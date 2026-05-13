@@ -3,6 +3,9 @@
 This document defines shared GitHub workflow rules for humans and AI coding
 tools.
 
+Local setup commands belong in [`development.md`](development.md). Local
+cross-AI review hook details belong in [`local-ai-review.md`](local-ai-review.md).
+
 ## 1. Development Model
 
 - Use trunk-based development.
@@ -35,7 +38,32 @@ Rules:
 - Keep the English slug short and descriptive.
 - Record the branch name in the GitHub Issue when useful.
 
-## 3. Implementation Size
+## 3. Issue Workflow
+
+This section should describe how Issues are used for planning, scope, and
+acceptance criteria.
+
+Issue templates live under `../.github/ISSUE_TEMPLATE/`.
+
+The canonical implementation planning template is
+`../.github/ISSUE_TEMPLATE/implementation-plan.md`.
+
+Use these sections as follows:
+
+- Goal: what the Issue should solve
+- Scope: work included in the Issue
+- Non-Scope: work intentionally left out
+- Approach: layers, modules, documents, or workflow rules expected to change
+- Files / Directories: main files or directories expected to change
+- Verification: automated and manual checks
+- Risks: expected regressions or hard parts
+- Open Questions: decisions still needed before implementation
+
+For small issues, remove sections that do not apply from the implementation
+plan template. Keep at least Goal, Scope, Approach, Verification, and Open
+Questions.
+
+## 4. Implementation Size
 
 - Keep each PR small enough to explain the goal, main changes, and risks.
 - Separate renames, refactors, and behavior changes when practical.
@@ -43,19 +71,9 @@ Rules:
 - Split broad UI / API / state changes when review quality would otherwise
   degrade.
 
-## 4. Quality Gates
+## 5. Quality Gates
 
-Replace these placeholders with project-specific commands:
-
-```bash
-# format
-
-# lint
-
-# typecheck
-
-# test
-```
+Canonical quality gate commands belong in [`development.md`](development.md).
 
 Rules:
 
@@ -64,7 +82,7 @@ Rules:
   affected.
 - State any skipped or unavailable checks in PR notes.
 
-## 5. Commits
+## 6. Commits
 
 - Commit meaningful, reviewable units.
 - Avoid noisy generated commits.
@@ -82,7 +100,7 @@ Examples:
 - `fix: handle expired sessions`
 - `docs: define github workflow`
 
-## 6. Pull Requests
+## 7. Pull Requests
 
 PR descriptions should include:
 
@@ -98,7 +116,7 @@ AI review convention:
 - Local AI review output under `state/ai-reviews/` is fast feedback, not a
   replacement for final judgment.
 
-## 7. Local AI Review
+## 8. Local AI Review
 
 Run:
 
@@ -111,16 +129,26 @@ The hook uses branch prefixes to choose the reviewer:
 - `codex/*` -> Claude review
 - `claude/*` -> Codex review
 
-See `docs/local-ai-review.md` for details.
+See [`local-ai-review.md`](local-ai-review.md) for details.
 
 GitHub Actions based cross-AI review is not enabled by default. If a project
 adds it as fallback automation, keep PAT / secret requirements in that
 fallback documentation rather than mixing them into the core workflow.
 
-## 8. Merge Policy
+## 9. Merge Policy
 
 - Prefer squash merge into `main`.
 - Merge only after required checks pass.
 - Re-run relevant checks after addressing review feedback.
 - Let `Closes #<issue>` close Issues automatically when possible.
 
+## 10. Learned Operational Notes
+
+This section should explain where durable operational lessons belong.
+
+`docs/lessons-learned.md` has been removed. Record durable lessons inline near
+the relevant workflow, Issue, or PR instead.
+
+Write durable lessons near the owning workflow or in the relevant Issue / PR.
+Reintroduce a separate lessons document only after ownership and update
+frequency are clear.

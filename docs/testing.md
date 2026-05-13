@@ -1,8 +1,12 @@
 # Testing
 
+This document owns the testing strategy for `formfill-assistant`.
+
+Manual browser checklists belong in [`manual-test.md`](manual-test.md).
+
 ## 1. Test Strategy
 
-<!-- Describe the balance of unit, integration, e2e, and manual testing. -->
+Write the balance of unit, integration, end-to-end, and manual testing.
 
 ## 2. Test Types
 
@@ -15,17 +19,30 @@
 
 ## 3. Test Environment
 
-### 3.1 Frameworks
+Write the test runner, browser requirements, extension loading approach, and
+local-only constraints.
+
+Frameworks:
 
 -
 
-### 3.2 Directory Structure
+Directory structure:
 
 ```text
 tests/
 ```
 
-## 4. Commands
+## 4. Test Data And Fixtures
+
+Write fixture and fake-data rules.
+
+HTML fixtures for automated and manual form tests should live under
+`tests/fixtures/` unless a later issue chooses a different location.
+
+## 5. Commands
+
+Write the commands for all tests, focused tests, type-aware tests, and future
+E2E tests once they exist.
 
 ```bash
 # Run all tests
@@ -35,15 +52,11 @@ tests/
 # Run e2e tests
 ```
 
-## 5. Manual Testing
+## 6. Manual Testing
 
-See `docs/manual-test.md`.
-
-## 6. Test Data
-
-<!-- Document fixtures, seed data, external accounts, and reset steps. -->
+Link to [`manual-test.md`](manual-test.md) and describe when manual checks are
+required.
 
 ## 7. CI
 
-<!-- Document which checks run in CI and which remain local/manual. -->
-
+Write which checks run in CI and which checks remain local or manual.
