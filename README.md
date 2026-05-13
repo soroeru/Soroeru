@@ -1,224 +1,104 @@
 # formfill-assistant
 
-formfill-assistant is a Chrome extension for user-confirmed form filling.
+formfill-assistant は、Webサイトの入力フォームに情報を入力する作業を補助する Chrome 拡張機能です。
 
-The project starts as a personal tool for reducing repetitive form entry on websites and contract-related forms. It detects fields on the current web page, suggests values from a locally managed profile, and lets the user explicitly choose what to fill.
+名前、メールアドレス、電話番号、住所、会社名、部署名など、何度も入力する情報をあらかじめ登録しておくことで、Webページ上のフォームに入力候補を表示します。
 
-The extension does **not** aim to automatically submit forms, create accounts, modify contracts, or complete transactions without user confirmation.
+入力する内容はユーザーが確認して選択します。formfill-assistant が勝手に送信ボタンを押したり、ユーザーの代わりに登録や契約を完了したりすることはありません。
 
-## Motivation
+## このアプリは何をするものですか？
 
-Many web forms ask for the same information repeatedly: name, email address, phone number, address, company name, billing information, department name, and other profile or contract-related data.
+formfill-assistant は、フォーム入力を少し楽にするための入力支援ツールです。
 
-Existing browser autofill and password managers are useful, but they are often optimized for a fixed set of personal fields such as login credentials, addresses, and payment information. This project explores a more flexible model:
+たとえば、以下のような場面での利用を想定しています。
 
-- user-defined profile fields
-- site-specific field history
-- dynamic field schemas
-- explicit user confirmation before filling
-- local-first storage
+- 問い合わせフォームへの入力
+- 会員登録フォームへの入力
+- 資料請求フォームへの入力
+- 契約関連フォームへの入力
+- 会社名、部署名、住所、電話番号などを何度も入力する作業
 
-The initial goal is simple: build a working Chrome extension that I can personally use and iterate on.
+ChromeでWebページを開いているときに、formfill-assistant はページ内の入力欄を検出し、登録済みの情報から候補を表示します。
 
-## Product Principles
+ユーザーは候補を確認し、必要な項目だけを入力できます。
 
-- Start with a small, usable Chrome extension.
-- Prefer user-confirmed assistance over autonomous automation.
-- Do not auto-submit forms.
-- Do not bypass CAPTCHA, bot detection, rate limits, or access controls.
-- Do not store passwords or credit card information in the initial version.
-- Keep user data local in the initial version.
-- Avoid backend services until they are clearly necessary.
-- Prefer deterministic, inspectable form-matching logic before introducing AI.
-- Treat personal and contract-related data as sensitive by default.
+## 使い方
 
-## Initial Scope: v0.1
+基本的な使い方は以下の流れです。
 
-v0.1 is a local-first Chrome extension for personal use.
+1. formfill-assistant に自分のプロフィール情報を登録します。
+2. 入力したいWebフォームをChromeで開きます。
+3. formfill-assistant がフォーム項目を検出します。
+4. 入力候補が表示されます。
+5. 内容を確認して、入力したい候補を選びます。
+6. 必要に応じて、ユーザー自身が内容を修正します。
+7. 最後の送信・登録・申請・契約確定などは、必ずユーザー自身が判断して実行します。
 
-Planned features:
+## Human-in-the-loop の考え方
 
-- Manage basic profile fields locally.
-  - full name
-  - email address
-  - phone number
-  - postal code
-  - address
-  - company name
-  - department name
-  - other manually defined fields
-- Detect form fields on the current web page.
-- Analyze `input`, `textarea`, and `select` elements.
-- Infer field meaning from attributes and surrounding text.
-  - `autocomplete`
-  - `name`
-  - `id`
-  - `placeholder`
-  - associated `label`
-  - nearby text
-- Show fill suggestions to the user.
-- Fill fields only after explicit user action.
-- Record which URL used which profile fields.
-- Provide an extension options page for managing profile data and settings.
+formfill-assistant は、人間の判断を前提にしたツールです。
 
-## Out of Scope for v0.1
+CAPTCHA、二段階認証、ワンタイムパスワード、本人確認、規約同意、最終確認画面など、ユーザー本人の操作や判断が必要な場面では、formfill-assistant はそれを回避しません。
 
-The following are intentionally excluded from the first version:
+そのような場面では、ユーザーに操作を促します。ユーザーが必要な操作を完了した後、formfill-assistant は再び現在のページを確認し、残っている入力欄への入力補助を続けます。
 
-- automatic form submission
-- automatic account registration
-- automatic address changes across multiple websites
-- automatic contract modification
-- password manager functionality
-- credit card storage
-- cloud sync
-- Google Drive / Dropbox integration
-- backend API server
-- mobile apps
-- iOS app autofill
-- Android Autofill Service
-- BYOC deployment
-- Terraform automation
-- Cloudflare Browser Run integration
-- autonomous browser AI agents
+つまり、このアプリは「人間の代わりにすべてを実行する自動化ツール」ではなく、「人間が確認しながらフォーム入力を進めるための補助ツール」です。
 
-## Architecture
+## このアプリでできること
 
-```text
-Chrome Extension
-├── content script
-│   ├── detect form elements
-│   ├── infer field types
-│   ├── render suggestion UI
-│   └── fill selected values into the page
-│
-├── background service worker
-│   ├── extension event handling
-│   └── message passing
-│
-├── options page
-│   ├── manage profile fields
-│   ├── manage custom field definitions
-│   └── view site-field history
-│
-└── local storage
-    ├── profile data
-    ├── field definitions
-    └── site-field history
-```
+初期版では、以下のような機能を想定しています。
 
-## Candidate Tech Stack
+- プロフィール情報の保存
+- Webページ上の入力欄の検出
+- 入力欄に合いそうな候補の表示
+- ユーザーが選択した項目の入力
+- どのサイトでどの種類の情報を入力したかの記録
+- 未知の項目を将来的に追加できるようにするための土台作り
 
-- TypeScript
-- Chrome Extension Manifest V3
-- HTML / CSS
-- React or Vanilla TypeScript for extension UI
-- `chrome.storage.local` or IndexedDB for local storage
-- Web Crypto API for future local encryption
-- Playwright for future end-to-end testing
+## このアプリではしないこと・できないこと
 
-## Field Detection Strategy
+formfill-assistant は、安全性とユーザー確認を重視するため、以下のことはしません。
 
-v0.1 should start with rule-based field detection.
+- フォームの自動送信
+- アカウント登録の完全自動化
+- 契約、申請、購入、解約などの自動確定
+- 規約同意チェックボックスの自動操作
+- CAPTCHAの突破や代行
+- 二段階認証や本人確認の回避
+- bot対策、アクセス制限、レート制限の回避
+- パスワード管理
+- クレジットカード情報の保存
+- ユーザーの許可なく外部サーバーへ情報を送信すること
 
-Examples:
+送信、登録、申請、契約確定などの重要な操作は、必ずユーザー自身が内容を確認したうえで行う必要があります。
 
-- `autocomplete="email"` -> email address
-- `autocomplete="tel"` -> phone number
-- `name` or `id` contains `email` -> email address
-- `name` or `id` contains `tel` / `phone` -> phone number
-- `placeholder` contains `住所` -> address
-- `label` contains `会社名` -> company name
-- `label` contains `部署` -> department name
-- `name` or `id` contains `zip` / `postal` -> postal code
+## セキュリティとプライバシー
 
-The goal is not perfect automatic classification. The first goal is to produce useful suggestions while keeping the user in control.
+formfill-assistant は、名前、住所、電話番号、会社情報などの個人情報や業務情報に近いデータを扱う可能性があります。そのため、初期版では安全側に倒した設計を目指します。
 
-## Dynamic Schema Direction
+初期版の方針は以下です。
 
-A key long-term idea is dynamic schema management.
+- 入力データはローカル環境に保存します。
+- 外部サーバーへの送信は行いません。
+- パスワードは保存しません。
+- クレジットカード情報は保存しません。
+- フォーム送信ボタンは自動で押しません。
+- CAPTCHAや二段階認証を回避しません。
+- Chrome拡張機能の権限は、必要最小限に抑えます。
 
-Different websites and business forms require different fields. Instead of hard-coding all possible fields, the extension should eventually allow users to add new field types when unknown fields are encountered.
+ただし、ブラウザ拡張機能はWebページ上の入力欄を読み取ったり、入力したりする性質上、慎重に扱う必要があります。重要なサイトで利用する場合は、入力内容が正しいか必ず確認してください。
 
-Example flow:
+## 想定している利用者
 
-1. The extension detects an unknown form field.
-2. The user selects or creates a field definition, such as `法人番号`, `請求先住所`, or `契約担当者名`.
-3. The extension stores the mapping.
-4. Similar fields can use the same mapping in the future.
+最初は、同じような情報を何度もフォームに入力するのが面倒だと感じている個人利用者を想定しています。
 
-This allows the product to grow from personal autofill assistance toward contract and business-form support without requiring a fixed universal schema from the beginning.
+将来的には、企業情報、契約情報、取引先登録情報など、より複雑なフォーム入力の補助にも広げる可能性があります。
 
-## Security and Privacy
+## 現在の開発状況
 
-This project handles sensitive information. The initial security posture is intentionally conservative.
+このプロジェクトは初期開発段階です。
 
-v0.1 security principles:
-
-- Store data locally only.
-- Do not send profile data to external servers.
-- Do not store passwords.
-- Do not store credit card information.
-- Do not automatically click submit buttons.
-- Fill only fields selected by the user.
-- Keep permissions as narrow as possible.
-- Avoid collecting telemetry in the initial version.
-
-Future security considerations:
-
-- local encryption
-- encrypted export/import
-- client-side encrypted cloud backup
-- explicit permission model per site
-- audit log for filled fields
-- safe handling of business and contract data
-
-## Roadmap
-
-### v0.1: Personal Chrome Extension
-
-- Local profile management
-- Rule-based form detection
-- User-confirmed filling
-- Site-field history
-- Options page
-
-### v0.2: Dynamic Fields
-
-- Custom field definitions
-- Unknown field classification UI
-- Reusable field mappings
-- Improved Japanese and English form support
-
-### v0.3: Quality and Testing
-
-- Better handling of dynamic forms and SPAs
-- More robust label and nearby-text extraction
-- End-to-end tests with fixture pages
-- Regression tests for field detection rules
-
-### v0.4: Backup and Portability
-
-- Export/import
-- Encrypted local backup
-- Evaluation of Google Drive / Dropbox backup
-
-### Future
-
-- Firefox extension
-- Safari Web Extension
-- Android Autofill Service
-- iOS Safari Extension
-- Business and contract-form assistance
-- Form field audit and checklist generation
-- Cloud-based form analysis for testing only
-- Optional BYOC architecture exploration
-
-## Development Status
-
-This project is in the initial planning and implementation stage.
-
-The immediate objective is to complete a small Chrome extension that is useful for personal repetitive form entry.
+まずは、自分自身が日常的に使える小さなChrome拡張機能として完成させることを目指しています。
 
 ## License
 
