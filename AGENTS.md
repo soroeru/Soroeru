@@ -15,7 +15,7 @@ When creating or updating `CLAUDE.md`, reuse the shared sections and replace the
 
 ## Project Overview
 
-`formfill-assistant` is a local-first Chrome extension for user-confirmed form filling.
+`formfill-assistant` is a local-first Chrome extension for user-confirmed, human-in-the-loop form filling.
 
 The extension detects form fields on the current web page, suggests values from locally managed profile data, and fills selected fields only after explicit user action.
 
@@ -25,14 +25,33 @@ The project starts as a personal tool for reducing repetitive form entry on webs
 
 - Start with a small, working Chrome extension.
 - Prefer user-confirmed assistance over autonomous automation.
+- Design the product around human-in-the-loop interaction.
+- Let the user handle any step that requires judgment, consent, identity verification, CAPTCHA, MFA, or manual confirmation.
+- After the user completes a manual step, resume assistance by re-detecting the current form state.
 - Do not auto-submit forms.
-- Do not bypass CAPTCHA, bot detection, rate limits, or access controls.
+- Do not bypass CAPTCHA, bot detection, rate limits, MFA, paywalls, or access controls.
 - Do not store passwords in the initial version.
 - Do not store credit card information in the initial version.
 - Keep user data local in the initial version.
 - Avoid backend services until they are clearly necessary.
 - Prefer deterministic, inspectable form-matching logic before introducing AI.
 - Treat personal information and contract-related information as sensitive by default.
+
+## Human-in-the-Loop Model
+
+The product should assist the user without pretending to be the user or replacing required human actions.
+
+When a web page requires a human step, such as CAPTCHA, MFA, terms confirmation, identity verification, file upload confirmation, or final submission, the extension should:
+
+1. stop automated filling activity for that step;
+2. clearly tell the user what action is needed;
+3. wait for the user to complete the action;
+4. re-scan the page after the user continues;
+5. resume suggestions only for remaining fillable fields.
+
+The extension must not attempt to solve, bypass, outsource, or obscure CAPTCHA and similar anti-abuse mechanisms.
+
+Human-in-the-loop behavior is not a fallback; it is a core product design principle.
 
 ## Initial Scope: v0.1
 
@@ -62,6 +81,8 @@ Planned features:
 - Fill fields only after explicit user action.
 - Record which URL used which profile fields.
 - Provide an extension options page for managing profile data and settings.
+- Detect when the page likely requires a manual human step and prompt the user to complete it.
+- Re-scan the form after user-driven page changes, CAPTCHA completion, MFA completion, or dynamic form updates.
 
 ## Explicitly Out of Scope for v0.1
 
@@ -71,6 +92,10 @@ Do not implement these features unless the user explicitly changes the scope:
 - automatic account registration
 - automatic address changes across multiple websites
 - automatic contract modification
+- CAPTCHA solving or CAPTCHA bypass
+- MFA bypass
+- bot detection bypass
+- automatic acceptance of terms or contracts
 - password manager functionality
 - credit card storage
 - cloud sync
@@ -105,7 +130,8 @@ Chrome Extension
 ├── content script
 │   ├── detect form elements
 │   ├── infer field types
-│   ├── render suggestion UI
+│   ├── detect manual-step states
+│   ├── render suggestion and guidance UI
 │   └── fill selected values into the page
 │
 ├── background service worker
@@ -140,6 +166,23 @@ Examples:
 
 The goal is not perfect automatic classification. The goal is useful suggestions while keeping the user in control.
 
+## Manual-Step Detection Strategy
+
+For v0.1, manual-step detection should be conservative and UI-oriented.
+
+The extension may recognize common signs that user action is needed, such as:
+
+- CAPTCHA containers or visible CAPTCHA text
+- MFA / one-time password fields
+- confirmation checkboxes for terms or consent
+- disabled fields or submit buttons waiting for user action
+- page transitions after user action
+- dynamically rendered follow-up forms
+
+When such states are detected, the extension should guide the user instead of attempting to complete the step.
+
+Avoid brittle or adversarial logic. This feature is for improving UX, not circumventing site protections.
+
 ## Dynamic Schema Direction
 
 The long-term product direction includes dynamic schema management.
@@ -160,17 +203,27 @@ For v0.1:
 - Do not store passwords.
 - Do not store credit card information.
 - Do not automatically click submit buttons.
+- Do not automatically accept terms, policies, contracts, or consent checkboxes.
+- Do not bypass CAPTCHA, MFA, bot detection, or access controls.
 - Fill only fields selected by the user.
 - Keep extension permissions as narrow as possible.
 - Avoid broad host permissions unless they are necessary and documented.
 
 When adding or changing permissions in `manifest.json`, explain why they are needed.
 
+## User-Facing Documentation Policy
+
+`README.md` should be written primarily for users, not implementation agents.
+
+Keep detailed development guidance, architecture notes, tech stack decisions, testing strategy, and implementation constraints in `AGENTS.md` and `docs/` files.
+
+If a technical detail is useful only for development, prefer documenting it outside `README.md`.
+
 ## Repository Documents
 
 Use these documents when present:
 
-- `README.md`: product overview and roadmap
+- `README.md`: user-facing product overview, usage, limitations, and security notes
 - `docs/requirements.md`: product requirements
 - `docs/development.md`: setup, commands, and workflow
 - `docs/testing.md`: testing strategy
@@ -244,6 +297,7 @@ If these commands do not exist yet, do not invent passing results. State what is
 
 - Prefer simple, deterministic logic for v0.1.
 - Keep DOM parsing logic isolated and testable.
+- Keep manual-step detection separate from field classification.
 - Keep storage access behind a small abstraction.
 - Keep profile field definitions typed.
 - Avoid coupling page content scripts directly to storage internals.
@@ -251,6 +305,8 @@ If these commands do not exist yet, do not invent passing results. State what is
 - Be careful when injecting UI into arbitrary websites.
 - Prefer explicit user actions for filling fields.
 - Never implement hidden or automatic submission behavior.
+- Never implement CAPTCHA solving, CAPTCHA bypass, or MFA bypass.
+- After user-driven page changes, support re-scanning rather than forcing a full reload when feasible.
 
 ## Manual Testing Expectations
 
@@ -267,6 +323,9 @@ Useful manual cases:
 - dynamically rendered form
 - textarea field
 - select field
+- CAPTCHA-like manual step placeholder in a fixture page
+- MFA / one-time-code-like field in a fixture page
+- terms confirmation checkbox in a fixture page
 
 Use fake profile data during tests.
 
@@ -321,5 +380,9 @@ Codex must not implement features that silently perform high-impact actions, inc
 - purchasing products or services
 - modifying contracts
 - uploading personal data to external services
+- solving or bypassing CAPTCHA
+- bypassing MFA or bot detection
 
 If a requested change appears to move toward those behaviors, pause and clarify the safety boundary before implementing.
+
+Codex may implement human-in-the-loop UX that pauses, prompts the user, and resumes assistance after the user completes a required manual step.
