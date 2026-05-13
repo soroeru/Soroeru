@@ -1,5 +1,5 @@
 ---
-name: Implementation
+name: Implementation Plan
 about: Plan and track implementation work
 title: ""
 labels: ""
@@ -23,4 +23,3 @@ assignees: ""
 ### Risks
 
 ### Open Questions
-

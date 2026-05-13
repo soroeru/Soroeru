@@ -1,29 +1,34 @@
 # Development
 
+This document owns local development workflow and implementation conventions.
+
+Architecture decisions belong in [`extension.md`](extension.md). Product
+requirements belong in [`requirements.md`](requirements.md).
+
 ## 1. Development Policy
 
-<!-- Describe development principles, design approach, and release style. -->
+Write development principles, review size expectations, and how to keep changes
+small and reversible.
 
 ## 2. Environment Setup
 
-### 2.1 Required Tools
-
-- Git
--
-
-### 2.2 Initial Setup
+Write required tools, install steps, and first-run setup.
 
 ```bash
 # Install dependencies
 ```
 
-### 2.3 Run Locally
+## 3. Run Locally
+
+Write commands for building, loading, and running the extension locally.
 
 ```bash
 # Start local app or service
 ```
 
-## 3. Project Structure
+## 4. Project Structure
+
+Write the source, test, fixture, and documentation directory layout.
 
 ```text
 .
@@ -32,46 +37,44 @@
 └── docs/
 ```
 
-## 4. Coding Conventions
+## 5. Implementation Conventions
 
-### 4.1 Formatting
+Write naming, module boundaries, storage access rules, and extension-specific
+implementation rules such as avoiding scattered direct storage calls.
+
+## 6. Formatting And Linting
+
+Write formatting and linting commands once they exist.
 
 ```bash
 # Format command
-```
 
-### 4.2 Linting
-
-```bash
 # Lint command
 ```
 
-### 4.3 Type Checking
+## 7. Type Checking
+
+Write typecheck commands and expectations once they exist.
 
 ```bash
 # Typecheck command
 ```
 
-## 5. Quality Gates
+## 8. Quality Gates
 
-Run the relevant project-specific checks before committing:
+Write the checks that should run before committing or opening a PR.
 
-```bash
-# format
-# lint
-# typecheck
-# test
-```
+## 9. Local AI Review
 
-## 6. Local AI Review
+Write only the short setup pointer here.
 
 ```bash
 bash scripts/setup-hooks.sh
 ```
 
-See `docs/local-ai-review.md`.
+Detailed hook behavior belongs in [`local-ai-review.md`](local-ai-review.md).
 
-## 7. Operational Notes
+## 10. Operational Notes
 
-<!-- Document local state, migrations, generated files, and manual setup. -->
-
+Write local state, generated files, migration notes, and troubleshooting that
+does not belong in a more specific document.

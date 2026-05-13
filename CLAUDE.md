@@ -221,15 +221,16 @@ If a technical detail is useful only for development, prefer documenting it outs
 Use these documents when present:
 
 - `README.md`: user-facing product overview, usage, limitations, and security notes
+- `docs/README.md`: documentation index and ownership guide
 - `docs/requirements.md`: product requirements
+- `docs/extension.md`: Chrome extension architecture and design notes
 - `docs/development.md`: setup, commands, and workflow
 - `docs/testing.md`: testing strategy
 - `docs/security.md`: security review notes
 - `docs/manual-test.md`: manual test checklist
-- `docs/lessons-learned.md`: project learning log
 - `docs/github-operations.md`: GitHub workflow rules
-- `docs/issue-implementation-plan-template.md`: issue planning template
 - `docs/local-ai-review.md`: local cross-AI review hook documentation
+- `.github/ISSUE_TEMPLATE/implementation-plan.md`: GitHub Issue implementation plan template
 
 Update docs when behavior, setup, commands, architecture, or security assumptions change.
 

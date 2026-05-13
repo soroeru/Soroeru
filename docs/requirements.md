@@ -1,68 +1,70 @@
 # Requirements
 
+This document owns the product requirements for `formfill-assistant`.
+
+It is the primary source for v0.1 scope, non-scope, human-in-the-loop behavior,
+use cases, and non-functional requirements. Agent-specific operating rules
+belong in `../AGENTS.md` and `../CLAUDE.md`.
+
 ## 1. Background
 
-### 1.1 Problem
+Write the user problem, product motivation, and why a local-first Chrome
+extension is the initial shape.
 
-<!-- Describe the user problem and why this project exists. -->
+## 2. Product Principles
 
-### 1.2 Constraints
+Write the durable principles that should shape product decisions.
 
-<!-- Document business, technical, legal, operational, and platform constraints. -->
+## 3. Human-In-The-Loop Model
 
-## 2. Functional Requirements
+Write how the extension pauses, prompts the user, re-scans, and resumes without
+replacing required human judgment.
+
+## 4. v0.1 Scope
+
+Write the features included in the first usable Chrome extension.
+
+## 5. v0.1 Non-Scope
+
+Write the behaviors intentionally excluded from v0.1.
+
+## 6. Functional Requirements
 
 | ID | Requirement | Priority | Status |
 | --- | --- | --- | --- |
 | REQ-001 |  |  |  |
 
-## 3. Non-Functional Requirements
+## 7. Non-Functional Requirements
 
-### 3.1 Performance
+Write performance, privacy, security, usability, maintainability, and local data
+requirements.
 
-| ID | Requirement | Target |
-| --- | --- | --- |
-| PERF-001 |  |  |
+| ID | Category | Requirement | Target |
+| --- | --- | --- | --- |
+| PERF-001 | Performance |  |  |
+| AVAIL-001 | Availability |  |  |
+| SEC-001 | Security |  |  |
 
-### 3.2 Availability
+## 8. Use Cases
 
-| ID | Requirement |
-| --- | --- |
-| AVAIL-001 |  |
+Write the core user workflows and important alternate flows.
 
-### 3.3 Security
+## 9. Field Detection Requirements
 
-| ID | Requirement |
-| --- | --- |
-| SEC-001 |  |
+Write the rule-based field detection expectations and classification boundaries.
 
-## 4. Use Cases
+## 10. Manual-Step Detection Requirements
 
-### UC-001: 
+Write conservative detection expectations for CAPTCHA-like, MFA-like, terms,
+consent, and final-confirmation states.
 
-**Actor**:
+## 11. Dynamic Schema Direction
 
-**Preconditions**:
+Write the long-term direction for custom fields and evolving site-specific
+schemas without over-engineering v0.1.
 
-**Main Flow**:
-
-1.
-
-**Alternative Flows**:
-
-- 
-
-## 5. UI / API Design
-
-<!-- Add screens, endpoint contracts, or command UX as needed. -->
-
-## 6. Technical Notes
-
-<!-- Add data formats, retry strategy, state model, or integration details. -->
-
-## 7. Glossary
+## 12. Glossary
 
 | Term | Definition |
 | --- | --- |
 |  |  |
-
