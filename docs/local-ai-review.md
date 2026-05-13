@@ -99,7 +99,25 @@ The hook skips when:
 - merge-base cannot be resolved
 - the same branch / merge-base / diff hash has already been reviewed
 
-## 7. Output
+`LOCAL_AI_REVIEW_RUNNING=1` is reserved for hook recursion prevention. Do not
+use it manually to suppress review for ordinary commits; use `[skip-review]`
+when the skip should be visible in Git history.
+
+## 7. Review Follow-Up Policy
+
+This section should describe how to avoid unnecessary review loops while still
+rerunning review for substantive changes.
+
+If a review result is `NIT_ONLY`, a follow-up commit or amend that only
+addresses those nits may include `[skip-review]` in the commit message. This
+prevents repeated review cycles for low-risk wording, formatting, or
+consistency fixes.
+
+Do not use `[skip-review]` for fixes to `NEEDS_CHANGES`, `major`, or higher-risk
+findings unless there is a separate reason to skip review. Those changes should
+normally be reviewed again.
+
+## 8. Output
 
 This section should describe where review output is stored and which files are
 useful for inspection.
@@ -120,7 +138,7 @@ Useful files:
 - `last-error.log`
 - `last-reviewed.json`
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 This section should describe common symptoms and likely checks.
 
@@ -132,7 +150,7 @@ This section should describe common symptoms and likely checks.
 | Hook blocks unexpectedly | `last-run.log`, lock file age, reviewer timeout |
 | Shellcheck fails | Bash 3.2 compatibility and quoted path handling |
 
-## 9. Optional GitHub Actions Fallback
+## 10. Optional GitHub Actions Fallback
 
 This section should describe where future GitHub Actions fallback details should
 live if the project adds them.
