@@ -1,0 +1,87 @@
+# .githooks/config
+#
+# Template configuration for the local AI review hook.
+# This file is sourced by .githooks/post-commit and the lib/ scripts.
+#
+# After creating a repository from this template, override values here
+# per project. Prefer editing this file over changing the lib scripts.
+
+# --- Branch prefix mapping --------------------------------------
+# When the current branch starts with one of these prefixes, the
+# reviewer is the OTHER AI. Branches that match neither prefix are
+# skipped entirely.
+LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE="claude/"
+LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX="codex/"
+
+# --- Diff base --------------------------------------------------
+# Base ref to compute branch-wide diff against. The actual diff
+# point is `git merge-base $LOCAL_AI_REVIEW_BASE_REF HEAD`, so the
+# reviewer sees the full branch contribution rather than just the
+# latest commit.
+LOCAL_AI_REVIEW_BASE_REF="origin/main"
+
+# --- Review target paths ---------------------------------------
+# Files outside these paths are excluded from the diff fed to the
+# reviewer. Paths are matched as git pathspecs (relative to repo
+# root). Bash 3.2 indexed array.
+LOCAL_AI_REVIEW_TARGET_PATHS=(
+  "README.md"
+  "AGENTS.md"
+  "CLAUDE.md"
+  "docs/"
+  "scripts/"
+  ".githooks/"
+  ".github/"
+  "src/"
+  "tests/"
+  # "test/"      # Enable for Node.js / Java-style test directories.
+  # ".claude/"   # Enable if shared Claude Code settings are tracked.
+  # ".Codex/"    # Enable if shared Codex settings are tracked.
+)
+
+# --- State directory --------------------------------------------
+# Where review outputs and bookkeeping live. Relative to repo root.
+LOCAL_AI_REVIEW_STATE_DIR="state/ai-reviews"
+
+# --- Timeouts ---------------------------------------------------
+# A lock file is considered stale (and reclaimed) after this many
+# seconds.
+LOCAL_AI_REVIEW_LOCK_TIMEOUT_SEC=600
+# The reviewer CLI is killed after this many seconds.
+LOCAL_AI_REVIEW_REVIEWER_TIMEOUT_SEC=900
+
+# --- Diff size guard --------------------------------------------
+# Diff bytes above this threshold trigger a warning in the run log
+# but do not abort the review.
+LOCAL_AI_REVIEW_DIFF_WARN_BYTES=$((256 * 1024))
+
+# --- Reviewer CLI invocations -----------------------------------
+# Each function reads the full prompt (prompt template + diff) from
+# stdin and writes the review body to stdout. Errors should go to
+# stderr. Override these to point at different CLIs / subscriptions.
+#
+# Each function MUST `exec` into the reviewer CLI as its final step.
+# The orchestrator's watchdog tracks the PID of the subshell that
+# runs the function; if the function called the CLI as a child
+# instead of `exec`ing, killing the tracked PID would only kill
+# the wrapper and leave the actual CLI orphaned.
+
+local_ai_review_run_claude() {
+  local prompt
+  prompt=$(cat)
+  # plan mode is read-only at the model level. We additionally
+  # restrict --tools to read-only operations as defense in depth.
+  exec claude -p "$prompt" \
+    --permission-mode plan \
+    --output-format text \
+    --tools "Read,Grep,Glob"
+}
+
+local_ai_review_run_codex() {
+  local prompt
+  prompt=$(cat)
+  # read-only sandbox blocks all file edits.
+  exec codex exec \
+    --sandbox read-only \
+    "$prompt"
+}

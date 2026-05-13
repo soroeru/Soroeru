@@ -1,0 +1,18 @@
+# Local state and review artifacts
+state/
+
+# Secrets and local environment
+.env
+.env.local
+*.session
+
+# Common caches
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+__pycache__/
+node_modules/
+dist/
+build/
+coverage/
+
