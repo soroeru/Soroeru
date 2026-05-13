@@ -117,7 +117,34 @@ Do not use `[skip-review]` for fixes to `NEEDS_CHANGES`, `major`, or higher-risk
 findings unless there is a separate reason to skip review. Those changes should
 normally be reviewed again.
 
-## 8. Output
+## 8. Cleanup Policy
+
+This section should describe when local review output can be deleted and which
+state should be preserved.
+
+A good cleanup point is after the review result reaches `NIT_ONLY` and the
+follow-up commit or amend that addresses those nits has been committed with
+`[skip-review]`. At that point, the review cycle is considered settled and old
+review artifacts can be removed to keep local state small.
+
+Files that can be deleted:
+
+- `state/ai-reviews/*.md`
+- `state/ai-reviews/last-run.log`
+- `state/ai-reviews/last-error.log`
+- `state/ai-reviews/.review-*`
+- `state/ai-reviews/.payload.*`
+- `state/ai-reviews/.diff.*`
+
+Files to keep by default:
+
+- `state/ai-reviews/last-reviewed.json`
+
+Keep `last-reviewed.json` because it may be used for duplicate-review
+prevention. Delete it only when intentionally resetting review state and
+accepting that the same diff may be reviewed again.
+
+## 9. Output
 
 This section should describe where review output is stored and which files are
 useful for inspection.
@@ -138,7 +165,7 @@ Useful files:
 - `last-error.log`
 - `last-reviewed.json`
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 This section should describe common symptoms and likely checks.
 
@@ -150,7 +177,7 @@ This section should describe common symptoms and likely checks.
 | Hook blocks unexpectedly | `last-run.log`, lock file age, reviewer timeout |
 | Shellcheck fails | Bash 3.2 compatibility and quoted path handling |
 
-## 10. Optional GitHub Actions Fallback
+## 11. Optional GitHub Actions Fallback
 
 This section should describe where future GitHub Actions fallback details should
 live if the project adds them.
