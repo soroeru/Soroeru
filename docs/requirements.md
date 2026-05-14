@@ -1,10 +1,12 @@
 # Requirements
 
-This document owns the product requirements for `formfill-assistant`.
+This document owns the **product requirements** for `formfill-assistant`: v0.1
+scope, non-scope, human-in-the-loop behavior, use cases, and non-functional
+requirements.
 
-It is the primary source for v0.1 scope, non-scope, human-in-the-loop behavior,
-use cases, and non-functional requirements. Agent-specific operating rules
-belong in `../AGENTS.md` and `../CLAUDE.md`.
+Out of scope here: extension architecture (see [`extension.md`](extension.md)),
+security review rationale (see [`security.md`](security.md)), and agent
+operating rules (see `../AGENTS.md` and `../CLAUDE.md`).
 
 ## 1. Background
 
@@ -121,6 +123,10 @@ v0.1 does not include:
 
 These requirements describe qualities expected from v0.1. Numeric targets may
 be refined after implementation benchmarks exist.
+
+Detailed security and privacy decisions, threat model, and permission review
+rules live in [`security.md`](security.md). This section records the
+requirement-level statements; the rationale and review notes belong there.
 
 | ID | Category | Requirement | Target |
 | --- | --- | --- | --- |

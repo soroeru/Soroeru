@@ -1,9 +1,13 @@
 # Development
 
-This document owns local development workflow and implementation conventions.
+This document owns **local development workflow, repository layout,
+implementation conventions, and the canonical quality gate list** for
+`formfill-assistant`.
 
-Architecture decisions belong in [`extension.md`](extension.md). Product
-requirements belong in [`requirements.md`](requirements.md).
+Out of scope here: extension architecture (see [`extension.md`](extension.md)),
+product requirements (see [`requirements.md`](requirements.md)), test strategy
+(see [`testing.md`](testing.md)), and GitHub workflow rules (see
+[`github-operations.md`](github-operations.md)).
 
 ## 1. Development Policy
 
@@ -155,13 +159,9 @@ executed. If a command is not available yet, state that plainly in the PR.
 
 ## 9. Local AI Review
 
-Install hooks with:
-
-```bash
-bash scripts/setup-hooks.sh
-```
-
-Detailed hook behavior belongs in [`local-ai-review.md`](local-ai-review.md).
+Setup, behavior, and troubleshooting for the local cross-AI review hook live
+in [`local-ai-review.md`](local-ai-review.md). The setup command is repeated
+once in §2 above as part of environment setup; do not duplicate it elsewhere.
 
 ## 10. Operational Notes
 
