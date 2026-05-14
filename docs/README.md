@@ -6,9 +6,6 @@ This directory contains development-facing documentation for
 Keep this file as a short index. Put detailed decisions in the document that
 owns the relevant topic.
 
-Many documents currently contain section scaffolding. Detailed content is
-intentionally left for follow-up documentation work.
-
 ## Document Responsibilities
 
 | Document | Responsibility |
@@ -35,3 +32,6 @@ intentionally left for follow-up documentation work.
 
 When behavior, commands, architecture, or security assumptions change, update
 the owning document instead of adding duplicate notes elsewhere.
+
+Do not describe future commands, tools, or quality gates as available until the
+repository actually contains the required files and scripts.
