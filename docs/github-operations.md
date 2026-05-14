@@ -40,8 +40,8 @@ Rules:
 
 ## 3. Issue Workflow
 
-This section should describe how Issues are used for planning, scope, and
-acceptance criteria.
+Use Issues to define the goal, scope, non-scope, implementation direction, and
+acceptance criteria before starting non-trivial work.
 
 Issue templates live under `../.github/ISSUE_TEMPLATE/`.
 
@@ -62,6 +62,10 @@ Use these sections as follows:
 For small issues, remove sections that do not apply from the implementation
 plan template. Keep at least Goal, Scope, Approach, Verification, and Open
 Questions.
+
+Keep implementation plans in the GitHub Issue for issue-driven work. If a PR
+changes the plan materially, update the Issue or explain the change in the PR
+description.
 
 ## 4. Implementation Size
 
@@ -144,11 +148,15 @@ fallback documentation rather than mixing them into the core workflow.
 
 ## 10. Learned Operational Notes
 
-This section should explain where durable operational lessons belong.
+Record durable lessons inline near the relevant workflow, Issue, or PR instead
+of creating a separate learning log without a clear owner.
 
-`docs/lessons-learned.md` has been removed. Record durable lessons inline near
-the relevant workflow, Issue, or PR instead.
+Examples:
 
-Write durable lessons near the owning workflow or in the relevant Issue / PR.
+- A lesson about branch naming belongs in this document.
+- A lesson about local review hooks belongs in [`local-ai-review.md`](local-ai-review.md).
+- A lesson about extension manual testing belongs in [`manual-test.md`](manual-test.md).
+- A one-off decision for a specific task may stay in that Issue or PR.
+
 Reintroduce a separate lessons document only after ownership and update
 frequency are clear.

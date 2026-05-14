@@ -8,61 +8,159 @@ which boundaries must not be crossed, and how sensitive data is protected.
 
 ## 1. Security Principles
 
-Write the security principles that must shape implementation and review.
-
-- Least privilege
-- Defense in depth
-- Secure defaults
-- No committed secrets
+- Keep profile data local in v0.1.
+- Do not send profile data, site-field history, or page-derived form data to
+  external services.
+- Do not store passwords or credit card data.
+- Do not submit forms, accept terms, or complete final confirmation steps
+  automatically.
+- Do not bypass CAPTCHA, MFA, bot detection, access controls, rate limits, or
+  paywalls.
+- Keep extension permissions as narrow as practical.
+- Treat page text and attributes as untrusted input.
+- Use fake data in tests, fixtures, docs, screenshots, and examples.
+- Do not commit secrets, local state, AI review artifacts, or generated caches.
 
 ## 2. Threat Model
 
-Write likely threats, impact, and mitigations for local profile data and page
-interaction.
-
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
-|  |  |  |
+| Over-broad extension permissions | More pages or data become reachable than intended. | Prefer `activeTab` or narrow host access; document any broad permission before adding it. |
+| Profile data leaked to a network service | Personal or business data leaves the user's machine. | No backend, telemetry, cloud sync, or external profile upload in v0.1. |
+| Password or credit card storage | High-impact secrets are stored in a tool not designed for them. | Do not support password or credit card field categories in v0.1. |
+| Automatic form submission | User may register, apply, purchase, agree, or submit incorrect data without consent. | Never click submit or final confirmation controls automatically. |
+| Terms or consent auto-acceptance | User may appear to consent without judgment. | Treat terms and consent controls as manual steps. |
+| CAPTCHA / MFA bypass behavior | Circumvents site protections and may violate user or site expectations. | Detect and pause; never solve, bypass, hide, or outsource. |
+| Host page interference from injected UI | Page controls may be obscured or altered. | Scope styles, avoid large overlays, and manually test fixtures. |
+| DOM-based injection or unsafe rendering | Page-provided text could affect extension UI. | Treat page text as untrusted; render as text, not HTML, unless explicitly sanitized. |
+| Real data committed in fixtures or logs | Sensitive data becomes part of repository history. | Use fake data only and keep local state ignored by Git. |
 
 ## 3. Sensitive Data Handling
 
-Write what data may be stored, what must not be stored, and how fake data should
-be used in tests and docs.
+Allowed in v0.1 local storage:
+
+- name;
+- email address;
+- phone number;
+- postal code;
+- address;
+- company name;
+- department name;
+- user-defined non-secret fields;
+- local site-field history.
+
+Not allowed in v0.1 storage:
+
+- passwords;
+- one-time passwords;
+- credit card numbers, expiration dates, or security codes;
+- government IDs or identity verification secrets unless a future issue
+  explicitly scopes and reviews them;
+- real test data, real customer data, or copied production records.
+
+Tests, fixtures, documentation, and screenshots must use fake values.
 
 ## 4. Local Storage And Encryption Direction
 
-Write local persistence expectations and future encryption considerations.
+Use local browser storage only for v0.1. `chrome.storage.local` or IndexedDB are
+acceptable candidates once implementation begins. Storage access should go
+through a small abstraction so future migration, validation, or encryption can
+be added without changing content scripts and UI code directly.
+
+Encryption is a future direction, not a current guarantee. If Web Crypto API
+encryption is added later, document:
+
+- what is encrypted;
+- where keys come from;
+- what remains visible to the browser extension runtime;
+- how backup, migration, and recovery work;
+- what risks encryption does and does not solve.
 
 ## 5. Extension Permissions Review
 
-Write why requested permissions are acceptable, how host permissions stay
-narrow, and which permissions are avoided.
+The repository does not yet contain a `manifest.json`. When permissions are
+added, document them in [`extension.md`](extension.md) and review their
+security impact here.
+
+Permission review rules:
+
+- Prefer the smallest permission set that supports the user-visible workflow.
+- Prefer user-initiated access such as `activeTab` when it is sufficient.
+- Avoid broad host permissions unless the implementation requires them and the
+  reason is documented.
+- Avoid permissions unrelated to local form assistance.
+- Treat new permissions as security-sensitive changes requiring manual review.
+- Explain why each permission is needed, which component uses it, and what user
+  data it can expose.
 
 ## 6. Network And External Services
 
-Write the default no-backend, no-telemetry, and no-profile-upload posture.
+v0.1 has no backend dependency. The extension must not send profile data,
+site-field history, or page-derived form contents to external services.
+
+Do not add telemetry, analytics, crash reporting, cloud sync, LLM services, or
+remote classification without an explicit issue that updates requirements,
+security notes, and user-facing documentation.
 
 ## 7. Human-Step Safety Boundaries
 
-Write the prohibition on CAPTCHA bypass, MFA bypass, bot-detection bypass,
-automatic terms acceptance, and automatic submission.
+The extension may detect that a human step is present and may guide the user. It
+must not complete the step.
+
+Do not implement:
+
+- CAPTCHA solving, bypass, hiding, outsourcing, or token reuse;
+- MFA or one-time-code bypass;
+- bot-detection or rate-limit bypass;
+- paywall or access-control bypass;
+- automatic terms, policy, contract, or consent acceptance;
+- automatic final submission, registration, application, purchase, or
+  confirmation.
+
+When the page requires one of these actions, the extension should pause and let
+the user act directly.
 
 ## 8. Input And DOM Safety
 
-Write how page text, attributes, injected UI, and user-entered profile values
-should be handled safely.
+Page DOM is untrusted input. Field labels, placeholders, nearby text, option
+labels, URLs, and attributes may be malformed, misleading, or adversarial.
+
+Implementation expectations:
+
+- render page-derived text as text, not raw HTML;
+- avoid evaluating page-provided strings as code or selectors without
+  validation;
+- keep injected UI isolated from host page styles where practical;
+- avoid global CSS resets or broad selectors;
+- avoid storing unnecessary page text in site-field history;
+- validate storage data before use;
+- preserve user ability to review and edit filled values.
 
 ## 9. Dependency And Supply Chain
 
-Write dependency, lockfile, update, and audit expectations once tooling exists.
+No JavaScript / TypeScript dependencies have been added yet.
+
+When dependencies are introduced:
+
+- add only dependencies with a clear purpose;
+- commit the lockfile for the chosen package manager;
+- prefer small, actively maintained packages;
+- avoid dependencies that phone home or process profile data remotely;
+- run the documented audit or update check when the toolchain supports it;
+- document any build tool or framework decision in [`development.md`](development.md).
 
 ## 10. Security Checklist
 
-Write the checklist used before changing permissions, storage behavior, or form
-filling behavior.
-
 - [ ] Secrets are not committed
 - [ ] Local state and logs are ignored by Git
-- [ ] External inputs are validated
-- [ ] Destructive operations require explicit confirmation
+- [ ] Fixtures, screenshots, tests, and docs use fake data only
+- [ ] No passwords or credit card data are stored
+- [ ] No profile data is sent to external services
+- [ ] Extension permissions are minimal and documented
+- [ ] Page-derived text is treated as untrusted input
+- [ ] Filling requires explicit user selection
+- [ ] Submit, register, apply, purchase, agree, and final confirmation controls
+      are not clicked automatically
+- [ ] CAPTCHA, MFA, bot-detection, access-control, and consent mechanisms are
+      not bypassed
 - [ ] Security-sensitive behavior is tested or manually verified

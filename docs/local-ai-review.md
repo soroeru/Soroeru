@@ -8,18 +8,21 @@ belongs in [`development.md`](development.md).
 
 ## 1. Purpose
 
-This section should describe why the hook exists and what kind of feedback it is
-expected to provide.
+The local AI review hook provides fast cross-AI feedback near the point where
+work is committed. It is intended to catch documentation, workflow, and code
+review issues before or alongside PR review without depending on GitHub Actions.
 
-- Run review near the point where work is committed.
-- Avoid depending on GitHub Actions for fast local feedback.
-- Keep the mechanism language-agnostic.
-- Save review output locally without blocking commits.
+The hook:
+
+- runs after local commits on configured branch prefixes;
+- reviews the branch-wide diff rather than only the latest commit;
+- saves review output under local state;
+- does not replace human judgment or final PR review;
+- should not require generated review artifacts to be committed.
 
 ## 2. Setup
 
-This section should describe setup commands and local configuration
-requirements.
+Run setup once after cloning, and again if hook files are refreshed:
 
 ```bash
 bash scripts/setup-hooks.sh
@@ -45,26 +48,38 @@ Reviewer CLIs:
 
 The setup script warns if reviewer CLIs are missing, but does not fail.
 
-## 3. Configuration
+If the relevant reviewer CLI is missing or rate-limited, commits can still be
+created, but review output may fail or be incomplete. In that case, inspect
+`state/ai-reviews/last-error.log` before deciding whether to retry later.
 
-This section should describe `.githooks/config` settings and how they affect
-review behavior.
+## 3. Configuration
 
 Edit `.githooks/config`.
 
 Important settings:
 
-- branch prefixes
-- base ref, usually `origin/main`
-- target paths
-- state directory
-- lock timeout
-- reviewer timeout
-- reviewer CLI invocation functions
+- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE`: branch prefix for Claude-authored
+  work;
+- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX`: branch prefix for Codex-authored work;
+- `LOCAL_AI_REVIEW_BASE_REF`: base ref used to compute the branch-wide diff,
+  usually `origin/main`;
+- `LOCAL_AI_REVIEW_TARGET_PATHS`: pathspecs included in the review diff;
+- `LOCAL_AI_REVIEW_STATE_DIR`: local output and bookkeeping directory;
+- `LOCAL_AI_REVIEW_LOCK_TIMEOUT_SEC`: stale lock timeout;
+- `LOCAL_AI_REVIEW_REVIEWER_TIMEOUT_SEC`: reviewer CLI timeout;
+- `LOCAL_AI_REVIEW_DIFF_WARN_BYTES`: diff size warning threshold.
+
+Reviewer CLI invocations:
+
+- `local_ai_review_run_claude`: Bash function that must `exec` the Claude
+  reviewer command;
+- `local_ai_review_run_codex`: Bash function that must `exec` the Codex
+  reviewer command.
+
+Prefer project-level changes in `.githooks/config` over editing hook library
+scripts.
 
 ## 4. Branch Rules
-
-This section should describe the branch prefix rules that choose the reviewer.
 
 Default reviewer mapping:
 
@@ -72,9 +87,10 @@ Default reviewer mapping:
 - `claude/*` branches trigger Codex review
 - other branches are skipped
 
-## 5. Review Target
+This mapping is for cross-AI review: the tool that authored the branch should
+normally be reviewed by the other tool when available.
 
-This section should describe how the branch diff is selected for review.
+## 5. Review Target
 
 The reviewer sees a branch-wide diff:
 
@@ -84,9 +100,10 @@ git diff "$(git merge-base origin/main HEAD)" HEAD -- <target-paths>
 
 Target paths are configured in `.githooks/config`.
 
-## 6. Skip Conditions
+Branch-wide review keeps follow-up commits in context. If only files outside
+the configured target paths changed, the hook skips review.
 
-This section should describe when the hook intentionally skips a review.
+## 6. Skip Conditions
 
 The hook skips when:
 
@@ -105,9 +122,6 @@ when the skip should be visible in Git history.
 
 ## 7. Review Follow-Up Policy
 
-This section should describe how to avoid unnecessary review loops while still
-rerunning review for substantive changes.
-
 If a review result is `NIT_ONLY`, a follow-up commit or amend that only
 addresses those nits may include `[skip-review]` in the commit message. This
 prevents repeated review cycles for low-risk wording, formatting, or
@@ -117,10 +131,10 @@ Do not use `[skip-review]` for fixes to `NEEDS_CHANGES`, `major`, or higher-risk
 findings unless there is a separate reason to skip review. Those changes should
 normally be reviewed again.
 
-## 8. Cleanup Policy
+If a commit mixes nit fixes with unrelated content changes, do not use
+`[skip-review]`.
 
-This section should describe when local review output can be deleted and which
-state should be preserved.
+## 8. Cleanup Policy
 
 A good cleanup point is after the review result reaches `NIT_ONLY` and the
 follow-up commit or amend that addresses those nits has been committed with
@@ -146,9 +160,6 @@ accepting that the same diff may be reviewed again.
 
 ## 9. Output
 
-This section should describe where review output is stored and which files are
-useful for inspection.
-
 Review output is written under:
 
 ```text
@@ -165,9 +176,9 @@ Useful files:
 - `last-error.log`
 - `last-reviewed.json`
 
-## 10. Troubleshooting
+Review artifacts are local state and should not be committed.
 
-This section should describe common symptoms and likely checks.
+## 10. Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
@@ -178,9 +189,6 @@ This section should describe common symptoms and likely checks.
 | Shellcheck fails | Bash 3.2 compatibility and quoted path handling |
 
 ## 11. Optional GitHub Actions Fallback
-
-This section should describe where future GitHub Actions fallback details should
-live if the project adds them.
 
 GitHub Actions based cross-AI review is intentionally outside the default
 template. If a project adds it, keep these details in a separate optional
