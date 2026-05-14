@@ -1,11 +1,13 @@
 # Chrome Extension Design
 
-This document owns Chrome extension architecture and design decisions.
+This document owns **Chrome extension architecture and design decisions**:
+component boundaries, Manifest V3 permissions, message passing, storage
+abstraction, UI injection, and manual-step handling.
 
-It should describe how the extension is structured and how data flows between
-extension components. It should not duplicate product requirements from
-[`requirements.md`](requirements.md) or implementation conventions from
-[`development.md`](development.md).
+Out of scope here: product requirements (see
+[`requirements.md`](requirements.md)), implementation conventions and
+repository layout (see [`development.md`](development.md)), and security
+rationale for permissions (see [`security.md`](security.md)).
 
 ## 1. Architecture Overview
 

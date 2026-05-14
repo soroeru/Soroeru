@@ -122,29 +122,9 @@ If introducing a framework, build tool, package manager, or test runner, documen
 
 ## Expected Architecture
 
-```text
-Chrome Extension
-├── content script
-│   ├── detect form elements
-│   ├── infer field types
-│   ├── detect manual-step states
-│   ├── render suggestion and guidance UI
-│   └── fill selected values into the page
-│
-├── background service worker
-│   ├── extension event handling
-│   └── message passing
-│
-├── options page
-│   ├── manage profile fields
-│   ├── manage custom field definitions
-│   └── view site-field history
-│
-└── local storage
-    ├── profile data
-    ├── field definitions
-    └── site-field history
-```
+Canonical Chrome extension architecture and component responsibilities live in [`docs/extension.md`](docs/extension.md). Repository file layout lives in [`docs/development.md`](docs/development.md).
+
+In short, v0.1 is a Manifest V3 extension with four boundaries: content script, background service worker, options page, and a storage abstraction. Keep new code aligned with the boundaries defined in [`docs/extension.md`](docs/extension.md).
 
 ## Field Detection Strategy
 
@@ -190,23 +170,16 @@ Do not over-engineer this in v0.1. Prefer a simple data model that can evolve la
 
 ## Security and Privacy Requirements
 
-This project handles sensitive information. All agents must treat security and privacy as first-class constraints.
+Canonical security and privacy decisions, threat model, sensitive data handling, and permission review rules live in [`docs/security.md`](docs/security.md). Non-functional security and privacy requirements live in [`docs/requirements.md`](docs/requirements.md) §7.
 
-For v0.1:
+Non-negotiable rules for agent sessions:
 
-- Store data locally only.
-- Do not send profile data to external servers.
-- Do not add telemetry unless explicitly requested.
-- Do not store passwords.
-- Do not store credit card information.
-- Do not automatically click submit buttons.
-- Do not automatically accept terms, policies, contracts, or consent checkboxes.
+- Store profile data locally only; do not send it to external services and do not add telemetry.
+- Do not store passwords or credit card data.
+- Do not auto-submit forms or auto-accept terms, policies, contracts, or consent checkboxes.
 - Do not bypass CAPTCHA, MFA, bot detection, or access controls.
-- Fill only fields selected by the user.
-- Keep extension permissions as narrow as possible.
-- Avoid broad host permissions unless they are necessary and documented.
-
-When adding or changing permissions in `manifest.json`, explain why they are needed.
+- Fill only fields the user has selected.
+- Keep extension permissions as narrow as possible and document any permission added or changed in `manifest.json`.
 
 ## User-Facing Documentation Policy
 
@@ -236,60 +209,36 @@ Update docs when behavior, setup, commands, architecture, or security assumption
 
 ## Development Workflow
 
-- Keep changes small and reviewable.
-- Prefer issue-driven work when a GitHub Issue exists.
-- Keep the implementation plan in the GitHub Issue for issue-driven work.
-- Use short-lived branches named `<agent>/issue-<number>-<short-slug>` when working from an issue.
-- Run relevant quality gates before committing.
+Branch naming, Issue workflow, commit conventions, PR descriptions, review expectations, and merge policy live in [`docs/github-operations.md`](docs/github-operations.md). The implementation plan template is `.github/ISSUE_TEMPLATE/implementation-plan.md`.
+
+Quick reminders for agent sessions:
+
+- Keep changes small and reviewable, and prefer issue-driven work when a GitHub Issue exists.
+- Use short-lived branches named `<agent>/issue-<number>-<short-slug>`.
 - Do not commit secrets, local state, generated caches, or AI review artifacts.
 - Do not commit real personal information in fixtures, screenshots, tests, or docs.
-- Use fake data for examples and tests.
 
 ## Local AI Review
 
 This repository may use a local Git `post-commit` hook for cross-AI review.
 
-Run once after cloning if the workflow is enabled:
+Setup, branch rules, skip conditions, follow-up policy, cleanup policy, and troubleshooting live in [`docs/local-ai-review.md`](docs/local-ai-review.md).
 
-```bash
-bash scripts/setup-hooks.sh
-```
+Key points for agent sessions:
 
-Default behavior:
-
-- commits on `codex/*` branches trigger Claude review
-- commits on `claude/*` branches trigger Codex review
-- review results are written to `state/ai-reviews/`
-- `[skip-review]` in a commit message skips review
-
-Configuration lives in `.githooks/config`.
-
-Do not assume this hook has run unless you have explicitly verified it in the current environment.
+- The hook is opt-in. Do not assume it has run unless you have verified it in the current environment.
+- Use `[skip-review]` in a commit message only when [`docs/local-ai-review.md`](docs/local-ai-review.md) allows it.
+- Treat hook output under `state/ai-reviews/` as local state. Do not commit it.
 
 ## Quality Gates
 
-The exact commands may change as the project is implemented. Prefer documented commands in `docs/development.md` and `package.json` when they exist.
+The canonical quality gate definitions live in [`docs/development.md`](docs/development.md).
 
-Expected future checks:
+Rules:
 
-```bash
-# install dependencies
-npm install
-
-# run tests
-npm test
-
-# run typecheck
-npm run typecheck
-
-# run linter
-npm run lint
-
-# build extension
-npm run build
-```
-
-If these commands do not exist yet, do not invent passing results. State what is missing and update docs when adding commands.
+- Run the gates documented there before committing code changes.
+- Documentation-only changes may skip code-level gates when no generated output is affected.
+- Do not invent passing results for commands that do not exist yet. State what is missing in PR notes.
 
 ## Implementation Guidance
 
@@ -308,22 +257,10 @@ If these commands do not exist yet, do not invent passing results. State what is
 
 ## Manual Testing Expectations
 
-When relevant, test against simple fixture pages before testing on real sites.
+Test strategy and test-type matrix live in [`docs/testing.md`](docs/testing.md).
+The browser-based manual checklist lives in [`docs/manual-test.md`](docs/manual-test.md).
 
-Useful manual cases:
-
-- Japanese contact form
-- English contact form
-- form with `autocomplete` attributes
-- form without labels
-- form with labels wrapping inputs
-- form with labels linked by `for` attributes
-- dynamically rendered form
-- textarea field
-- select field
-- CAPTCHA-like manual step placeholder in a fixture page
-- MFA / one-time-code-like field in a fixture page
-- terms confirmation checkbox in a fixture page
+When a change affects extension loading, content script DOM interaction, injected UI, selected filling, manual-step prompts, permissions, or observable storage behavior, run the relevant items from [`docs/manual-test.md`](docs/manual-test.md) against fixtures.
 
 Use fake profile data during tests.
 

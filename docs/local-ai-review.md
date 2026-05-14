@@ -1,10 +1,12 @@
 # Local AI Review
 
-This document owns the local Git hook used for cross-AI review.
+This document owns the **local Git hook for cross-AI review**: purpose, setup,
+configuration, branch rules, review target, skip conditions, follow-up policy,
+cleanup policy, output, and troubleshooting.
 
-GitHub PR workflow expectations belong in
-[`github-operations.md`](github-operations.md). General development setup
-belongs in [`development.md`](development.md).
+Out of scope here: GitHub PR workflow expectations (see
+[`github-operations.md`](github-operations.md)) and general development setup
+(see [`development.md`](development.md)).
 
 ## 1. Purpose
 

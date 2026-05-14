@@ -1,10 +1,12 @@
 # Security
 
-This document owns security and privacy review notes for `formfill-assistant`.
+This document owns **security and privacy decisions**: principles, threat
+model, sensitive data handling, permission review rules, network policy, human
+step safety boundaries, DOM input safety, and dependency policy.
 
-Chrome extension permission usage belongs in [`extension.md`](extension.md).
-This document explains why permissions and data handling choices are acceptable,
-which boundaries must not be crossed, and how sensitive data is protected.
+Out of scope here: extension permission usage and runtime layout (see
+[`extension.md`](extension.md)) and product-level non-functional requirement
+statements (see [`requirements.md`](requirements.md) §7).
 
 ## 1. Security Principles
 

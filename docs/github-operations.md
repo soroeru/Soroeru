@@ -1,10 +1,12 @@
 # GitHub Operations
 
-This document defines shared GitHub workflow rules for humans and AI coding
-tools.
+This document owns **GitHub workflow rules**: trunk-based development, branch
+naming, Issue workflow, commit conventions, PR descriptions, review
+expectations, and merge policy.
 
-Local setup commands belong in [`development.md`](development.md). Local
-cross-AI review hook details belong in [`local-ai-review.md`](local-ai-review.md).
+Out of scope here: local setup and quality gate commands (see
+[`development.md`](development.md)) and local cross-AI review hook details
+(see [`local-ai-review.md`](local-ai-review.md)).
 
 ## 1. Development Model
 
@@ -122,18 +124,10 @@ AI review convention:
 
 ## 8. Local AI Review
 
-Run:
-
-```bash
-bash scripts/setup-hooks.sh
-```
-
-The hook uses branch prefixes to choose the reviewer:
-
-- `codex/*` -> Claude review
-- `claude/*` -> Codex review
-
-See [`local-ai-review.md`](local-ai-review.md) for details.
+Setup, branch rules, skip conditions, follow-up policy, cleanup policy, output,
+and troubleshooting live in [`local-ai-review.md`](local-ai-review.md). PRs
+authored by Codex are reviewed by Claude when possible, and PRs authored by
+Claude are reviewed by Codex when possible.
 
 GitHub Actions based cross-AI review is not enabled by default. If a project
 adds it as fallback automation, keep PAT / secret requirements in that

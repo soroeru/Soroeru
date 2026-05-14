@@ -1,9 +1,11 @@
 # Manual Test
 
-This document owns browser-based manual checklists.
+This document owns the **browser-based manual test checklist** for
+`formfill-assistant`.
 
-Use it for checks that cannot be fully automated or that need human judgment.
-Test strategy and commands belong in [`testing.md`](testing.md).
+Out of scope here: the overall test strategy and test-type matrix (see
+[`testing.md`](testing.md)), and the canonical command list (see
+[`development.md`](development.md)).
 
 ## 0. Preparation
 

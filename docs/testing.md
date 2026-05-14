@@ -1,8 +1,11 @@
 # Testing
 
-This document owns the testing strategy for `formfill-assistant`.
+This document owns the **testing strategy** for `formfill-assistant`: what to
+test, which test types apply, and where fixtures live.
 
-Manual browser checklists belong in [`manual-test.md`](manual-test.md).
+Out of scope here: the browser-based manual checklist itself (see
+[`manual-test.md`](manual-test.md)) and the canonical command list (see
+[`development.md`](development.md)).
 
 ## 1. Test Strategy
 
@@ -75,16 +78,13 @@ Fixture rules:
 
 ## 5. Commands
 
-No test commands exist yet because there is no `package.json`.
+Test commands belong with the rest of the quality gates in
+[`development.md`](development.md). No test runner exists yet, so this document
+does not record placeholder commands.
 
-When commands are added, keep this section synchronized with `package.json` and
-do not leave stale placeholders.
-
-Current all-test command: none.
-
-Current focused-test command: none.
-
-Current E2E command: none.
+When a test runner is added, document the exact commands once in
+[`development.md`](development.md) and update [`manual-test.md`](manual-test.md)
+only if the manual checklist needs to reference a specific command.
 
 ## 6. Manual Testing
 
