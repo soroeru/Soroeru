@@ -69,6 +69,11 @@ acceptable candidates once implementation begins. Storage access should go
 through a small abstraction so future migration, validation, or encryption can
 be added without changing content scripts and UI code directly.
 
+The current profile storage reader ignores invalid stored rows and logs a
+warning instead of failing the whole options page. This keeps valid local
+profile fields accessible if a future validation rule rejects an old password,
+one-time-code, or credit-card-like row.
+
 Encryption is a future direction, not a current guarantee. If Web Crypto API
 encryption is added later, document:
 
@@ -80,9 +85,13 @@ encryption is added later, document:
 
 ## 5. Extension Permissions Review
 
-The repository does not yet contain a `manifest.json`. When permissions are
-added, document them in [`extension.md`](extension.md) and review their
-security impact here.
+The extension manifest lives at `src/manifest.json`.
+
+Current permissions:
+
+| Permission | Reason | Security Notes |
+| --- | --- | --- |
+| `storage` | Store user-managed profile fields locally through the storage abstraction. | Profile data remains in browser-local extension storage. Do not add sync, telemetry, or external upload without a new scoped issue and security review. |
 
 Permission review rules:
 
@@ -140,7 +149,10 @@ Implementation expectations:
 
 ## 9. Dependency And Supply Chain
 
-No JavaScript / TypeScript dependencies have been added yet.
+Current JavaScript / TypeScript dependencies are limited to development tools:
+
+- `typescript` for compilation and type checking;
+- `@types/node` for Node unit test typings.
 
 When dependencies are introduced:
 
@@ -156,7 +168,8 @@ When dependencies are introduced:
 - [ ] Secrets are not committed
 - [ ] Local state and logs are ignored by Git
 - [ ] Fixtures, screenshots, tests, and docs use fake data only
-- [ ] No passwords or credit card data are stored
+- [ ] No passwords or credit card data are stored; profile validation rejects
+      unsupported password, one-time-code, and credit-card-like categories
 - [ ] No profile data is sent to external services
 - [ ] Extension permissions are minimal and documented
 - [ ] Page-derived text is treated as untrusted input

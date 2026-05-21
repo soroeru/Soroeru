@@ -108,7 +108,7 @@ v0.1 does not include:
 
 | ID | Requirement | Priority | Status |
 | --- | --- | --- | --- |
-| REQ-001 | The extension can store and edit basic profile fields locally. | Must | Planned |
+| REQ-001 | The extension can store and edit basic profile fields locally. | Must | Implemented |
 | REQ-002 | The content script can detect visible `input`, `textarea`, and `select` fields on the active page. | Must | Planned |
 | REQ-003 | Field detection uses inspectable rules based on `autocomplete`, `name`, `id`, `placeholder`, associated labels, and nearby text. | Must | Planned |
 | REQ-004 | The extension shows suggestions before filling any value. | Must | Planned |

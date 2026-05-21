@@ -44,14 +44,15 @@ types should be isolated so it can be tested outside a live browser page.
 
 ## 2. Manifest V3 And Permissions
 
-The repository does not yet contain a `manifest.json`. When it is added, keep
-permissions narrow and document each one in this section.
+The extension manifest lives at `src/manifest.json` and is copied to
+`dist/extension/manifest.json` by `npm run build`. Keep permissions narrow and
+document each one in this section.
 
 Expected permission direction for v0.1:
 
 | Permission / Access | Expected Use | Owner |
 | --- | --- | --- |
-| `storage` | Store profile fields, custom definitions, settings, and site-field history locally. | Options page and storage abstraction |
+| `storage` | Store profile fields locally. Future custom definitions, settings, and site-field history should use the same storage boundary. | Options page and storage abstraction |
 | `activeTab` or narrow host access | Let the content script inspect and fill the current user-selected page. | Content script |
 | `scripting` if needed | Inject or register content scripts only when static manifest registration is not enough, such as runtime opt-in for selected tabs. | Background service worker |
 
@@ -110,6 +111,15 @@ user:
 - understand that data is local and that passwords and credit cards are not
   supported in v0.1.
 
+Current implementation status:
+
+- `src/options/` provides a Vanilla TypeScript options page for creating,
+  editing, deleting, listing, and clearing profile fields;
+- basic field kinds are `fullName`, `email`, `phone`, `postalCode`, `address`,
+  `companyName`, and `departmentName`;
+- custom fields use `{ id, label, value, matchTerms[], order }`;
+- fake data can be added from the options page for manual verification.
+
 The options page should avoid real user data in examples, screenshots, tests,
 or committed fixtures.
 
@@ -131,6 +141,15 @@ Expected data groups:
 Use `chrome.storage.local` or IndexedDB for v0.1 unless the implementation
 finds a concrete reason to choose otherwise. Future encryption with Web Crypto
 API can be added behind the same boundary.
+
+Current implementation status:
+
+- `src/storage/profile-store.ts` exposes `get`, `set`, `list`, `delete`, and
+  `clear`;
+- `ChromeProfileStorage` stores profile fields in `chrome.storage.local`;
+- `InMemoryProfileStorage` supports unit tests without a browser runtime;
+- all stored profile fields are validated through
+  `src/shared/profile-validation.ts`.
 
 Concrete file layout and implementation rules belong in
 [`development.md`](development.md).
