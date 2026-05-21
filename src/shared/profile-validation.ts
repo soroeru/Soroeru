@@ -28,6 +28,7 @@ const SENSITIVE_TERM_PATTERNS = [
   /(^|[^A-Za-z0-9])passcode([^A-Za-z0-9]|$)/i,
   /(^|[^A-Za-z0-9])one[-_\s]?time[-_\s]+password([^A-Za-z0-9]|$)/i,
   /(^|[^A-Za-z0-9])otp([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])credit([^A-Za-z0-9]|$)/i,
   /(^|[^A-Za-z0-9])credit[-_\s]*card([^A-Za-z0-9]|$)/i,
   /(^|[^A-Za-z0-9])card[-_\s]*number([^A-Za-z0-9]|$)/i,
   /(^|[^A-Za-z0-9])card[-_\s]*expir(?:y|ation)([^A-Za-z0-9]|$)/i,

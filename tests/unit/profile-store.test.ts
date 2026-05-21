@@ -98,6 +98,18 @@ describe("InMemoryProfileStorage", () => {
 
     await assert.rejects(
       storage.set({
+        id: "credit",
+        kind: "custom",
+        label: "credit",
+        value: "not stored",
+        matchTerms: ["credit"],
+        order: 1,
+      }),
+      ProfileFieldValidationError,
+    );
+
+    await assert.rejects(
+      storage.set({
         id: "card-number",
         kind: "custom",
         label: "Card number",
