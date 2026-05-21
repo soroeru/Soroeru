@@ -66,10 +66,9 @@ The build output is `dist/extension/`. Manual loading flow:
 5. open the extension options page;
 6. add, edit, delete, list, and clear fake profile fields.
 
-The current implementation only includes the Manifest V3 shell, background
-service worker placeholder, local profile storage abstraction, and options page
-profile editor. Content-script scanning and field filling are not implemented
-yet.
+The current implementation only includes the Manifest V3 shell, local profile
+storage abstraction, and options page profile editor. Content-script scanning,
+field filling, and background service worker behavior are not implemented yet.
 
 ## 4. Project Structure
 
@@ -84,7 +83,7 @@ Current repository shape:
 ├── docs/
 ├── scripts/
 ├── src/
-│   ├── background/
+│   ├── manifest.json
 │   ├── options/
 │   ├── shared/
 │   └── storage/
@@ -92,7 +91,6 @@ Current repository shape:
 │   └── unit/
 ├── package.json
 ├── package-lock.json
-├── src/manifest.json
 └── tsconfig.json
 ```
 

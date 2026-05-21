@@ -4,9 +4,5 @@
   "version": "0.1.0",
   "description": "Local-first, user-confirmed form filling assistance.",
   "permissions": ["storage"],
-  "background": {
-    "service_worker": "background/background.js",
-    "type": "module"
-  },
   "options_page": "options/options.html"
 }

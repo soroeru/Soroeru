@@ -69,6 +69,11 @@ acceptable candidates once implementation begins. Storage access should go
 through a small abstraction so future migration, validation, or encryption can
 be added without changing content scripts and UI code directly.
 
+The current profile storage reader ignores invalid stored rows and logs a
+warning instead of failing the whole options page. This keeps valid local
+profile fields accessible if a future validation rule rejects an old password,
+one-time-code, or credit-card-like row.
+
 Encryption is a future direction, not a current guarantee. If Web Crypto API
 encryption is added later, document:
 

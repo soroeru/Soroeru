@@ -1,4 +1,4 @@
-import { ProfileFieldValidationError } from "../shared/profile-validation.js";
+import { isBasicProfileFieldKind, ProfileFieldValidationError } from "../shared/profile-validation.js";
 import { PROFILE_FIELD_LABELS, type BasicProfileFieldKind, type ProfileField } from "../shared/types.js";
 import { ChromeProfileStorage } from "../storage/profile-store.js";
 
@@ -13,19 +13,19 @@ const matchTermsInput = getElement<HTMLInputElement>("field-match-terms");
 const orderInput = getElement<HTMLInputElement>("field-order");
 const listRoot = getElement<HTMLDivElement>("field-list");
 const statusMessage = getElement<HTMLParagraphElement>("status-message");
+let busyCount = 0;
+let lastAutoLabel: string | undefined;
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  try {
+  await runUiOperation(async () => {
     const field = buildFieldFromForm();
     await storage.set(field);
     resetForm();
     await renderFields();
     setStatus("Saved locally.");
-  } catch (error) {
-    setStatus(error instanceof ProfileFieldValidationError ? error.message : "Could not save this field.");
-  }
+  });
 });
 
 getElement<HTMLButtonElement>("reset-form").addEventListener("click", () => {
@@ -34,27 +34,41 @@ getElement<HTMLButtonElement>("reset-form").addEventListener("click", () => {
 });
 
 getElement<HTMLButtonElement>("clear-fields").addEventListener("click", async () => {
-  await storage.clear();
-  await renderFields();
-  resetForm();
-  setStatus("All profile fields were cleared.");
+  await runUiOperation(async () => {
+    await storage.clear();
+    await renderFields();
+    resetForm();
+    setStatus("All profile fields were cleared.");
+  });
 });
 
 getElement<HTMLButtonElement>("add-fake-data").addEventListener("click", async () => {
-  await addFakeData();
-  await renderFields();
-  resetForm();
-  setStatus("Fake profile data was added.");
+  await runUiOperation(async () => {
+    await addFakeData();
+    await renderFields();
+    resetForm();
+    setStatus("Fake profile data was added.");
+  });
+});
+
+labelInput.addEventListener("input", () => {
+  lastAutoLabel = undefined;
 });
 
 kindInput.addEventListener("change", () => {
-  if (kindInput.value !== "custom" && !labelInput.value.trim()) {
-    labelInput.value = PROFILE_FIELD_LABELS[kindInput.value as BasicProfileFieldKind];
+  if (kindInput.value === "custom") {
+    return;
+  }
+
+  if (!labelInput.value.trim() || labelInput.value === lastAutoLabel) {
+    setAutoLabel(PROFILE_FIELD_LABELS[kindInput.value as BasicProfileFieldKind]);
   }
 });
 
 resetForm();
-await renderFields();
+await runUiOperation(async () => {
+  await renderFields();
+});
 
 async function renderFields(): Promise<void> {
   const fields = await storage.list();
@@ -69,6 +83,10 @@ async function renderFields(): Promise<void> {
 
   for (const field of fields) {
     listRoot.append(renderFieldCard(field));
+  }
+
+  if (busyCount > 0) {
+    setControlsDisabled(true);
   }
 }
 
@@ -99,9 +117,11 @@ function renderFieldCard(field: ProfileField): HTMLElement {
   deleteButton.type = "button";
   deleteButton.textContent = "Delete";
   deleteButton.addEventListener("click", async () => {
-    await storage.delete(field.id);
-    await renderFields();
-    setStatus("Deleted locally.");
+    await runUiOperation(async () => {
+      await storage.delete(field.id);
+      await renderFields();
+      setStatus("Deleted locally.");
+    });
   });
 
   actions.append(editButton, deleteButton);
@@ -138,13 +158,17 @@ function buildFieldFromForm(): ProfileField {
     };
   }
 
-  return {
-    id,
-    kind: kind as BasicProfileFieldKind,
-    label,
-    value,
-    order,
-  };
+  if (isBasicProfileFieldKind(kind)) {
+    return {
+      id,
+      kind,
+      label,
+      value,
+      order,
+    };
+  }
+
+  throw new ProfileFieldValidationError("Profile field kind is not supported.");
 }
 
 function loadFieldIntoForm(field: ProfileField): void {
@@ -154,6 +178,8 @@ function loadFieldIntoForm(field: ProfileField): void {
   valueInput.value = field.value;
   orderInput.value = String(field.order);
   matchTermsInput.value = field.kind === "custom" ? field.matchTerms.join(", ") : "";
+  lastAutoLabel =
+    field.kind !== "custom" && field.label === PROFILE_FIELD_LABELS[field.kind] ? field.label : undefined;
   setStatus("Editing existing field.");
 }
 
@@ -161,7 +187,7 @@ function resetForm(): void {
   form.reset();
   idInput.value = "";
   orderInput.value = "0";
-  labelInput.value = PROFILE_FIELD_LABELS.fullName;
+  setAutoLabel(PROFILE_FIELD_LABELS.fullName);
 }
 
 async function addFakeData(): Promise<void> {
@@ -204,7 +230,9 @@ async function addFakeData(): Promise<void> {
     },
   ];
 
-  await Promise.all(fakeFields.map((field) => storage.set(field)));
+  for (const field of fakeFields) {
+    await storage.set(field);
+  }
 }
 
 function getElement<T extends HTMLElement>(id: string): T {
@@ -217,6 +245,39 @@ function getElement<T extends HTMLElement>(id: string): T {
 
 function setStatus(message: string): void {
   statusMessage.textContent = message;
+}
+
+function setAutoLabel(label: string): void {
+  labelInput.value = label;
+  lastAutoLabel = label;
+}
+
+async function runUiOperation(operation: () => Promise<void>): Promise<void> {
+  busyCount += 1;
+  setControlsDisabled(busyCount > 0);
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof ProfileFieldValidationError) {
+      setStatus(error.message);
+      return;
+    }
+
+    console.error("Profile options operation failed.", error);
+    setStatus("Could not update profile fields.");
+  } finally {
+    busyCount = Math.max(0, busyCount - 1);
+    setControlsDisabled(busyCount > 0);
+  }
+}
+
+function setControlsDisabled(disabled: boolean): void {
+  const controls = document.querySelectorAll<
+    HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+  >("button, input, select, textarea");
+  for (const control of Array.from(controls)) {
+    control.disabled = disabled;
+  }
 }
 
 function createId(): string {

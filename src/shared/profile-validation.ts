@@ -16,27 +16,30 @@ const RESERVED_UNSUPPORTED_KINDS = new Set([
   "cardNumber",
   "card-number",
   "cardSecurityCode",
+  "card-security-code",
   "cardExpiration",
+  "card-expiration",
+  "cvv",
+  "cvc",
 ]);
 
 const SENSITIVE_TERM_PATTERNS = [
-  /\bpassword\b/i,
-  /\bpasscode\b/i,
-  /\bone[-\s]?time\s+password\b/i,
-  /\botp\b/i,
-  /\bcredit\s*card\b/i,
-  /\bcard\s*number\b/i,
-  /\bcvv\b/i,
-  /\bcvc\b/i,
-  /\bsecurity\s*code\b/i,
-  /\bexpir(?:y|ation)\b/i,
+  /(^|[^A-Za-z0-9])password([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])passcode([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])one[-_\s]?time[-_\s]+password([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])otp([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])credit[-_\s]*card([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])card[-_\s]*number([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])card[-_\s]*expir(?:y|ation)([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])cvv([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])cvc([^A-Za-z0-9]|$)/i,
+  /(^|[^A-Za-z0-9])security[-_\s]*code([^A-Za-z0-9]|$)/i,
   /パスワード/,
   /ワンタイム/,
   /暗証番号/,
   /クレジットカード/,
   /カード番号/,
   /セキュリティコード/,
-  /有効期限/,
 ];
 
 export class ProfileFieldValidationError extends Error {
@@ -89,18 +92,13 @@ export function assertProfileField(value: unknown): asserts value is ProfileFiel
     }
   }
 
-  if (containsSensitiveTerm(searchableTerms) || containsCreditCardLikeNumber(value.value)) {
+  if (containsSensitiveTerm(searchableTerms)) {
     throw new ProfileFieldValidationError("Passwords, one-time codes, and credit card fields are not supported.");
   }
 }
 
 export function containsSensitiveTerm(values: readonly string[]): boolean {
   return values.some((value) => SENSITIVE_TERM_PATTERNS.some((pattern) => pattern.test(value)));
-}
-
-export function containsCreditCardLikeNumber(value: string): boolean {
-  const digits = value.replace(/[^\d]/g, "");
-  return digits.length >= 13 && digits.length <= 19 && passesLuhnCheck(digits);
 }
 
 function assertNonEmptyString(value: unknown, name: string): asserts value is string {
@@ -124,29 +122,4 @@ function assertFiniteNumber(value: unknown, name: string): asserts value is numb
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function passesLuhnCheck(digits: string): boolean {
-  let sum = 0;
-  let shouldDouble = false;
-
-  for (let index = digits.length - 1; index >= 0; index -= 1) {
-    const digit = Number(digits[index]);
-    if (!Number.isInteger(digit)) {
-      return false;
-    }
-
-    let addend = digit;
-    if (shouldDouble) {
-      addend *= 2;
-      if (addend > 9) {
-        addend -= 9;
-      }
-    }
-
-    sum += addend;
-    shouldDouble = !shouldDouble;
-  }
-
-  return sum % 10 === 0;
 }

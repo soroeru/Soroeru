@@ -14,7 +14,7 @@ or payment information.
 
 Before manual checks:
 
-- [ ] The extension build command exists and has completed
+- [ ] `npm run build` has been run and `dist/extension/` exists
 - [ ] Chrome or Chromium is available
 - [ ] The unpacked extension has been loaded from the documented build output
 - [ ] Fake profile data is configured

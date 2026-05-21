@@ -40,6 +40,8 @@ export class InMemoryProfileStorage implements ProfileStorage {
 }
 
 export class ChromeProfileStorage implements ProfileStorage {
+  private operationQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly storageArea: ChromeStorageArea = chrome.storage.local) {}
 
   async get(id: string): Promise<ProfileField | undefined> {
@@ -47,33 +49,66 @@ export class ChromeProfileStorage implements ProfileStorage {
   }
 
   async set(field: ProfileField): Promise<ProfileField> {
-    const parsedField = parseProfileField(field);
-    const fields = await this.list();
-    const nextFields = fields.filter((storedField) => storedField.id !== parsedField.id);
-    nextFields.push(parsedField);
-    await this.writeFields(nextFields);
+    const parsedField = cloneProfileField(parseProfileField(field));
+    await this.enqueueOperation(async () => {
+      const fields = await this.readFields();
+      const nextFields = fields.filter((storedField) => storedField.id !== parsedField.id);
+      nextFields.push(parsedField);
+      await this.writeFields(nextFields);
+    });
     return cloneProfileField(parsedField);
   }
 
   async list(): Promise<ProfileField[]> {
+    return this.enqueueOperation(() => this.readFields());
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.enqueueOperation(async () => {
+      const fields = (await this.readFields()).filter((field) => field.id !== id);
+      await this.writeFields(fields);
+    });
+  }
+
+  async clear(): Promise<void> {
+    await this.enqueueOperation(async () => {
+      await new Promise<void>((resolve) => {
+        this.storageArea.remove(PROFILE_FIELDS_KEY, resolve);
+      });
+    });
+  }
+
+  private async enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const previousOperation = this.operationQueue;
+    let releaseCurrentOperation: () => void = () => {};
+    this.operationQueue = new Promise<void>((resolve) => {
+      releaseCurrentOperation = resolve;
+    });
+
+    try {
+      await previousOperation;
+      return await operation();
+    } finally {
+      releaseCurrentOperation();
+    }
+  }
+
+  private async readFields(): Promise<ProfileField[]> {
     const items = await this.getItems(PROFILE_FIELDS_KEY);
     const storedFields = items[PROFILE_FIELDS_KEY];
     if (!Array.isArray(storedFields)) {
       return [];
     }
 
-    return sortFields(storedFields.map(parseProfileField).map(cloneProfileField));
-  }
-
-  async delete(id: string): Promise<void> {
-    const fields = (await this.list()).filter((field) => field.id !== id);
-    await this.writeFields(fields);
-  }
-
-  async clear(): Promise<void> {
-    await new Promise<void>((resolve) => {
-      this.storageArea.remove(PROFILE_FIELDS_KEY, resolve);
-    });
+    const validFields: ProfileField[] = [];
+    for (const storedField of storedFields) {
+      try {
+        validFields.push(cloneProfileField(parseProfileField(storedField)));
+      } catch (error) {
+        console.warn("Ignoring invalid stored profile field.", error);
+      }
+    }
+    return sortFields(validFields);
   }
 
   private async writeFields(fields: ProfileField[]): Promise<void> {
