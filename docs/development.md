@@ -26,48 +26,50 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 
 ## 2. Environment Setup
 
-The implementation toolchain is not installed yet. At the time of this
-document, the repository does not contain `package.json` or `manifest.json`.
-
-Required tools for current documentation and local hook work:
+Required tools for current extension development:
 
 - `git`
 - `bash`
 - `jq` for running the local AI review post-commit hook
 - `shasum` on macOS or `sha256sum`
-
-Expected future extension toolchain:
-
-- Node.js and npm or another documented package manager
+- Node.js
+- npm
 - TypeScript
 - Chrome or Chromium for extension loading
-- a test runner selected when implementation starts
 
-After cloning, install local hooks only if the local AI review workflow is in
-use:
+After cloning, install dependencies:
+
+```bash
+npm install
+```
+
+Install local hooks only if the local AI review workflow is in use:
 
 ```bash
 bash scripts/setup-hooks.sh
 ```
 
-Do not run `npm install` until a `package.json` exists.
-
 ## 3. Run Locally
 
-There is no runnable extension build yet. Once `manifest.json` and the build
-tooling exist, this section should contain the exact build command and Chrome
-loading steps.
+Build the unpacked extension:
 
-Expected manual loading flow after implementation starts:
+```bash
+npm run build
+```
 
-1. build the extension into the documented output directory;
+The build output is `dist/extension/`. Manual loading flow:
+
+1. run `npm run build`;
 2. open Chrome's extensions page;
 3. enable developer mode;
-4. load the unpacked extension directory;
-5. open a local fixture or safe test page;
-6. verify detection, suggestions, selected filling, and manual-step handling.
+4. load `dist/extension/` as an unpacked extension;
+5. open the extension options page;
+6. add, edit, delete, list, and clear fake profile fields.
 
-Current local run command: none.
+The current implementation only includes the Manifest V3 shell, background
+service worker placeholder, local profile storage abstraction, and options page
+profile editor. Content-script scanning and field filling are not implemented
+yet.
 
 ## 4. Project Structure
 
@@ -80,10 +82,21 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
-└── scripts/
+├── scripts/
+├── src/
+│   ├── background/
+│   ├── options/
+│   ├── shared/
+│   └── storage/
+├── tests/
+│   └── unit/
+├── package.json
+├── package-lock.json
+├── src/manifest.json
+└── tsconfig.json
 ```
 
-Expected structure once implementation begins:
+Expected future structure as remaining extension boundaries are added:
 
 ```text
 .
@@ -101,8 +114,8 @@ Expected structure once implementation begins:
 └── docs/
 ```
 
-The exact structure may change when tooling is chosen. Update this section when
-real directories are added.
+The exact structure may change as remaining extension boundaries are added.
+Update this section when real directories are added.
 
 ## 5. Implementation Conventions
 
@@ -121,11 +134,8 @@ real directories are added.
 
 ## 6. Formatting And Linting
 
-No formatter or linter command exists yet because the JavaScript / TypeScript
-tooling has not been added.
-
-When tooling is introduced, document the exact commands here and keep them in
-sync with `package.json`.
+No formatter or linter command exists yet. Add and document one when the project
+needs formatting or lint coverage beyond TypeScript checks.
 
 Current format command: none.
 
@@ -133,26 +143,24 @@ Current lint command: none.
 
 ## 7. Type Checking
 
-No typecheck command exists yet. TypeScript is the preferred implementation
-direction, but the repository should not claim a passing typecheck until the
-tooling and command exist.
+Typecheck command:
 
-Current typecheck command: none.
+```bash
+npm run typecheck
+```
 
 ## 8. Quality Gates
 
 For documentation-only changes, review the rendered Markdown and check for
 stale file references.
 
-For future code changes, expected gates are:
+For code changes, run the available gates:
 
-- format
-- lint
-- typecheck
-- unit tests
-- integration tests where affected
-- extension build
-- focused manual tests for browser behavior
+- `npm run typecheck`
+- `npm test`
+- focused manual tests for affected browser behavior
+
+`npm test` runs the extension build and Node unit tests.
 
 Only report checks as run when the command actually exists and has been
 executed. If a command is not available yet, state that plainly in the PR.

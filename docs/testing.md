@@ -33,13 +33,12 @@ require human judgment.
 
 ## 3. Test Environment
 
-No test runner has been selected yet. When implementation starts, prefer a
-tooling choice that supports TypeScript and DOM-oriented tests without requiring
-network services.
+The current automated test runner is Node's built-in test runner after
+TypeScript compilation.
 
 Frameworks:
 
-- Unit / integration: not selected yet.
+- Unit / integration: Node built-in test runner.
 - E2E: Playwright is the current candidate for future browser tests.
 - Manual: Chrome or Chromium with an unpacked local extension.
 
@@ -79,12 +78,15 @@ Fixture rules:
 ## 5. Commands
 
 Test commands belong with the rest of the quality gates in
-[`development.md`](development.md). No test runner exists yet, so this document
-does not record placeholder commands.
+[`development.md`](development.md).
 
-When a test runner is added, document the exact commands once in
-[`development.md`](development.md) and update [`manual-test.md`](manual-test.md)
-only if the manual checklist needs to reference a specific command.
+Current automated test command:
+
+```bash
+npm test
+```
+
+`npm test` builds the extension and runs unit tests from `tests/unit/`.
 
 ## 6. Manual Testing
 

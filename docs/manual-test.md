@@ -12,10 +12,6 @@ Out of scope here: the overall test strategy and test-type matrix (see
 Use fake profile data only. Do not test with real personal, customer, contract,
 or payment information.
 
-If the repository still has no extension build, record that in the manual-test
-notes and skip browser workflow checks until an unpacked extension can be
-loaded.
-
 Before manual checks:
 
 - [ ] The extension build command exists and has completed
@@ -26,6 +22,28 @@ Before manual checks:
 - [ ] Local environment is clean
 - [ ] Logs are enabled if needed
 - [ ] No real accounts, credentials, passwords, or credit card data are used
+
+Current build command:
+
+```bash
+npm run build
+```
+
+Load the unpacked extension from `dist/extension/`.
+
+## 0.1 Options Page Profile Storage
+
+- [ ] Open the extension options page
+- [ ] Add fake profile data using the options page button
+- [ ] Confirm the fake profile fields are listed
+- [ ] Edit one fake profile field and confirm the update persists after reload
+- [ ] Delete one profile field and confirm it is removed after reload
+- [ ] Clear all profile fields and confirm the list is empty after reload
+- [ ] Try to add a custom field with a credit-card-like label and confirm it is
+      rejected
+- [ ] Try to add a custom field with a password-like label and confirm it is
+      rejected
+- [ ] Confirm profile storage still works while the machine is offline
 
 ## 1. Smoke Test
 
