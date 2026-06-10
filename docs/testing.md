@@ -39,6 +39,9 @@ TypeScript compilation.
 Frameworks:
 
 - Unit / integration: Node built-in test runner.
+- DOM scanning unit tests use `jsdom` to construct a `Document` from HTML
+  fixtures, since the content script's `scanFields` accepts a `Document`
+  argument for testability.
 - E2E: Playwright is the current candidate for future browser tests.
 - Manual: Chrome or Chromium with an unpacked local extension.
 

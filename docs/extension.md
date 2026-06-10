@@ -84,6 +84,19 @@ The content script must not:
 - store profile data directly without going through the storage boundary;
 - inject broad global CSS likely to alter the host page.
 
+### 3.1 Current Scanner Status
+
+- `src/content/scanner.ts` exposes `scanFields(document)` for the active page;
+- it returns visible `input`, `textarea`, and `select` elements with a
+  scan-local `fieldId` (`ff-N`, rebuilt per scan via a `WeakMap`), the current
+  value, and ordered label candidates;
+- label candidates are collected from associated `<label>` elements (`for` and
+  wrapping), `aria-label`, `aria-labelledby`, and `placeholder`, in that order;
+- unsupported input types (`password`, `hidden`, `submit`, `button`, `image`,
+  `reset`, `file`) and disabled / readonly controls are excluded;
+- same-origin iframes and shadow DOM are out of scope for v0.1, and visibility
+  is intentionally conservative (no pixel-perfect / layout-based checks).
+
 ## 4. Background Service Worker
 
 The background service worker should stay small. It may own extension lifecycle

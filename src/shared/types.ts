@@ -43,3 +43,15 @@ export const PROFILE_FIELD_LABELS: Record<BasicProfileFieldKind, string> = {
   companyName: "Company name",
   departmentName: "Department name",
 };
+
+export interface ScannedFieldBase {
+  fieldId: string;
+  value: string;
+  visible: boolean;
+  labelCandidates: string[];
+}
+
+export type ScannedField =
+  | (ScannedFieldBase & { tag: "input"; type: string })
+  | (ScannedFieldBase & { tag: "textarea" })
+  | (ScannedFieldBase & { tag: "select" });
