@@ -241,11 +241,27 @@ interface ServiceRecord {
   entries: CategoryEntry[];
 }
 
+// 既知カテゴリ（§5 の表のグルーピングに対応）
+type KnownCategory =
+  | "name" | "gender" | "email" | "phone" | "birthdate"            // 連絡先
+  | "homeAddress" | "workAddress" | "shippingAddress"
+  | "billingAddress" | "otherAddress"                              // 住所系
+  | "creditCard"                                                   // 支払い
+  | "idDocument"                                                   // ID書類
+  | "login";                                                       // 認証
+
+// 「高精度自動入力」（動的スキーマ）で観測した未知種別は文字列として動的に追加する。
+// union に閉じず、既知カテゴリ＋カスタム種別の開いた型にする
+type Category = KnownCategory | (string & {});
+
 interface CategoryEntry {
-  category: "name" | "phone" | "address" | "creditCard" | "login";
-  displayValue?: string; // name=フル, phone=下4桁, address=郵便番号。card/login は持たない
+  category: Category;
+  displayValue?: string; // 保存・表示の粒度は §5 の表に従う（name=フル, phone=下4桁,
+                         // 住所系=郵便番号。creditCard / idDocument / login は持たない。
+                         // email / birthdate / カスタム種別の粒度は Open Question）
   observedAt: number;    // このカテゴリを最後に観測した時刻。変更キャンペーンの完了判定に使う（§6d）
-  // creditCard -> Google Wallet, login -> password-manager 詳細リンク（origin から生成）
+  // creditCard -> Google Wallet, idDocument -> Chrome 管理画面,
+  // login -> password-manager 詳細リンク（origin から生成）
 }
 ```
 
@@ -351,9 +367,9 @@ Chrome autofill、認証・削除・保存はユーザーが行う。
 
 ```ts
 interface ChangeCampaign {
-  category: "address" | "phone" | "email"; // 住所以外（電話・メール変更）にも汎用
+  category: Category;       // §5 の Category。例: "homeAddress" / "phone" / "email"
   startedAt: number;        // T。これより前の観測は「旧値の疑い」
-  newDisplayValue?: string; // 任意。住所=郵便番号, 電話=下4桁。完了検証に使う
+  newDisplayValue?: string; // 任意。住所系=郵便番号, 電話=下4桁。完了検証に使う
   confirmedBy?: "editScreen" | "observation" | "userInput";
 }
 
@@ -384,6 +400,8 @@ function judge(rec: ServiceRecord, c: ChangeCampaign): CampaignJudgement {
 - 新値が不明な間は「更新済み」への自動遷移を行わない（誤完了より見逃しの少なさを優先）。
   §6d の3層フォールバックで新値が確定し次第、自動遷移を有効化する。
 - 電話番号・メール変更にもそのまま使える汎用モデル（RFC-002 §8.2 の更新カテゴリ全般と整合）。
+- 引っ越しでは住所系サブタイプ（自宅 / 配送先 / 請求先 等）がまとめて旧値になるため、住所キャンペーンは
+  住所系グループ一括で開始できるようにする（判定はサブタイプごと）。グループ指定の形は実装時に決める。
 
 ## 6e. 統合編集画面（ゼロ保持の編集バッファ）— 構想
 
