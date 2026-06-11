@@ -244,6 +244,7 @@ interface ServiceRecord {
 interface CategoryEntry {
   category: "name" | "phone" | "address" | "creditCard" | "login";
   displayValue?: string; // name=フル, phone=下4桁, address=郵便番号。card/login は持たない
+  observedAt: number;    // このカテゴリを最後に観測した時刻。変更キャンペーンの完了判定に使う（§6d）
   // creditCard -> Google Wallet, login -> password-manager 詳細リンク（origin から生成）
 }
 ```
@@ -277,7 +278,9 @@ Chrome autofill、認証・削除・保存はユーザーが行う。
 想定フロー:
 
 1. ユーザーが Chrome 連絡先情報で新住所を保存する。
-2. formfill-assistant が「Chrome の新住所と異なる住所を使った全サイト」をフィルタ一覧。各行に
+2. ユーザーが formfill-assistant で「住所が変わった」を宣言（変更キャンペーン開始、§6d）。
+   **T 以降に新住所で確認できていない全サイト**が「更新必要」としてフィルタ一覧される
+   （拡張は Chrome の現住所を読めないため、値比較ではなく宣言時刻との比較で絞り込む）。各行に
    **変更ボタン**と**更新ステータス**（§6c）。
 3. 行の変更ボタン → そのサイトの住所変更ページへ遷移。
 4. ログインを求められたら Chrome のパスワード/ID autofill でログイン。再認証/MFA/確認メールは
@@ -354,21 +357,33 @@ interface ChangeCampaign {
   confirmedBy?: "editScreen" | "observation" | "userInput";
 }
 
-function needsUpdate(rec: ServiceRecord, c: ChangeCampaign): boolean {
+type CampaignJudgement =
+  | "needsUpdate"    // 旧値の疑い → ステータス「更新必要」
+  | "updated"        // 新値で確認済み → 「更新済み」へ自動遷移
+  | "manualCheck"    // 自動では確定できない → 「手動確認が必要」
+  | "notApplicable"; // 対象カテゴリの観測なし
+
+function judge(rec: ServiceRecord, c: ChangeCampaign): CampaignJudgement {
   const entry = rec.entries.find((e) => e.category === c.category);
-  if (!entry) return false;
-  // T 以降に（新値が分かっていればその値で）再観測済みなら完了
-  if (rec.updatedAt > c.startedAt &&
-      (!c.newDisplayValue || entry.displayValue === c.newDisplayValue)) {
-    return false;
+  if (!entry) return "notApplicable";
+  // キャンペーン対象カテゴリ自体が T 以降に再観測されていなければ旧値の疑い。
+  // レコード単位の updatedAt では判定しない（別カテゴリの観測で誤完了するため）。
+  if (entry.observedAt <= c.startedAt) return "needsUpdate";
+  // 新値が分かっている場合のみ、照合して「更新済み」へ自動遷移させる
+  if (c.newDisplayValue) {
+    return entry.displayValue === c.newDisplayValue ? "updated" : "needsUpdate";
   }
-  return true; // それ以外は旧値の疑い
+  // 新値が不明なら自動完了させず、確定はユーザーの手動記録（§6c）に委ねる
+  return "manualCheck";
 }
 ```
 
+- 完了判定は**キャンペーン対象カテゴリ自体の再観測**（`CategoryEntry.observedAt`、§5）を必須とする。
+  レコード単位の `updatedAt` で判定すると、住所キャンペーン中に電話欄の観測などで誤って完了扱いに
+  なるため使わない。
+- 新値が不明な間は「更新済み」への自動遷移を行わない（誤完了より見逃しの少なさを優先）。
+  §6d の3層フォールバックで新値が確定し次第、自動遷移を有効化する。
 - 電話番号・メール変更にもそのまま使える汎用モデル（RFC-002 §8.2 の更新カテゴリ全般と整合）。
-- 精緻化の余地: `updatedAt` をレコード単位ではなく `CategoryEntry` 単位の `observedAt` にする
-  （住所だけ古いのに別カテゴリの観測で「完了」扱いになる誤判定を防ぐ）。実装時に判断。
 
 ## 6e. 統合編集画面（ゼロ保持の編集バッファ）— 構想
 
