@@ -1,6 +1,14 @@
 # RFC-002: Chrome Autofill を前提とした Formfill Assistant 要件定義
 
-> **注記（2026-06-11）: 本ドキュメントは非規範（歴史的資料）。正は
+> **注記（2026-06-12）: 本ドキュメントは superseded（歴史的資料）。**
+> Chrome autofill を前提とする本要件は、RFC-001 v3（2026-06-12 全面改訂）で**廃案**となった。
+> 現在の正は [`rfc-001-chrome-autofill-pivot.md`](rfc-001-chrome-autofill-pivot.md)（自律型 autofill
+> エージェントへの転換）。背景は [`research-chrome-autofill-locale-maturity.md`](research-chrome-autofill-locale-maturity.md)
+> （Chrome autofill のロケール成熟度不足）。以下の旧注記は v1/v2 当時の統合経緯であり、参考情報。
+>
+> ---
+>
+> **旧注記（2026-06-11）: 本ドキュメントは非規範（歴史的資料）。正は
 > [`rfc-001-chrome-autofill-pivot.md`](rfc-001-chrome-autofill-pivot.md)。**
 >
 > 本ドキュメントは要件のインプットとして作成され、内容は RFC-001 に統合済み。本ドキュメントと
