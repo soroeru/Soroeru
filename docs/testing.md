@@ -1,7 +1,14 @@
 # Testing
 
-This document owns the **testing strategy** for `formfill-assistant`: what to
-test, which test types apply, and where fixtures live.
+This document owns the **testing strategy** for `autofill`: what to test, which test
+types apply, and where fixtures live.
+
+> **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
+> autonomous agent. End-to-end tests use **Playwright** (Chromium / Firefox / WebKit)
+> against local test sites; see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)
+> §8. The MV3-extension-specific guidance below is historical and is being updated
+> alongside the PoC implementation (#33). The risk-focused strategy and fake-data-only
+> rule still apply.
 
 Out of scope here: the browser-based manual checklist itself (see
 [`manual-test.md`](manual-test.md)) and the canonical command list (see

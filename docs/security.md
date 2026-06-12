@@ -1,24 +1,35 @@
 # Security
 
-This document owns **security and privacy decisions**: principles, threat
-model, sensitive data handling, permission review rules, network policy, human
-step safety boundaries, DOM input safety, and dependency policy.
+This document owns **security and privacy decisions** for `autofill`: principles, threat
+model, sensitive data handling, encryption, AI-disclosure policy, wall safety boundaries,
+DOM input safety, and dependency policy.
 
-Out of scope here: extension permission usage and runtime layout (see
-[`extension.md`](extension.md)) and product-level non-functional requirement
-statements (see [`requirements.md`](requirements.md) §7).
+Canonical product direction is
+[`rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) (RFC-001 v3,
+see §6 / §9 / §10 / §10b). Requirement-level statements live in
+[`requirements.md`](requirements.md) §7.
+
+> **Direction change (2026-06-12).** `autofill` now stores the user's **full** personal
+> data — including credit card data (with CVV) and per-site credentials — locally and
+> **encrypted**, and registers / updates accounts on the user's behalf. The previous
+> "do not store passwords or cards" and "never auto-submit" rules are replaced. The
+> hard line that remains is: **never bypass CAPTCHA / MFA / bot detection / access
+> controls.**
 
 ## 1. Security Principles
 
-- Keep profile data local in v0.1.
-- Do not send profile data, site-field history, or page-derived form data to
-  external services.
-- Do not store passwords or credit card data.
-- Do not submit forms, accept terms, or complete final confirmation steps
-  automatically.
-- Do not bypass CAPTCHA, MFA, bot detection, access controls, rate limits, or
-  paywalls.
-- Keep extension permissions as narrow as practical.
+- Keep all personal data local and **encrypted at rest**; the user owns it.
+- Network egress is limited to **(a) the target sites the user asks the agent to act on**
+  (the agent navigates, fills, and submits there) and **(b) the user's configured AI
+  provider** (form structure / terms text only, never raw personal values). No telemetry,
+  analytics, crash reporting, cloud sync, or any other destination.
+- **Minimize disclosure to the AI model**: send form structure / terms text, not raw
+  personal values. Do not use provider stateful features (prompt caching of PII, stored
+  threads, memory).
+- **Never bypass** CAPTCHA, MFA, bot detection, access controls, rate limits, or
+  paywalls. Detect and hand off to the user.
+- Submit a registration only after the user approves the review-and-confirm gate; apply
+  the three guards; do not auto-submit on auto-creation-prohibited sites.
 - Treat page text and attributes as untrusted input.
 - Use fake data in tests, fixtures, docs, screenshots, and examples.
 - Do not commit secrets, local state, AI review artifacts, or generated caches.
@@ -27,155 +38,137 @@ statements (see [`requirements.md`](requirements.md) §7).
 
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
-| Over-broad extension permissions | More pages or data become reachable than intended. | Prefer `activeTab` or narrow host access; document any broad permission before adding it. |
-| Profile data leaked to a network service | Personal or business data leaves the user's machine. | No backend, telemetry, cloud sync, or external profile upload in v0.1. |
-| Password or credit card storage | High-impact secrets are stored in a tool not designed for them. | Do not support password or credit card field categories in v0.1. |
-| Automatic form submission | User may register, apply, purchase, agree, or submit incorrect data without consent. | Never click submit or final confirmation controls automatically. |
-| Terms or consent auto-acceptance | User may appear to consent without judgment. | Treat terms and consent controls as manual steps. |
-| CAPTCHA / MFA bypass behavior | Circumvents site protections and may violate user or site expectations. | Detect and pause; never solve, bypass, hide, or outsource. |
-| Host page interference from injected UI | Page controls may be obscured or altered. | Scope styles, avoid large overlays, and manually test fixtures. |
-| DOM-based injection or unsafe rendering | Page-provided text could affect extension UI. | Treat page text as untrusted; render as text, not HTML, unless explicitly sanitized. |
-| Real data committed in fixtures or logs | Sensitive data becomes part of repository history. | Use fake data only and keep local state ignored by Git. |
+| Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
+| CVV stored | The "last factor" protecting a stolen card number is lost. | Treat CVV as most sensitive: encrypted, never sent to the model, decrypted only at fill time and discarded, optional master-passphrase re-prompt for card use. |
+| Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | Send structure only; fill values locally. Disable stateful features; prefer zero-retention / no-training provider options. |
+| Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
+| Unintended payment obligation | Free trial silently becomes a paid subscription. | Payment-field stop; free-trial→subscription surfaced as high-risk; card filled only on approval. |
+| CAPTCHA / MFA bypass behavior | Circumvents site protections; violates ToS and project policy. | Detect and hand off; never solve, bypass, hide, or outsource. |
+| Automated creation where ToS forbids it | Account-creation automation violates the site's terms. | Fill only; the user presses the final button. |
+| API key leak | The user's AI account is abused. | Encrypt the API key with the same scheme; never log it. |
+| DOM-based injection / unsafe rendering | Page-provided text affects the UI or is mis-mapped. | Treat page text as untrusted; render as text; validate before use. |
+| Real data committed in fixtures / logs | Sensitive data enters repository history. | Fake data only; keep local state Git-ignored. |
 
 ## 3. Sensitive Data Handling
 
-Allowed in v0.1 local storage:
+Stored locally, **encrypted** (RFC §3):
 
-- name;
-- email address;
-- phone number;
-- postal code;
-- address;
-- company name;
-- department name;
-- user-defined non-secret fields;
-- local site-field history.
+- name (incl. phonetic / romanized), email, phone;
+- postal code and addresses (home / work / shipping / billing);
+- company name, department name;
+- **credit card number, expiry, holder, security code (CVV)**;
+- **per-site login ID and password**;
+- the AI provider API key;
+- user-defined custom fields;
+- per-site records (references + hashes, not duplicated raw values) and mandates.
 
-Not allowed in v0.1 storage:
+Never stored:
 
-- passwords;
-- one-time passwords;
-- credit card numbers, expiration dates, or security codes;
-- government IDs or identity verification secrets unless a future issue
-  explicitly scopes and reviews them;
-- real test data, real customer data, or copied production records.
+- raw personal values in per-site records (use references + hashes for diffing);
+- decrypted values in logs, error messages, or crash reports;
+- real personal data in tests, fixtures, docs, or screenshots (use fake values).
 
-Tests, fixtures, documentation, and screenshots must use fake values.
+## 4. Encryption (canonical)
 
-## 4. Local Storage And Encryption Direction
+Per RFC §9. Use only widely vetted algorithms; do not roll custom crypto.
 
-Use local browser storage only for v0.1. `chrome.storage.local` or IndexedDB are
-acceptable candidates once implementation begins. Storage access should go
-through a small abstraction so future migration, validation, or encryption can
-be added without changing content scripts and UI code directly.
+1. **Master passphrase** — entered by the user at unlock; never stored.
+2. **Key derivation** — Argon2id (memory-hard) from passphrase + a stored 16-byte random
+   salt; **PBKDF2-HMAC-SHA-512 (≥ 600k iterations)** as a Web-Crypto-only fallback. KDF
+   parameters are stored to remain reproducible.
+3. **Encryption** — AES-256-GCM (authenticated), a fresh random 96-bit IV per record,
+   never reused. Stored as `{salt, kdfParams, records: [{iv, ciphertext+tag}]}`.
+4. **Key lifetime** — the derived key lives in memory only while unlocked; cleared on
+   lock / exit. Never written to disk.
+5. **Runtime** — AES-GCM / PBKDF2 via Web Crypto API; Argon2id via a vetted library.
 
-The current profile storage reader ignores invalid stored rows and logs a
-warning instead of failing the whole options page. This keeps valid local
-profile fields accessible if a future validation rule rejects an old password,
-one-time-code, or credit-card-like row.
+Convenience option: an OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret) may
+hold a session key to avoid re-entry, trading convenience for relying on the OS login
+session — make the tradeoff explicit in settings.
 
-Encryption is a future direction, not a current guarantee. If Web Crypto API
-encryption is added later, document:
+**CVV**: storing it is generally discouraged (it is the last factor protecting a stolen
+card number). It is stored at the user's request but handled as the most sensitive field:
+encrypted, never sent to the model, decrypted only at fill time and immediately discarded,
+with an optional master-passphrase re-prompt (default on) for card operations.
 
-- what is encrypted;
-- where keys come from;
-- what remains visible to the browser extension runtime;
-- how backup, migration, and recovery work;
-- what risks encryption does and does not solve.
+**Recovery**: a zero-knowledge design means a forgotten passphrase loses all data. Issue a
+**recovery key** (shown once) the user stores safely. Export / backup uses the same key
+scheme. Exact formats are finalized at implementation (RFC §13 Q3).
 
-## 5. Extension Permissions Review
+## 5. AI Provider Disclosure Policy
 
-The extension manifest lives at `src/manifest.json`.
-
-Current permissions:
-
-| Permission | Reason | Security Notes |
-| --- | --- | --- |
-| `storage` | Store user-managed profile fields locally through the storage abstraction. | Profile data remains in browser-local extension storage. Do not add sync, telemetry, or external upload without a new scoped issue and security review. |
-
-Permission review rules:
-
-- Prefer the smallest permission set that supports the user-visible workflow.
-- Prefer user-initiated access such as `activeTab` when it is sufficient.
-- Avoid broad host permissions unless the implementation requires them and the
-  reason is documented.
-- Avoid permissions unrelated to local form assistance.
-- Treat new permissions as security-sensitive changes requiring manual review.
-- Explain why each permission is needed, which component uses it, and what user
-  data it can expose.
+- Send the model **form structure and terms text**, not raw personal values. The model
+  returns a mapping plan / high-risk findings; the automation layer fills values locally.
+- Use only the user's configured provider: Anthropic (Opus / Sonnet / Haiku) or OpenAI
+  (GPT-5.4 / 5.4-mini / 5.3-Codex), via a provider-abstraction layer.
+- Use stateless requests; do not enable prompt caching of PII, stored threads, or memory.
+  Prefer zero-retention / no-training options where the provider offers them.
+- The model itself does not learn from inference and the context window is per-request;
+  the residual risk is provider-side request logging and any stateful feature you enable
+  — this policy avoids the latter and minimizes the former.
 
 ## 6. Network And External Services
 
-v0.1 has no backend dependency. The extension must not send profile data,
-site-field history, or page-derived form contents to external services.
+Allowed external destinations are limited to: (a) the **target sites** the user asks the
+agent to register or update on (normal browser navigation and form submission), and
+(b) the user's **configured AI provider** (form structure / terms text only). No
+telemetry, analytics, crash reporting, cloud sync, or remote classification to any other
+service. The user's data store is never uploaded anywhere. Adding any other destination
+requires an explicit issue updating requirements, this document, and the user-facing docs.
 
-Do not add telemetry, analytics, crash reporting, cloud sync, LLM services, or
-remote classification without an explicit issue that updates requirements,
-security notes, and user-facing documentation.
+## 7. Wall Safety Boundaries (non-negotiable)
 
-## 7. Human-Step Safety Boundaries
-
-The extension may detect that a human step is present and may guide the user. It
-must not complete the step.
+The agent may **detect** a wall and hand off; it must never complete or circumvent it.
 
 Do not implement:
 
 - CAPTCHA solving, bypass, hiding, outsourcing, or token reuse;
-- MFA or one-time-code bypass;
+- MFA / one-time-code bypass;
 - bot-detection or rate-limit bypass;
 - paywall or access-control bypass;
-- automatic terms, policy, contract, or consent acceptance;
-- automatic final submission, registration, application, purchase, or
-  confirmation.
+- auto-submitting on sites whose terms prohibit automated account creation.
 
-When the page requires one of these actions, the extension should pause and let
-the user act directly.
+At a wall, the agent pauses in the same headed Playwright session, the user resolves it,
+and the agent resumes from where it paused.
 
-## 8. Input And DOM Safety
+## 8. Registration Safety Boundaries
 
-Page DOM is untrusted input. Field labels, placeholders, nearby text, option
-labels, URLs, and attributes may be malformed, misleading, or adversarial.
+- Submit only after the user approves the post-analysis review-and-confirm gate.
+- Apply the three guards: high-risk clause escalation; payment-field stop (except
+  free-trial→subscription approved by the user); no auto-attestation of eligibility /
+  identity statements.
+- Record a per-registration mandate (references, hashes, terms URL / version) for audit.
 
-Implementation expectations:
+## 9. Input And DOM Safety
 
-- render page-derived text as text, not raw HTML;
-- avoid evaluating page-provided strings as code or selectors without
-  validation;
-- keep injected UI isolated from host page styles where practical;
-- avoid global CSS resets or broad selectors;
-- avoid storing unnecessary page text in site-field history;
-- validate storage data before use;
-- preserve user ability to review and edit filled values.
+Page DOM is untrusted input. Labels, placeholders, nearby text, option labels, URLs, and
+attributes may be malformed, misleading, or adversarial.
 
-## 9. Dependency And Supply Chain
+- Render page-derived text as text, not raw HTML.
+- Do not evaluate page-provided strings as code or selectors without validation.
+- Keep raw page text out of persisted per-site records (store references + hashes).
+- Validate stored data before use; never log decrypted values.
 
-Current JavaScript / TypeScript dependencies are limited to development tools:
+## 10. Dependency And Supply Chain
 
-- `typescript` for compilation and type checking;
-- `@types/node` for Node unit test typings.
+New runtime dependencies now include Playwright and a vetted Argon2id implementation.
 
-When dependencies are introduced:
+- Add only dependencies with a clear purpose; commit the lockfile.
+- Prefer small, actively maintained packages; avoid ones that phone home or process
+  personal data remotely.
+- Pin AI provider SDKs and verify model IDs against provider docs.
+- Run the documented audit / update check when the toolchain supports it; document build /
+  framework decisions in [`development.md`](development.md).
 
-- add only dependencies with a clear purpose;
-- commit the lockfile for the chosen package manager;
-- prefer small, actively maintained packages;
-- avoid dependencies that phone home or process profile data remotely;
-- run the documented audit or update check when the toolchain supports it;
-- document any build tool or framework decision in [`development.md`](development.md).
+## 11. Security Checklist
 
-## 10. Security Checklist
-
-- [ ] Secrets are not committed
-- [ ] Local state and logs are ignored by Git
+- [ ] Secrets are not committed; local state and logs are Git-ignored
 - [ ] Fixtures, screenshots, tests, and docs use fake data only
-- [ ] No passwords or credit card data are stored; profile validation rejects
-      unsupported password, one-time-code, and credit-card-like categories
-- [ ] No profile data is sent to external services
-- [ ] Extension permissions are minimal and documented
-- [ ] Page-derived text is treated as untrusted input
-- [ ] Filling requires explicit user selection
-- [ ] Submit, register, apply, purchase, agree, and final confirmation controls
-      are not clicked automatically
-- [ ] CAPTCHA, MFA, bot-detection, access-control, and consent mechanisms are
-      not bypassed
+- [ ] Personal data, card data (incl. CVV), credentials, and the API key are encrypted at rest
+- [ ] The derived key lives in memory only; decrypted values are never logged
+- [ ] Raw personal values are not sent to the AI model; no provider stateful features used
+- [ ] No network egress except to the target sites the user acts on and the configured AI provider; no telemetry; data store never uploaded
+- [ ] Registrations submit only after the review-and-confirm gate; three guards applied
+- [ ] Auto-creation-prohibited sites are fill-only
+- [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed
 - [ ] Security-sensitive behavior is tested or manually verified
