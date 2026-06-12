@@ -19,6 +19,11 @@ RFC-001（`docs/rfc/rfc-001-chrome-autofill-pivot.md`）の Open Questions **R /
 1. Chrome に**検証用のダミー住所プロフィール**を登録する:
    `chrome://settings/addresses` → 「住所を追加」→ 架空の氏名・住所・電話・メールを入力。
    実在の個人情報は使わない（結果を Issue / RFC に貼るため）。
+   - 注（Chrome 149 で確認）: `chrome://settings/addresses` は
+     `chrome://settings/contactInfo`（連絡先情報）にリダイレクトされる。氏名・メール・電話は
+     各1件のみ、住所は「自宅の住所」「勤務先の住所」の2枠で、住所文字列を入力すると
+     Google Map の候補地点を選択して保存する形式（郵便番号・建物名などのフィールド分割なし）。
+     「会社名」に相当する項目はない。
 2. この PoC 拡張を読み込む:
    `chrome://extensions` → デベロッパーモード ON → 「パッケージ化されていない拡張機能を読み込む」→
    `poc/issue-29-autofill-poc/` を選択。
@@ -65,7 +70,12 @@ RFC-001（`docs/rfc/rfc-001-chrome-autofill-pivot.md`）の Open Questions **R /
    - `poll` 行（1秒間隔の `:autofill` ポーリング）が「※input/changeイベント未観測（取り逃がし）」を
      出すケースがあるか
    - 「再スキャン」ボタン（手動再スキャン）で捕捉できるか
-6. 「コピー」でログを控える。
+6. **R3-4**: ページ下部の「自宅・勤務先住所（contactInfo モデル検証）」フォームで、
+   Chrome の「連絡先情報」（`chrome://settings/contactInfo`、Google Map 地点選択式の
+   「自宅の住所」「勤務先の住所」）が 1行の住所フィールド
+   （`autocomplete="section-home street-address"` / `section-work street-address`）に
+   autofill されるか確認する。
+7. 「コピー」でログを控える。
 
 ## 結果記入表
 
@@ -77,16 +87,17 @@ RFC-001（`docs/rfc/rfc-001-chrome-autofill-pivot.md`）の Open Questions **R /
 
 | # | 検証項目 | 結果（可/不可/条件付き） | メモ |
 | --- | --- | --- | --- |
-| R-1 | tabs.create で password-manager 一覧/詳細 | | |
-| R-2 | tabs.create で settings/addresses・payments | | |
-| R-3 | aタグ / window.open での chrome:// 遷移 | | |
-| R-4 | ブロック時のエラー・挙動 | | |
-| R2-1 | 拡張ページで autofill 候補が出る | | |
-| R2-2 | 選択で値が入り event / :autofill で観測できる | | |
-| R2-3 | 送信後に保存/更新プロンプトが出る | | |
-| R3-1 | 通常ページで input/change が発火する | | |
-| R3-2 | トリガー種別による発火差 | | |
-| R3-3 | ポーリング/手動再スキャンで取り逃がしを補足できる | | |
+| R-1 | tabs.create で password-manager 一覧/詳細 | 可 | |
+| R-2 | tabs.create で settings/addresses・payments | 可 | |
+| R-3 | aタグ / window.open での chrome:// 遷移 | 不可 | |
+| R-4 | ブロック時のエラー・挙動 |反応は何も無し | |
+| R2-1 | 拡張ページで autofill 候補が出る | 不可 | |
+| R2-2 | 選択で値が入り event / :autofill で観測できる |不可 | |
+| R2-3 | 送信後に保存/更新プロンプトが出る |不可 | |
+| R3-1 | 通常ページで input/change が発火する |氏名・メールアドレスのみ発火 | |
+| R3-2 | トリガー種別による発火差 | 氏名・メールアドレスのみ発火| |
+| R3-3 | ポーリング/手動再スキャンで取り逃がしを補足できる |可 | |
+| R3-4 | 自宅/勤務先住所（contactInfo の地点式住所）が street-address に入る | 不可 | 電話番号も contactInfo 登録済みなのに発火せず。楽天・Amazon の実フォームでも氏名・メール以外は発火しないことを確認 |
 
 ## 後片付け
 

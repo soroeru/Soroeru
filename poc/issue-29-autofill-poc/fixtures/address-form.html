@@ -36,5 +36,19 @@
       <input id="x-org" name="organization" autocomplete="organization" /></div>
     <button type="submit">送信（ユーザー操作）</button>
   </form>
+
+  <h2>自宅・勤務先住所（contactInfo モデル検証）</h2>
+  <p class="note">
+    Chrome の「連絡先情報」（chrome://settings/contactInfo）にある「自宅の住所」
+    「勤務先の住所」（Google Map 地点選択式）が、1行の住所フィールドに
+    autofill されるかを検証する（R3-4）。
+  </p>
+  <form action="address-form.html" method="GET">
+    <div class="field"><label for="x-home-addr">自宅の住所</label>
+      <input id="x-home-addr" name="home-address" autocomplete="section-home street-address" /></div>
+    <div class="field"><label for="x-work-addr">勤務先の住所</label>
+      <input id="x-work-addr" name="work-address" autocomplete="section-work street-address" /></div>
+    <button type="submit">送信（ユーザー操作）</button>
+  </form>
 </body>
 </html>
