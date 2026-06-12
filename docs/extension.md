@@ -1,224 +1,118 @@
-# Chrome Extension Design
+# Application Architecture
 
-This document owns **Chrome extension architecture and design decisions**:
-component boundaries, Manifest V3 permissions, message passing, storage
-abstraction, UI injection, and manual-step handling.
+This document owns **`autofill` application architecture and design decisions**: the
+layer boundaries, the Playwright automation runtime, the encrypted store, the AI agent
+boundary, and the registration / hand-off control flow.
 
-Out of scope here: product requirements (see
-[`requirements.md`](requirements.md)), implementation conventions and
-repository layout (see [`development.md`](development.md)), and security
-rationale for permissions (see [`security.md`](security.md)).
+Canonical product direction is
+[`rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) (RFC-001 v3,
+see §7). Out of scope here: product requirements (see [`requirements.md`](requirements.md)),
+setup and repository layout (see [`development.md`](development.md)), and security
+rationale (see [`security.md`](security.md)).
+
+> **Direction change (2026-06-12).** `autofill` is no longer a Chrome Extension
+> (Manifest V3). It is a **local Playwright-based application**. The previous MV3 design
+> (content script / background service worker / options page) is historical and lives in
+> git. Detailed component and file layout are finalized during the PoC (#33); this
+> document describes the intended boundaries.
 
 ## 1. Architecture Overview
 
-v0.1 is a Chrome Extension Manifest V3 application with four main boundaries:
+`autofill` is a local application with four layers:
 
 ```text
-Chrome Extension
-├── content script
-│   ├── detects form elements on the active page
-│   ├── classifies fields with local rules
-│   ├── detects manual-step states
-│   ├── renders suggestion and guidance UI
-│   └── fills only user-selected values
+autofill (local app)
+├── store layer
+│   ├── personal data (name, address, phone, email, card incl. CVV, per-site credentials)
+│   ├── per-site records (references + hashes, not duplicated raw values)
+│   ├── authorization records (mandates)
+│   └── all encrypted at rest (AES-256-GCM, master-passphrase-derived key)
 │
-├── background service worker
-│   ├── handles extension events
-│   ├── coordinates message passing
-│   └── avoids storing page-specific state in memory as the source of truth
+├── agent layer (the user's AI; provider-abstracted)
+│   ├── finds the registration page
+│   ├── maps form fields to stored field types (AI variant)
+│   ├── detects high-risk terms clauses
+│   └── receives form structure / terms text — never raw personal values
 │
-├── options page
-│   ├── manages local profile fields
-│   ├── manages custom field definitions
-│   └── shows site-field history
+├── automation layer (Playwright)
+│   ├── drives a headed browser (Chromium / Firefox / WebKit)
+│   ├── navigates, fills values locally, submits after approval
+│   ├── detects walls (CAPTCHA / MFA / verification) — never bypasses
+│   └── pauses for hand-off and resumes in the same session
 │
-└── storage boundary
-    ├── profile data
-    ├── field definitions
-    └── site-field history
+└── UI layer
+    ├── personal-data management (incl. card data, credentials)
+    ├── per-site inventory and bulk-update selection
+    ├── the review-and-confirm gate
+    └── settings (master passphrase, AI provider API key)
 ```
 
-The content script owns page interaction. The options page owns user-managed
-data. Shared logic such as field classification, storage access, and message
-types should be isolated so it can be tested outside a live browser page.
+Keep shared logic — field classification, wall detection, the store/crypto boundary, and
+the provider abstraction — isolated so it can be tested outside a live browser.
 
-## 2. Manifest V3 And Permissions
+## 2. Automation Layer (Playwright)
 
-The extension manifest lives at `src/manifest.json` and is copied to
-`dist/extension/manifest.json` by `npm run build`. Keep permissions narrow and
-document each one in this section.
+- Playwright is the automation runtime **and** the test framework, chosen for
+  browser-engine independence (Chromium / Firefox / WebKit). See `development.md` for
+  commands once they exist.
+- Run **headed** so the user can take over at a wall in the same session (shared cookies /
+  session state), then the agent resumes.
+- The automation layer is where raw personal **values** are injected into form fields.
+  Values come from the decrypted store, not from the AI model.
+- Registration runs new browser sessions; updates log in with stored per-site credentials.
 
-Expected permission direction for v0.1:
+## 3. Agent Layer (AI)
 
-| Permission / Access | Expected Use | Owner |
-| --- | --- | --- |
-| `storage` | Store profile fields locally. Future custom definitions, settings, and site-field history should use the same storage boundary. | Options page and storage abstraction |
-| `activeTab` or narrow host access | Let the content script inspect and fill the current user-selected page. | Content script |
-| `scripting` if needed | Inject or register content scripts only when static manifest registration is not enough, such as runtime opt-in for selected tabs. | Background service worker |
+- Uses the user's configured provider only (Anthropic Opus / Sonnet / Haiku, or OpenAI
+  GPT-5.4 / 5.4-mini / 5.3-Codex) behind a provider-abstraction interface.
+- Receives **form structure** (labels, `name`, `id`, type, nearby text) and **terms text**,
+  and returns a mapping plan and high-risk findings. It does not receive raw personal
+  values and is not given direct browser control (the automation layer executes the plan).
+- Stateless requests only; no prompt caching of personal data, stored threads, or memory.
+- A **deterministic** field-mapping variant (reusing the existing scanner and rule-based
+  classifier) is built alongside the AI variant and compared for accuracy (RFC §8).
 
-Avoid broad host permissions unless the implementation cannot work without
-them. If broad access becomes necessary, document the user benefit, the
-security tradeoff, and the alternatives considered.
+## 4. Store Layer (encrypted)
 
-Security justification for permissions belongs in [`security.md`](security.md).
+- All personal data, card data (incl. CVV), per-site credentials, the API key, per-site
+  records, and mandates are encrypted at rest. Encryption is canonical in
+  [`security.md`](security.md) §4 (Argon2id / PBKDF2-SHA-512 + AES-256-GCM, key in memory
+  only).
+- Per-site records hold **references + hashes**, not duplicated raw values, so bulk-update
+  diffing works without multiplying sensitive data.
+- Access goes through a small abstraction; never log decrypted values.
 
-## 3. Content Script Responsibilities
+## 5. Registration Control Flow
 
-The content script may:
+1. The user gives a URL; the automation layer opens it.
+2. The agent finds the registration page and analyzes the form.
+3. Missing fields are requested from the user and saved for reuse.
+4. The **review-and-confirm gate** shows the submission summary, terms links, and detected
+   high-risk clauses.
+5. On the user's single approval, the automation layer fills, accepts ordinary terms, and
+   submits, applying the **three guards** (high-risk escalation; payment stop with the
+   free-trial→subscription exception; no auto-attestation).
+6. On auto-creation-prohibited sites, the agent fills only and the user submits.
+7. A per-site record and a mandate are written.
 
-- scan the current DOM for visible `input`, `textarea`, and `select` elements;
-- collect field metadata such as `autocomplete`, `name`, `id`, `placeholder`,
-  label text, and nearby visible text;
-- run or call deterministic field classification rules;
-- detect conservative signs of manual-step states;
-- render extension-owned suggestion and guidance UI;
-- fill selected values into selected fields after explicit user action;
-- re-scan after user-driven page changes or dynamic form updates.
+## 6. Wall Hand-off and Resume
 
-The content script must not:
+When CAPTCHA / MFA / identity / email / SMS verification is detected, the agent pauses,
+surfaces an instruction overlay, and the user resolves the step in the same headed
+session. The agent resumes from the paused step because progress state is held by the
+agent, not the page. During a bulk update, the current site pauses, the user resolves,
+that site resumes, then the run continues. Detection is conservative and never attempts to
+solve or bypass; see [`security.md`](security.md) §7.
 
-- submit forms automatically;
-- click final action buttons automatically;
-- check terms, consent, or contract agreement boxes automatically;
-- attempt CAPTCHA, MFA, bot-detection, paywall, or access-control bypass;
-- store profile data directly without going through the storage boundary;
-- inject broad global CSS likely to alter the host page.
+## 7. Bulk Update
 
-### 3.1 Current Scanner Status
+The user selects sites and runs an update. For each, the agent diffs the per-site record
+hashes against the latest stored values, opens the sites with changes, logs in with stored
+credentials, updates the changed fields, and handles walls via §6.
 
-- `src/content/scanner.ts` exposes `scanFields(document)` for the active page;
-- it returns visible `input`, `textarea`, and `select` elements with a
-  scan-local `fieldId` (`ff-N`, rebuilt per scan via a `WeakMap`), the current
-  value, and ordered label candidates;
-- label candidates are collected from associated `<label>` elements (`for` and
-  wrapping), `aria-label`, `aria-labelledby`, and `placeholder`, in that order;
-- unsupported input types (`password`, `hidden`, `submit`, `button`, `image`,
-  `reset`, `file`) and disabled / readonly controls are excluded;
-- same-origin iframes and shadow DOM are out of scope for v0.1, and visibility
-  is intentionally conservative (no pixel-perfect / layout-based checks).
+## 8. Status
 
-## 4. Background Service Worker
-
-The background service worker should stay small. It may own extension lifecycle
-events, action clicks, tab-related coordination, and message routing between the
-content script, options page, and storage boundary.
-
-Manifest V3 service workers can be suspended and restarted by Chrome. Do not
-use the background worker's in-memory variables as durable state. Profile data,
-settings, custom definitions, and site-field history must live in local storage
-through a small storage abstraction.
-
-The background service worker should not make network calls for profile data in
-v0.1.
-
-## 5. Options Page
-
-The options page is the user's control surface for local data. It should let the
-user:
-
-- create, edit, and delete basic profile fields;
-- define additional custom fields when a website asks for data not covered by
-  the basic profile;
-- review and clear site-field history;
-- adjust extension settings that affect suggestion behavior;
-- understand that data is local and that passwords and credit cards are not
-  supported in v0.1.
-
-Current implementation status:
-
-- `src/options/` provides a Vanilla TypeScript options page for creating,
-  editing, deleting, listing, and clearing profile fields;
-- basic field kinds are `fullName`, `email`, `phone`, `postalCode`, `address`,
-  `companyName`, and `departmentName`;
-- custom fields use `{ id, label, value, matchTerms[], order }`;
-- fake data can be added from the options page for manual verification.
-
-The options page should avoid real user data in examples, screenshots, tests,
-or committed fixtures.
-
-## 6. Storage Abstraction
-
-Storage access should be behind a small abstraction rather than scattered
-through content script and UI code. The abstraction should own serialization,
-schema versioning direction, and future migration points.
-
-Expected data groups:
-
-- profile fields: user-managed values used for suggestions;
-- field definitions: built-in and custom mappings from field types to labels
-  and matching rules;
-- site-field history: local record of URL or origin patterns and field types
-  used there;
-- settings: user preferences that affect suggestion and UI behavior.
-
-Use `chrome.storage.local` or IndexedDB for v0.1 unless the implementation
-finds a concrete reason to choose otherwise. Future encryption with Web Crypto
-API can be added behind the same boundary.
-
-Current implementation status:
-
-- `src/storage/profile-store.ts` exposes `get`, `set`, `list`, `delete`, and
-  `clear`;
-- `ChromeProfileStorage` stores profile fields in `chrome.storage.local`;
-- `InMemoryProfileStorage` supports unit tests without a browser runtime;
-- all stored profile fields are validated through
-  `src/shared/profile-validation.ts`.
-
-Concrete file layout and implementation rules belong in
-[`development.md`](development.md).
-
-## 7. Message Passing
-
-Message passing should keep ownership boundaries explicit. Prefer typed
-request / response payloads once TypeScript is introduced.
-
-Expected message categories:
-
-- scan request: ask a content script to scan the current page;
-- scan result: return detected fields, confidence, and manual-step signals;
-- suggestion request: ask for profile values that may match detected fields;
-- fill request: fill only the user-selected field/value pairs;
-- history update: record local site-field usage after user-confirmed filling;
-- settings/profile update notification: tell active extension views to refresh
-  cached data.
-
-Messages should not carry more profile data than needed. Page-derived text
-should be treated as untrusted input.
-
-## 8. UI Injection Guidelines
-
-Injected UI should be easy to distinguish from the host page and should not
-break page layout. Prefer an isolated root element, scoped class names, and
-minimal CSS. If Shadow DOM is used, document the reason and test it against
-fixture pages.
-
-The UI should:
-
-- show suggestions before filling;
-- make the user action required for filling explicit;
-- avoid covering important page controls;
-- avoid imitating host page submit or confirmation controls;
-- provide guidance when a manual step is detected;
-- let the user dismiss or re-open the assistant;
-- avoid large overlays unless the user explicitly opens them.
-
-The UI must not hide CAPTCHA, MFA, consent, or final confirmation controls.
-
-## 9. Manual-Step Handling
-
-When CAPTCHA, MFA, terms confirmation, identity verification, file upload
-confirmation, final submission, or similar human steps are detected, the
-extension should pause filling for that step and guide the user.
-
-Expected behavior:
-
-1. mark the detected state as requiring user action;
-2. avoid filling or clicking controls related to that state;
-3. show a short explanation in the injected UI;
-4. let the user complete the step directly on the page;
-5. offer a re-scan action or automatically re-scan after a clear user-driven
-   page update;
-6. resume suggestions only for ordinary remaining fields.
-
-Manual-step handling should improve user experience without attempting to
-circumvent site protections.
+This is design intent. Concrete component structure, file layout, and the reusable scanner
+/ classifier integration are finalized during the PoC (#33). Reusable assets from the
+earlier work (the form scanner and rule-based classifier) feed the deterministic mapping
+variant.

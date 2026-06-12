@@ -1,241 +1,194 @@
 # Requirements
 
-This document owns the **product requirements** for `formfill-assistant`: v0.1
-scope, non-scope, human-in-the-loop behavior, use cases, and non-functional
-requirements.
+This document owns the **product requirements** for `autofill`: scope, non-scope,
+the autonomy / hand-off model, use cases, and non-functional requirements.
 
-Out of scope here: extension architecture (see [`extension.md`](extension.md)),
-security review rationale (see [`security.md`](security.md)), and agent
-operating rules (see `../AGENTS.md` and `../CLAUDE.md`).
+Canonical product direction is
+[`rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) (RFC-001 v3).
+Out of scope here: application architecture (see [`extension.md`](extension.md)),
+security rationale (see [`security.md`](security.md)), and agent operating rules (see
+`../AGENTS.md` and `../CLAUDE.md`).
+
+> **Direction change (2026-06-12).** `autofill` is no longer a human-in-the-loop Chrome
+> extension. It is a local-first, autonomous agent that stores the user's full personal
+> data (encrypted) and registers / updates the user's accounts on their behalf via
+> Playwright. This document reflects that direction.
 
 ## 1. Background
 
-Many websites ask users to enter the same personal or business information over
-and over again. The initial problem is not that users need a fully autonomous
-agent; it is that repetitive form entry is tedious while still requiring human
-judgment.
+People register the same personal information across many sites and must keep it current
+when it changes (moving, new phone number, new card). Doing this by hand is repetitive.
 
-`formfill-assistant` starts as a local-first Chrome extension because the
-browser page is where the form fields exist, and because the first version
-should not require a backend service to store profile data. Keeping data local
-also keeps the security model easier to inspect while the product is still
-small.
+`autofill` keeps the user's personal data **locally and encrypted** and uses an AI agent
+plus Playwright browser automation to register on new sites and update existing accounts
+on the user's behalf, with a single review-and-confirm step per registration. Keeping the
+data local means the user owns and manages their own information rather than handing it to
+a third-party service.
 
-The product may later grow toward more complex business and contract-form
-assistance, but v0.1 should stay focused on a small, usable extension that helps
-one user fill ordinary forms after explicit confirmation.
+Browser automation uses Playwright so the agent works across browser engines (Chromium /
+Firefox / WebKit) rather than depending on one browser's autofill.
 
 ## 2. Product Principles
 
-- Prefer user-confirmed assistance over autonomous automation.
-- Keep the user responsible for judgment, consent, identity verification, and
-  final submission.
-- Fill only fields the user explicitly selects.
-- Keep profile data local in v0.1.
-- Avoid backend services, telemetry, cloud sync, and AI classification until
-  they are clearly needed and explicitly scoped.
-- Use deterministic, inspectable matching rules before introducing more complex
-  inference.
-- Treat profile data, business data, and contract-adjacent data as sensitive.
-- Keep Chrome extension permissions as narrow as practical.
+- The user's personal data stays local and encrypted; the user owns it.
+- The AI agent acts autonomously; required human intervention is minimized.
+- Registration auto-submits only after the user approves a review-and-confirm gate.
+- Never bypass CAPTCHA, MFA, bot detection, or access controls — detect and hand off.
+- No checkout / payment, except a free-trial→subscription card case approved by the user.
+- Prefer deterministic, inspectable matching; also evaluate an AI-driven variant.
+- Network egress only to the user's configured AI provider; no telemetry.
+- Treat all stored data (including card data and credentials) as sensitive.
 
-## 3. Human-In-The-Loop Model
+## 3. Autonomy and Human Hand-off Model
 
-The extension assists the user without pretending to be the user. When a page
-requires a human step such as CAPTCHA, MFA, terms confirmation, identity
-verification, file upload confirmation, or final submission, the extension
-should stop filling-related activity for that step and show guidance instead of
-trying to complete it.
+The agent acts on the user's behalf. Human intervention is limited to:
 
-The expected flow is:
+1. **Missing data** — the agent prompts the user for a value not in the store and saves
+   it for reuse.
+2. **Unautomatable walls** — CAPTCHA, MFA / OTP, identity verification, email/SMS
+   verification. The agent detects (never bypasses) these and hands off in the same
+   headed browser session, then resumes from where it paused.
 
-1. detect that a human step may be present;
-2. avoid filling, checking, clicking, or submitting anything related to that
-   step;
-3. tell the user what kind of action appears to be required;
-4. wait for the user to complete the action;
-5. re-scan the current page after the user continues;
-6. resume suggestions only for remaining ordinary fillable fields.
+Registration flow:
 
-Human-in-the-loop behavior is part of the product design, not an exception path.
+1. the user gives a URL;
+2. the agent finds the registration page and analyzes the form;
+3. the agent prompts for any missing field and saves it;
+4. the agent shows a **review-and-confirm gate** (what will be submitted, terms links,
+   high-risk clauses);
+5. on the user's single approval, the agent fills, accepts ordinary terms, and submits,
+   applying the **three guards**;
+6. the agent records a per-site entry and an authorization record (mandate).
 
-## 4. v0.1 Scope
+## 4. Scope
 
-v0.1 includes:
+- Local, encrypted store of the user's personal data: name (incl. phonetic / romanized),
+  email, phone, postal code, addresses (home / work / shipping / billing), company,
+  department, **credit card (number, expiry, holder, CVV)**, **per-site login ID /
+  password**, and dynamically added fields.
+- URL-driven autonomous registration with the review-and-confirm gate and three guards.
+- Per-site inventory of submitted fields (references + hashes, not duplicated raw values)
+  and authorization records.
+- Bulk update across selected sites by diffing against the latest stored values.
+- Settings, including the user's own AI provider API key.
+- CAPTCHA / MFA / verification wall detection with seamless hand-off and resume.
+- Two field-detection variants (deterministic and AI-driven) compared for accuracy.
 
-- local management of basic profile fields:
-  - full name
-  - email address
-  - phone number
-  - postal code
-  - address
-  - company name
-  - department name
-  - other manually defined fields
-- detection of `input`, `textarea`, and `select` elements on the active page;
-- rule-based field meaning inference from attributes and nearby text;
-- visible suggestions for likely matching profile fields;
-- user-triggered filling of selected fields;
-- local recording of which URL used which profile field types;
-- an options page for profile fields, custom field definitions, settings, and
-  site-field history;
-- conservative detection of states that appear to require a manual human step;
-- re-scanning after user-driven page changes or dynamic form updates.
+## 5. Non-Scope
 
-## 5. v0.1 Non-Scope
-
-v0.1 does not include:
-
-- automatic form submission;
-- automatic account registration;
-- automatic address changes across multiple websites;
-- automatic contract modification;
-- CAPTCHA solving, CAPTCHA bypass, or CAPTCHA outsourcing;
-- MFA, bot-detection, rate-limit, paywall, or access-control bypass;
-- automatic acceptance of terms, policies, contracts, or consent checkboxes;
-- password manager functionality;
-- credit card storage;
-- cloud sync;
-- Google Drive or Dropbox integration;
-- backend API servers;
-- mobile apps;
-- iOS app autofill or Android Autofill Service;
-- BYOC deployment, Terraform automation, or Cloudflare Browser Run integration;
-- autonomous browser AI agents;
-- LLM-based field classification.
+- checkout / purchase / payment (except the approved free-trial→subscription card case);
+- **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls;
+- auto-submitting on sites whose terms prohibit automated account creation (fill only);
+- auto-attesting eligibility / identity statements;
+- multi-locale form detection in the PoC (PoC is Japanese-only);
+- cloud sync, backend API servers, telemetry;
+- mobile apps, iOS app autofill, Android Autofill Service;
+- using any AI provider other than the user's configured one.
 
 ## 6. Functional Requirements
 
 | ID | Requirement | Priority | Status |
 | --- | --- | --- | --- |
-| REQ-001 | The extension can store and edit basic profile fields locally. | Must | Implemented |
-| REQ-002 | The content script can detect visible `input`, `textarea`, and `select` fields on the active page. | Must | Planned |
-| REQ-003 | Field detection uses inspectable rules based on `autocomplete`, `name`, `id`, `placeholder`, associated labels, and nearby text. | Must | Planned |
-| REQ-004 | The extension shows suggestions before filling any value. | Must | Planned |
-| REQ-005 | The extension fills values only after explicit user action. | Must | Planned |
-| REQ-006 | The extension never clicks submit, register, apply, purchase, agree, or final-confirmation controls automatically. | Must | Planned |
-| REQ-007 | The extension can detect common manual-step signals and pause assistance for that step. | Should | Planned |
-| REQ-008 | The user can re-scan the page after completing a manual step or after dynamic form changes. | Must | Planned |
-| REQ-009 | The extension records local site-field history for the URL and profile field types used. | Should | Planned |
-| REQ-010 | The options page supports profile fields, custom field definitions, settings, and site-field history management. | Must | Planned |
+| REQ-001 | Store and edit the user's personal data locally, **encrypted at rest**. | Must | Planned |
+| REQ-002 | Store credit card data (incl. CVV) and per-site credentials, encrypted, with CVV treated as most sensitive. | Must | Planned |
+| REQ-003 | Given a URL, find the registration page and analyze the form (Playwright). | Must | Planned |
+| REQ-004 | Map form fields to stored data (deterministic and AI-driven variants). | Must | Planned |
+| REQ-005 | Prompt for missing fields and save them as new reusable fields. | Must | Planned |
+| REQ-006 | Show a review-and-confirm gate before submitting; submit only on user approval. | Must | Planned |
+| REQ-007 | Apply the three guards (high-risk clause escalation, payment stop with free-trial exception, no auto-attestation). | Must | Planned |
+| REQ-008 | On auto-creation-prohibited sites, fill only and let the user submit. | Must | Planned |
+| REQ-009 | Detect CAPTCHA / MFA / verification walls; never bypass; hand off and resume in the same session. | Must | Planned |
+| REQ-010 | Keep a per-site inventory and an authorization record (mandate) per registration. | Must | Planned |
+| REQ-011 | Bulk-update selected sites by diffing against the latest stored values. | Must | Planned |
+| REQ-012 | Use the user's configured AI provider only; never send raw personal values to the model. | Must | Planned |
 
 ## 7. Non-Functional Requirements
 
-These requirements describe qualities expected from v0.1. Numeric targets may
-be refined after implementation benchmarks exist.
-
-Detailed security and privacy decisions, threat model, and permission review
-rules live in [`security.md`](security.md). This section records the
-requirement-level statements; the rationale and review notes belong there.
+Detailed security and privacy decisions live in [`security.md`](security.md). This
+section records requirement-level statements.
 
 | ID | Category | Requirement | Target |
 | --- | --- | --- | --- |
-| PERF-001 | Performance | Form scanning should feel immediate on ordinary contact and registration forms. | Avoid noticeable UI delay on small to medium forms. |
-| PERF-002 | Performance | Re-scanning should be scoped to page form state and should not require full page reloads when avoidable. | User can continue after dynamic updates. |
-| AVAIL-001 | Availability | Core profile storage and suggestion behavior should work without network access. | No backend dependency for v0.1. |
-| PRIV-001 | Privacy | Profile data must remain local by default. | No external profile upload in v0.1. |
-| SEC-001 | Security | Passwords and credit card data must not be stored. | Unsupported field categories in v0.1. |
-| SEC-002 | Security | The extension must not bypass CAPTCHA, MFA, bot detection, access controls, or consent mechanisms. | Pause and guide the user instead. |
-| USE-001 | Usability | The user must be able to inspect suggestions before filling. | No hidden fill behavior. |
-| MAINT-001 | Maintainability | Field classification and manual-step detection should be isolated and testable. | Avoid scattering DOM rules across UI code. |
+| SEC-001 | Security | Personal data (incl. card data and credentials) is encrypted at rest with AES-256-GCM under a master-passphrase-derived key. | No plaintext at rest; derived key in memory only. |
+| SEC-002 | Security | Never bypass CAPTCHA, MFA, bot detection, or access controls. | Detect and hand off to the user. |
+| SEC-003 | Security | Raw personal values are not sent to the AI model; only form structure / terms text. | Structure to model, values local. |
+| PRIV-001 | Privacy | No network egress except to the user's configured AI provider; no telemetry. | Local-first. |
+| PRIV-002 | Privacy | No provider stateful features (prompt caching of PII, stored threads, memory). | Stateless requests; zero-retention where available. |
+| SAFE-001 | Safety | Registrations submit only after the user approves the review-and-confirm gate. | No blind auto-submit. |
+| PERF-001 | Performance | Form analysis and filling should complete without excessive delay on ordinary forms. | Usable per-site latency. |
+| MAINT-001 | Maintainability | Field classification, wall detection, and storage/encryption are isolated and testable. | No scattered DOM or crypto logic. |
+| PORT-001 | Portability | Automation works across Chromium / Firefox / WebKit via Playwright. | No single-engine dependency. |
 
 ## 8. Use Cases
 
-### UC-001: Fill a Basic Contact Form
+### UC-001: Register on a New Site
 
-The user opens a contact form, reviews suggested values for name, email, phone,
-company, and message-related fields, selects the fields to fill, and manually
-submits the form after checking the result.
+The user gives a URL. The agent finds the registration page, fills the form from the
+store, prompts for anything missing, shows the review-and-confirm gate, and on approval
+submits and records the result.
 
-### UC-002: Fill a Form With Japanese Labels
+### UC-002: High-Risk Terms Surfaced
 
-The user opens a Japanese form containing labels such as `氏名`, `住所`, `会社名`,
-and `部署`. The extension maps these to local profile fields where rules are
-clear enough, then asks the user to confirm before filling.
+A registration's terms include an auto-renewing subscription. The agent surfaces it in
+the gate; the user decides. If approved (free-trial→subscription), the card is auto-filled.
 
-### UC-003: Continue After a Manual Step
+### UC-003: Site Prohibits Automated Account Creation
 
-The user reaches a page with CAPTCHA, MFA, terms confirmation, or a final
-confirmation step. The extension pauses assistance, prompts the user to complete
-the step manually, then re-scans the page and resumes suggestions for any
-remaining ordinary fields.
+The agent fills the data but does not submit; it explains the restriction and the user
+presses the final button.
 
-### UC-004: Manage Profile Data
+### UC-004: Hand-off at a Wall
 
-The user opens the options page, adds or updates profile values, removes data
-they no longer want to store, and optionally adds a custom field definition for
-future form matching.
+Registration reaches a CAPTCHA or MFA step. The agent pauses, the user resolves it in the
+same browser window, and the agent resumes automatically.
 
-### UC-005: Review Site-Field History
+### UC-005: Bulk Update After a Change
 
-The user reviews locally stored history showing which field types were used on a
-URL, so future matching can become more useful without sending the history to a
-server.
+The user updates their address in the store, selects affected sites, and runs the bulk
+update; the agent diffs and updates the changed field on each site, handing off at any
+walls.
+
+### UC-006: Manage Personal Data
+
+The user opens the data-management UI to add, edit, or delete fields (including card data
+and credentials) and set the AI provider API key.
 
 ## 9. Field Detection Requirements
 
-Field detection starts with rule-based matching. The classifier should inspect:
+Two variants are built and compared (RFC §8):
 
-- `autocomplete`;
-- `name`;
-- `id`;
-- `placeholder`;
-- associated `label` text, including labels linked by `for`;
-- labels that wrap controls;
-- nearby visible text when it can be collected without brittle page-specific
-  logic.
+1. **Deterministic** — reuse the scanner and rule-based classifier, inspecting
+   `autocomplete`, `name`, `id`, `placeholder`, associated and wrapping `label` text, and
+   safely collectible nearby text. Examples: `autocomplete="email"` → email; `住所` →
+   address; `会社名` → company.
+2. **AI-driven** — the model receives form structure and returns a mapping plan; values
+   are filled locally.
 
-Initial examples:
+The PoC measures success and mis-mapping rates for both, Japanese-only. Ambiguous fields
+should be low-confidence or deferred to the user, not guessed with false confidence.
 
-- `autocomplete="email"` maps to email address.
-- `autocomplete="tel"` maps to phone number.
-- `name` or `id` containing `email` maps to email address.
-- `name` or `id` containing `tel` or `phone` maps to phone number.
-- `name` or `id` containing `zip` or `postal` maps to postal code.
-- Japanese labels or placeholders containing `住所` map to address.
-- Japanese labels or placeholders containing `会社名` map to company name.
-- Japanese labels or placeholders containing `部署` map to department name.
+## 10. Wall Detection Requirements
 
-The classifier should prefer useful suggestions over pretending to be certain.
-Ambiguous fields should be shown as low-confidence suggestions or left for the
-user to fill manually.
-
-## 10. Manual-Step Detection Requirements
-
-Manual-step detection should be conservative and UI-oriented. It may recognize:
-
-- visible CAPTCHA text or common CAPTCHA containers;
-- one-time password or MFA-like fields;
-- consent, terms, policy, or agreement checkboxes;
-- disabled submit buttons waiting for user action;
-- final confirmation pages or controls;
-- page transitions or dynamically rendered follow-up forms after user action.
-
-Detection must not become adversarial. It must not solve, bypass, obscure, or
-outsource CAPTCHA, MFA, bot detection, access controls, or consent mechanisms.
-When uncertain, the extension should prefer prompting the user or doing nothing
-over taking a risky action.
+Wall detection is conservative and exists only to hand off, never to circumvent. It may
+recognize CAPTCHA widgets / text, OTP / MFA fields, and verification wording. It must not
+solve, bypass, obscure, or outsource any anti-abuse mechanism; when uncertain, it stops
+and asks the user.
 
 ## 11. Dynamic Schema Direction
 
-The long-term direction is to support custom fields and site-specific schema
-learning. Different websites may ask for industry, department, invoice address,
-contract owner, tax identifier, or other fields that are not part of the basic
-profile.
-
-v0.1 should leave room for that direction by keeping field definitions typed and
-stored behind a small abstraction. It should not introduce a complex schema
-engine, remote configuration service, or AI-based classifier before a simple
-local model has proven useful.
+When a form needs a field not in the store, the agent prompts the user and adds it as a
+new reusable field. Keep field definitions typed and behind a small abstraction; do not
+build a heavy schema engine early.
 
 ## 12. Glossary
 
 | Term | Definition |
 | --- | --- |
-| Profile field | A locally stored value such as name, email, phone number, address, company name, or department name. |
-| Field detection | The process of finding form controls on the current page and collecting useful metadata about them. |
-| Field classification | The process of mapping a detected form control to a likely profile field type. |
-| Suggestion | A user-visible proposed value for a detected field. |
-| Fill | Writing a selected profile value into a page field after explicit user action. |
-| Manual step | A page state requiring human judgment or identity action, such as CAPTCHA, MFA, terms confirmation, or final submission. |
-| Site-field history | Local history of which field types were used on a URL. |
+| Personal data field | A locally stored, encrypted value (name, address, phone, email, card data, per-site credential, or a custom field). |
+| Field detection | Finding form controls and collecting metadata about them. |
+| Field classification | Mapping a detected control to a stored field type (deterministic or AI-driven). |
+| Review-and-confirm gate | The single post-analysis approval the user gives before the agent submits a registration. |
+| Three guards | High-risk clause escalation, payment stop (free-trial exception), and no auto-attestation. |
+| Wall | A step that cannot/should not be automated: CAPTCHA, MFA, identity / email / SMS verification. |
+| Mandate | A per-registration authorization record of what the user approved (references, hashes, terms URL). |
+| Per-site record | Local record of what was submitted to a site (references + hashes, not duplicated raw values). |

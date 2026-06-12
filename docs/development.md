@@ -1,10 +1,15 @@
 # Development
 
 This document owns **local development workflow, repository layout,
-implementation conventions, and the canonical quality gate list** for
-`formfill-assistant`.
+implementation conventions, and the canonical quality gate list** for `autofill`.
 
-Out of scope here: extension architecture (see [`extension.md`](extension.md)),
+> **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
+> autonomous agent (Playwright-based; see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
+> The MV3-extension build / layout / command details below are historical and are being
+> updated alongside the PoC implementation (#33). General conventions (small reviewable
+> changes, quality gates before committing, fake data only) still apply.
+
+Out of scope here: application architecture (see [`extension.md`](extension.md)),
 product requirements (see [`requirements.md`](requirements.md)), test strategy
 (see [`testing.md`](testing.md)), and GitHub workflow rules (see
 [`github-operations.md`](github-operations.md)).

@@ -9,188 +9,202 @@ It is intentionally split into two parts:
 
 When creating or updating `CLAUDE.md`, reuse the shared sections and replace the Codex-specific section with Claude Code-specific guidance.
 
+> **Direction change (2026-06-12).** The project has pivoted from a Chrome-extension,
+> human-in-the-loop form *assistant* to **`autofill`**: a local-first, **autonomous
+> AI agent** that stores the user's full personal data and registers / updates the
+> user's accounts on their behalf. The canonical design is
+> [`docs/rfc/rfc-001-chrome-autofill-pivot.md`](docs/rfc/rfc-001-chrome-autofill-pivot.md)
+> (RFC-001 v3). This file reflects that direction. Sections that previously described
+> an MV3 extension, human-in-the-loop filling, or "do not store passwords / cards"
+> have been intentionally replaced; their history is in git.
+
 ---
 
 # Shared Agent Instructions
 
 ## Project Overview
 
-`formfill-assistant` is a local-first Chrome extension for user-confirmed, human-in-the-loop form filling.
+`autofill` is a **local-first, autonomous form-filling agent** for personal use.
 
-The extension detects form fields on the current web page, suggests values from locally managed profile data, and fills selected fields only after explicit user action.
+The user stores their personal data locally (encrypted). When the user gives a URL,
+the agent finds the registration page on that site, fills the form, and completes the
+registration on the user's behalf after a single review-and-confirm step. The agent
+also keeps a per-site inventory of what was submitted and can update the user's
+information across many sites when their data changes.
 
-The project starts as a personal tool for reducing repetitive form entry on websites and contract-related forms. It may later grow toward business and contract-form assistance, but the initial priority is to complete a small, usable Chrome extension.
+The project starts as a personal tool. Browser automation is performed with
+**Playwright** so the agent is not tied to one browser engine (Chromium / Firefox /
+WebKit).
 
 ## Product Principles
 
-- Start with a small, working Chrome extension.
-- Prefer user-confirmed assistance over autonomous automation.
-- Design the product around human-in-the-loop interaction.
-- Let the user handle any step that requires judgment, consent, identity verification, CAPTCHA, MFA, or manual confirmation.
-- After the user completes a manual step, resume assistance by re-detecting the current form state.
-- Do not auto-submit forms.
-- Do not bypass CAPTCHA, bot detection, rate limits, MFA, paywalls, or access controls.
-- Do not store passwords in the initial version.
-- Do not store credit card information in the initial version.
-- Keep user data local in the initial version.
-- Avoid backend services until they are clearly necessary.
-- Prefer deterministic, inspectable form-matching logic before introducing AI.
-- Treat personal information and contract-related information as sensitive by default.
+- Build a small, working autonomous agent the user can run locally.
+- Keep the user's personal data **local and encrypted**; the user owns and manages it.
+- Give the AI agent maximum autonomy; minimize required human intervention.
+- The agent may auto-fill and auto-submit registrations after the user approves a
+  single review-and-confirm gate; it may accept terms and complete the final submit
+  on the user's behalf within that approval.
+- **Never bypass CAPTCHA, MFA, bot detection, rate limits, paywalls, or access
+  controls.** These are the unavoidable hand-off points to the human (see below).
+- Do not perform checkout / payment. Exception: a free-trial-that-becomes-a-paid-
+  subscription is surfaced as a high-risk item, and the card is filled only on the
+  user's explicit approval.
+- Prefer deterministic, inspectable form-matching logic; also evaluate an AI-driven
+  variant and compare accuracy.
+- Keep network egress to the user's own AI provider only; no telemetry, no other
+  external services.
+- Treat all stored personal data (including card data and per-site credentials) as
+  sensitive by default.
 
-## Human-in-the-Loop Model
+## Autonomy and Human Hand-off Model
 
-The product should assist the user without pretending to be the user or replacing required human actions.
+Human-in-the-loop is **no longer the core model**. The agent acts autonomously. Human
+intervention is limited to two cases:
 
-When a web page requires a human step, such as CAPTCHA, MFA, terms confirmation, identity verification, file upload confirmation, or final submission, the extension should:
+1. **Missing data**: when a form needs information not in the store, prompt the user
+   for that value and save it as a new field for reuse.
+2. **Walls that cannot be automated**: CAPTCHA, MFA / OTP, identity verification, and
+   email/SMS verification links. The agent **detects but never bypasses** these. It
+   hands off to the user in the **same headed Playwright session**, waits for the user
+   to resolve the step, then resumes automation from where it paused.
 
-1. stop automated filling activity for that step;
-2. clearly tell the user what action is needed;
-3. wait for the user to complete the action;
-4. re-scan the page after the user continues;
-5. resume suggestions only for remaining fillable fields.
+Registration uses a **review-and-confirm gate**: after the agent analyzes the form
+(but before submitting), it shows what will be submitted, the terms links, and any
+detected high-risk clauses. On the user's single approval, the agent fills, accepts
+ordinary terms, and submits.
 
-The extension must not attempt to solve, bypass, outsource, or obscure CAPTCHA and similar anti-abuse mechanisms.
+## Three Guards (registration safety)
 
-Human-in-the-loop behavior is not a fallback; it is a core product design principle.
+When delegating terms acceptance and final submit, the agent applies:
 
-## Initial Scope: v0.1
+1. **High-risk clause escalation**: detect clauses such as auto-renewing subscriptions,
+   mandatory arbitration, third-party data sharing/sale, or content licenses; surface
+   them in the gate and stop auto-acceptance for the user to decide. This also lowers
+   the cognitive load of long terms users would otherwise skip.
+2. **Payment stop (with one exception)**: if a registration form contains card /
+   payment fields, stop and hand off — except free-trial→subscription, which is shown
+   as a high-risk item and, only on approval, the card is auto-filled.
+3. **No auto-attestation**: do not auto-check eligibility/identity statements
+   ("I am 18+", residency, "I am authorized"); present them for the user to decide.
 
-v0.1 is a local-first Chrome extension for personal use.
+**Sites whose terms prohibit automated account creation**: fill the data only, do not
+auto-submit; explain the restriction and let the user press the final button.
 
-Planned features:
+## Initial Scope
 
-- Manage basic profile fields locally.
-  - full name
+Planned capabilities:
+
+- Local, encrypted store of the user's personal data:
+  - full name (incl. phonetic / romanized)
   - email address
   - phone number
-  - postal code
-  - address
-  - company name
-  - department name
-  - other manually defined fields
-- Detect form fields on the current web page.
-- Analyze `input`, `textarea`, and `select` elements.
-- Infer field meaning from attributes and surrounding text.
-  - `autocomplete`
-  - `name`
-  - `id`
-  - `placeholder`
-  - associated `label`
-  - nearby text
-- Show fill suggestions to the user.
-- Fill fields only after explicit user action.
-- Record which URL used which profile fields.
-- Provide an extension options page for managing profile data and settings.
-- Detect when the page likely requires a manual human step and prompt the user to complete it.
-- Re-scan the form after user-driven page changes, CAPTCHA completion, MFA completion, or dynamic form updates.
+  - postal code and address (home / work / shipping / billing)
+  - company name, department name
+  - **credit card number, expiry, holder, security code (CVV)**
+  - **per-site login ID and password**
+  - other dynamically added fields
+- Given a URL: find the registration page, map fields, fill, run the review-and-
+  confirm gate, and submit (subject to the three guards).
+- Per-site inventory of what was submitted (references + hashes, not duplicated raw
+  values) and an authorization record (mandate) of what the user approved.
+- Bulk update: select sites, diff against the latest stored values, and update the
+  changed fields on each site.
+- Settings, including the user's own AI provider API key.
+- Detect CAPTCHA / MFA / verification walls and hand off / resume seamlessly.
 
-## Explicitly Out of Scope for v0.1
+## Explicitly Out of Scope
 
-Do not implement these features unless the user explicitly changes the scope:
+Do not implement these unless the user explicitly changes the scope:
 
-- automatic form submission
-- automatic account registration
-- automatic address changes across multiple websites
-- automatic contract modification
-- CAPTCHA solving or CAPTCHA bypass
-- MFA bypass
-- bot detection bypass
-- automatic acceptance of terms or contracts
-- password manager functionality
-- credit card storage
-- cloud sync
-- Google Drive / Dropbox integration
-- backend API server
-- mobile apps
-- iOS app autofill
-- Android Autofill Service
-- BYOC deployment
-- Terraform automation
-- Cloudflare Browser Run integration
-- autonomous browser AI agents
+- checkout / purchase / payment (except the free-trial→subscription card case above)
+- **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls
+- multi-locale form detection in the PoC (PoC is Japanese-only; multi-locale is later)
+- cloud sync, backend API servers, telemetry
+- mobile apps, iOS app autofill, Android Autofill Service
+- using any AI provider other than the user's configured one
 
-## Candidate Tech Stack
+## Tech Stack
 
 Prefer this stack unless the repository has already standardized on something else:
 
 - TypeScript
-- Chrome Extension Manifest V3
-- HTML / CSS
-- React or Vanilla TypeScript for extension UI
-- `chrome.storage.local` or IndexedDB for local storage
-- Web Crypto API for future local encryption
-- Playwright for future end-to-end testing
+- **Playwright** for browser automation (agent runtime) **and** end-to-end tests —
+  chosen for browser-engine independence (Chromium / Firefox / WebKit).
+- Local encrypted storage (see Security below): Web Crypto API (AES-256-GCM) with a
+  memory-hard KDF (Argon2id; PBKDF2-HMAC-SHA-512 as a Web-Crypto-only fallback).
+- AI providers: **Anthropic** (Claude Opus / Sonnet / Haiku) and **OpenAI**
+  (GPT-5.4 / GPT-5.4-mini / GPT-5.3-Codex), behind a provider-abstraction layer.
+- HTML / CSS and TypeScript (Vanilla or a framework) for the local UI.
 
-If introducing a framework, build tool, package manager, or test runner, document the reason and update the relevant docs.
+If introducing a framework, build tool, package manager, or test runner, document the
+reason and update the relevant docs.
 
 ## Expected Architecture
 
-Canonical Chrome extension architecture and component responsibilities live in [`docs/extension.md`](docs/extension.md). Repository file layout lives in [`docs/development.md`](docs/development.md).
+Canonical architecture lives in [`docs/extension.md`](docs/extension.md) and the RFC.
+In short, `autofill` is a **local Playwright-based application** with four layers:
 
-In short, v0.1 is a Manifest V3 extension with four boundaries: content script, background service worker, options page, and a storage abstraction. Keep new code aligned with the boundaries defined in [`docs/extension.md`](docs/extension.md).
+- **store layer**: encrypted personal data, per-site records, mandates;
+- **agent layer**: the user's AI (form discovery, field mapping, high-risk clause
+  detection) — receives form structure, not raw values;
+- **automation layer**: Playwright drives a (headed) browser to navigate, fill, submit,
+  observe, and hand off / resume across Chromium / Firefox / WebKit;
+- **UI layer**: personal-data management, per-site inventory, the review-and-confirm
+  gate, and settings (API key).
 
 ## Field Detection Strategy
 
-Start with rule-based field detection. Do not introduce LLM-based classification for v0.1.
+Two variants are built and compared (see RFC §8):
 
-Examples:
+1. **Deterministic**: reuse the existing scanner (`scanFields`) and rule-based
+   classifier to map fields (`autocomplete`, `name`, `id`, `placeholder`, `label`,
+   nearby text). Examples: `autocomplete="email"` → email; `住所` label → address.
+2. **AI-driven**: the model receives the form structure and returns a mapping plan;
+   the automation layer fills the values locally.
 
-- `autocomplete="email"` -> email address
-- `autocomplete="tel"` -> phone number
-- `name` or `id` contains `email` -> email address
-- `name` or `id` contains `tel` / `phone` -> phone number
-- `placeholder` contains `住所` -> address
-- `label` contains `会社名` -> company name
-- `label` contains `部署` -> department name
-- `name` or `id` contains `zip` / `postal` -> postal code
+The PoC measures success rate and mis-mapping rate of both, Japanese-only.
 
-The goal is not perfect automatic classification. The goal is useful suggestions while keeping the user in control.
+## Wall Detection Strategy (CAPTCHA / MFA / verification)
 
-## Manual-Step Detection Strategy
-
-For v0.1, manual-step detection should be conservative and UI-oriented.
-
-The extension may recognize common signs that user action is needed, such as:
-
-- CAPTCHA containers or visible CAPTCHA text
-- MFA / one-time password fields
-- confirmation checkboxes for terms or consent
-- disabled fields or submit buttons waiting for user action
-- page transitions after user action
-- dynamically rendered follow-up forms
-
-When such states are detected, the extension should guide the user instead of attempting to complete the step.
-
-Avoid brittle or adversarial logic. This feature is for improving UX, not circumventing site protections.
+Detection is conservative and never adversarial — it exists to hand off to the human,
+not to circumvent anything. Signals: known CAPTCHA widgets (reCAPTCHA / hCaptcha /
+Turnstile DOM markers and visible text), OTP/MFA field traits
+(`autocomplete="one-time-code"`, single-digit boxes, "認証コード" / "verification
+code"), and verification-page wording. When in doubt, stop and ask the human. The
+agent must never solve, bypass, outsource, or obscure these mechanisms.
 
 ## Dynamic Schema Direction
 
-The long-term product direction includes dynamic schema management.
-
-Different websites and business forms require different fields. The extension should eventually allow users to create custom field definitions when unknown fields are encountered.
-
-Do not over-engineer this in v0.1. Prefer a simple data model that can evolve later.
+Different sites need different fields. When a form needs a field not in the store,
+prompt the user and add it as a new field for reuse. Keep field definitions typed and
+behind a small abstraction; do not over-engineer a schema engine early.
 
 ## Security and Privacy Requirements
 
-Canonical security and privacy decisions, threat model, sensitive data handling, and permission review rules live in [`docs/security.md`](docs/security.md). Non-functional security and privacy requirements live in [`docs/requirements.md`](docs/requirements.md) §7.
+Canonical security and privacy decisions live in [`docs/security.md`](docs/security.md).
+Requirement-level statements live in [`docs/requirements.md`](docs/requirements.md) §7.
 
 Non-negotiable rules for agent sessions:
 
-- Store profile data locally only; do not send it to external services and do not add telemetry.
-- Do not store passwords or credit card data.
-- Do not auto-submit forms or auto-accept terms, policies, contracts, or consent checkboxes.
-- Do not bypass CAPTCHA, MFA, bot detection, or access controls.
-- Fill only fields the user has selected.
-- Keep extension permissions as narrow as possible and document any permission added or changed in `manifest.json`.
+- Store all personal data **locally and encrypted**; never send it to any service other
+  than the user's configured AI provider, and add no telemetry.
+- **Minimize disclosure to the AI model**: send form structure / terms text, not raw
+  personal values; do not use provider stateful features (prompt caching of PII, stored
+  threads, memory).
+- Encrypt at rest with AES-256-GCM under a key derived from a master passphrase
+  (Argon2id / PBKDF2-SHA-512). The derived key stays in memory only. Treat the card
+  security code (CVV) as the most sensitive field.
+- **Never bypass CAPTCHA, MFA, bot detection, or access controls.** Detect and hand off.
+- Only submit a registration after the user approves the review-and-confirm gate; apply
+  the three guards; do not auto-submit on auto-creation-prohibited sites.
+- Do not auto-attest eligibility/identity statements.
+- Do not commit secrets, local state, real personal data, or AI review artifacts.
 
 ## User-Facing Documentation Policy
 
-`README.md` should be written primarily for users, not implementation agents.
-
-Keep detailed development guidance, architecture notes, tech stack decisions, testing strategy, and implementation constraints in `AGENTS.md` and `docs/` files.
-
-If a technical detail is useful only for development, prefer documenting it outside `README.md`.
+`README.md` should be written primarily for users, not implementation agents. Keep
+detailed development guidance, architecture, tech-stack decisions, testing strategy, and
+implementation constraints in `AGENTS.md`, `CLAUDE.md`, and `docs/`.
 
 ## Repository Documents
 
@@ -198,8 +212,9 @@ Use these documents when present:
 
 - `README.md`: user-facing product overview, usage, limitations, and security notes
 - `docs/README.md`: documentation index and ownership guide
+- `docs/rfc/rfc-001-chrome-autofill-pivot.md`: **canonical product direction (RFC-001 v3)**
 - `docs/requirements.md`: product requirements
-- `docs/extension.md`: Chrome extension architecture and design notes
+- `docs/extension.md`: application architecture and design notes
 - `docs/development.md`: setup, commands, and workflow
 - `docs/testing.md`: testing strategy
 - `docs/security.md`: security review notes
@@ -212,7 +227,8 @@ Update docs when behavior, setup, commands, architecture, or security assumption
 
 ## Development Workflow
 
-Branch naming, Issue workflow, commit conventions, PR descriptions, review expectations, and merge policy live in [`docs/github-operations.md`](docs/github-operations.md). The implementation plan template is `.github/ISSUE_TEMPLATE/implementation-plan.md`.
+Branch naming, Issue workflow, commit conventions, PR descriptions, review expectations,
+and merge policy live in [`docs/github-operations.md`](docs/github-operations.md).
 
 Quick reminders for agent sessions:
 
@@ -223,21 +239,17 @@ Quick reminders for agent sessions:
 
 ## Local AI Review
 
-This repository may use a local Git `post-commit` hook for cross-AI review.
+This repository may use a local Git `post-commit` hook for cross-AI review. Setup,
+branch rules, skip conditions, and cleanup live in
+[`docs/local-ai-review.md`](docs/local-ai-review.md).
 
-Setup, branch rules, skip conditions, follow-up policy, cleanup policy, and troubleshooting live in [`docs/local-ai-review.md`](docs/local-ai-review.md).
-
-Key points for agent sessions:
-
-- The hook is opt-in. Do not assume it has run unless you have verified it in the current environment.
-- Use `[skip-review]` in a commit message only when [`docs/local-ai-review.md`](docs/local-ai-review.md) allows it.
+- The hook is opt-in. Do not assume it has run unless verified in the current environment.
+- Use `[skip-review]` only when [`docs/local-ai-review.md`](docs/local-ai-review.md) allows it.
 - Treat hook output under `state/ai-reviews/` as local state. Do not commit it.
 
 ## Quality Gates
 
 The canonical quality gate definitions live in [`docs/development.md`](docs/development.md).
-
-Rules:
 
 - Run the gates documented there before committing code changes.
 - Documentation-only changes may skip code-level gates when no generated output is affected.
@@ -245,27 +257,23 @@ Rules:
 
 ## Implementation Guidance
 
-- Prefer simple, deterministic logic for v0.1.
-- Keep DOM parsing logic isolated and testable.
-- Keep manual-step detection separate from field classification.
-- Keep storage access behind a small abstraction.
-- Keep profile field definitions typed.
-- Avoid coupling page content scripts directly to storage internals.
-- Avoid broad global CSS that may break host pages.
-- Be careful when injecting UI into arbitrary websites.
-- Prefer explicit user actions for filling fields.
-- Never implement hidden or automatic submission behavior.
-- Never implement CAPTCHA solving, CAPTCHA bypass, or MFA bypass.
-- After user-driven page changes, support re-scanning rather than forcing a full reload when feasible.
+- Prefer simple, deterministic logic where it suffices; reserve AI for form understanding.
+- Keep DOM parsing / field classification isolated and testable.
+- Keep wall detection (CAPTCHA / MFA) separate from field classification.
+- Keep storage access behind a small, encrypted abstraction; never log decrypted values.
+- Keep personal-data field definitions typed.
+- Keep raw personal values out of AI requests; pass structure and substitute locally.
+- Never implement CAPTCHA solving / bypass, MFA bypass, or bot-detection evasion.
+- Make the review-and-confirm gate and the three guards explicit and testable.
+- Support pausing on a wall and resuming in the same browser session.
 
 ## Manual Testing Expectations
 
-Test strategy and test-type matrix live in [`docs/testing.md`](docs/testing.md).
-The browser-based manual checklist lives in [`docs/manual-test.md`](docs/manual-test.md).
-
-When a change affects extension loading, content script DOM interaction, injected UI, selected filling, manual-step prompts, permissions, or observable storage behavior, run the relevant items from [`docs/manual-test.md`](docs/manual-test.md) against fixtures.
-
-Use fake profile data during tests.
+Test strategy lives in [`docs/testing.md`](docs/testing.md); the manual checklist in
+[`docs/manual-test.md`](docs/manual-test.md). When a change affects form detection,
+filling, submission, the review-and-confirm gate, the three guards, wall hand-off, or
+storage/encryption behavior, run the relevant items against the local test sites. Use
+**fake data only**.
 
 ---
 
@@ -273,13 +281,14 @@ Use fake profile data during tests.
 
 ## Role of Codex in This Repository
 
-Codex should act as an implementation-focused coding agent.
+Codex should act as an implementation-focused coding agent for the autonomous `autofill`
+agent, respecting the local-first, encrypted-storage, and never-bypass-walls principles
+above.
 
 Primary responsibilities:
 
 - read the repository instructions before editing
-- make small, coherent code changes
-- keep implementation aligned with `README.md` and this file
+- make small, coherent code changes aligned with the shared sections and RFC-001 v3
 - update documentation when behavior or commands change
 - run available checks when feasible
 - clearly report what was changed and what was not verified
@@ -291,36 +300,31 @@ Primary responsibilities:
 - Respect sandbox and approval requirements for network, GUI, or destructive operations.
 - Prefer repository-local patterns and documented commands over ad hoc tooling.
 - Do not add new dependencies without a clear reason.
-- Do not introduce backend services, AI agents, cloud sync, or browser automation services unless explicitly requested.
-- Do not broaden Chrome extension permissions without documenting the need.
+- Do not add AI providers beyond the user's configured set, cloud sync, telemetry, or a
+  backend server unless explicitly requested.
+- Do not weaken encryption, log decrypted values, or send raw personal data to the model.
 - Do not use real user data when creating examples, tests, or fixtures.
 
 ## Codex Response Expectations
 
-When finishing a task, report:
-
-- files changed
-- important implementation choices
-- tests or checks run
-- checks not run and why
-- any follow-up work that remains
-
-Keep final summaries concise and factual.
+When finishing a task, report: files changed, important implementation choices, tests or
+checks run, checks not run and why, and any follow-up work. Keep summaries concise.
 
 ## Codex Safety Notes
 
-Codex must not implement features that silently perform high-impact actions, including:
+The product intentionally automates registration on the user's behalf. Codex **may**
+implement: auto-fill, the review-and-confirm gate, delegated terms acceptance and final
+submit after that approval, encrypted storage of personal data including card data and
+credentials, and seamless wall hand-off / resume.
 
-- submitting forms
-- accepting terms
-- creating accounts
-- changing account settings
-- purchasing products or services
-- modifying contracts
-- uploading personal data to external services
-- solving or bypassing CAPTCHA
-- bypassing MFA or bot detection
+Codex **must not** implement, even here:
 
-If a requested change appears to move toward those behaviors, pause and clarify the safety boundary before implementing.
+- bypassing or solving CAPTCHA, MFA, bot detection, rate limits, or access controls;
+- checkout / payment beyond the approved free-trial→subscription card case;
+- auto-submitting on sites whose terms prohibit automated account creation;
+- auto-attesting eligibility/identity statements;
+- sending raw personal values to the AI model or any non-provider service;
+- storing data unencrypted or logging decrypted values.
 
-Codex may implement human-in-the-loop UX that pauses, prompts the user, and resumes assistance after the user completes a required manual step.
+If a requested change moves toward those behaviors, pause and clarify the safety boundary
+before implementing.

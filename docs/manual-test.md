@@ -1,7 +1,12 @@
 # Manual Test
 
-This document owns the **browser-based manual test checklist** for
-`formfill-assistant`.
+This document owns the **browser-based manual test checklist** for `autofill`.
+
+> **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
+> autonomous agent (see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
+> The MV3-extension checklist below is historical. A new checklist (registration, the
+> review-and-confirm gate, the three guards, wall hand-off / resume, encrypted store) is
+> being written alongside the PoC implementation (#33). The fake-data-only rule still applies.
 
 Out of scope here: the overall test strategy and test-type matrix (see
 [`testing.md`](testing.md)), and the canonical command list (see
