@@ -48,8 +48,9 @@ WebKit).
   user's explicit approval.
 - Prefer deterministic, inspectable form-matching logic; also evaluate an AI-driven
   variant and compare accuracy.
-- Keep network egress to the user's own AI provider only; no telemetry, no other
-  external services.
+- Limit network egress to the target sites the user acts on and the user's own AI
+  provider; no telemetry, no cloud sync, no other external services; never upload the
+  data store.
 - Treat all stored personal data (including card data and per-site credentials) as
   sensitive by default.
 
@@ -183,8 +184,9 @@ Requirement-level statements live in [`docs/requirements.md`](docs/requirements.
 
 Non-negotiable rules for agent sessions:
 
-- Store all personal data **locally and encrypted**; never send it to any service other
-  than the user's configured AI provider, and add no telemetry.
+- Store all personal data **locally and encrypted**. It leaves the machine only as form
+  submissions to the target sites the user acts on, and never as raw values to anything
+  else; do not upload the data store; add no telemetry.
 - **Minimize disclosure to the AI model**: send form structure / terms text, not raw
   personal values; do not use provider stateful features (prompt caching of PII, stored
   threads, memory).

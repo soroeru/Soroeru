@@ -36,7 +36,7 @@ Firefox / WebKit) rather than depending on one browser's autofill.
 - Never bypass CAPTCHA, MFA, bot detection, or access controls — detect and hand off.
 - No checkout / payment, except a free-trial→subscription card case approved by the user.
 - Prefer deterministic, inspectable matching; also evaluate an AI-driven variant.
-- Network egress only to the user's configured AI provider; no telemetry.
+- Network egress only to the target sites the user acts on and the user's configured AI provider; no telemetry; never upload the data store.
 - Treat all stored data (including card data and credentials) as sensitive.
 
 ## 3. Autonomy and Human Hand-off Model
@@ -112,7 +112,7 @@ section records requirement-level statements.
 | SEC-001 | Security | Personal data (incl. card data and credentials) is encrypted at rest with AES-256-GCM under a master-passphrase-derived key. | No plaintext at rest; derived key in memory only. |
 | SEC-002 | Security | Never bypass CAPTCHA, MFA, bot detection, or access controls. | Detect and hand off to the user. |
 | SEC-003 | Security | Raw personal values are not sent to the AI model; only form structure / terms text. | Structure to model, values local. |
-| PRIV-001 | Privacy | No network egress except to the user's configured AI provider; no telemetry. | Local-first. |
+| PRIV-001 | Privacy | Network egress only to the target sites the user acts on and the user's configured AI provider; no telemetry; the data store is never uploaded. | Local-first. |
 | PRIV-002 | Privacy | No provider stateful features (prompt caching of PII, stored threads, memory). | Stateless requests; zero-retention where available. |
 | SAFE-001 | Safety | Registrations submit only after the user approves the review-and-confirm gate. | No blind auto-submit. |
 | PERF-001 | Performance | Form analysis and filling should complete without excessive delay on ordinary forms. | Usable per-site latency. |

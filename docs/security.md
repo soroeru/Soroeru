@@ -19,8 +19,10 @@ see §6 / §9 / §10 / §10b). Requirement-level statements live in
 ## 1. Security Principles
 
 - Keep all personal data local and **encrypted at rest**; the user owns it.
-- The only external network destination is the user's configured AI provider. No
-  telemetry, analytics, crash reporting, cloud sync, or other services.
+- Network egress is limited to **(a) the target sites the user asks the agent to act on**
+  (the agent navigates, fills, and submits there) and **(b) the user's configured AI
+  provider** (form structure / terms text only, never raw personal values). No telemetry,
+  analytics, crash reporting, cloud sync, or any other destination.
 - **Minimize disclosure to the AI model**: send form structure / terms text, not raw
   personal values. Do not use provider stateful features (prompt caching of PII, stored
   threads, memory).
@@ -107,10 +109,12 @@ scheme. Exact formats are finalized at implementation (RFC §13 Q3).
 
 ## 6. Network And External Services
 
-The only allowed external destination is the user's configured AI provider. No telemetry,
-analytics, crash reporting, cloud sync, or remote classification. Adding any other
-destination requires an explicit issue updating requirements, this document, and the
-user-facing docs.
+Allowed external destinations are limited to: (a) the **target sites** the user asks the
+agent to register or update on (normal browser navigation and form submission), and
+(b) the user's **configured AI provider** (form structure / terms text only). No
+telemetry, analytics, crash reporting, cloud sync, or remote classification to any other
+service. The user's data store is never uploaded anywhere. Adding any other destination
+requires an explicit issue updating requirements, this document, and the user-facing docs.
 
 ## 7. Wall Safety Boundaries (non-negotiable)
 
@@ -163,7 +167,7 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - [ ] Personal data, card data (incl. CVV), credentials, and the API key are encrypted at rest
 - [ ] The derived key lives in memory only; decrypted values are never logged
 - [ ] Raw personal values are not sent to the AI model; no provider stateful features used
-- [ ] No network egress except to the user's configured AI provider; no telemetry
+- [ ] No network egress except to the target sites the user acts on and the configured AI provider; no telemetry; data store never uploaded
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
 - [ ] Auto-creation-prohibited sites are fill-only
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed

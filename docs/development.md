@@ -19,15 +19,19 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 - Keep changes small enough to review as one coherent behavior, document, or
   workflow update.
 - Prefer issue-driven branches named `<agent>/issue-<number>-<short-slug>`.
-- Keep product requirements, extension design, test strategy, and security
-  assumptions in the owning docs rather than repeating them in `README.md`.
-- Do not introduce frameworks, dependencies, backend services, AI classifiers,
-  or browser automation services without an explicit scope decision.
-- Do not broaden Chrome extension permissions without documenting the need.
-- Keep form detection, field classification, manual-step detection, storage,
-  and UI concerns separated so they can be tested independently.
-- Never implement automatic submission, terms acceptance, CAPTCHA bypass, MFA
-  bypass, or hidden high-impact actions.
+- Keep product requirements, application architecture, test strategy, and
+  security assumptions in the owning docs rather than repeating them in `README.md`.
+- Playwright browser automation and the user's configured AI provider are the
+  scope decision of RFC-001 v3; do not introduce *other* frameworks, dependencies,
+  backend services, cloud sync, telemetry, or AI providers without an explicit
+  scope decision.
+- Keep field detection, field classification, wall detection (CAPTCHA / MFA),
+  the encrypted store, and UI concerns separated so they can be tested independently.
+- Automatic submission and acceptance of ordinary terms are allowed **only** after
+  the user approves the review-and-confirm gate, subject to the three guards.
+- Never implement CAPTCHA / MFA / bot-detection bypass, auto-submit on
+  auto-creation-prohibited sites, auto-attestation of eligibility, sending raw
+  personal values to the AI model, or storing data unencrypted.
 
 ## 2. Environment Setup
 
