@@ -26,7 +26,7 @@ import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
 import { snapshotPage, waitForFields } from "./scan.js";
-import { detectWall, type HumanHandoff } from "./walls.js";
+import { detectWall, handoffInstruction, type HumanHandoff } from "./walls.js";
 
 const NEXT_BUTTON_RE = /次へ|確認画面へ|^確認する?$/;
 const FINAL_BUTTON_RE = /登録|送信|作成|開始|申し?込|保存/;
@@ -104,7 +104,7 @@ async function checkWall(snapshot: PageSnapshot, deps: AgentDeps): Promise<"clea
   if (!wall) return "clear";
   deps.log(`壁を検知: ${wall.kind} (${wall.evidence}) — 解決はせずユーザーへハンドオフします`);
   if (!deps.handoff) return "abort";
-  const outcome = await deps.handoff(wall, "この認証を完了し、よろしければ続行してください。");
+  const outcome = await deps.handoff(wall, handoffInstruction(wall));
   return outcome === "resolved" ? "clear" : "abort";
 }
 
