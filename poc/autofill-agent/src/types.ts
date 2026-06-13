@@ -236,6 +236,6 @@ export interface RegistrationMandate {
 
 /** Wall detection result (RFC-001 v3 §10b). Detect only; never solve or bypass. */
 export interface WallDetection {
-  kind: "captcha" | "mfa" | "email-verification";
+  kind: "captcha" | "mfa" | "email-verification" | "identity-verification";
   evidence: string;
 }
