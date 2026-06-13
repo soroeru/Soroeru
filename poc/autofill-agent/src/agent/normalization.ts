@@ -56,9 +56,12 @@ export function normalizeMappingPlan(plan: MappingPlan, fields: FormField[], cus
   }
 
   const checkboxes: CheckboxClassification[] = [];
+  const seenCheckboxFieldIds = new Set<string>();
   for (const box of plan.checkboxes) {
     if (!fieldIds.has(box.fieldId)) continue;
     if (!checkboxRoleSet.has(box.role)) continue;
+    if (seenCheckboxFieldIds.has(box.fieldId)) continue;
+    seenCheckboxFieldIds.add(box.fieldId);
     checkboxes.push({ fieldId: box.fieldId, role: box.role, label: box.label });
   }
 
@@ -79,6 +82,8 @@ export function normalizeTermsAnalysis(analysis: TermsAnalysis): TermsAnalysis {
 
   if (analysis.prohibitsAutoCreation && !flags.includes("no-auto-creation")) {
     flags.push("no-auto-creation");
+    const quote = analysis.evidence["no-auto-creation"];
+    if (quote) evidence["no-auto-creation"] = quote;
   }
 
   const normalized: TermsAnalysis = {

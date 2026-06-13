@@ -85,6 +85,7 @@ test("AI mapper drops invented keys, invalid transforms, and non-existent field 
       ],
       checkboxes: [
         { fieldId: "agree", role: "terms-consent", label: "利用規約に同意する" },
+        { fieldId: "agree", role: "optional-optin", label: "duplicate valid role" },
         { fieldId: "agree", role: "consent-ish", label: "invalid" },
       ],
       unmappedRequired: ["missing", "not-on-page"],

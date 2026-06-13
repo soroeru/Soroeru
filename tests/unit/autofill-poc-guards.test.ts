@@ -40,6 +40,17 @@ test("Q2c: automated account creation bans are detected", () => {
   assert.ok(!detectsAutoCreationBan("当社はアカウントの作成を歓迎します。"));
 });
 
+test("Q2c analysis surfaces auto-creation ban as a high-risk flag with evidence", () => {
+  const analysis = analyzeTermsDeterministic(
+    "自動化された手段（ボット、スクリプト、スクレイパー等）を用いたアカウントの作成を禁止します。",
+    "",
+    false,
+  );
+  assert.equal(analysis.prohibitsAutoCreation, true);
+  assert.ok(analysis.highRiskFlags.includes("no-auto-creation"));
+  assert.ok(analysis.evidence["no-auto-creation"]?.includes("アカウントの作成"));
+});
+
 test("analysis composes: trial conversion is surfaced as a high-risk flag", () => {
   const analysis = analyzeTermsDeterministic(
     "無料トライアル期間の終了後は、月額980円が自動的に課金されます。",
