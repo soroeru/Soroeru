@@ -11,6 +11,7 @@ import type {
   FilledFieldRecord,
   FormField,
   GateRequest,
+  HighRiskFlag,
   MappingEntry,
   PageLink,
   PageSnapshot,
@@ -391,7 +392,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
 
 export interface UpdateResult {
   siteId: string;
-  status: "updated" | "skipped" | "failed" | "manualHandoff";
+  status: "updated" | "skipped" | "declined" | "failed" | "manualHandoff";
   changedKeys: string[];
   planned: PlannedField[];
   notes: string[];
@@ -445,6 +446,69 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
     ...(entry.transform ? { transform: entry.transform } : {}),
   }));
 
+  const saveButton = snapshot.buttons.find((b) => FINAL_BUTTON_RE.test(b.text));
+  if (!saveButton) {
+    return { siteId, status: "failed", changedKeys: [...changedKeySet], planned, notes: ["保存ボタンが見つかりません"] };
+  }
+
+  const termsLinks = new Map<string, PageLink>();
+  for (const link of snapshot.links) {
+    if (TERMS_LINK_RE.test(link.text)) termsLinks.set(link.href, link);
+  }
+  let termsText = "";
+  for (const link of termsLinks.values()) termsText += `\n${await fetchVisibleText(link.href)}`;
+  const rawAnalysis = normalizeTermsAnalysis(await deps.mapper.analyzeTerms(termsText, snapshot.visibleText, hasCardFields(snapshot.fields)));
+  const analysis = {
+    ...rawAnalysis,
+    highRiskFlags: rawAnalysis.highRiskFlags.filter((flag): flag is HighRiskFlag => flag !== "no-auto-creation"),
+    prohibitsAutoCreation: false,
+  };
+  const attestations = step.checkboxes.filter((c) => c.box.role === "attestation");
+  const gateRequest: GateRequest = {
+    origin: new URL(page.url()).origin,
+    serviceName: record.serviceName,
+    fields: toFill.map(({ entry, field }) => {
+      const master = deps.store.getValue(entry.profileKey) ?? "";
+      return {
+        label: labelOf(field),
+        profileKey: entry.profileKey,
+        maskedValue: maskValue(entry.profileKey, applyTransform(master, entry.transform, view)),
+      };
+    }),
+    termsLinks: [...termsLinks.values()],
+    analysis,
+    attestations: attestations.map((a) => ({ fieldId: a.box.fieldId, label: a.box.label })),
+  };
+  deps.log(renderGate(gateRequest));
+  const decision = await deps.gate.decide(gateRequest);
+  const guard = evaluateGuards({ analysis, decision, hasCardFields: hasCardFields(snapshot.fields) });
+  const addUpdateMandate = (result: "updated" | RegistrationStatus): void => {
+    deps.store.addMandate(
+      buildMandate({
+        origin: gateRequest.origin,
+        submittedFieldKeys: planned.map((p) => p.profileKey),
+        ...(([...termsLinks.values()][0]?.href) ? { termsUrl: [...termsLinks.values()][0]!.href } : {}),
+        ...(termsText ? { termsText } : {}),
+        highRiskFlags: analysis.highRiskFlags,
+        attestationsApproved: attestations
+          .filter((a) => decision.attestationApprovals[a.box.fieldId])
+          .map((a) => a.box.label),
+        result,
+        audit: paymentAudit(analysis, hasCardFields(snapshot.fields), guard),
+      }),
+    );
+  };
+  if (guard.action === "declined") {
+    notes.push("更新前の確認ゲートで承認されなかったため中止しました");
+    return { siteId, status: "declined", changedKeys: [...changedKeySet], planned, notes };
+  }
+  if (guard.action === "stop-handoff") {
+    notes.push(`更新フォームで支払い項目を検知（判定: ${analysis.payment ?? "unknown"}）。自動進行を停止しハンドオフします`);
+    addUpdateMandate("manualHandoff");
+    await deps.store.save();
+    return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned, notes };
+  }
+
   const outcomes = await fillEntries(
     {
       page,
@@ -455,9 +519,18 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
     toFill.map((e) => e.entry),
   );
 
-  const saveButton = snapshot.buttons.find((b) => FINAL_BUTTON_RE.test(b.text));
-  if (!saveButton) {
-    return { siteId, status: "failed", changedKeys: [...changedKeySet], planned, notes: ["保存ボタンが見つかりません"] };
+  for (const { box } of step.checkboxes) {
+    if (box.role === "terms-consent") {
+      await setCheckbox(page, box.fieldId, true);
+      deps.log(`更新前ゲートに基づき通常の規約同意「${box.label}」をチェックしました`);
+    } else if (box.role === "attestation") {
+      if (shouldCheckAttestation(decision, box.fieldId)) {
+        await setCheckbox(page, box.fieldId, true);
+        deps.log(`ユーザーの明示判断により更新時の「${box.label}」をチェックしました`);
+      } else {
+        deps.log(`更新時の「${box.label}」はユーザー判断がないためチェックしません（ガード3）`);
+      }
+    }
   }
   await page.click(saveButton.selector);
   await page.waitForLoadState();
@@ -487,6 +560,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   record.status = "updated";
   record.lastUpdatedAt = Date.now();
   deps.store.upsertSiteRecord(record);
+  addUpdateMandate("updated");
   await deps.store.save();
   deps.log(`${siteId}: 差分 ${changed.length} 項目を更新しました`);
   return { siteId, status: "updated", changedKeys: [...changedKeySet], planned, notes };

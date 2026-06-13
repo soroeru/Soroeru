@@ -54,7 +54,7 @@ export interface MandateInput {
   termsText?: string;
   highRiskFlags: HighRiskFlag[];
   attestationsApproved: string[];
-  result: RegistrationStatus;
+  result: RegistrationStatus | "updated";
   audit: PaymentAudit;
 }
 

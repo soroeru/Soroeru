@@ -231,7 +231,7 @@ export interface RegistrationMandate {
   termsVersionHash?: string;
   highRiskFlags: HighRiskFlag[];
   attestationsApproved: string[];
-  result: RegistrationStatus;
+  result: RegistrationStatus | "updated";
   /** Payment-guard audit (REQ-010): classification when card fields were present. */
   payment?: PaymentClassification;
   /** Guard 2 stopped the run for payment and handed off to the user. */
