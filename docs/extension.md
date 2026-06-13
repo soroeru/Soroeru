@@ -50,6 +50,37 @@ autofill (local app)
 Keep shared logic — field classification, wall detection, the store/crypto boundary, and
 the provider abstraction — isolated so it can be tested outside a live browser.
 
+### 1.1 Layer seams and shared contracts (MAINT-001)
+
+The PoC (`poc/autofill-agent/`) is the reference implementation of these boundaries; this
+issue locks the seams there rather than rewriting them into `src/`. Promotion of the PoC
+into a product `src/` tree is tracked separately (see APP-001 / #43).
+
+The four layers communicate only through **typed contracts** declared in
+`poc/autofill-agent/src/types.ts`: `ProfileKey`, `Transform`, `PageSnapshot` /
+`FormField`, `MappingPlan`, `TermsAnalysis`, `WallDetection`, `GateRequest` /
+`GateDecision`, `SiteRecord` / `FilledFieldRecord`, and `RegistrationMandate`. No layer
+reaches across these types into another layer's internals.
+
+Two seams keep the deterministic and AI variants interchangeable and testable:
+
+- **`Mapper` seam** (`src/agent/mapper.ts`): `DeterministicMapper` and `AiMapper`
+  implement the same interface (`discoverRegistrationLink`, `mapFields`, `analyzeTerms`).
+  The orchestrator depends on the interface, so either variant can be swapped in and
+  measured against the same scenarios.
+- **Normalization seam** (`src/agent/normalization.ts`): every mapper output passes
+  through `normalizeMappingPlan` / `normalizeTermsAnalysis` before the agent acts on it.
+  This is the single place that drops invented keys, invalid transforms/roles, and
+  field ids that are not on the page, and that folds `prohibitsAutoCreation` /
+  `trial-subscription` into the high-risk flags. Both variants share it, so guard stop
+  conditions are identical regardless of which mapper produced the plan.
+
+**Cross-layer invariant (agent layer never sees raw values).** The agent layer receives
+only `PageSnapshot` structure (labels / `name` / `id` / type / options / nearby text) and
+terms text. Raw profile values are resolved from the decrypted store and injected by the
+automation layer at fill time — they never enter a mapper input or an AI prompt. This
+invariant is asserted in `tests/unit/autofill-poc-contracts.test.ts`.
+
 ## 2. Automation Layer (Playwright)
 
 - Playwright is the automation runtime **and** the test framework, chosen for
