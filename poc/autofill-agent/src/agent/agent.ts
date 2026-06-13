@@ -22,6 +22,7 @@ import type { CustomFieldDef } from "./classifier.js";
 import { findEditLink } from "./discovery.js";
 import { evaluateGuards, shouldCheckAttestation } from "./guards.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
+import { toFilledFieldRecords } from "./records.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
@@ -302,19 +303,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   }
 
   const record = (status: RegistrationStatus): void => {
-    const filledFields: FilledFieldRecord[] = filledOutcomes
-      .filter((o) => o.ok)
-      .map((o) => {
-        const plannedEntry = planned.find((p) => p.fieldName === o.fieldName && p.profileKey === o.profileKey);
-        const rec: FilledFieldRecord = {
-          profileKey: o.profileKey,
-          filledValueHash: sha256Hex(o.filledValue),
-          fieldName: o.fieldName,
-          filledAt: Date.now(),
-        };
-        if (plannedEntry?.transform) rec.transform = plannedEntry.transform;
-        return rec;
-      });
+    const filledFields: FilledFieldRecord[] = toFilledFieldRecords(filledOutcomes, planned);
     deps.store.upsertSiteRecord({
       origin: new URL(page.url()).origin,
       siteId: siteIdFromUrl(page.url()),
