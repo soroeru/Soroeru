@@ -19,13 +19,27 @@ import { CliGate } from "../src/agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../src/agent/mapper.js";
 import { DUMMY_PROFILE_SEED } from "../src/profile.js";
 import { PocStore } from "../src/store/store.js";
-import { formatResult, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
+import { formatResult, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = "state/autofill-poc";
 
 function aiMapperFromEnv(): Mapper | undefined {
   const provider = aiProviderFromEnv();
   return provider ? new AiMapper(provider) : undefined;
+}
+
+function mapperFor(variantArg: string): Mapper {
+  if (variantArg === "ai") {
+    const ai = aiMapperFromEnv();
+    if (!ai) throw new Error("AI版を使うには ANTHROPIC_API_KEY を設定してください（.env も可）");
+    return ai;
+  }
+  return new DeterministicMapper();
+}
+
+async function cmdDemo(variantArg: string, engineArg: string): Promise<void> {
+  const engine = (engineArg as EngineName) || "chromium";
+  await runDemo(mapperFor(variantArg), engine, STATE_ROOT, (m) => console.log(m));
 }
 
 async function cmdServe(port: number): Promise<void> {
@@ -121,6 +135,12 @@ switch (command) {
     if (!arg1) throw new Error("usage: register <siteId> [deterministic|ai]");
     await cmdRegister(arg1, arg2 ?? "deterministic");
     break;
+  case "demo":
+    // Headed, auto-approved run across all 10 sites. Default variant: ai.
+    await cmdDemo(arg1 ?? "ai", arg2 ?? "chromium");
+    break;
   default:
-    console.log("usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant]");
+    console.log(
+      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine]",
+    );
 }

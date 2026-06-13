@@ -358,6 +358,42 @@ export async function runVariant(
   }
 }
 
+/**
+ * Visual demo: runs every test site headed, gate auto-approved, so the user can
+ * watch the agent register on all 10 sites end to end without manual input.
+ * slowMo makes each fill/click visible; the gate decisions are scripted to
+ * approve (incl. the trial-card future charge and attestations), and the
+ * auto-creation-prohibited site is completed by the human surrogate.
+ */
+export async function runDemo(
+  mapper: Mapper,
+  engine: EngineName,
+  stateRoot: string,
+  log: (m: string) => void,
+  options?: { slowMo?: number; pauseMs?: number },
+): Promise<void> {
+  const server = await startPocServer();
+  const browser = await ENGINES[engine].launch({ headless: false, slowMo: options?.slowMo ?? 250 });
+  const pauseMs = options?.pauseMs ?? 1200;
+  try {
+    const store = await newStore(join(stateRoot, `demo-${mapper.name}-${engine}`));
+    const deps = makeDeps(store, mapper, log);
+    const profile = profileView(store);
+    log(`テストサイト: ${server.url}/ （${mapper.name} / ${engine}, headed）`);
+    for (const site of SITES) {
+      log(`\n=== ${site.id} / ${site.serviceName} を自動登録 ===`);
+      const row = await runSiteRegistration(browser, server, site, deps, profile);
+      log(`  → status=${row.status}  (mapping ✓${row.mappedCorrect}/✗${row.mappedWrong}/miss${row.missed})`);
+      for (const note of row.notes) log(`    note: ${note}`);
+      await new Promise((resolve) => setTimeout(resolve, pauseMs));
+    }
+    log("\nすべてのテストサイトの自動登録デモが完了しました。");
+  } finally {
+    await browser.close();
+    await server.close();
+  }
+}
+
 export function formatResult(result: VariantRunResult): string {
   const lines: string[] = [];
   lines.push(`\n== ${result.variant} / ${result.engine} ==`);
