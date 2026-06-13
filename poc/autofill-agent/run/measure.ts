@@ -9,7 +9,7 @@ import { chromium, firefox, webkit, type Browser, type BrowserType } from "playw
 import { SITES, type SiteDef } from "../sites/defs.js";
 import { startPocServer, type PocServer } from "../sites/server.js";
 import { runRegistration, runUpdate, type AgentDeps } from "../src/agent/agent.js";
-import { ScriptedGate } from "../src/agent/gate.js";
+import { maskForArtifact, ScriptedGate } from "../src/agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../src/agent/mapper.js";
 import { snapshotPage } from "../src/agent/scan.js";
 import { detectWall } from "../src/agent/walls.js";
@@ -220,8 +220,12 @@ async function runSiteRegistration(
   return row;
 }
 
+/**
+ * PRIV-002 (#21): mismatch notes are written to `state/autofill-poc/matrix-*.json`,
+ * so no field's raw value goes in — see `maskForArtifact`.
+ */
 function maskNote(gt: GtField, value: string): string {
-  return gt.profileKey.startsWith("card.") || gt.profileKey === "account.password" ? "•••" : value;
+  return maskForArtifact(gt.profileKey, value);
 }
 
 /** Guard-2 negative path: without the user's card approval, no card data may be filled or submitted. */

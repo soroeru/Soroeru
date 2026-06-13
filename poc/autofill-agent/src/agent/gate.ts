@@ -14,10 +14,51 @@ const PAYMENT_LABELS: Record<NonNullable<GateRequest["analysis"]["payment"]>, st
   unknown: "判別不能（安全側で停止）",
 };
 
+/** `du***@example.com` — keep enough of the local part + domain to recognize the address. */
+function maskEmail(value: string): string {
+  const at = value.indexOf("@");
+  if (at <= 0) return "***";
+  const local = value.slice(0, at);
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}***${value.slice(at)}`;
+}
+
+/** `090-****-5678` — keep the area/prefix and the last segment, mask the middle. */
+function maskPhone(value: string): string {
+  const parts = value.split("-");
+  if (parts.length === 3) return `${parts[0]}-****-${parts[2]}`;
+  if (value.length <= 4) return "*".repeat(value.length);
+  return `${value.slice(0, 2)}${"*".repeat(value.length - 6)}${value.slice(-4)}`;
+}
+
+/**
+ * Mask policy for interactive review surfaces (the review-and-confirm gate
+ * and the local UI's profile listing, PRIV-002 / #21): card number to last 4,
+ * CVV/expiry/holder/password to a strong mask (`isSensitiveKey`), email/phone
+ * to a partial mask that still lets the user recognize their own value. Other
+ * fields (name, address, company, account ID) are shown in full — the gate's
+ * purpose is to let the user verify exactly what will be submitted, and the
+ * "necessary minimum" principle for those fields is enforced instead at the
+ * persisted-artifact boundary (`maskForArtifact`, docs/security.md §3).
+ */
 export function maskValue(key: ProfileKey, value: string): string {
   if (key === "card.number") return `**** **** **** ${value.slice(-4)}`;
   if (isSensitiveKey(key)) return "••••••";
+  if (key === "email") return maskEmail(value);
+  if (key === "phone.full") return maskPhone(value);
   return value;
+}
+
+/**
+ * Mask policy for persisted artifacts (measurement JSON under `state/`,
+ * PRIV-002 / #21): unlike `maskValue`, no field's raw value is written —
+ * only enough to tell that a mismatch occurred and roughly how large the
+ * value is. card / CVV / expiry / holder / password use the same strong mask
+ * as `maskValue`.
+ */
+export function maskForArtifact(key: ProfileKey, value: string): string {
+  if (key === "card.number" || isSensitiveKey(key)) return "••••••";
+  return value ? `(${value.length}文字)` : "(空)";
 }
 
 export function renderGate(request: GateRequest): string {

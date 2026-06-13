@@ -350,6 +350,7 @@ export class PocStore {
   async save(): Promise<void> {
     const file = await this.serialize();
     await mkdir(dirname(this.filePath), { recursive: true });
+    // persist: encrypted-store — AES-256-GCM encrypted records only (docs/security.md §4)
     await writeFile(this.filePath, JSON.stringify(file), "utf8");
   }
 
@@ -385,6 +386,7 @@ export class PocStore {
       }
     }
     await mkdir(dirname(filePath), { recursive: true });
+    // persist: encrypted-store — restoring an encrypted export writes the same encrypted shape (§4)
     await writeFile(filePath, JSON.stringify(file), "utf8");
     return PocStore.open(filePath, passphrase);
   }

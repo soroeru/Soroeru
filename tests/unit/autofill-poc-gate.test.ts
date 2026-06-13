@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { maskValue, renderGate, ScriptedGate } from "../../poc/autofill-agent/src/agent/gate.js";
+import { maskForArtifact, maskValue, renderGate, ScriptedGate } from "../../poc/autofill-agent/src/agent/gate.js";
 import type { GateRequest, ProfileKey } from "../../poc/autofill-agent/src/types.js";
 
 function gateRequest(overrides: Partial<GateRequest> = {}): GateRequest {
@@ -26,7 +26,27 @@ test("masks sensitive values: card number to last 4, CVV/password fully", () => 
   assert.equal(maskValue("card.number", "4111111111111111"), "**** **** **** 1111");
   assert.equal(maskValue("card.cvv", "123"), "••••••");
   assert.equal(maskValue("account.password", "Dummy-Passw0rd!"), "••••••");
-  assert.equal(maskValue("email", "dummy@example.com"), "dummy@example.com");
+});
+
+test("masks email and phone partially: enough to recognize, not the full value (PRIV-002 / #21)", () => {
+  assert.equal(maskValue("email", "dummy@example.com"), "du***@example.com");
+  assert.equal(maskValue("email", "a@example.com"), "a***@example.com");
+  assert.equal(maskValue("phone.full", "090-1234-5678"), "090-****-5678");
+});
+
+test("other profile fields (name, address, account ID) are shown in full for gate review", () => {
+  assert.equal(maskValue("name.full", "山田 太郎"), "山田 太郎");
+  assert.equal(maskValue("address.full", "東京都千代田区千代田1-1"), "東京都千代田区千代田1-1");
+  assert.equal(maskValue("account.id", "taro_yamada"), "taro_yamada");
+});
+
+test("maskForArtifact: persisted artifacts (measurement JSON) never contain a raw value (PRIV-002 / #21)", () => {
+  assert.equal(maskForArtifact("card.number", "4111111111111111"), "••••••");
+  assert.equal(maskForArtifact("card.cvv", "123"), "••••••");
+  assert.equal(maskForArtifact("account.password", "Dummy-Passw0rd!"), "••••••");
+  assert.equal(maskForArtifact("email", "dummy@example.com"), "(17文字)");
+  assert.equal(maskForArtifact("address.full", "東京都千代田区千代田1-1"), "(13文字)");
+  assert.equal(maskForArtifact("email", ""), "(空)");
 });
 
 test("renders service, origin, masked fields, and terms links", () => {

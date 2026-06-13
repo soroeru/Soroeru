@@ -545,6 +545,7 @@ export class AppUI {
     if (!path) return;
     const json = await this.app.store.exportEncrypted();
     await mkdir(dirname(path), { recursive: true });
+    // persist: encrypted-export — same encrypted shape as the on-disk store (docs/security.md §4)
     await writeFile(path, json, "utf8");
     this.io.log(`暗号化データを書き出しました: ${path}`);
   }
