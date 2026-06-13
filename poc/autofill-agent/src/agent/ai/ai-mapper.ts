@@ -5,8 +5,13 @@
 
 import {
   KNOWN_PROFILE_KEYS,
+  HIGH_RISK_FLAG_DESCRIPTIONS,
+  HIGH_RISK_FLAGS,
+  TRANSFORM_DESCRIPTIONS,
+  TRANSFORMS,
   type CheckboxClassification,
   type HighRiskFlag,
+  type KnownProfileKey,
   type MappingEntry,
   type MappingPlan,
   type PageLink,
@@ -18,32 +23,48 @@ import {
 } from "../../types.js";
 import type { CustomFieldDef } from "../classifier.js";
 import type { Mapper } from "../mapper.js";
+import { normalizeMappingPlan, normalizeTermsAnalysis } from "../normalization.js";
 import type { AiProvider } from "./provider.js";
 
-const TRANSFORMS: Transform[] = ["postal3", "postal4", "phone1", "phone2", "phone3", "addressAfterPref"];
-const HIGH_RISK_FLAGS: HighRiskFlag[] = [
-  "auto-renewal",
-  "third-party-sharing",
-  "arbitration",
-  "content-license",
-  "trial-subscription",
-  "no-auto-creation",
-];
+const PROFILE_KEY_DESCRIPTIONS = {
+  "name.full": "氏名（姓名つなげた表記）",
+  "name.sei": "姓",
+  "name.mei": "名",
+  "name.kana.full": "フリガナ全体",
+  "name.kana.sei": "セイ",
+  "name.kana.mei": "メイ",
+  email: "メールアドレス（確認用の再入力欄も email にマップする）",
+  "phone.full": "電話番号全体",
+  "postal.full": "郵便番号全体",
+  "address.full": "住所全体",
+  "address.pref": "都道府県",
+  "address.city": "市区町村",
+  "address.street": "番地",
+  "address.building": "建物名",
+  "company.name": "会社名",
+  "company.department": "部署名",
+  "birth.year": "生まれた年",
+  "birth.month": "生まれた月",
+  "birth.day": "生まれた日",
+  gender: "性別",
+  "card.number": "カード番号",
+  "card.exp.month": "カード有効期限月",
+  "card.exp.year": "カード有効期限年",
+  "card.holder": "カード名義",
+  "card.cvv": "カードセキュリティコード",
+  "account.id": "ログインID",
+  "account.password": "パスワード",
+} satisfies Record<KnownProfileKey, string>;
 
 const KEY_GUIDE = `
 プロフィールキー一覧（値の意味）:
-- name.full 氏名（姓名つなげた表記） / name.sei 姓 / name.mei 名
-- name.kana.full フリガナ全体 / name.kana.sei セイ / name.kana.mei メイ
-- email メールアドレス（確認用の再入力欄も email にマップする）
-- phone.full 電話番号全体（3分割は transform phone1/phone2/phone3）
-- postal.full 郵便番号全体（3桁/4桁分割は transform postal3/postal4）
-- address.full 住所全体 / address.pref 都道府県 / address.city 市区町村 / address.street 番地 / address.building 建物名
-  （「都道府県以降の住所」のような欄は address.full + transform addressAfterPref）
-- company.name 会社名 / company.department 部署名
-- birth.year 生まれた年 / birth.month 月 / birth.day 日 / gender 性別
-- card.number カード番号 / card.exp.month 有効期限月 / card.exp.year 有効期限年 / card.holder カード名義 / card.cvv セキュリティコード
-- account.id ログインID / account.password パスワード
+${KNOWN_PROFILE_KEYS.map((key) => `- ${key} ${PROFILE_KEY_DESCRIPTIONS[key]}`).join("\n")}
+
+transform一覧:
+${TRANSFORMS.map((transform) => `- ${transform}: ${TRANSFORM_DESCRIPTIONS[transform]}`).join("\n")}
 `;
+
+const HIGH_RISK_GUIDE = HIGH_RISK_FLAGS.map((flag) => `${flag}（${HIGH_RISK_FLAG_DESCRIPTIONS[flag]}）`).join(" / ");
 
 function mapFieldsSchema(): Record<string, unknown> {
   return {
@@ -139,16 +160,13 @@ ${KEY_GUIDE}${customGuide}
       unmappedRequired: string[];
     };
 
-    const validKeys = new Set<string>(KNOWN_PROFILE_KEYS);
-    for (const c of customs) validKeys.add(c.key);
     const entries: MappingEntry[] = [];
     for (const e of result.entries) {
-      if (!validKeys.has(e.profileKey)) continue; // invented key: drop (counts as a miss in measurement)
       const entry: MappingEntry = { fieldId: e.fieldId, profileKey: e.profileKey as ProfileKey };
       if (e.transform) entry.transform = e.transform;
       entries.push(entry);
     }
-    return { entries, checkboxes: result.checkboxes, unmappedRequired: result.unmappedRequired };
+    return normalizeMappingPlan({ entries, checkboxes: result.checkboxes, unmappedRequired: result.unmappedRequired }, snapshot.fields, customs);
   }
 
   async analyzeTerms(termsText: string, pageText: string, hasCardFields: boolean): Promise<TermsAnalysis> {
@@ -178,7 +196,7 @@ ${KEY_GUIDE}${customGuide}
     };
     const result = (await this.provider.completeJson({
       system: `あなたは利用規約とページ文言を分析するアシスタントです。
-1. 高リスク条項を検出して該当箇所を引用します: auto-renewal（自動更新・自動課金）/ third-party-sharing（第三者提供・販売）/ arbitration（強制仲裁）/ content-license（コンテンツの利用許諾）/ trial-subscription（無料トライアル後にサブスク課金が始まる）/ no-auto-creation（自動化された手段によるアカウント作成の禁止）。
+1. 高リスク条項を検出して該当箇所を引用します: ${HIGH_RISK_GUIDE}。
 2. payment: カード入力欄が${hasCardFields ? "あります" : "ありません"}。「無料トライアル後に課金が始まる」型は trial-subscription、「その場で即時決済」型は immediate-payment、カード欄があるのに判別できなければ unknown（安全側）、カード欄がなければ none。
 3. prohibitsAutoCreation: 規約が自動アカウント作成を禁止しているか。`,
       user: JSON.stringify({ terms: termsText.slice(0, 12000), page: pageText.slice(0, 6000) }),
@@ -208,6 +226,6 @@ ${KEY_GUIDE}${customGuide}
         analysis.highRiskFlags = [...flags, "trial-subscription"];
       }
     }
-    return analysis;
+    return normalizeTermsAnalysis(analysis);
   }
 }

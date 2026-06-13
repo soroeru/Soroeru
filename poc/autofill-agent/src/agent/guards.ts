@@ -5,6 +5,7 @@
 // starting point for open question Q2a.
 
 import type { HighRiskFlag, PaymentClassification, TermsAnalysis } from "../types.js";
+import { normalizeTermsAnalysis } from "./normalization.js";
 
 const HIGH_RISK_PATTERNS: { flag: HighRiskFlag; re: RegExp }[] = [
   { flag: "auto-renewal", re: /自動的に更新|自動更新|自動的に有料|自動的に課金/ },
@@ -51,6 +52,8 @@ export function analyzeTermsDeterministic(termsText: string, pageText: string, h
   const combined = `${termsText}\n${pageText}`;
   const { flags, evidence } = detectHighRiskFlags(combined);
   const prohibitsAutoCreation = detectsAutoCreationBan(combined);
+  const noAutoMatch = prohibitsAutoCreation ? NO_AUTO_CREATION_RE.exec(combined) : undefined;
+  if (noAutoMatch) evidence["no-auto-creation"] = excerpt(combined, noAutoMatch.index);
 
   const analysis: TermsAnalysis = {
     highRiskFlags: flags,
@@ -59,15 +62,10 @@ export function analyzeTermsDeterministic(termsText: string, pageText: string, h
   };
   if (hasCardFields) {
     analysis.payment = classifyPayment(combined);
-    if (analysis.payment === "trial-subscription" && !flags.includes("trial-subscription")) {
-      // The trial→subscription conversion itself is surfaced as a high-risk item:
-      // approving it at the gate is what authorizes the future charge (§4 guard 2).
-      analysis.highRiskFlags = [...flags, "trial-subscription"];
-      const m = TRIAL_RE.exec(combined);
-      if (m) analysis.evidence["trial-subscription"] = excerpt(combined, m.index);
-    }
+    const m = analysis.payment === "trial-subscription" ? TRIAL_RE.exec(combined) : undefined;
+    if (m) analysis.evidence["trial-subscription"] = excerpt(combined, m.index);
   }
-  return analysis;
+  return normalizeTermsAnalysis(analysis);
 }
 
 function excerpt(text: string, index: number): string {

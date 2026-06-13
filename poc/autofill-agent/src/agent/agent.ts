@@ -23,6 +23,7 @@ import { findEditLink } from "./discovery.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
+import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
 import { snapshotPage, waitForFields } from "./scan.js";
 import { detectWall, type HumanHandoff } from "./walls.js";
 
@@ -117,7 +118,8 @@ interface StepState {
 
 async function mapCurrentPage(snapshot: PageSnapshot, deps: AgentDeps): Promise<StepState> {
   const fieldsById = new Map(snapshot.fields.map((f) => [f.fieldId, f]));
-  const plan = await deps.mapper.mapFields(snapshot, customsOf(deps.store));
+  const customs = customsOf(deps.store);
+  const plan = normalizeMappingPlan(await deps.mapper.mapFields(snapshot, customs), snapshot.fields, customs);
 
   // Missing data (§4 step 3): ask the user, store as a reusable custom field.
   for (const fieldId of plan.unmappedRequired) {
@@ -220,7 +222,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   // 3. Terms analysis (guards 1-2, Q2c). Linked terms pages are fetched locally.
   let termsText = "";
   for (const link of termsLinks.values()) termsText += `\n${await fetchVisibleText(link.href)}`;
-  const analysis = await deps.mapper.analyzeTerms(termsText, pageTexts.join("\n"), cardPresent);
+  const analysis = normalizeTermsAnalysis(await deps.mapper.analyzeTerms(termsText, pageTexts.join("\n"), cardPresent));
 
   // 4. The single review-and-confirm gate.
   const attestations = allCheckboxes.filter((c) => c.box.role === "attestation");

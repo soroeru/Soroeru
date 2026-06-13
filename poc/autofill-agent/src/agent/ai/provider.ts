@@ -21,6 +21,17 @@ export interface AiProvider {
   completeJson(options: CompleteJsonOptions): Promise<unknown>;
 }
 
+export class AiProviderError extends Error {
+  constructor(
+    message: string,
+    readonly code: "request-failed" | "refusal" | "empty-response" | "invalid-json",
+    options?: { cause?: unknown },
+  ) {
+    super(message, options);
+    this.name = "AiProviderError";
+  }
+}
+
 export class AnthropicProvider implements AiProvider {
   readonly id: string;
   private readonly client: Anthropic;
@@ -35,22 +46,37 @@ export class AnthropicProvider implements AiProvider {
   }
 
   async completeJson(options: CompleteJsonOptions): Promise<unknown> {
-    const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: options.maxTokens ?? 4096,
-      thinking: { type: "adaptive" },
-      system: options.system,
-      output_config: {
-        format: { type: "json_schema", schema: options.schema },
-      },
-      messages: [{ role: "user", content: options.user }],
-    });
+    let response: Awaited<ReturnType<Anthropic["messages"]["create"]>>;
+    try {
+      response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: options.maxTokens ?? 4096,
+        thinking: { type: "adaptive" },
+        system: options.system,
+        output_config: {
+          format: { type: "json_schema", schema: options.schema },
+        },
+        messages: [{ role: "user", content: options.user }],
+      });
+    } catch (err) {
+      throw new AiProviderError("AI provider request failed; default policy is to stop without fallback", "request-failed", {
+        cause: err,
+      });
+    }
     if (response.stop_reason === "refusal") {
-      throw new Error("AI provider refused the request");
+      throw new AiProviderError("AI provider refused the request; default policy is to stop without fallback", "refusal");
     }
     const text = response.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") throw new Error("AI provider returned no text content");
-    return JSON.parse(text.text);
+    if (!text || text.type !== "text") {
+      throw new AiProviderError("AI provider returned no text content; default policy is to stop without fallback", "empty-response");
+    }
+    try {
+      return JSON.parse(text.text);
+    } catch (err) {
+      throw new AiProviderError("AI provider returned invalid JSON; default policy is to stop without fallback", "invalid-json", {
+        cause: err,
+      });
+    }
   }
 }
 
