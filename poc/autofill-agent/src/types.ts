@@ -232,6 +232,12 @@ export interface RegistrationMandate {
   highRiskFlags: HighRiskFlag[];
   attestationsApproved: string[];
   result: RegistrationStatus;
+  /** Payment-guard audit (REQ-010): classification when card fields were present. */
+  payment?: PaymentClassification;
+  /** Guard 2 stopped the run for payment and handed off to the user. */
+  paymentStopped?: boolean;
+  /** A card value was auto-filled (only on an approved trial→subscription). */
+  cardFilled?: boolean;
 }
 
 /** Wall detection result (RFC-001 v3 §10b). Detect only; never solve or bypass. */
