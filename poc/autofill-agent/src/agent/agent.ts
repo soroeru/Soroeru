@@ -119,6 +119,8 @@ interface StepState {
 async function mapCurrentPage(snapshot: PageSnapshot, deps: AgentDeps): Promise<StepState> {
   const fieldsById = new Map(snapshot.fields.map((f) => [f.fieldId, f]));
   const customs = customsOf(deps.store);
+  // Mapper implementations may self-normalize for direct tests/metrics, but
+  // this seam is the authoritative guard before any browser side effects.
   const plan = normalizeMappingPlan(await deps.mapper.mapFields(snapshot, customs), snapshot.fields, customs);
 
   // Missing data (§4 step 3): ask the user, store as a reusable custom field.

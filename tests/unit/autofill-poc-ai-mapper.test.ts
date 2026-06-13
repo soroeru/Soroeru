@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AiMapper } from "../../poc/autofill-agent/src/agent/ai/ai-mapper.js";
-import type { AiProvider, CompleteJsonOptions } from "../../poc/autofill-agent/src/agent/ai/provider.js";
+import {
+  AiProviderError,
+  AnthropicProvider,
+  type AiProvider,
+  type CompleteJsonOptions,
+} from "../../poc/autofill-agent/src/agent/ai/provider.js";
 import { HIGH_RISK_FLAGS, TRANSFORMS, type FormField, type PageSnapshot } from "../../poc/autofill-agent/src/types.js";
 
 class StubProvider implements AiProvider {
@@ -16,6 +21,18 @@ class StubProvider implements AiProvider {
     if (next instanceof Error) return Promise.reject(next);
     return Promise.resolve(next);
   }
+}
+
+interface MutableAnthropicProvider {
+  client: { messages: { create: () => Promise<unknown> } };
+}
+
+function anthropicProviderWith(response: unknown): AnthropicProvider {
+  const provider = new AnthropicProvider({ apiKey: "test-key", model: "test-model" });
+  (provider as unknown as MutableAnthropicProvider).client = {
+    messages: { create: () => Promise.resolve(response) },
+  };
+  return provider;
 }
 
 function field(partial: Partial<FormField> & { fieldId: string }): FormField {
@@ -140,4 +157,24 @@ test("AI mapper keeps provider failures explicit instead of silently falling bac
   const mapper = new AiMapper(provider);
 
   await assert.rejects(() => mapper.mapFields(snapshot([]), []), /network down/);
+});
+
+test("Anthropic provider maps refusal and invalid JSON to explicit provider errors", async () => {
+  await assert.rejects(
+    () =>
+      anthropicProviderWith({
+        stop_reason: "refusal",
+        content: [{ type: "text", text: "{}" }],
+      }).completeJson({ system: "", user: "", schema: {} }),
+    (err: unknown) => err instanceof AiProviderError && err.code === "refusal",
+  );
+
+  await assert.rejects(
+    () =>
+      anthropicProviderWith({
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "not json" }],
+      }).completeJson({ system: "", user: "", schema: {} }),
+    (err: unknown) => err instanceof AiProviderError && err.code === "invalid-json",
+  );
 });

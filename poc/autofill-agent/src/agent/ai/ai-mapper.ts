@@ -5,6 +5,7 @@
 
 import {
   KNOWN_PROFILE_KEYS,
+  CHECKBOX_ROLES,
   HIGH_RISK_FLAG_DESCRIPTIONS,
   HIGH_RISK_FLAGS,
   TRANSFORM_DESCRIPTIONS,
@@ -93,7 +94,7 @@ function mapFieldsSchema(): Record<string, unknown> {
           required: ["fieldId", "role", "label"],
           properties: {
             fieldId: { type: "string" },
-            role: { type: "string", enum: ["terms-consent", "attestation", "optional-optin"] },
+            role: { type: "string", enum: CHECKBOX_ROLES },
             label: { type: "string" },
           },
         },
@@ -197,7 +198,7 @@ ${KEY_GUIDE}${customGuide}
     const result = (await this.provider.completeJson({
       system: `あなたは利用規約とページ文言を分析するアシスタントです。
 1. 高リスク条項を検出して該当箇所を引用します: ${HIGH_RISK_GUIDE}。
-2. payment: カード入力欄が${hasCardFields ? "あります" : "ありません"}。「無料トライアル後に課金が始まる」型は trial-subscription、「その場で即時決済」型は immediate-payment、カード欄があるのに判別できなければ unknown（安全側）、カード欄がなければ none。
+2. payment: カード入力欄が${hasCardFields ? "あります" : "ありません"}。「無料トライアル後に課金が始まる」型は trial-subscription、「その場で即時決済」型は immediate-payment、カード欄があるのに判別できなければ unknown（安全側）、カード欄がなければ none。payment が trial-subscription の場合は、highRisk に trial-subscription を入れて quote も必ず返します。
 3. prohibitsAutoCreation: 規約が自動アカウント作成を禁止しているか。`,
       user: JSON.stringify({ terms: termsText.slice(0, 12000), page: pageText.slice(0, 6000) }),
       schema,
