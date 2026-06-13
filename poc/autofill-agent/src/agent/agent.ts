@@ -20,9 +20,9 @@ import type {
 } from "../types.js";
 import type { CustomFieldDef } from "./classifier.js";
 import { findEditLink } from "./discovery.js";
-import { evaluateGuards, shouldCheckAttestation } from "./guards.js";
+import { evaluateGuards, paymentAudit, shouldCheckAttestation } from "./guards.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
-import { toFilledFieldRecords } from "./records.js";
+import { buildMandate, toFilledFieldRecords } from "./records.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
@@ -253,9 +253,38 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   // 5. Three guards (shared seam): payment stop with the trial exception, and the
   //    auto-creation ban. The same evaluateGuards path runs for both mapper variants.
   const guard = evaluateGuards({ analysis, decision, hasCardFields: cardPresent });
+
+  const record = (status: RegistrationStatus): void => {
+    const filledFields: FilledFieldRecord[] = toFilledFieldRecords(filledOutcomes, planned);
+    deps.store.upsertSiteRecord({
+      origin: new URL(page.url()).origin,
+      siteId: siteIdFromUrl(page.url()),
+      serviceName: gateRequest.serviceName,
+      registeredAt: Date.now(),
+      filledFields,
+      status,
+    });
+    deps.store.addMandate(
+      buildMandate({
+        origin: gateRequest.origin,
+        submittedFieldKeys: planned.map((p) => p.profileKey),
+        ...(([...termsLinks.values()][0]?.href) ? { termsUrl: [...termsLinks.values()][0]!.href } : {}),
+        ...(termsText ? { termsText } : {}),
+        highRiskFlags: analysis.highRiskFlags,
+        attestationsApproved: attestations
+          .filter((a) => decision.attestationApprovals[a.box.fieldId])
+          .map((a) => a.box.label),
+        result: status,
+        audit: paymentAudit(analysis, cardPresent, guard),
+      }),
+    );
+  };
+
   let entriesToFill = currentStep.entries.map((e) => e.entry);
   if (guard.action === "stop-handoff") {
     notes.push(`支払い項目を検知（判定: ${analysis.payment ?? "unknown"}）。自動進行を停止しハンドオフします`);
+    record("manualHandoff"); // audit the payment stop (no fields are filled/submitted)
+    await deps.store.save();
     return result("manualHandoff", true, analysis.highRiskFlags);
   }
   if (guard.action === "declined") {
@@ -301,31 +330,6 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
       }
     }
   }
-
-  const record = (status: RegistrationStatus): void => {
-    const filledFields: FilledFieldRecord[] = toFilledFieldRecords(filledOutcomes, planned);
-    deps.store.upsertSiteRecord({
-      origin: new URL(page.url()).origin,
-      siteId: siteIdFromUrl(page.url()),
-      serviceName: gateRequest.serviceName,
-      registeredAt: Date.now(),
-      filledFields,
-      status,
-    });
-    const termsUrl = [...termsLinks.values()][0]?.href;
-    deps.store.addMandate({
-      origin: gateRequest.origin,
-      authorizedAt: Date.now(),
-      submittedFieldKeys: planned.map((p) => p.profileKey),
-      ...(termsUrl ? { termsUrl } : {}),
-      ...(termsText ? { termsVersionHash: sha256Hex(termsText) } : {}),
-      highRiskFlags: analysis.highRiskFlags,
-      attestationsApproved: attestations
-        .filter((a) => decision.attestationApprovals[a.box.fieldId])
-        .map((a) => a.box.label),
-      result: status,
-    });
-  };
 
   // 8. Q2c: sites that prohibit automated account creation get assisted fill only.
   if (guard.action === "assisted-fill") {

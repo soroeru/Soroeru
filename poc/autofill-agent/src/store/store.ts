@@ -195,6 +195,29 @@ export class PocStore {
     this.siteRecords.set(record.siteId, record);
   }
 
+  // --- Per-site inventory API (REQ-010) for the UI / bulk update ---
+  getSiteRecord(siteId: string): SiteRecord | undefined {
+    this.requireKey();
+    return this.siteRecords.get(siteId);
+  }
+
+  listSiteRecords(): SiteRecord[] {
+    this.requireKey();
+    return [...this.siteRecords.values()];
+  }
+
+  /** Remove a site from the inventory (user-initiated). Returns true if it existed. */
+  deleteSiteRecord(siteId: string): boolean {
+    this.requireKey();
+    return this.siteRecords.delete(siteId);
+  }
+
+  /** Mandates for a given origin (or all), for audit display. */
+  listMandates(origin?: string): RegistrationMandate[] {
+    this.requireKey();
+    return origin ? this.mandates.filter((m) => m.origin === origin) : [...this.mandates];
+  }
+
   addMandate(mandate: RegistrationMandate): void {
     this.requireKey();
     this.mandates.push(mandate);

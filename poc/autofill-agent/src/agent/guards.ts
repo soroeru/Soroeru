@@ -132,3 +132,19 @@ export function evaluateGuards({ analysis, decision, hasCardFields }: GuardInput
 export function shouldCheckAttestation(decision: GateDecision, fieldId: string): boolean {
   return decision.attestationApprovals[fieldId] === true;
 }
+
+/** Payment-guard decision recorded on the mandate for audit (REQ-010). */
+export interface PaymentAudit {
+  payment?: PaymentClassification;
+  paymentStopped: boolean;
+  cardFilled: boolean;
+}
+
+export function paymentAudit(analysis: TermsAnalysis, hasCardFields: boolean, outcome: GuardOutcome): PaymentAudit {
+  const audit: PaymentAudit = {
+    paymentStopped: outcome.action === "stop-handoff",
+    cardFilled: outcome.fillCard,
+  };
+  if (hasCardFields) audit.payment = analysis.payment ?? "unknown";
+  return audit;
+}
