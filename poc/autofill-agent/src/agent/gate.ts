@@ -8,6 +8,12 @@ export interface Gate {
   decide(request: GateRequest): Promise<GateDecision>;
 }
 
+const PAYMENT_LABELS: Record<NonNullable<GateRequest["analysis"]["payment"]>, string> = {
+  "trial-subscription": "無料トライアル後にサブスク課金（承認時のみカード入力）",
+  "immediate-payment": "即時決済（対象外・停止）",
+  unknown: "判別不能（安全側で停止）",
+};
+
 export function maskValue(key: ProfileKey, value: string): string {
   if (key === "card.number") return `**** **** **** ${value.slice(-4)}`;
   if (isSensitiveKey(key)) return "••••••";
@@ -29,7 +35,16 @@ export function renderGate(request: GateRequest): string {
       lines.push(`  - ${flag}: ${request.analysis.evidence[flag] ?? ""}`);
     }
   }
-  if (request.analysis.payment) lines.push(`支払い項目の判定: ${request.analysis.payment}`);
+  if (request.analysis.payment) {
+    lines.push(`支払い項目の判定: ${PAYMENT_LABELS[request.analysis.payment]}`);
+    if (request.analysis.payment === "trial-subscription") {
+      lines.push(
+        "  → 承認した場合のみカード情報を自動入力します（GateDecision.cardApproved）。承認しなければカードは入力しません。",
+      );
+    } else {
+      lines.push("  → 支払いが必要なため自動入力・送信は行いません（ユーザーへハンドオフ）。");
+    }
+  }
   if (request.analysis.prohibitsAutoCreation) {
     lines.push("※ このサイトは自動アカウント作成を禁止しています。入力のみ行い、最後の登録ボタンはご自身で押してください。");
   }
