@@ -33,6 +33,7 @@ LOCAL_AI_REVIEW_TARGET_PATHS=(
   ".githooks/"
   ".github/"
   "src/"
+  "poc/"
   "tests/"
   # "test/"      # Enable for Node.js / Java-style test directories.
   # ".claude/"   # Enable if shared Claude Code settings are tracked.

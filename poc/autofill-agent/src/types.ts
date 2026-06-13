@@ -48,13 +48,25 @@ export const MOST_SENSITIVE_KEY: ProfileKey = "card.cvv";
  * one master value across several inputs. The AI model never sees the values;
  * it only names the transform (RFC-001 v3 §6).
  */
-export type Transform =
-  | "postal3" // 100-0001 -> 100
-  | "postal4" // 100-0001 -> 0001
-  | "phone1" // 03-1234-5678 -> 03
-  | "phone2" // 03-1234-5678 -> 1234
-  | "phone3" // 03-1234-5678 -> 5678
-  | "addressAfterPref"; // address.full minus prefecture
+export const TRANSFORMS = [
+  "postal3", // 100-0001 -> 100
+  "postal4", // 100-0001 -> 0001
+  "phone1", // 03-1234-5678 -> 03
+  "phone2", // 03-1234-5678 -> 1234
+  "phone3", // 03-1234-5678 -> 5678
+  "addressAfterPref", // address.full minus prefecture
+] as const;
+
+export type Transform = (typeof TRANSFORMS)[number];
+
+export const TRANSFORM_DESCRIPTIONS = {
+  postal3: "郵便番号の上3桁",
+  postal4: "郵便番号の下4桁",
+  phone1: "電話番号の市外局番",
+  phone2: "電話番号の市内局番",
+  phone3: "電話番号の加入者番号",
+  addressAfterPref: "住所全体から都道府県を除いた部分",
+} satisfies Record<Transform, string>;
 
 /** A logical form field extracted from the page by the in-page scanner. */
 export interface FormField {
@@ -107,6 +119,8 @@ export type CheckboxRole =
   | "attestation" // eligibility/identity statement: NEVER auto-checked (guard 3)
   | "optional-optin"; // marketing etc.: left unchecked by default
 
+export const CHECKBOX_ROLES = ["terms-consent", "attestation", "optional-optin"] as const satisfies readonly CheckboxRole[];
+
 export interface MappingEntry {
   fieldId: string;
   profileKey: ProfileKey;
@@ -127,13 +141,25 @@ export interface MappingPlan {
   unmappedRequired: string[];
 }
 
-export type HighRiskFlag =
-  | "auto-renewal"
-  | "third-party-sharing"
-  | "arbitration"
-  | "content-license"
-  | "trial-subscription"
-  | "no-auto-creation";
+export const HIGH_RISK_FLAGS = [
+  "auto-renewal",
+  "third-party-sharing",
+  "arbitration",
+  "content-license",
+  "trial-subscription",
+  "no-auto-creation",
+] as const;
+
+export type HighRiskFlag = (typeof HIGH_RISK_FLAGS)[number];
+
+export const HIGH_RISK_FLAG_DESCRIPTIONS = {
+  "auto-renewal": "自動更新・自動課金",
+  "third-party-sharing": "第三者提供・販売",
+  arbitration: "強制仲裁",
+  "content-license": "コンテンツの利用許諾",
+  "trial-subscription": "無料トライアル後にサブスク課金が始まる",
+  "no-auto-creation": "自動化された手段によるアカウント作成の禁止",
+} satisfies Record<HighRiskFlag, string>;
 
 /** Result of analyzing terms / page wording (guards 1-2 and Q2c). */
 export interface TermsAnalysis {
