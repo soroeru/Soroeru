@@ -60,6 +60,7 @@ export interface VariantRunResult {
   update: UpdateResultRow[];
   trialCardDeclinePathOk: boolean;
   wallDetectionOk: boolean;
+  wallResumeFlowOk: boolean;
   successRate: number;
   misMappingRate: number;
 }
@@ -264,6 +265,29 @@ async function runWallFixtureCheck(browser: Browser, server: PocServer): Promise
   }
 }
 
+/** Full orchestration check: a wall appears after final submit, then human handoff resumes to success. */
+async function runWallResumeFlowCheck(browser: Browser, server: PocServer, mapper: Mapper, storeDir: string): Promise<boolean> {
+  const store = await newStore(join(storeDir, "wall-resume-flow"));
+  const deps = makeDeps(store, mapper, () => {});
+  const page = await browser.newPage();
+  let handoffs = 0;
+  deps.handoff = async (wall) => {
+    if (wall.kind !== "captcha") return "abort";
+    handoffs += 1;
+    await page.getByRole("button", { name: "人間が確認を完了" }).click();
+    await page.waitForLoadState();
+    return "resolved";
+  };
+  try {
+    const result = await runRegistration(page, `${server.url}/wall-flow/`, deps);
+    return result.status === "registered" && result.gateShown && handoffs === 1 && store.listSiteRecords().length === 1;
+  } catch {
+    return false;
+  } finally {
+    await page.close();
+  }
+}
+
 async function runBulkUpdate(
   browser: Browser,
   server: PocServer,
@@ -339,6 +363,7 @@ export async function runVariant(
 
     const trialCardDeclinePathOk = await runTrialCardDeclinePath(browser, server, mapper, storeDir);
     const wallDetectionOk = await runWallFixtureCheck(browser, server);
+    const wallResumeFlowOk = await runWallResumeFlowCheck(browser, server, mapper, storeDir);
 
     const okCount = registration.filter((r) => r.registrationOk && r.guardsOk).length;
     const gtTotal = registration.reduce((a, r) => a + r.gtTotal, 0);
@@ -350,6 +375,7 @@ export async function runVariant(
       update,
       trialCardDeclinePathOk,
       wallDetectionOk,
+      wallResumeFlowOk,
       successRate: okCount / registration.length,
       misMappingRate: gtTotal === 0 ? 0 : wrong / gtTotal,
     };
@@ -411,6 +437,7 @@ export function formatResult(result: VariantRunResult): string {
   }
   lines.push(`trial-card decline path (card approval=no): ${result.trialCardDeclinePathOk ? "OK" : "NG"}`);
   lines.push(`wall detection fixtures: ${result.wallDetectionOk ? "OK" : "NG"}`);
+  lines.push(`wall resume flow fixture: ${result.wallResumeFlowOk ? "OK" : "NG"}`);
   lines.push(
     `success rate: ${(result.successRate * 100).toFixed(0)}%  mis-mapping rate: ${(result.misMappingRate * 100).toFixed(1)}%`,
   );
