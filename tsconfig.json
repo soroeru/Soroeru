@@ -12,5 +12,5 @@
     "outDir": "dist/compiled",
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "poc/autofill-agent/**/*.ts"]
 }
