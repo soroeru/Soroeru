@@ -81,6 +81,17 @@ Per RFC §9. Use only widely vetted algorithms; do not roll custom crypto.
 4. **Key lifetime** — the derived key lives in memory only while unlocked; cleared on
    lock / exit. Never written to disk.
 5. **Runtime** — AES-GCM / PBKDF2 via Web Crypto API; Argon2id via a vetted library.
+6. **Format version** — the store file carries a `version` field; opening a version newer
+   than the running build understands fails closed rather than mis-reading the bytes.
+   Migrations are added per version, never silent.
+7. **Lock lifecycle** — `lock()` drops the derived key and every decrypted value
+   (profile, site records, mandates, provider settings) from memory; further reads/writes
+   throw until the store is reopened with the passphrase.
+
+The PoC reference implementation of this scheme is `poc/autofill-agent/src/store/`
+(`crypto.ts` + `store.ts`); the AI provider API key and model settings are persisted as an
+encrypted record in the same store, and the most-sensitive field (CVV) is kept out of the
+shared transform view and read only through a sanctioned fill-time accessor.
 
 Convenience option: an OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret) may
 hold a session key to avoid re-entry, trading convenience for relying on the OS login

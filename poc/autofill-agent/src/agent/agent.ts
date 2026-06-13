@@ -76,10 +76,6 @@ function customsOf(store: PocStore): CustomFieldDef[] {
     .map((e) => ({ key: e.key, matchTerms: e.matchTerms ?? [e.label] }));
 }
 
-function profileView(store: PocStore): ReadonlyMap<ProfileKey, string> {
-  return new Map([...store.profile.values()].map((e) => [e.key, e.value]));
-}
-
 function hasCardFields(fields: FormField[]): boolean {
   return fields.some(
     (f) =>
@@ -177,7 +173,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   let currentStep: StepState = { entries: [], checkboxes: [] };
   let finalButtonSelector: string | undefined;
   const filledOutcomes: FillOutcome[] = [];
-  const view = profileView(deps.store);
+  const view = deps.store.profileView();
 
   for (let step = 0; step < 6; step++) {
     snapshot = await waitForFields(page);
@@ -387,7 +383,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   const record = deps.store.siteRecords.get(siteId);
   if (!record) return { siteId, status: "skipped", changedKeys: [], planned: [], notes: ["登録記録がありません"] };
 
-  const view = profileView(deps.store);
+  const view = deps.store.profileView();
   const changed = record.filledFields.filter((ff) => {
     const master = deps.store.getValue(ff.profileKey);
     if (master === undefined) return false;
