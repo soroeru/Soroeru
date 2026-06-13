@@ -103,7 +103,8 @@ async function newStore(dir: string): Promise<PocStore> {
 }
 
 function profileView(store: PocStore): ReadonlyMap<ProfileKey, string> {
-  return new Map([...store.profile.values()].map((e) => [e.key, e.value]));
+  // Excludes the most-sensitive field (CVV); see PocStore.profileView.
+  return store.profileView();
 }
 
 function makeDeps(store: PocStore, mapper: Mapper, log: (m: string) => void): AgentDeps {

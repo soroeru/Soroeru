@@ -3,13 +3,14 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
 import {
   decryptRecord,
   deriveKey,
   encryptRecord,
   newKdfParams,
 } from "../../poc/autofill-agent/src/store/crypto.js";
-import { PocStore } from "../../poc/autofill-agent/src/store/store.js";
+import { PocStore, StoreLockedError, STORE_FORMAT_VERSION } from "../../poc/autofill-agent/src/store/store.js";
 
 // Fake data only (docs/testing.md).
 const PASSPHRASE = "unit-test-passphrase";
@@ -70,6 +71,77 @@ test("store persists encrypted and reloads with the right passphrase", async () 
     assert.equal(reopened.getValue("email"), "dummy@example.com");
 
     await assert.rejects(() => PocStore.open(file, "wrong-passphrase"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("provider settings (incl. API key) persist encrypted and reload", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-store-"));
+  const file = join(dir, "store.json");
+  try {
+    const store = await PocStore.open(file, PASSPHRASE, "pbkdf2-sha512");
+    store.setProviderSettings({ provider: "anthropic", model: "claude-test", apiKey: "sk-fake-test-key" });
+    await store.save();
+
+    const raw = await readFile(file, "utf8");
+    assert.ok(!raw.includes("sk-fake-test-key"), "API key must never reach disk as plaintext");
+
+    const reopened = await PocStore.open(file, PASSPHRASE);
+    assert.deepEqual(reopened.getSettings(), {
+      provider: "anthropic",
+      model: "claude-test",
+      apiKey: "sk-fake-test-key",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("profileView excludes the most-sensitive field but getValueForFill reads it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-store-"));
+  const file = join(dir, "store.json");
+  try {
+    const store = await PocStore.open(file, PASSPHRASE, "pbkdf2-sha512");
+    store.setProfileValue("email", "メール", "dummy@example.com");
+    store.setProfileValue("card.cvv", "セキュリティコード", "123");
+
+    const view = store.profileView();
+    assert.equal(view.get("email"), "dummy@example.com");
+    assert.equal(view.has("card.cvv"), false, "CVV must not appear in the shared transform view");
+    assert.equal(store.getValueForFill("card.cvv"), "123");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("lock clears in-memory secrets and blocks further access", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-store-"));
+  const file = join(dir, "store.json");
+  try {
+    const store = await PocStore.open(file, PASSPHRASE, "pbkdf2-sha512");
+    store.setProfileValue("email", "メール", "dummy@example.com");
+    store.lock();
+    assert.equal(store.isLocked, true);
+    assert.equal(store.profile.size, 0);
+    assert.throws(() => store.getValue("email"), StoreLockedError);
+    await assert.rejects(() => store.save(), StoreLockedError);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("opening a newer store format version is rejected, not mis-read", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-store-"));
+  const file = join(dir, "store.json");
+  try {
+    const store = await PocStore.open(file, PASSPHRASE, "pbkdf2-sha512");
+    await store.save();
+    const parsed = JSON.parse(await readFile(file, "utf8")) as { version: number };
+    parsed.version = STORE_FORMAT_VERSION + 1;
+    await writeFile(file, JSON.stringify(parsed), "utf8");
+
+    await assert.rejects(() => PocStore.open(file, PASSPHRASE), /newer than supported/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
