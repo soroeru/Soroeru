@@ -12,12 +12,15 @@ import {
   decryptRecord,
   deriveKey,
   encryptRecord,
+  exportKeyRaw,
+  importKeyRaw,
   newKdfParams,
   type EncryptedRecord,
   type KdfAlgo,
   type KdfParams,
   type MasterKey,
 } from "./crypto.js";
+import { generateRecoveryKey, recoveryKeyToKek } from "./recovery.js";
 
 /**
  * On-disk store format version. The field name is `version`; bump it and add a
@@ -46,6 +49,9 @@ interface StoreFile {
   version: number;
   kdf: KdfParams;
   records: EncryptedRecord[];
+  /** Present iff a recovery key has been set up (SEC-003 / #44): the master
+   *  key, wrapped under SHA-256(recovery key). */
+  recovery?: EncryptedRecord;
 }
 
 interface StorePayload {
@@ -81,6 +87,7 @@ function migrateStoreFile(file: StoreFile): StoreFile {
 export class PocStore {
   private key: MasterKey | null;
   private kdf: KdfParams;
+  private recovery: EncryptedRecord | undefined;
   private readonly filePath: string;
 
   readonly profile = new Map<ProfileKey, ProfileEntry>();
@@ -88,24 +95,24 @@ export class PocStore {
   readonly mandates: RegistrationMandate[] = [];
   private settings: ProviderSettings | undefined;
 
-  private constructor(filePath: string, key: MasterKey, kdf: KdfParams) {
+  private constructor(filePath: string, key: MasterKey, kdf: KdfParams, recovery?: EncryptedRecord) {
     this.filePath = filePath;
     this.key = key;
     this.kdf = kdf;
+    this.recovery = recovery;
   }
 
-  /** Open (or create) the store. Wrong passphrase fails GCM authentication and throws. */
-  static async open(filePath: string, passphrase: string, kdfAlgo: KdfAlgo = "argon2id"): Promise<PocStore> {
+  private static async readFile(filePath: string): Promise<StoreFile | undefined> {
     let file: StoreFile | undefined;
     try {
       file = JSON.parse(await readFile(filePath, "utf8")) as StoreFile;
     } catch {
       file = undefined;
     }
-    if (file) file = migrateStoreFile(file);
-    const kdf = file?.kdf ?? newKdfParams(kdfAlgo);
-    const key = await deriveKey(passphrase, kdf);
-    const store = new PocStore(filePath, key, kdf);
+    return file ? migrateStoreFile(file) : undefined;
+  }
+
+  private static async loadRecords(store: PocStore, file: StoreFile | undefined, key: MasterKey): Promise<void> {
     for (const record of file?.records ?? []) {
       const payload = JSON.parse(await decryptRecord(key, record)) as StorePayload;
       if (payload.kind === "profile") {
@@ -120,6 +127,31 @@ export class PocStore {
         store.mandates.push(payload.data as RegistrationMandate);
       }
     }
+  }
+
+  /** Open (or create) the store. Wrong passphrase fails GCM authentication and throws. */
+  static async open(filePath: string, passphrase: string, kdfAlgo: KdfAlgo = "argon2id"): Promise<PocStore> {
+    const file = await PocStore.readFile(filePath);
+    const kdf = file?.kdf ?? newKdfParams(kdfAlgo);
+    const key = await deriveKey(passphrase, kdf);
+    const store = new PocStore(filePath, key, kdf, file?.recovery);
+    await PocStore.loadRecords(store, file, key);
+    return store;
+  }
+
+  /**
+   * Open the store using a recovery key instead of the passphrase (SEC-003 /
+   * #44). Fails if no recovery key was set up, or the given key does not
+   * unwrap the stored master key (wrong recovery key / tampering).
+   */
+  static async openWithRecoveryKey(filePath: string, recoveryKey: string): Promise<PocStore> {
+    const file = await PocStore.readFile(filePath);
+    if (!file?.recovery) throw new Error("no recovery key is configured for this store");
+    const kek = await recoveryKeyToKek(recoveryKey);
+    const rawKey = Buffer.from(await decryptRecord(kek, file.recovery), "base64");
+    const key = await importKeyRaw(rawKey);
+    const store = new PocStore(filePath, key, file.kdf, file.recovery);
+    await PocStore.loadRecords(store, file, key);
     return store;
   }
 
@@ -223,8 +255,62 @@ export class PocStore {
     this.mandates.push(mandate);
   }
 
-  /** Persist everything; every record gets a fresh random IV. */
-  async save(): Promise<void> {
+  /** True once a recovery key has been set up (SEC-003 / #44). */
+  get hasRecoveryKey(): boolean {
+    return this.recovery !== undefined;
+  }
+
+  /**
+   * Generate a new recovery key, wrap the current master key under it, and
+   * stage the wrap for the next `save()`. Returns the recovery key for
+   * one-time display; the caller must show it to the user immediately and
+   * never log or persist the plaintext value itself.
+   */
+  async setupRecoveryKey(): Promise<string> {
+    const key = this.requireKey();
+    const recoveryKey = generateRecoveryKey();
+    const kek = await recoveryKeyToKek(recoveryKey);
+    const raw = await exportKeyRaw(key);
+    this.recovery = await encryptRecord(kek, Buffer.from(raw).toString("base64"));
+    return recoveryKey;
+  }
+
+  /** Remove the recovery wrap (staged for the next `save()`). */
+  removeRecoveryKey(): void {
+    this.requireKey();
+    this.recovery = undefined;
+  }
+
+  /** Check whether `candidate` unwraps the current recovery wrap, without unlocking a new store. */
+  async verifyRecoveryKey(candidate: string): Promise<boolean> {
+    if (!this.recovery) return false;
+    try {
+      const kek = await recoveryKeyToKek(candidate);
+      await decryptRecord(kek, this.recovery);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Change the passphrase: derive a new master key under a fresh KDF salt and
+   * switch to it for subsequent reads/writes. This invalidates any existing
+   * recovery wrap (it wraps the old key), so it is cleared here; call
+   * `setupRecoveryKey()` again afterward if recovery should remain available.
+   * Caller must `save()` to persist.
+   */
+  async rekey(newPassphrase: string, kdfAlgo: KdfAlgo = "argon2id"): Promise<void> {
+    this.requireKey();
+    const newKdf = newKdfParams(kdfAlgo);
+    const newKey = await deriveKey(newPassphrase, newKdf);
+    this.key = newKey;
+    this.kdf = newKdf;
+    this.recovery = undefined;
+  }
+
+  /** Build the on-disk file shape; every record gets a fresh random IV. */
+  private async serialize(): Promise<StoreFile> {
     const key = this.requireKey();
     const payloads: StorePayload[] = [
       ...[...this.profile.values()].map((data): StorePayload => ({ kind: "profile", data })),
@@ -237,7 +323,50 @@ export class PocStore {
       records.push(await encryptRecord(key, JSON.stringify(payload)));
     }
     const file: StoreFile = { version: STORE_FORMAT_VERSION, kdf: this.kdf, records };
+    if (this.recovery) file.recovery = this.recovery;
+    return file;
+  }
+
+  /** Persist everything; every record gets a fresh random IV. */
+  async save(): Promise<void> {
+    const file = await this.serialize();
     await mkdir(dirname(this.filePath), { recursive: true });
     await writeFile(this.filePath, JSON.stringify(file), "utf8");
+  }
+
+  /**
+   * Return the same encrypted JSON shape as the on-disk store, for the user
+   * to copy elsewhere as a backup. No plaintext export exists; the file is
+   * useless without the passphrase (or recovery key, if configured).
+   */
+  async exportEncrypted(): Promise<string> {
+    const file = await this.serialize();
+    return JSON.stringify(file);
+  }
+
+  /**
+   * Restore an encrypted export to `filePath` and open it. Validates the
+   * store format version before writing anything, and refuses to overwrite
+   * an existing file at `filePath` unless `options.overwrite` is set.
+   */
+  static async importEncrypted(
+    filePath: string,
+    exported: string,
+    passphrase: string,
+    options?: { overwrite?: boolean },
+  ): Promise<PocStore> {
+    const file = migrateStoreFile(JSON.parse(exported) as StoreFile);
+    if (!options?.overwrite) {
+      const exists = await readFile(filePath).then(
+        () => true,
+        () => false,
+      );
+      if (exists) {
+        throw new Error(`refusing to overwrite existing store at ${filePath} (pass { overwrite: true } to replace it)`);
+      }
+    }
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, JSON.stringify(file), "utf8");
+    return PocStore.open(filePath, passphrase);
   }
 }
