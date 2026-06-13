@@ -165,6 +165,19 @@ export class PocStore {
   }
 
   /**
+   * Check whether `candidate` re-derives the same master key under this
+   * store's KDF params, without changing any state. Used by the UI to
+   * require master-passphrase re-entry before revealing the most-sensitive
+   * fields (CVV, credentials, API key) (UI-001 / #17).
+   */
+  async verifyPassphrase(candidate: string): Promise<boolean> {
+    const key = this.requireKey();
+    const candidateKey = await deriveKey(candidate, this.kdf);
+    const [a, b] = await Promise.all([exportKeyRaw(key), exportKeyRaw(candidateKey)]);
+    return Buffer.from(a).equals(Buffer.from(b));
+  }
+
+  /**
    * Drop the master key and every decrypted value from memory. Call on idle /
    * shutdown; the store must be reopened with the passphrase to be used again.
    */
@@ -210,6 +223,12 @@ export class PocStore {
     const entry: ProfileEntry = { key, label, value, updatedAt: Date.now() };
     if (matchTerms) entry.matchTerms = matchTerms;
     this.profile.set(key, entry);
+  }
+
+  /** Remove a profile field (user-initiated). Returns true if it existed. */
+  deleteProfileValue(key: ProfileKey): boolean {
+    this.requireKey();
+    return this.profile.delete(key);
   }
 
   getSettings(): ProviderSettings | undefined {

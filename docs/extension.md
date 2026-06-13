@@ -190,3 +190,48 @@ predate the RFC-001 v3 pivot to a local Playwright application and are not part 
 scanner and rule-based classifier informed the PoC's deterministic mapper) and are not
 extended; new UI work happens in `poc/autofill-agent/` (see §9 and UI-001 / #17). Removal
 will be considered once the PoC UI supersedes their functionality.
+
+## 11. Local App UI (UI-001 / #17)
+
+`poc/autofill-agent/src/app/ui.ts` (`AppUI`) is the interactive local UI on top of the
+app shell (§9): a CLI menu over `AutofillApp` + `AppRunner`, started via
+`npm run poc -- ui [deterministic|ai]`. It is the first concrete UI layer for RFC-001 v3
+§7 (no GUI framework was added; the CLI menu fits the "no new dependencies without a
+documented reason" policy).
+
+Menus:
+
+- **1) Personal data** — list, add (from `KNOWN_PROFILE_KEYS`, labeled via
+  `PROFILE_FIELD_LABELS`, or a custom `custom.<slug>` field), edit, and delete profile
+  fields. Listings always go through `maskValue` (`agent/gate.ts`): `card.number` shows
+  only the last 4 digits, other sensitive keys (`isSensitiveKey`, e.g. `card.cvv`,
+  `account.password`) show `••••••`. Revealing a sensitive field's raw value requires
+  re-entering the master passphrase, checked via `PocStore.verifyPassphrase()` without
+  changing any state.
+- **2) Site inventory / mandates** — list per-site records (flagging sites with
+  `staleFilledFields()` candidates and `lastUpdatedAt`), view a site's `filledFields` and
+  `RegistrationMandate` history (including `highRiskFlags` / `paymentStopped` /
+  `cardFilled`), and delete a site from the local inventory (does not touch the real
+  account).
+- **3) Bulk update** — `staleFilledFields()` (shared with `runUpdate` in `agent/agent.ts`,
+  `agent/records.ts`) computes which sites have profile values that no longer match what
+  was last filled; the user picks sites (or `all`), and each runs through
+  `AppRunner.update()` with the same gate / guards / wall hand-off as registration.
+- **4) New registration** — prompts for a URL and runs `AppRunner.register()` through the
+  review-and-confirm gate (`CliGate`).
+- **5) Settings** — view/edit the AI provider config (`ProviderSettings`: provider/model/
+  API key, persisted encrypted via `PocStore.setProviderSettings`); reveal the API key
+  (passphrase re-entry, like sensitive profile fields); generate / verify / remove a
+  recovery key (SEC-003 / #44); encrypted export / import (`exportEncrypted` /
+  `importEncrypted`, refusing to import over the currently-open store file). The menu also
+  restates the PRIV-001 / PRIV-002 network-egress and AI-disclosure policy.
+
+Both registration and bulk update wire `AppRunnerHooks.handoff`: on a detected wall
+(CAPTCHA / MFA / verification), the UI prints the `HANDOFF_INSTRUCTIONS` text and waits
+for Enter before resuming in the same headed session (§6). `humanFinalSubmit` is left
+unset, matching `agent.ts`'s existing behavior for auto-creation-prohibited sites (the
+agent fills, the user presses the final button in the visible browser).
+
+`AppUI`'s I/O (`ask` / `confirm` / `askSecret` / `log`) is behind an injectable `UiIo`
+interface (`defaultIo` uses real stdin/stdout); `tests/unit/autofill-poc-ui.test.ts`
+drives the menus with a scripted `UiIo` fake and does not launch a real browser.

@@ -23,7 +23,8 @@ poc/autofill-agent/
 ```
 
 層構成は RFC-001 v3 §7（ストア / エージェント / Playwright 自動操作 / UI）に対応する。
-UI 層は PoC では CLI（確認ゲートの対話表示）が代替する。
+UI 層は `src/app/`（`AutofillApp` / `AppRunner` / `AppUI`、§9・§11）が提供する
+対話 CLI（`npm run poc -- ui`）。
 
 ## 使い方
 
@@ -46,6 +47,9 @@ npm run poc -- register 09-trial-card [deterministic|ai]
 
 # アプリシェルのlifecycle確認（unlock -> ブラウザ起動/終了 -> lock）
 npm run poc -- app
+
+# ローカルアプリUI（個人情報管理・サイト一覧/mandate・一括更新・新規登録・設定）
+npm run poc -- ui [deterministic|ai]
 ```
 
 - マスターパスフレーズは `AF_POC_PASSPHRASE`（未指定時は PoC 用の固定値）。ストアは
@@ -119,7 +123,8 @@ npm run poc -- app
 ### Recovery key / encrypted export・import（SEC-003 / #44）
 
 `src/store/recovery.ts` と `store.ts` の `PocStore` に以下の zero-knowledge な復旧手段を実装した
-（詳細は `docs/security.md` §4）。CLI/UI からの操作は #17 で配線する。
+（詳細は `docs/security.md` §4）。`npm run poc -- ui` の「5. 設定」から生成・検証・削除できる
+（#17）。
 
 - `store.setupRecoveryKey()`: 256bit の recovery key を生成し、現在の master key をその key で
   wrap して `recovery` フィールドとして保存準備する。**戻り値の recovery key は一度しか
@@ -138,6 +143,26 @@ npm run poc -- app
 - ユニットテスト `tests/unit/autofill-poc-recovery.test.ts`: roundtrip・誤 recovery key・
   `verifyRecoveryKey`・`rekey` による無効化・export/import roundtrip（平文非混入を確認）・
   上書き拒否・バージョン不一致拒否をカバー。
+
+### ローカルアプリUI（UI-001 / #17）
+
+`npm run poc -- ui [deterministic|ai]` で `src/app/ui.ts`（`AppUI`）の対話メニューが起動する
+（詳細は `docs/extension.md` §11）。
+
+1. **個人情報**: 既知フィールド（`KNOWN_PROFILE_KEYS`）またはカスタム項目の追加・編集・削除。
+   一覧表示は常に `maskValue` でマスク（カード番号は末尾4桁のみ、CVV/パスワード/APIキーは
+   `••••••`）。表示にはマスターパスフレーズの再入力（`verifyPassphrase`）が必要。
+2. **サイト一覧 / mandate**: サイトごとの `filledFields` と `RegistrationMandate`
+   （高リスク条項・支払い停止・カード入力の有無）を表示、ローカル一覧から削除（実アカウントは
+   削除しない）。
+3. **一括更新**: `staleFilledFields()`（`agent.ts` の `runUpdate` と共有）で差分のあるサイトを
+   検出し、選択したサイトを確認ゲート・3ガード・壁ハンドオフ込みで更新。
+4. **新規登録**: URL を入力して確認ゲート経由で新規登録。
+5. **設定**: AI プロバイダ（provider/model/APIキー、暗号化保存）、APIキー表示（要再認証）、
+   recovery key の生成・検証・削除、暗号化エクスポート/インポート。PRIV-001 / PRIV-002 の
+   方針も画面に表示する。
+- ユニットテスト `tests/unit/autofill-poc-ui.test.ts`: 全メニューを注入可能な `UiIo`
+  フェイクで駆動（実ブラウザは起動しない）。
 
 ## 所見・既知の制限
 

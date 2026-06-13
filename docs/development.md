@@ -90,6 +90,7 @@ npm run poc:serve                 # local 10-pattern test sites
 npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
 npm run poc -- register 09-trial-card   # headed demo with the interactive gate
 npm run poc -- app                 # app-shell lifecycle smoke test (unlock/browser/lock)
+npm run poc -- ui                  # interactive local app UI (personal data, sites, settings, ...)
 ```
 
 PoC state (encrypted store, measurement JSON) is written under
