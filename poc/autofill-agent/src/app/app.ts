@@ -91,6 +91,25 @@ export class AutofillApp {
     return store;
   }
 
+  /**
+   * Unlock the encrypted store with a recovery key instead of the passphrase
+   * (SEC-003 / #44). Fails closed with `AutofillAppError` if no recovery key
+   * was configured, or the given key does not unwrap the stored master key.
+   */
+  async unlockWithRecoveryKey(recoveryKey: string): Promise<PocStore> {
+    let store: PocStore;
+    try {
+      store = await PocStore.openWithRecoveryKey(this.storeFilePath, recoveryKey);
+    } catch (err) {
+      throw new AutofillAppError("failed to unlock the store with the recovery key (invalid key or no recovery key configured)", {
+        cause: err,
+      });
+    }
+    this._store = store;
+    this.resetIdleTimer();
+    return store;
+  }
+
   /** The unlocked store. Throws if `unlock()` has not been called or the store is locked. */
   get store(): PocStore {
     if (!this._store || this._store.isLocked) throw new AutofillAppError("store is not unlocked");

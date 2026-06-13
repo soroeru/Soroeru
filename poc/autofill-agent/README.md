@@ -116,6 +116,29 @@ npm run poc -- app
   フォールバックあり。誤パスフレーズ・改ざんは GCM 認証で失敗することをユニットテストで確認。
 - ディスク上に平文が現れないこと、CVV を含む全値が暗号化されることを確認（テスト `tests/unit/autofill-poc-crypto.test.ts`）。
 
+### Recovery key / encrypted export・import（SEC-003 / #44）
+
+`src/store/recovery.ts` と `store.ts` の `PocStore` に以下の zero-knowledge な復旧手段を実装した
+（詳細は `docs/security.md` §4）。CLI/UI からの操作は #17 で配線する。
+
+- `store.setupRecoveryKey()`: 256bit の recovery key を生成し、現在の master key をその key で
+  wrap して `recovery` フィールドとして保存準備する。**戻り値の recovery key は一度しか
+  表示されない**。画面・ログ・スクリーンショット・AI への送信に絶対に含めないこと
+  （ユーザー向け警告として、表示時に「安全な場所に書き留めたら閉じる」旨を案内する）。
+- `PocStore.openWithRecoveryKey(filePath, recoveryKey)` /
+  `AutofillApp.unlockWithRecoveryKey(recoveryKey)`: passphrase の代わりに recovery key で
+  解錠する。誤った recovery key は GCM 認証エラーでフェイルクローズする。
+- `store.rekey(newPassphrase)`: passphrase を変更する。**既存の recovery key は無効化**
+  される（古い master key を wrap しているため）。変更後に recovery key を再発行する
+  必要がある。
+- `store.exportEncrypted()` / `PocStore.importEncrypted(filePath, json, passphrase, { overwrite? })`:
+  ディスク上と同じ暗号化 JSON（`version` / `kdf` / `records` / `recovery`）をそのまま
+  バックアップ・復元する。**平文 export は提供しない**。import はバージョン不一致を
+  fail-closed で拒否し、既存ファイルは `overwrite: true` を渡さない限り上書きしない。
+- ユニットテスト `tests/unit/autofill-poc-recovery.test.ts`: roundtrip・誤 recovery key・
+  `verifyRecoveryKey`・`rekey` による無効化・export/import roundtrip（平文非混入を確認）・
+  上書き拒否・バージョン不一致拒否をカバー。
+
 ## 所見・既知の制限
 
 - **決定的版・AI 版とも10パターン全てで成立**した。決定的版のラベル語彙ルールは

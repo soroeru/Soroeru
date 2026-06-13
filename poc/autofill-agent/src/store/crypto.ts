@@ -66,7 +66,19 @@ export async function deriveKey(passphrase: string, params: KdfParams): Promise<
     );
     raw = new Uint8Array(bits);
   }
-  return subtle.importKey("raw", Buffer.from(raw), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+  // Extractable so the master key's raw bytes can be wrapped under a recovery
+  // key (SEC-003 / #44); the key itself never leaves this process.
+  return subtle.importKey("raw", Buffer.from(raw), { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
+}
+
+/** Export an AES-GCM key's raw bytes, e.g. to wrap it under another key. */
+export async function exportKeyRaw(key: MasterKey): Promise<Uint8Array> {
+  return new Uint8Array(await subtle.exportKey("raw", key));
+}
+
+/** Re-import raw AES-GCM key bytes produced by `exportKeyRaw`. */
+export async function importKeyRaw(raw: Uint8Array, extractable = true): Promise<MasterKey> {
+  return subtle.importKey("raw", Buffer.from(raw), { name: "AES-GCM" }, extractable, ["encrypt", "decrypt"]);
 }
 
 export interface EncryptedRecord {

@@ -102,9 +102,33 @@ card number). It is stored at the user's request but handled as the most sensiti
 encrypted, never sent to the model, decrypted only at fill time and immediately discarded,
 with an optional master-passphrase re-prompt (default on) for card operations.
 
-**Recovery**: a zero-knowledge design means a forgotten passphrase loses all data. Issue a
-**recovery key** (shown once) the user stores safely. Export / backup uses the same key
-scheme. Exact formats are finalized at implementation (RFC §13 Q3).
+**Recovery (SEC-003 / #44)**: a zero-knowledge design means a forgotten passphrase loses
+all data unless the user set up a recovery key beforehand.
+
+- **Recovery key**: a 256-bit random secret, generated locally and shown to the user
+  exactly once (base32, grouped for readability, e.g. `ABCD-EFGH-...-2345`). It is never
+  persisted in plaintext and never sent anywhere.
+- **Wrapping the master key**: rather than a separate data-encryption key / envelope
+  layer, the recovery key directly wraps the existing passphrase-derived master key.
+  `setupRecoveryKey()` exports the master key's raw bytes, encrypts them (AES-256-GCM)
+  under SHA-256(recovery key) as the key-wrapping key, and stores the result as the
+  optional `recovery` field in the store file. A single SHA-256 is sufficient here
+  (unlike the passphrase KDF) because the recovery key already carries 256 bits of
+  entropy.
+- **Recovery unlock**: `PocStore.openWithRecoveryKey()` / `AutofillApp.unlockWithRecoveryKey()`
+  unwrap the master key with the recovery key instead of deriving it from a passphrase,
+  then decrypt the store as usual. A wrong recovery key fails AES-GCM authentication and
+  is rejected (fail-closed), matching the wrong-passphrase behavior in §4.7.
+- **Rekey invalidates recovery**: `rekey()` (passphrase change) derives a new master key
+  under a fresh KDF salt and clears the existing recovery wrap, since it wraps the old
+  key. The user must run `setupRecoveryKey()` again afterward if they want recovery to
+  remain available. This is documented behavior, not a bug.
+- **Export / import**: `exportEncrypted()` returns the same encrypted JSON shape as the
+  on-disk store (`version`, `kdf` params, encrypted `records`, and `recovery` if
+  configured) — there is no plaintext export. `PocStore.importEncrypted()` validates the
+  store format version before writing anything (fails closed on an unsupported version,
+  per §4.6) and refuses to overwrite an existing destination file unless the caller
+  passes `{ overwrite: true }`.
 
 ## 5. AI Provider Disclosure Policy
 
