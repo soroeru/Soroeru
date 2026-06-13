@@ -51,6 +51,7 @@ export interface UpdateResultRow {
   expected: "updated" | "skipped";
   actual: string;
   valuesOk: boolean;
+  mandateOk: boolean;
 }
 
 export interface VariantRunResult {
@@ -315,6 +316,7 @@ async function runBulkUpdate(
     const expected = changedFields.length > 0 ? "updated" : "skipped";
 
     const page = await browser.newPage();
+    const mandateCount = deps.store.listMandates().length;
     let actual = "error";
     try {
       const result = await runUpdate(page, server.siteUrl(site.id), site.id, deps);
@@ -333,7 +335,9 @@ async function runBulkUpdate(
       }
     }
     if (expected === "skipped" && state.events.some((e) => e.type === "update")) valuesOk = false;
-    rows.push({ siteId: site.id, expected, actual, valuesOk });
+    const mandateDelta = deps.store.listMandates().length - mandateCount;
+    const mandateOk = actual === "updated" ? mandateDelta === 1 : mandateDelta === 0;
+    rows.push({ siteId: site.id, expected, actual, valuesOk, mandateOk });
   }
   return rows;
 }
@@ -433,7 +437,9 @@ export function formatResult(result: VariantRunResult): string {
   }
   lines.push("update:");
   for (const u of result.update) {
-    lines.push(`  ${u.siteId.padEnd(20)} expected=${u.expected.padEnd(7)} actual=${u.actual.padEnd(7)} ${u.valuesOk ? "OK" : "NG"}`);
+    lines.push(
+      `  ${u.siteId.padEnd(20)} expected=${u.expected.padEnd(7)} actual=${u.actual.padEnd(7)} ${u.valuesOk ? "OK" : "NG"} mandate=${u.mandateOk ? "OK" : "NG"}`,
+    );
   }
   lines.push(`trial-card decline path (card approval=no): ${result.trialCardDeclinePathOk ? "OK" : "NG"}`);
   lines.push(`wall detection fixtures: ${result.wallDetectionOk ? "OK" : "NG"}`);
