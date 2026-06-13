@@ -37,8 +37,13 @@ function mapperFor(variantArg: string): Mapper {
   return new DeterministicMapper();
 }
 
+const ENGINE_NAMES: EngineName[] = ["chromium", "firefox", "webkit"];
+
 async function cmdDemo(variantArg: string, engineArg: string): Promise<void> {
-  const engine = (engineArg as EngineName) || "chromium";
+  const engine = (engineArg || "chromium") as EngineName;
+  if (!ENGINE_NAMES.includes(engine)) {
+    throw new Error(`unknown engine "${engineArg}" (use one of: ${ENGINE_NAMES.join(", ")})`);
+  }
   await runDemo(mapperFor(variantArg), engine, STATE_ROOT, (m) => console.log(m));
 }
 

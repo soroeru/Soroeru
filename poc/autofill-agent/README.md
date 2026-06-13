@@ -37,8 +37,12 @@ npm run poc:serve            # http://127.0.0.1:4333/
 # 計測（決定的版を3エンジンで実行。ANTHROPIC_API_KEY があれば AI 版も実行）
 npm run poc:matrix -- both
 
-# 1サイトを headed + 対話ゲートでデモ実行
-npm run poc -- register 09-trial-card
+# 全サイトを headed + 確認ゲート自動承認で連続自動登録する様子を見る（既定: AI版）
+npm run poc -- demo                  # demo [deterministic|ai] [engine]
+npm run poc -- demo deterministic    # API 不要・無料で動きだけ見る
+
+# 1サイトを headed + 対話ゲートでデモ実行（ゲートを手動で y/N 承認）
+npm run poc -- register 09-trial-card [deterministic|ai]
 ```
 
 - マスターパスフレーズは `AF_POC_PASSPHRASE`（未指定時は PoC 用の固定値）。ストアは
