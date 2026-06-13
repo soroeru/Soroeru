@@ -38,6 +38,23 @@ require human judgment.
 | E2E | Verify the extension in a real browser once tooling exists. | Loading the extension, scanning fixture pages, showing suggestions, selected filling, re-scanning. |
 | Manual | Verify user experience and safety boundaries. | Human-in-the-loop behavior, UI placement, real Chrome extension loading, release readiness. |
 
+### 2.1 Layer → test mapping (MAINT-001)
+
+Each architecture layer (see [`extension.md`](extension.md) §1.1) is unit-testable in
+isolation. Current coverage:
+
+| Layer / seam | Modules | Tests |
+| --- | --- | --- |
+| Store (crypto boundary) | `store/crypto.ts`, `store/store.ts` | `autofill-poc-crypto.test.ts`, `profile-store.test.ts` |
+| Agent — deterministic mapper | `agent/classifier.ts`, `agent/guards.ts` | `autofill-poc-classifier.test.ts`, `autofill-poc-guards.test.ts` |
+| Agent — AI mapper | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `autofill-poc-ai-mapper.test.ts` |
+| Agent — wall detection | `agent/walls.ts` | `autofill-poc-walls.test.ts` |
+| Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `autofill-poc-contracts.test.ts` |
+| Automation (DOM scan) | `content/scanner.ts`, `agent/scan.ts` | `scanner.test.ts` |
+
+`autofill-poc-contracts.test.ts` additionally locks the cross-layer invariant that the
+agent layer never receives raw personal values.
+
 ## 3. Test Environment
 
 The current automated test runner is Node's built-in test runner after
