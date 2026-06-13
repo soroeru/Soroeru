@@ -4,6 +4,7 @@
 //   register <siteId> [variant]      — headed demo run with the interactive CLI gate
 //   app                                — app-shell lifecycle smoke test (unlock/browser/lock)
 //   ui [variant]                       — interactive local app UI (personal data, sites, settings, ...)
+//   check-egress                       — PRIV-001 static network-egress allowlist check
 //
 // Examples:
 //   node dist/compiled/poc/autofill-agent/run/cli.js serve 4333
@@ -11,6 +12,7 @@
 //   node dist/compiled/poc/autofill-agent/run/cli.js register 08-terms
 //   node dist/compiled/poc/autofill-agent/run/cli.js app
 //   node dist/compiled/poc/autofill-agent/run/cli.js ui
+//   node dist/compiled/poc/autofill-agent/run/cli.js check-egress
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +25,7 @@ import { DUMMY_PROFILE_SEED } from "../src/profile.js";
 import { AutofillApp, AutofillAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
 import { askSecret, AppUI } from "../src/app/ui.js";
+import { checkNetworkEgress } from "../src/dev/egress-check.js";
 import { formatResult, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = "state/autofill-poc";
@@ -168,6 +171,19 @@ function aiMapperForUi(app: AutofillApp): Mapper {
   return new AiMapper(provider);
 }
 
+/** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
+function cmdCheckEgress(): void {
+  const result = checkNetworkEgress(process.cwd());
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under poc/autofill-agent/{src,run}`);
+  if (result.violations.length > 0) {
+    console.error("violations (see docs/security.md §6):");
+    for (const v of result.violations) console.error(`  - ${v}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log("ok: every network call is annotated (target-site / ai-provider); no telemetry/analytics dependency found");
+}
+
 async function cmdUi(variantArg: string): Promise<void> {
   const server = await startPocServer();
   const app = new AutofillApp({ stateDir: join(STATE_ROOT, "manual") });
@@ -217,8 +233,11 @@ switch (command) {
   case "ui":
     await cmdUi(arg1 ?? "deterministic");
     break;
+  case "check-egress":
+    cmdCheckEgress();
+    break;
   default:
     console.log(
-      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai]",
+      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai] | check-egress",
     );
 }

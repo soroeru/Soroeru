@@ -40,6 +40,7 @@ export class AnthropicProvider implements AiProvider {
   constructor(options?: { apiKey?: string; model?: string }) {
     // In the real app the key comes from the encrypted settings store; the PoC
     // reads the environment (never logged, never persisted by the PoC).
+    // egress: ai-provider — Anthropic SDK default base URL is https://api.anthropic.com
     this.client = options?.apiKey ? new Anthropic({ apiKey: options.apiKey }) : new Anthropic();
     this.model = options?.model ?? process.env["AF_POC_AI_MODEL"] ?? "claude-opus-4-8";
     this.id = `anthropic:${this.model}`;
@@ -56,6 +57,8 @@ export class AnthropicProvider implements AiProvider {
         output_config: {
           format: { type: "json_schema", schema: options.schema },
         },
+        // Stateless: no `metadata`, no prompt-cache `cache_control`, no
+        // conversation continuation — each call is a fresh, single-turn request.
         messages: [{ role: "user", content: options.user }],
       });
     } catch (err) {
@@ -101,6 +104,7 @@ export class OpenAiProvider implements AiProvider {
   constructor(options?: { apiKey?: string; model?: string; baseUrl?: string; fetchImpl?: FetchLike }) {
     this.apiKey = options?.apiKey ?? process.env["OPENAI_API_KEY"] ?? "";
     this.model = options?.model ?? process.env["AF_POC_OPENAI_MODEL"] ?? "gpt-5.4";
+    // egress: ai-provider — overridable only for offline tests via fetchImpl/baseUrl
     this.baseUrl = options?.baseUrl ?? "https://api.openai.com/v1";
     this.fetchImpl = options?.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
     this.id = `openai:${this.model}`;
