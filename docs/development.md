@@ -89,6 +89,7 @@ npx playwright install chromium firefox webkit   # once
 npm run poc:serve                 # local 10-pattern test sites
 npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
 npm run poc -- register 09-trial-card   # headed demo with the interactive gate
+npm run poc -- app                 # app-shell lifecycle smoke test (unlock/browser/lock)
 ```
 
 PoC state (encrypted store, measurement JSON) is written under
@@ -107,7 +108,7 @@ Current repository shape:
 ├── docs/
 ├── poc/
 │   ├── issue-29-autofill-poc/   # throwaway PoC extension (RFC-001 R/R2/R3)
-│   └── autofill-agent/          # Issue #33 PoC: sites/ + src/ + run/
+│   └── autofill-agent/          # Issue #33 PoC: sites/ + src/ (agent, app, store) + run/
 ├── scripts/
 ├── src/
 │   ├── manifest.json

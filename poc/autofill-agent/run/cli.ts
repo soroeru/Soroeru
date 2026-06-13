@@ -2,23 +2,24 @@
 //   serve [port]                       — start the 10-pattern test-site server
 //   matrix [variant] [engines]        — run measurements (variant: deterministic | ai | both)
 //   register <siteId> [variant]      — headed demo run with the interactive CLI gate
+//   app                                — app-shell lifecycle smoke test (unlock/browser/lock)
 //
 // Examples:
 //   node dist/compiled/poc/autofill-agent/run/cli.js serve 4333
 //   node dist/compiled/poc/autofill-agent/run/cli.js matrix deterministic chromium,firefox,webkit
 //   node dist/compiled/poc/autofill-agent/run/cli.js register 08-terms
+//   node dist/compiled/poc/autofill-agent/run/cli.js app
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { chromium } from "playwright";
 import { startPocServer } from "../sites/server.js";
-import { runRegistration } from "../src/agent/agent.js";
 import { AiMapper } from "../src/agent/ai/ai-mapper.js";
 import { aiProviderFromEnv } from "../src/agent/ai/provider.js";
 import { CliGate } from "../src/agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../src/agent/mapper.js";
 import { DUMMY_PROFILE_SEED } from "../src/profile.js";
-import { PocStore } from "../src/store/store.js";
+import { AutofillApp, AutofillAppError } from "../src/app/app.js";
+import { AppRunner } from "../src/app/runner.js";
 import { formatResult, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = "state/autofill-poc";
@@ -31,7 +32,7 @@ function aiMapperFromEnv(): Mapper | undefined {
 function mapperFor(variantArg: string): Mapper {
   if (variantArg === "ai") {
     const ai = aiMapperFromEnv();
-    if (!ai) throw new Error("AI版を使うには ANTHROPIC_API_KEY を設定してください（.env も可）");
+    if (!ai) throw new Error("AI版を使うには OPENAI_API_KEY または ANTHROPIC_API_KEY を設定してください（.env も可）");
     return ai;
   }
   return new DeterministicMapper();
@@ -65,7 +66,7 @@ async function cmdMatrix(variantArg: string, enginesArg: string): Promise<void> 
   if (variantArg === "ai" || variantArg === "both") {
     const ai = aiMapperFromEnv();
     if (!ai) {
-      console.log("\nAI版はスキップ: ANTHROPIC_API_KEY が未設定です（ユーザー契約のAIプロバイダのキーを設定して再実行してください）。");
+      console.log("\nAI版はスキップ: OPENAI_API_KEY / ANTHROPIC_API_KEY が未設定です（ユーザー契約のAIプロバイダのキーを設定して再実行してください）。");
     } else {
       // The AI variant measures mapping accuracy; engine coverage is the
       // deterministic run's job, so the AI run uses chromium only.
@@ -93,21 +94,17 @@ async function cmdMatrix(variantArg: string, enginesArg: string): Promise<void> 
 
 async function cmdRegister(siteId: string, variantArg: string): Promise<void> {
   const server = await startPocServer();
-  const browser = await chromium.launch({ headless: false });
+  const app = new AutofillApp({ stateDir: join(STATE_ROOT, "manual") });
   try {
-    const store = await PocStore.open(
-      join(STATE_ROOT, "manual", "store.json"),
-      process.env["AF_POC_PASSPHRASE"] ?? "poc-dummy-passphrase",
-    );
+    await app.unlock(process.env["AF_POC_PASSPHRASE"] ?? "poc-dummy-passphrase");
     for (const seed of DUMMY_PROFILE_SEED) {
-      if (!store.profile.has(seed.key)) store.setProfileValue(seed.key, seed.label, seed.value);
+      if (!app.store.profile.has(seed.key)) app.store.setProfileValue(seed.key, seed.label, seed.value);
     }
-    const mapper = variantArg === "ai" ? aiMapperFromEnv() : new DeterministicMapper();
-    if (!mapper) throw new Error("AI版を使うには ANTHROPIC_API_KEY を設定してください");
+    const mapper = mapperFor(variantArg);
+    const browser = await app.launchBrowser("chromium");
     const page = await browser.newPage();
-    const result = await runRegistration(page, server.siteUrl(siteId), {
-      store,
-      mapper,
+    const runner = new AppRunner(app, mapper);
+    const result = await runner.register(page, server.siteUrl(siteId), {
       gate: new CliGate(),
       promptUser: async (label) => {
         const { createInterface } = await import("node:readline/promises");
@@ -123,8 +120,32 @@ async function cmdRegister(siteId: string, variantArg: string): Promise<void> {
     console.log(`\nstatus: ${result.status}`);
     for (const note of result.notes) console.log(`note: ${note}`);
   } finally {
-    await browser.close();
+    await app.shutdown();
     await server.close();
+  }
+}
+
+async function cmdApp(): Promise<void> {
+  const app = new AutofillApp({ stateDir: join(STATE_ROOT, "app") });
+  try {
+    await app.unlock(process.env["AF_POC_PASSPHRASE"] ?? "poc-dummy-passphrase");
+  } catch (err) {
+    if (err instanceof AutofillAppError) {
+      console.error(`store unlock failed: ${err.message}`);
+      return;
+    }
+    throw err;
+  }
+  console.log(`store unlocked: ${app.storeFilePath}`);
+  try {
+    const browser = await app.launchBrowser("chromium");
+    console.log("browser launched (chromium)");
+    const page = await browser.newPage();
+    await page.goto("about:blank");
+    console.log("navigated to about:blank");
+  } finally {
+    await app.shutdown();
+    console.log("browser closed, store locked");
   }
 }
 
@@ -144,8 +165,11 @@ switch (command) {
     // Headed, auto-approved run across all 10 sites. Default variant: ai.
     await cmdDemo(arg1 ?? "ai", arg2 ?? "chromium");
     break;
+  case "app":
+    await cmdApp();
+    break;
   default:
     console.log(
-      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine]",
+      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app",
     );
 }

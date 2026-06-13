@@ -171,8 +171,13 @@ export function createProvider(config: ProviderConfig): AiProvider {
   }
 }
 
+/**
+ * Build the AI provider from environment configuration. OpenAI is preferred
+ * (the PoC's current default contract: REQ-012), with Anthropic as a fallback
+ * for users who configured `ANTHROPIC_API_KEY` instead.
+ */
 export function aiProviderFromEnv(): AiProvider | undefined {
-  if (process.env["ANTHROPIC_API_KEY"]) return new AnthropicProvider();
   if (process.env["OPENAI_API_KEY"]) return new OpenAiProvider();
+  if (process.env["ANTHROPIC_API_KEY"]) return new AnthropicProvider();
   return undefined;
 }
