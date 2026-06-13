@@ -34,7 +34,7 @@ npx playwright install chromium firefox webkit
 # テストサイトをブラウザで眺める
 npm run poc:serve            # http://127.0.0.1:4333/
 
-# 計測（決定的版を3エンジンで実行。ANTHROPIC_API_KEY があれば AI 版も実行）
+# 計測（決定的版を3エンジンで実行。OPENAI_API_KEY/ANTHROPIC_API_KEY があれば AI 版も実行）
 npm run poc:matrix -- both
 
 # 全サイトを headed + 確認ゲート自動承認で連続自動登録する様子を見る（既定: AI版）
@@ -43,15 +43,21 @@ npm run poc -- demo deterministic    # API 不要・無料で動きだけ見る
 
 # 1サイトを headed + 対話ゲートでデモ実行（ゲートを手動で y/N 承認）
 npm run poc -- register 09-trial-card [deterministic|ai]
+
+# アプリシェルのlifecycle確認（unlock -> ブラウザ起動/終了 -> lock）
+npm run poc -- app
 ```
 
 - マスターパスフレーズは `AF_POC_PASSPHRASE`（未指定時は PoC 用の固定値）。ストアは
   `state/autofill-poc/` に暗号化保存される（`state/` はコミット対象外）。
-- AI 版はユーザー契約の Anthropic API キー（`ANTHROPIC_API_KEY`）を使う。モデルは
-  `AF_POC_AI_MODEL` で変更可（既定 `claude-opus-4-8`）。
-- API キーは環境変数で渡すか、リポジトリ直下の `.env` に `ANTHROPIC_API_KEY=...` と書く
-  （`npm run poc*` は `.env` があれば自動で読み込む。`.env` は gitignore 済み・コミットしない）。
-  キーはローカルでのみ使用し、ログ・計測結果・ストアには出力しない。
+- AI 版はユーザー契約のAPIキーを使う。既定はOpenAI（`OPENAI_API_KEY`、モデルは
+  `AF_POC_OPENAI_MODEL` で変更可・既定 `gpt-5.4`）。`OPENAI_API_KEY` が未設定で
+  `ANTHROPIC_API_KEY` がある場合はAnthropicにフォールバックする（モデルは
+  `AF_POC_AI_MODEL` で変更可・既定 `claude-opus-4-8`）。
+- API キーは環境変数で渡すか、リポジトリ直下の `.env` に `OPENAI_API_KEY=...`（または
+  `ANTHROPIC_API_KEY=...`）と書く（`npm run poc*` は `.env` があれば自動で読み込む。
+  `.env` は gitignore 済み・コミットしない）。キーはローカルでのみ使用し、ログ・計測結果・
+  ストアには出力しない。
 
 ## テストサイト10パターン
 

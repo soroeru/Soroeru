@@ -147,3 +147,46 @@ This is design intent. Concrete component structure, file layout, and the reusab
 / classifier integration are finalized during the PoC (#33). Reusable assets from the
 earlier work (the form scanner and rule-based classifier) feed the deterministic mapping
 variant.
+
+## 9. App Shell (APP-001)
+
+`poc/autofill-agent/src/app/` is the local app shell that the UI layer and the automation
+layer both go through, rather than opening the store or launching browsers directly:
+
+- **`app.ts` — `AutofillApp`**: owns the encrypted store's unlock/lock lifecycle (incl.
+  idle auto-lock, default 10 minutes, 0 disables) and tracks Playwright `Browser`
+  instances so `shutdown()` can close them all and lock the store in one step. A wrong
+  passphrase fails GCM authentication; `unlock()` fails closed with `AutofillAppError`
+  rather than falling back to an unauthenticated read. `touch()` resets the idle timer on
+  user/agent activity. Browser launching and the idle timers are injectable
+  (`launchBrowserFn`, `setTimeoutFn` / `clearTimeoutFn`) so the lifecycle is unit-testable
+  without a real browser or real delays (`tests/unit/autofill-poc-app.test.ts`).
+- **`runner.ts` — `AppRunner`**: the UI <-> automation boundary. It owns the chosen
+  `Mapper` and reads the store + browser lifecycle from `AutofillApp`; the UI supplies
+  `AppRunnerHooks` (the review-and-confirm `Gate`, the missing-data prompt, the optional
+  wall `HumanHandoff`, and the optional `humanFinalSubmit` surrogate for
+  auto-creation-prohibited sites). `register()` / `update()` call `app.touch()` and then
+  delegate to the existing `runRegistration` / `runUpdate` in `agent/agent.ts` — the UI
+  never constructs an `AgentDeps` or touches the store directly.
+
+Local state (the encrypted store file, matrix output, etc.) lives under
+`state/autofill-poc/` (gitignored). AI provider/model selection is part of the encrypted
+store's `ProviderSettings` (set via `PocStore.setProviderSettings`); the env-var based
+`aiProviderFromEnv()` (`OPENAI_API_KEY` preferred, `ANTHROPIC_API_KEY` fallback) remains
+for the PoC CLI and measurement runner, which run outside the UI flow.
+
+The CLI's `app` subcommand (`npm run poc -- app`) is a lifecycle smoke test: unlock the
+store (reporting `AutofillAppError` on a bad passphrase), launch a headed Chromium
+browser, navigate to `about:blank`, then `shutdown()` (close the browser and lock the
+store).
+
+## 10. Status of Pre-Pivot MV3 Files
+
+The pre-pivot Chrome Extension (Manifest V3) files under `src/` —
+`src/manifest.json`, `src/options/*`, `src/content/scanner.ts`,
+`src/storage/profile-store.ts`, and `src/shared/*` — are **historical and frozen**. They
+predate the RFC-001 v3 pivot to a local Playwright application and are not part of the
+`autofill` runtime described in this document. They are retained for reference (the form
+scanner and rule-based classifier informed the PoC's deterministic mapper) and are not
+extended; new UI work happens in `poc/autofill-agent/` (see §9 and UI-001 / #17). Removal
+will be considered once the PoC UI supersedes their functionality.
