@@ -68,6 +68,48 @@ Never stored:
 - decrypted values in logs, error messages, or crash reports;
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
 
+**Mask policy (PRIV-002 / #21)**: a single mask module
+(`poc/autofill-agent/src/agent/gate.ts`) defines two policies, used everywhere
+a profile value can reach a display or a file:
+
+- `maskValue(key, value)` — for **interactive review surfaces** (the
+  review-and-confirm gate, `renderGate`, and the local UI's profile listing,
+  `AppUI`'s "1. 個人情報" menu): card number → last 4 digits; CVV, card
+  expiry/holder, and account password → a strong mask (`isSensitiveKey`);
+  email and phone → a partial mask (`du***@example.com`, `090-****-5678`)
+  that still lets the user recognize their own value. Other fields (name,
+  address, company, account ID) are shown in full — the gate's job is to let
+  the user verify *exactly* what will be submitted, so masking those would
+  weaken the review. The UI's "r) 表示" (reveal) command additionally requires
+  re-entering the master passphrase for `isSensitiveKey` fields before
+  showing the raw value (Claude Review follow-up on #17).
+- `maskForArtifact(key, value)` — for **persisted artifacts**
+  (`state/autofill-poc/matrix-*.json`, written by `npm run poc -- matrix`):
+  card / CVV / expiry / holder / password use the same strong mask; every
+  other field is reduced to its length (e.g. `(17文字)`) or `(空)` — no raw
+  value of any kind is written to disk outside the encrypted store. This is
+  the "necessary minimum" treatment for fields (e.g. address) that
+  `maskValue` shows in full for review purposes.
+
+**Local persistence (PRIV-002 / #21)**: `npm run poc -- check-persistence`
+(`poc/autofill-agent/src/dev/privacy-check.ts`, tested by
+`tests/unit/autofill-poc-privacy.test.ts`) scans
+`poc/autofill-agent/{src,run}/**/*.ts` for local-filesystem writes and fails
+unless each one carries a `// persist: encrypted-store`,
+`// persist: encrypted-export`, or `// persist: measurement-output`
+annotation — i.e. the encrypted store (`src/store/store.ts`), the encrypted
+export/import (SEC-003 / #44), and the masked measurement output above are the
+*only* code paths allowed to write to local disk. A new, unannotated local
+write fails this check and must be reviewed against this section before it is
+annotated.
+
+**`state/ai-reviews/`** (the local cross-AI review hook,
+[`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
+source code, not on `state/autofill-poc/` (the encrypted profile store); since
+profile values are encrypted at rest and never appear in source, review
+artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
+`state/autofill-poc/` are Git-ignored.
+
 ## 4. Encryption (canonical)
 
 Per RFC §9. Use only widely vetted algorithms; do not roll custom crypto.
@@ -214,6 +256,7 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - [ ] The derived key lives in memory only; decrypted values are never logged
 - [ ] Raw personal values are not sent to the AI model; no provider stateful features used
 - [ ] No network egress except to the target sites the user acts on and the configured AI provider; no telemetry; data store never uploaded (`npm run poc -- check-egress`)
+- [ ] Display/log/measurement-output masking follows the unified `maskValue` / `maskForArtifact` policy; local writes stay inside the encrypted store / encrypted export / masked measurement output (`npm run poc -- check-persistence`)
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
 - [ ] Auto-creation-prohibited sites are fill-only
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed

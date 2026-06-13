@@ -5,6 +5,7 @@
 //   app                                — app-shell lifecycle smoke test (unlock/browser/lock)
 //   ui [variant]                       — interactive local app UI (personal data, sites, settings, ...)
 //   check-egress                       — PRIV-001 static network-egress allowlist check
+//   check-persistence                  — PRIV-002 static local-persistence allowlist check
 //
 // Examples:
 //   node dist/compiled/poc/autofill-agent/run/cli.js serve 4333
@@ -13,6 +14,7 @@
 //   node dist/compiled/poc/autofill-agent/run/cli.js app
 //   node dist/compiled/poc/autofill-agent/run/cli.js ui
 //   node dist/compiled/poc/autofill-agent/run/cli.js check-egress
+//   node dist/compiled/poc/autofill-agent/run/cli.js check-persistence
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -26,6 +28,7 @@ import { AutofillApp, AutofillAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
 import { askSecret, AppUI } from "../src/app/ui.js";
 import { checkNetworkEgress } from "../src/dev/egress-check.js";
+import { checkLocalPersistence } from "../src/dev/privacy-check.js";
 import { formatResult, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = "state/autofill-poc";
@@ -93,6 +96,7 @@ async function cmdMatrix(variantArg: string, enginesArg: string): Promise<void> 
     }
     await mkdir(STATE_ROOT, { recursive: true });
     const out = join(STATE_ROOT, `matrix-${Date.now()}.json`);
+    // persist: measurement-output — notes are masked via maskForArtifact (docs/security.md §3)
     await writeFile(out, JSON.stringify(results, null, 2), "utf8");
     console.log(`\n詳細結果: ${out}`);
   }
@@ -184,6 +188,19 @@ function cmdCheckEgress(): void {
   console.log("ok: every network call is annotated (target-site / ai-provider); no telemetry/analytics dependency found");
 }
 
+/** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
+function cmdCheckPersistence(): void {
+  const result = checkLocalPersistence(process.cwd());
+  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under poc/autofill-agent/{src,run}`);
+  if (result.violations.length > 0) {
+    console.error("violations (see docs/security.md §3):");
+    for (const v of result.violations) console.error(`  - ${v}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log("ok: every local write is annotated (encrypted-store / encrypted-export / measurement-output)");
+}
+
 async function cmdUi(variantArg: string): Promise<void> {
   const server = await startPocServer();
   const app = new AutofillApp({ stateDir: join(STATE_ROOT, "manual") });
@@ -236,8 +253,11 @@ switch (command) {
   case "check-egress":
     cmdCheckEgress();
     break;
+  case "check-persistence":
+    cmdCheckPersistence();
+    break;
   default:
     console.log(
-      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai] | check-egress",
+      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai] | check-egress | check-persistence",
     );
 }

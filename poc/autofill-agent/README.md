@@ -53,6 +53,10 @@ npm run poc -- ui [deterministic|ai]
 
 # PRIV-001: network egressがtarget sites / AIプロバイダ以外に増えていないかの静的チェック
 npm run poc -- check-egress
+
+# PRIV-002: ローカルへの書き込みが暗号化ストア/暗号化エクスポート/マスク済み計測結果以外に
+# 増えていないかの静的チェック
+npm run poc -- check-persistence
 ```
 
 - マスターパスフレーズは `AF_POC_PASSPHRASE`（未指定時は PoC 用の固定値）。ストアは
@@ -154,7 +158,9 @@ npm run poc -- check-egress
 
 1. **個人情報**: 既知フィールド（`KNOWN_PROFILE_KEYS`）またはカスタム項目の追加・編集・削除。
    一覧表示は常に `maskValue` でマスク（カード番号は末尾4桁のみ、CVV/パスワード/APIキーは
-   `••••••`）。表示にはマスターパスフレーズの再入力（`verifyPassphrase`）が必要。
+   `••••••`、メール/電話番号は部分マスク `du***@example.com` / `090-****-5678`）。
+   機密項目（カード/CVV/パスワード）の表示（r）にはマスターパスフレーズの再入力
+   （`verifyPassphrase`）が必要（PRIV-002 / #21）。
 2. **サイト一覧 / mandate**: サイトごとの `filledFields` と `RegistrationMandate`
    （高リスク条項・支払い停止・カード入力の有無）を表示、ローカル一覧から削除（実アカウントは
    削除しない）。
@@ -188,6 +194,30 @@ npm run poc -- check-egress
 - ユニットテスト `tests/unit/autofill-poc-egress.test.ts`: 上記チェックが現状の
   リポジトリで違反なしであること、未注釈の通信・許可外の注釈・telemetry系依存・
   `sites/` 配下が対象外であることをそれぞれ確認する。
+
+### 個人データのマスキングとローカル永続化（PRIV-002 / #21）
+
+`src/agent/gate.ts` に2つのマスク方針を定義し、表示・ログ・ファイル出力のすべてで
+これを使う（詳細は `docs/security.md` §3）。
+
+- `maskValue(key, value)`: 確認ゲート（`renderGate`）とローカルUIの一覧表示用。
+  カード番号は末尾4桁、CVV/カード有効期限/名義/パスワードは `••••••`、メール/電話番号は
+  `du***@example.com` / `090-****-5678` の部分マスク。氏名・住所・会社名・ログインIDは
+  ゲートでの確認に必要なため全表示する。
+- `maskForArtifact(key, value)`: `npm run poc:matrix` が書き出す
+  `state/autofill-poc/matrix-*.json` の不一致ノート用。カード/CVV/パスワード等は同じ
+  強マスク、それ以外は値そのものを書かず文字数（例: `(17文字)`）または `(空)` のみ書く。
+- `npm run poc -- check-persistence`（`src/dev/privacy-check.ts`）が `src/`・`run/`
+  配下のローカル書き込み箇所を静的に検査する。各箇所には `// persist: encrypted-store`
+  （暗号化ストア本体）・`// persist: encrypted-export`（暗号化エクスポート/インポート）・
+  `// persist: measurement-output`（上記のマスク済み計測結果）のいずれかの注釈が必須で、
+  未注釈の新しいローカル書き込みはこのチェックで失敗する。`sites/` は対象外。
+- ユニットテスト: `tests/unit/autofill-poc-gate.test.ts`（`maskValue` / `maskForArtifact`
+  のマスク内容）、`tests/unit/autofill-poc-privacy.test.ts`（上記チェックが現状の
+  リポジトリで違反なしであること、未注釈の書き込み・許可外の注釈・`sites/` 配下が対象外
+  であることをそれぞれ確認）。
+- `state/ai-reviews/`（ローカル cross-AI レビューhook）はソースコードの `git diff` のみを
+  扱い、暗号化ストア（`state/autofill-poc/`）には触れない。両方とも Git 管理対象外。
 
 ## 所見・既知の制限
 
@@ -235,7 +265,10 @@ npm run poc -- check-egress
 
 ## セキュリティ方針（このPoCで守っていること）
 
-- 個人情報（ダミー）は暗号化ストア以外に書かない。ログ・計測結果ではカード/パスワード値をマスク。
+- 個人情報（ダミー）は暗号化ストア・暗号化エクスポート以外に書かない（PRIV-002 / #21、
+  `npm run poc -- check-persistence` で静的検査）。計測結果には値そのものを書かず、
+  確認ゲート/UI一覧はカード・CVV・パスワードを強マスク、メール/電話番号を部分マスクする
+  （`maskValue` / `maskForArtifact` に統一）。
 - AI 版はフォーム構造と規約テキストのみ送信し、実値はローカルの Playwright 層で充填（§6）。
   ステートレス補完のみ（プロンプトキャッシュ・保存スレッド不使用）。
 - CAPTCHA / MFA / bot 検知の回避は実装しない（検知して停止のみ）。
