@@ -102,6 +102,12 @@ async function handle(
     return;
   }
 
+  if (path.startsWith("/wall-flow/") || path === "/wall-flow") {
+    const form = req.method === "POST" ? await readForm(req) : {};
+    send(wallFlowFixture(path, req.method ?? "GET", form));
+    return;
+  }
+
   const m = /^\/site\/([^/]+)(\/.*)?$/.exec(path);
   if (!m) {
     send(page("Not Found", "<h1>404 Not Found</h1>"), 404);
@@ -417,4 +423,47 @@ function wallFixture(kind: string): string {
     default:
       return page("Not Found", "<h1>404</h1>");
   }
+}
+
+/** Registration flow fixture where a wall appears after final submit. */
+function wallFlowFixture(path: string, method: string, form: Record<string, string>): string {
+  const base = "/wall-flow";
+  if ((path === "/wall-flow/" || path === "/wall-flow") && method === "GET") {
+    return page(
+      "壁つき登録テスト",
+      `<h1>壁つき登録テスト</h1>
+<p><a href="${base}/register">新規登録</a></p>`,
+    );
+  }
+  if (path === "/wall-flow/register" && method === "GET") {
+    return page(
+      "壁つき登録テスト - 新規登録",
+      `<h1>新規登録</h1>
+<form method="post" action="${base}/submit">
+  <div class="row"><label for="name">氏名</label><input id="name" name="name" autocomplete="name" required></div>
+  <div class="row"><label for="email">メールアドレス</label><input id="email" name="email" type="email" autocomplete="email" required></div>
+  <div class="row"><label for="password">パスワード</label><input id="password" name="password" type="password" autocomplete="new-password" required></div>
+  <div class="row"><button type="submit">登録する</button></div>
+</form>`,
+    );
+  }
+  if (path === "/wall-flow/submit" && method === "POST") {
+    const hidden = Object.entries(form)
+      .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
+      .join("\n");
+    return page(
+      "セキュリティ確認",
+      `<h1>セキュリティ確認</h1>
+<p>私はロボットではありません</p>
+<div class="g-recaptcha" data-sitekey="dummy"></div>
+<form method="post" action="${base}/success">
+${hidden}
+<button type="submit">人間が確認を完了</button>
+</form>`,
+    );
+  }
+  if (path === "/wall-flow/success") {
+    return page("壁つき登録テスト - 完了", "<h1>登録が完了しました</h1>");
+  }
+  return page("Not Found", "<h1>404</h1>");
 }

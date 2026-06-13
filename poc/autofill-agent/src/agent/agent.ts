@@ -371,10 +371,16 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
       await deps.store.save();
       return result("manualHandoff", true, analysis.highRiskFlags);
     }
-    notes.push("送信後に完了画面を確認できませんでした");
-    record("failed");
-    await deps.store.save();
-    return result("failed", true, analysis.highRiskFlags);
+    try {
+      await page.getByText(SUCCESS_TEXT).first().waitFor({ timeout: 1000 });
+    } catch {
+      if (!after.snapshot.visibleText.includes(SUCCESS_TEXT)) {
+        notes.push("送信後に完了画面を確認できませんでした");
+        record("failed");
+        await deps.store.save();
+        return result("failed", true, analysis.highRiskFlags);
+      }
+    }
   }
 
   record("registered");
