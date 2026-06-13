@@ -50,6 +50,9 @@ npm run poc -- app
 
 # ローカルアプリUI（個人情報管理・サイト一覧/mandate・一括更新・新規登録・設定）
 npm run poc -- ui [deterministic|ai]
+
+# PRIV-001: network egressがtarget sites / AIプロバイダ以外に増えていないかの静的チェック
+npm run poc -- check-egress
 ```
 
 - マスターパスフレーズは `AF_POC_PASSPHRASE`（未指定時は PoC 用の固定値）。ストアは
@@ -164,6 +167,28 @@ npm run poc -- ui [deterministic|ai]
 - ユニットテスト `tests/unit/autofill-poc-ui.test.ts`: 全メニューを注入可能な `UiIo`
   フェイクで駆動（実ブラウザは起動しない）。
 
+### ネットワークegress（PRIV-001 / #20）
+
+許可される外部送信先は (a) ユーザーが指定した **target sites**（通常の Playwright
+ナビゲーション・フォーム送信。規約リンクの取得 `fetchVisibleText` を含む）と
+(b) ユーザーが設定した **AI プロバイダ**（フォーム構造・規約テキストのみ）に限る
+（詳細は `docs/security.md` §6）。
+
+- `npm run poc -- check-egress`（`src/dev/egress-check.ts`）が
+  `src/`・`run/` 配下のネットワーク呼び出し箇所を静的に検査する。各箇所には
+  `// egress: target-site` または `// egress: ai-provider` の注釈が必須で、
+  未注釈の新しい通信先や `package.json` への telemetry/analytics 系依存追加は
+  このチェックで失敗する。`sites/`（ローカル 127.0.0.1 のテストサイトサーバー）は
+  対象外（外部送信ではない）。
+- AI プロバイダ（`src/agent/ai/provider.ts`）はステートレス呼び出しのみ
+  （`store` / `previous_response_id` / `metadata` / プロンプトキャッシュ不使用）。
+  ユニットテスト `tests/unit/autofill-poc-provider.test.ts` で OpenAI 経路のリクエスト
+  本文を検証し、`tests/unit/autofill-poc-contracts.test.ts` で `mapFields` に渡る
+  ペイロードがフォーム構造のみ（実値を含まない）であることを検証する。
+- ユニットテスト `tests/unit/autofill-poc-egress.test.ts`: 上記チェックが現状の
+  リポジトリで違反なしであること、未注釈の通信・許可外の注釈・telemetry系依存・
+  `sites/` 配下が対象外であることをそれぞれ確認する。
+
 ## 所見・既知の制限
 
 - **決定的版・AI 版とも10パターン全てで成立**した。決定的版のラベル語彙ルールは
@@ -214,3 +239,5 @@ npm run poc -- ui [deterministic|ai]
 - AI 版はフォーム構造と規約テキストのみ送信し、実値はローカルの Playwright 層で充填（§6）。
   ステートレス補完のみ（プロンプトキャッシュ・保存スレッド不使用）。
 - CAPTCHA / MFA / bot 検知の回避は実装しない（検知して停止のみ）。
+- ネットワーク送信先は target sites と設定済み AI プロバイダのみ（PRIV-001 / #20、
+  `npm run poc -- check-egress` で静的検査）。telemetry / cloud sync は実装しない。

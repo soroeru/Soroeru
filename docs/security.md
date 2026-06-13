@@ -151,6 +151,17 @@ telemetry, analytics, crash reporting, cloud sync, or remote classification to a
 service. The user's data store is never uploaded anywhere. Adding any other destination
 requires an explicit issue updating requirements, this document, and the user-facing docs.
 
+**Static enforcement (PRIV-001 / #20)**: `npm run poc -- check-egress`
+(`poc/autofill-agent/src/dev/egress-check.ts`, tested by
+`tests/unit/autofill-poc-egress.test.ts`) scans
+`poc/autofill-agent/{src,run}/**/*.ts` for network-call sites and fails unless each one
+carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
+`package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
+Segment, Datadog, etc.). `poc/autofill-agent/sites/` (the local 127.0.0.1-only PoC
+test-site server) is out of scope — it is not external egress. A new, unannotated
+network destination — or a telemetry-shaped dependency — fails this check and must be
+reviewed against this section before it is annotated.
+
 ## 7. Wall Safety Boundaries (non-negotiable)
 
 The agent may **detect** a wall and hand off; it must never complete or circumvent it.
@@ -202,7 +213,7 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - [ ] Personal data, card data (incl. CVV), credentials, and the API key are encrypted at rest
 - [ ] The derived key lives in memory only; decrypted values are never logged
 - [ ] Raw personal values are not sent to the AI model; no provider stateful features used
-- [ ] No network egress except to the target sites the user acts on and the configured AI provider; no telemetry; data store never uploaded
+- [ ] No network egress except to the target sites the user acts on and the configured AI provider; no telemetry; data store never uploaded (`npm run poc -- check-egress`)
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
 - [ ] Auto-creation-prohibited sites are fill-only
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed

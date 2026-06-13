@@ -93,6 +93,7 @@ function siteIdFromUrl(url: string): string {
 
 async function fetchVisibleText(url: string): Promise<string> {
   try {
+    // egress: target-site — terms links discovered on the site the user is registering on
     const res = await fetch(url);
     const html = await res.text();
     return html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");

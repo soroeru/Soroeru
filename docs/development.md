@@ -91,6 +91,7 @@ npm run poc:matrix -- both        # measurement runs (deterministic + AI variant
 npm run poc -- register 09-trial-card   # headed demo with the interactive gate
 npm run poc -- app                 # app-shell lifecycle smoke test (unlock/browser/lock)
 npm run poc -- ui                  # interactive local app UI (personal data, sites, settings, ...)
+npm run poc -- check-egress        # PRIV-001 static network-egress allowlist check
 ```
 
 PoC state (encrypted store, measurement JSON) is written under
@@ -186,6 +187,9 @@ For code changes, run the available gates:
 - `npm run typecheck`
 - `npm test`
 - focused manual tests for affected browser behavior
+- for changes touching network calls, AI provider config, or `package.json`
+  dependencies: `npm run poc -- check-egress` (PRIV-001, see
+  [`security.md`](security.md) §6)
 
 `npm test` runs the extension build and Node unit tests.
 
