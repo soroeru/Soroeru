@@ -71,3 +71,47 @@ const HANDOFF_INSTRUCTIONS: Record<WallDetection["kind"], string> = {
 export function handoffInstruction(wall: WallDetection): string {
   return HANDOFF_INSTRUCTIONS[wall.kind];
 }
+
+/**
+ * Pause/resume contract (REQ-009 sub-task tracked informally as "REQ-009b"; the
+ * formal requirement is REQ-009). Given a freshly observed snapshot:
+ *
+ *   - no wall                  -> "clear", resume on the same snapshot;
+ *   - wall, no handoff wired   -> "abort" (caller records manualHandoff);
+ *   - wall, handoff "abort"    -> "abort";
+ *   - wall, handoff "resolved" -> re-observe the page the human advanced to and
+ *     loop, so a chained wall (e.g. CAPTCHA then OTP) is caught and the caller's
+ *     mapper / three guards / review-and-confirm gate / fill all re-run against
+ *     the *resumed* page, never the pre-handoff one.
+ *
+ * The re-observation count is bounded by `maxHandoffs` (default 3): the agent
+ * never loops forever and never does anything that resembles retrying past or
+ * evading a wall. It detects and hands off — it never solves or bypasses.
+ */
+export async function clearWalls(
+  initial: PageSnapshot,
+  opts: {
+    handoff?: HumanHandoff;
+    reobserve: () => Promise<PageSnapshot>;
+    log: (message: string) => void;
+    maxHandoffs?: number;
+  },
+): Promise<{ snapshot: PageSnapshot; status: "clear" | "abort" }> {
+  const maxHandoffs = opts.maxHandoffs ?? 3;
+  let snapshot = initial;
+  for (let handoffs = 0; handoffs <= maxHandoffs; handoffs++) {
+    const wall = detectWall(snapshot);
+    if (!wall) return { snapshot, status: "clear" };
+    opts.log(`壁を検知: ${wall.kind} (${wall.evidence}) — 解決はせずユーザーへハンドオフします`);
+    if (!opts.handoff) return { snapshot, status: "abort" };
+    if (handoffs === maxHandoffs) {
+      opts.log("壁が連続したため自動進行を停止します（壁の解決・回避は行いません）");
+      return { snapshot, status: "abort" };
+    }
+    const outcome = await opts.handoff(wall, handoffInstruction(wall));
+    if (outcome !== "resolved") return { snapshot, status: "abort" };
+    opts.log("壁の解決を確認しました。再開ページを再観測してから続行します。");
+    snapshot = await opts.reobserve();
+  }
+  return { snapshot, status: "abort" };
+}

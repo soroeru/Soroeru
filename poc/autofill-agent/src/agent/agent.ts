@@ -27,7 +27,7 @@ import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
 import { snapshotPage, waitForFields } from "./scan.js";
-import { detectWall, handoffInstruction, type HumanHandoff } from "./walls.js";
+import { clearWalls, type HumanHandoff } from "./walls.js";
 
 const NEXT_BUTTON_RE = /次へ|確認画面へ|^確認する?$/;
 const FINAL_BUTTON_RE = /登録|送信|作成|開始|申し?込|保存/;
@@ -100,13 +100,23 @@ async function fetchVisibleText(url: string): Promise<string> {
   }
 }
 
-async function checkWall(snapshot: PageSnapshot, deps: AgentDeps): Promise<"clear" | "abort"> {
-  const wall = detectWall(snapshot);
-  if (!wall) return "clear";
-  deps.log(`壁を検知: ${wall.kind} (${wall.evidence}) — 解決はせずユーザーへハンドオフします`);
-  if (!deps.handoff) return "abort";
-  const outcome = await deps.handoff(wall, handoffInstruction(wall));
-  return outcome === "resolved" ? "clear" : "abort";
+/**
+ * Pause/resume gate around any detected wall. On "clear" the returned snapshot
+ * is the resumed page (re-observed via `reobserve` after each resolved handoff),
+ * so the caller's mapper / three guards / gate / fill always run against the
+ * current page, never the pre-handoff one. On "abort" the caller records
+ * manualHandoff. The wall is detected and handed off — never solved or bypassed.
+ */
+function clearWallsFor(
+  snapshot: PageSnapshot,
+  deps: AgentDeps,
+  reobserve: () => Promise<PageSnapshot>,
+): Promise<{ snapshot: PageSnapshot; status: "clear" | "abort" }> {
+  return clearWalls(snapshot, {
+    ...(deps.handoff ? { handoff: deps.handoff } : {}),
+    reobserve,
+    log: deps.log,
+  });
 }
 
 interface StepState {
@@ -156,7 +166,11 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
 
   await page.goto(siteTopUrl);
   let snapshot = await snapshotPage(page);
-  if ((await checkWall(snapshot, deps)) === "abort") return result("manualHandoff", false);
+  {
+    const observed = await clearWallsFor(snapshot, deps, () => snapshotPage(page));
+    if (observed.status === "abort") return result("manualHandoff", false);
+    snapshot = observed.snapshot;
+  }
 
   // 1. Find the registration page autonomously.
   const registerLink = await deps.mapper.discoverRegistrationLink(snapshot.links, snapshot.visibleText);
@@ -179,7 +193,11 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
 
   for (let step = 0; step < 6; step++) {
     snapshot = await waitForFields(page);
-    if ((await checkWall(snapshot, deps)) === "abort") return result("manualHandoff", false);
+    {
+      const observed = await clearWallsFor(snapshot, deps, () => waitForFields(page));
+      if (observed.status === "abort") return result("manualHandoff", false);
+      snapshot = observed.snapshot;
+    }
     pageTexts.push(snapshot.visibleText);
     for (const link of snapshot.links) {
       if (TERMS_LINK_RE.test(link.text)) termsLinks.set(link.href, link);
@@ -347,8 +365,8 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   try {
     await page.getByText(SUCCESS_TEXT).first().waitFor({ timeout: 5000 });
   } catch {
-    const after = await snapshotPage(page);
-    if ((await checkWall(after, deps)) === "abort") {
+    const after = await clearWallsFor(await snapshotPage(page), deps, () => snapshotPage(page));
+    if (after.status === "abort") {
       record("manualHandoff");
       await deps.store.save();
       return result("manualHandoff", true, analysis.highRiskFlags);
@@ -392,8 +410,12 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
 
   await page.goto(siteTopUrl);
   let snapshot = await snapshotPage(page);
-  if ((await checkWall(snapshot, deps)) === "abort") {
-    return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned: [], notes };
+  {
+    const observed = await clearWallsFor(snapshot, deps, () => snapshotPage(page));
+    if (observed.status === "abort") {
+      return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned: [], notes };
+    }
+    snapshot = observed.snapshot;
   }
   const editLink = findEditLink(snapshot.links);
   if (!editLink) {
@@ -401,8 +423,12 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   }
   await page.goto(editLink.href);
   snapshot = await waitForFields(page);
-  if ((await checkWall(snapshot, deps)) === "abort") {
-    return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned: [], notes };
+  {
+    const observed = await clearWallsFor(snapshot, deps, () => waitForFields(page));
+    if (observed.status === "abort") {
+      return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned: [], notes };
+    }
+    snapshot = observed.snapshot;
   }
 
   const step = await mapCurrentPage(snapshot, deps);
