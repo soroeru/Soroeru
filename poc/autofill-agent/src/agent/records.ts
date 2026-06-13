@@ -3,17 +3,33 @@
 // (FilledFieldRecord.filledValueHash), never the raw value, so per-site
 // inventory and bulk-update diffing work without duplicating sensitive data.
 
-import { sha256Hex } from "../store/store.js";
+import { applyTransform } from "../profile.js";
+import { sha256Hex, type PocStore } from "../store/store.js";
 import type {
   FilledFieldRecord,
   HighRiskFlag,
   ProfileKey,
   RegistrationMandate,
   RegistrationStatus,
+  SiteRecord,
   Transform,
 } from "../types.js";
 import type { FillOutcome } from "./filler.js";
 import type { PaymentAudit } from "./guards.js";
+
+/**
+ * Filled fields whose stored hash no longer matches the current master value
+ * (bulk-update diff, §5). Used both by `runUpdate` to decide what to fix and
+ * by the UI to show which sites need an update before launching a browser.
+ */
+export function staleFilledFields(store: PocStore, record: SiteRecord): FilledFieldRecord[] {
+  const view = store.profileView();
+  return record.filledFields.filter((ff) => {
+    const master = store.getValue(ff.profileKey);
+    if (master === undefined) return false;
+    return sha256Hex(applyTransform(master, ff.transform, view)) !== ff.filledValueHash;
+  });
+}
 
 /** Minimal planned-field shape needed to attach the transform to a record. */
 export interface PlannedFieldRef {

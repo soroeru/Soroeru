@@ -23,7 +23,7 @@ import type { CustomFieldDef } from "./classifier.js";
 import { findEditLink } from "./discovery.js";
 import { evaluateGuards, paymentAudit, shouldCheckAttestation } from "./guards.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
-import { buildMandate, toFilledFieldRecords } from "./records.js";
+import { buildMandate, staleFilledFields, toFilledFieldRecords } from "./records.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
@@ -405,11 +405,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   if (!record) return { siteId, status: "skipped", changedKeys: [], planned: [], notes: ["登録記録がありません"] };
 
   const view = deps.store.profileView();
-  const changed = record.filledFields.filter((ff) => {
-    const master = deps.store.getValue(ff.profileKey);
-    if (master === undefined) return false;
-    return sha256Hex(applyTransform(master, ff.transform, view)) !== ff.filledValueHash;
-  });
+  const changed = staleFilledFields(deps.store, record);
   if (changed.length === 0) {
     return { siteId, status: "skipped", changedKeys: [], planned: [], notes: ["差分なし"] };
   }

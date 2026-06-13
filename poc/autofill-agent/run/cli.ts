@@ -3,23 +3,26 @@
 //   matrix [variant] [engines]        — run measurements (variant: deterministic | ai | both)
 //   register <siteId> [variant]      — headed demo run with the interactive CLI gate
 //   app                                — app-shell lifecycle smoke test (unlock/browser/lock)
+//   ui [variant]                       — interactive local app UI (personal data, sites, settings, ...)
 //
 // Examples:
 //   node dist/compiled/poc/autofill-agent/run/cli.js serve 4333
 //   node dist/compiled/poc/autofill-agent/run/cli.js matrix deterministic chromium,firefox,webkit
 //   node dist/compiled/poc/autofill-agent/run/cli.js register 08-terms
 //   node dist/compiled/poc/autofill-agent/run/cli.js app
+//   node dist/compiled/poc/autofill-agent/run/cli.js ui
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startPocServer } from "../sites/server.js";
 import { AiMapper } from "../src/agent/ai/ai-mapper.js";
-import { aiProviderFromEnv } from "../src/agent/ai/provider.js";
+import { aiProviderFromEnv, createProvider } from "../src/agent/ai/provider.js";
 import { CliGate } from "../src/agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../src/agent/mapper.js";
 import { DUMMY_PROFILE_SEED } from "../src/profile.js";
 import { AutofillApp, AutofillAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
+import { askSecret, AppUI } from "../src/app/ui.js";
 import { formatResult, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = "state/autofill-poc";
@@ -149,6 +152,49 @@ async function cmdApp(): Promise<void> {
   }
 }
 
+/**
+ * Build the AI mapper for the interactive UI: prefer the provider the user
+ * configured via Settings (encrypted store), falling back to environment
+ * variables (REQ-012) for users who have not opened Settings yet.
+ */
+function aiMapperForUi(app: AutofillApp): Mapper {
+  const settings = app.store.getSettings();
+  const provider = settings ? createProvider(settings) : aiProviderFromEnv();
+  if (!provider) {
+    throw new Error(
+      "AI版を使うには「5. 設定」でAIプロバイダを登録するか、OPENAI_API_KEY / ANTHROPIC_API_KEY を設定してください",
+    );
+  }
+  return new AiMapper(provider);
+}
+
+async function cmdUi(variantArg: string): Promise<void> {
+  const server = await startPocServer();
+  const app = new AutofillApp({ stateDir: join(STATE_ROOT, "manual") });
+  try {
+    const passphrase = process.env["AF_POC_PASSPHRASE"] ?? (await askSecret("マスターパスフレーズ: "));
+    try {
+      await app.unlock(passphrase);
+    } catch (err) {
+      if (err instanceof AutofillAppError) {
+        console.error(err.message);
+        return;
+      }
+      throw err;
+    }
+    for (const seed of DUMMY_PROFILE_SEED) {
+      if (!app.store.profile.has(seed.key)) app.store.setProfileValue(seed.key, seed.label, seed.value);
+    }
+    const mapper = variantArg === "ai" ? aiMapperForUi(app) : new DeterministicMapper();
+    const runner = new AppRunner(app, mapper);
+    const ui = new AppUI(app, runner);
+    await ui.run();
+  } finally {
+    await app.shutdown();
+    await server.close();
+  }
+}
+
 const [, , command, arg1, arg2] = process.argv;
 switch (command) {
   case "serve":
@@ -168,8 +214,11 @@ switch (command) {
   case "app":
     await cmdApp();
     break;
+  case "ui":
+    await cmdUi(arg1 ?? "deterministic");
+    break;
   default:
     console.log(
-      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app",
+      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai]",
     );
 }

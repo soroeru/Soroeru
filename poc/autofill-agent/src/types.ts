@@ -35,6 +35,37 @@ export const KNOWN_PROFILE_KEYS = [
 export type KnownProfileKey = (typeof KNOWN_PROFILE_KEYS)[number];
 export type ProfileKey = KnownProfileKey | `custom.${string}`;
 
+/** Default Japanese display labels for known profile keys, used by the local UI (UI-001 / #17). */
+export const PROFILE_FIELD_LABELS = {
+  "name.full": "氏名",
+  "name.sei": "姓",
+  "name.mei": "名",
+  "name.kana.full": "フリガナ",
+  "name.kana.sei": "セイ",
+  "name.kana.mei": "メイ",
+  email: "メールアドレス",
+  "phone.full": "電話番号",
+  "postal.full": "郵便番号",
+  "address.full": "住所",
+  "address.pref": "都道府県",
+  "address.city": "市区町村",
+  "address.street": "番地",
+  "address.building": "建物名",
+  "company.name": "会社名",
+  "company.department": "部署名",
+  "birth.year": "生年",
+  "birth.month": "生月",
+  "birth.day": "生日",
+  gender: "性別",
+  "card.number": "カード番号",
+  "card.exp.month": "カード有効期限（月）",
+  "card.exp.year": "カード有効期限（年）",
+  "card.holder": "カード名義",
+  "card.cvv": "セキュリティコード",
+  "account.id": "ログインID",
+  "account.password": "パスワード",
+} satisfies Record<KnownProfileKey, string>;
+
 /** Keys whose decrypted values must never be displayed unmasked or logged. */
 export function isSensitiveKey(key: ProfileKey): boolean {
   return key.startsWith("card.") || key === "account.password";
