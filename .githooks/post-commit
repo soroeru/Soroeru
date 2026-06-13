@@ -27,10 +27,13 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 # --- TEMPORARY: local cross-AI review disabled ------------------
 # Codex is rate-limited, so the cross-AI local review is paused to
-# avoid failed/queued reviews on every commit. Remove this block to
-# restore normal behavior once the reviewer CLIs are available again.
+# avoid failed/queued reviews on every commit. Flip the flag in
+# .githooks/config back to 0 (or remove it) to restore normal
+# behavior once the reviewer CLIs are available again.
 # Tracking: re-enable as part of the test-matrix issue (#45).
-exit 0
+if [ "${LOCAL_AI_REVIEW_DISABLED:-0}" = "1" ]; then
+  exit 0
+fi
 # ----------------------------------------------------------------
 
 # Recursion guard
