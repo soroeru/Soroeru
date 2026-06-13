@@ -79,6 +79,21 @@ The current implementation only includes the Manifest V3 shell, local profile
 storage abstraction, and options page profile editor. Content-script scanning,
 field filling, and background service worker behavior are not implemented yet.
 
+### Autofill-agent PoC (Issue #33)
+
+The Playwright-based autonomous-agent PoC lives in `poc/autofill-agent/`
+(see its [README](../poc/autofill-agent/README.md) for details and results):
+
+```bash
+npx playwright install chromium firefox webkit   # once
+npm run poc:serve                 # local 10-pattern test sites
+npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
+npm run poc -- register 09-trial-card   # headed demo with the interactive gate
+```
+
+PoC state (encrypted store, measurement JSON) is written under
+`state/autofill-poc/` and must not be committed.
+
 ## 4. Project Structure
 
 Current repository shape:
@@ -90,6 +105,9 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
+├── poc/
+│   ├── issue-29-autofill-poc/   # throwaway PoC extension (RFC-001 R/R2/R3)
+│   └── autofill-agent/          # Issue #33 PoC: sites/ + src/ + run/
 ├── scripts/
 ├── src/
 │   ├── manifest.json

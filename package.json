@@ -6,12 +6,18 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-extension.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js"
+    "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js",
+    "poc": "npm run build && node dist/compiled/poc/autofill-agent/run/cli.js",
+    "poc:serve": "npm run poc -- serve",
+    "poc:matrix": "npm run poc -- matrix"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.104.1",
     "@types/jsdom": "^28.0.3",
     "@types/node": "^25.9.1",
+    "hash-wasm": "^4.12.0",
     "jsdom": "^29.1.1",
+    "playwright": "^1.60.0",
     "typescript": "^5.8.3"
   }
 }
