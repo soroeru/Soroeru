@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { classifyCheckbox, classifyFields } from "../../poc/autofill-agent/src/agent/classifier.js";
+import {
+  classifyCheckbox,
+  classifyFields,
+  classifyFieldsWithEvidence,
+} from "../../poc/autofill-agent/src/agent/classifier.js";
 import type { FormField } from "../../poc/autofill-agent/src/types.js";
 
 function field(partial: Partial<FormField> & { fieldId: string }): FormField {
@@ -100,4 +104,63 @@ test("checkbox roles: consent vs attestation vs opt-in", () => {
 test("password type always maps to account.password", () => {
   const pw = field({ fieldId: "p", type: "password", placeholder: "パスワード（8文字以上）" });
   assert.equal(keyOf([pw], "p"), "account.password");
+});
+
+function evidenceOf(fields: FormField[], fieldId: string, customs: Parameters<typeof classifyFieldsWithEvidence>[1] = []) {
+  return classifyFieldsWithEvidence(fields, customs).evidence.find((e) => e.fieldId === fieldId);
+}
+
+test("evidence records the source, ruleId, and matched text for each decision", () => {
+  // autocomplete source
+  const ac = evidenceOf([field({ fieldId: "a", autocomplete: "postal-code" })], "a");
+  assert.equal(ac?.source, "autocomplete");
+  assert.equal(ac?.ruleId, "ac:postal-code");
+  assert.equal(ac?.profileKey, "postal.full");
+
+  // rule source with matched fragment
+  const holder = evidenceOf([field({ fieldId: "c", labels: ["カード名義（ローマ字）"] })], "c");
+  assert.equal(holder?.source, "rule");
+  assert.equal(holder?.ruleId, "rule:card-holder");
+  assert.equal(holder?.profileKey, "card.holder");
+  assert.ok(holder?.matchedText.includes("名義"));
+
+  // split transform carried into evidence
+  const after = evidenceOf([field({ fieldId: "b", labels: ["都道府県以降の住所"] })], "b");
+  assert.equal(after?.ruleId, "rule:address-after-pref");
+  assert.equal(after?.transform, "addressAfterPref");
+
+  // password input-type source
+  const pw = evidenceOf([field({ fieldId: "p", type: "password" })], "p");
+  assert.equal(pw?.source, "input-type");
+  assert.equal(pw?.ruleId, "type:password");
+});
+
+test("mis-mapping regressions are pinned by ruleId, not just the final key", () => {
+  // 姓/名 must use the name rules, not card-holder's 名義 rule
+  const fields = [field({ fieldId: "sei", labels: ["姓"] }), field({ fieldId: "mei", labels: ["名"] })];
+  assert.equal(evidenceOf(fields, "sei")?.ruleId, "rule:name-sei");
+  assert.equal(evidenceOf(fields, "mei")?.ruleId, "rule:name-mei");
+});
+
+test("checkbox and unmapped-required decisions are recorded in evidence", () => {
+  const fields = [
+    field({ fieldId: "att", type: "checkbox", labels: ["私は18歳以上です"] }),
+    field({ fieldId: "job", tag: "select", type: "select", labels: ["ご職業（必須）"], required: true }),
+  ];
+  const att = evidenceOf(fields, "att");
+  assert.equal(att?.source, "checkbox");
+  assert.equal(att?.role, "attestation");
+  assert.equal(att?.ruleId, "checkbox:attestation");
+
+  const job = evidenceOf(fields, "job");
+  assert.equal(job?.source, "unmapped-required");
+  assert.equal(job?.profileKey, undefined);
+});
+
+test("custom-field matches record the matched term in evidence", () => {
+  const job = field({ fieldId: "j", tag: "select", type: "select", labels: ["ご職業（必須）"], required: true });
+  const ev = evidenceOf([job], "j", [{ key: "custom.ご職業", matchTerms: ["ご職業"] }]);
+  assert.equal(ev?.source, "custom");
+  assert.equal(ev?.ruleId, "custom:custom.ご職業");
+  assert.equal(ev?.matchedText, "ご職業");
 });
