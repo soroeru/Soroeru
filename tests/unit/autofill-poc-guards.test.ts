@@ -5,7 +5,11 @@ import {
   classifyPayment,
   detectHighRiskFlags,
   detectsAutoCreationBan,
+  evaluateGuards,
+  shouldCheckAttestation,
 } from "../../poc/autofill-agent/src/agent/guards.js";
+import { normalizeTermsAnalysis } from "../../poc/autofill-agent/src/agent/normalization.js";
+import type { GateDecision, TermsAnalysis } from "../../poc/autofill-agent/src/types.js";
 
 test("guard 1: auto-renewal and third-party-sharing clauses are flagged with evidence", () => {
   const terms =
@@ -60,4 +64,79 @@ test("analysis composes: trial conversion is surfaced as a high-risk flag", () =
   assert.equal(analysis.payment, "trial-subscription");
   assert.ok(analysis.highRiskFlags.includes("trial-subscription"));
   assert.equal(analysis.prohibitsAutoCreation, false);
+});
+
+// --- Shared guard decision (SAFE-001) -----------------------------------------
+
+function decision(overrides: Partial<GateDecision> = {}): GateDecision {
+  return { approved: true, attestationApprovals: {}, cardApproved: false, ...overrides };
+}
+
+const clean = (a: Partial<TermsAnalysis>): TermsAnalysis =>
+  normalizeTermsAnalysis({ highRiskFlags: [], evidence: {}, prohibitsAutoCreation: false, ...a });
+
+test("guard seam: gate denial declines regardless of analysis", () => {
+  const out = evaluateGuards({ analysis: clean({}), decision: decision({ approved: false }), hasCardFields: false });
+  assert.equal(out.action, "declined");
+  assert.equal(out.fillCard, false);
+});
+
+test("guard 2: card fields with non-trial payment stop and hand off", () => {
+  for (const payment of ["immediate-payment", "unknown"] as const) {
+    const out = evaluateGuards({ analysis: clean({ payment }), decision: decision(), hasCardFields: true });
+    assert.equal(out.action, "stop-handoff", payment);
+    assert.equal(out.fillCard, false);
+  }
+});
+
+test("guard 2 exception: approved trial→subscription fills the card and proceeds", () => {
+  const approved = evaluateGuards({
+    analysis: clean({ payment: "trial-subscription" }),
+    decision: decision({ cardApproved: true }),
+    hasCardFields: true,
+  });
+  assert.equal(approved.action, "proceed-submit");
+  assert.equal(approved.fillCard, true);
+
+  const declined = evaluateGuards({
+    analysis: clean({ payment: "trial-subscription" }),
+    decision: decision({ cardApproved: false }),
+    hasCardFields: true,
+  });
+  assert.equal(declined.action, "declined");
+  assert.equal(declined.fillCard, false);
+});
+
+test("auto-creation ban downgrades a submit to assisted fill", () => {
+  const out = evaluateGuards({ analysis: clean({ prohibitsAutoCreation: true }), decision: decision(), hasCardFields: false });
+  assert.equal(out.action, "assisted-fill");
+});
+
+test("guard 3: attestations are checked only on an explicit per-item decision", () => {
+  const d = decision({ attestationApprovals: { att1: true } });
+  assert.equal(shouldCheckAttestation(d, "att1"), true);
+  assert.equal(shouldCheckAttestation(d, "att2"), false);
+});
+
+test("deterministic and AI analyses reach the SAME guard stop condition", () => {
+  // Same normalized analysis (the seam both variants share) -> identical outcome,
+  // independent of which mapper produced it.
+  const det = analyzeTermsDeterministic("無料トライアル期間の終了後は月額980円が自動的に課金されます。", "", true);
+  const aiLike = normalizeTermsAnalysis({
+    highRiskFlags: ["trial-subscription"],
+    evidence: {},
+    prohibitsAutoCreation: false,
+    payment: "trial-subscription",
+  });
+  const d = decision({ cardApproved: true });
+  assert.deepEqual(
+    evaluateGuards({ analysis: det, decision: d, hasCardFields: true }),
+    evaluateGuards({ analysis: aiLike, decision: d, hasCardFields: true }),
+  );
+
+  // And an immediate-payment analysis stops both ways.
+  const detStop = analyzeTermsDeterministic("「今すぐ購入」で即時に決済されます。", "", true);
+  const aiStop = normalizeTermsAnalysis({ highRiskFlags: [], evidence: {}, prohibitsAutoCreation: false, payment: "immediate-payment" });
+  assert.equal(evaluateGuards({ analysis: detStop, decision: d, hasCardFields: true }).action, "stop-handoff");
+  assert.equal(evaluateGuards({ analysis: aiStop, decision: d, hasCardFields: true }).action, "stop-handoff");
 });

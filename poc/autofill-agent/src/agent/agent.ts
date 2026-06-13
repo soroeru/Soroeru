@@ -20,6 +20,7 @@ import type {
 } from "../types.js";
 import type { CustomFieldDef } from "./classifier.js";
 import { findEditLink } from "./discovery.js";
+import { evaluateGuards, shouldCheckAttestation } from "./guards.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
@@ -248,17 +249,19 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
     return result("declined", true, analysis.highRiskFlags);
   }
 
-  // 5. Guard 2: payment fields stop the run unless this is an approved trial→subscription.
+  // 5. Three guards (shared seam): payment stop with the trial exception, and the
+  //    auto-creation ban. The same evaluateGuards path runs for both mapper variants.
+  const guard = evaluateGuards({ analysis, decision, hasCardFields: cardPresent });
   let entriesToFill = currentStep.entries.map((e) => e.entry);
-  if (cardPresent) {
-    if (analysis.payment !== "trial-subscription") {
-      notes.push(`支払い項目を検知（判定: ${analysis.payment ?? "unknown"}）。自動進行を停止しハンドオフします`);
-      return result("manualHandoff", true, analysis.highRiskFlags);
-    }
-    if (!decision.cardApproved) {
-      notes.push("将来課金が承認されなかったため、カード入力を行わず中止しました");
-      return result("declined", true, analysis.highRiskFlags);
-    }
+  if (guard.action === "stop-handoff") {
+    notes.push(`支払い項目を検知（判定: ${analysis.payment ?? "unknown"}）。自動進行を停止しハンドオフします`);
+    return result("manualHandoff", true, analysis.highRiskFlags);
+  }
+  if (guard.action === "declined") {
+    notes.push("将来課金が承認されなかったため、カード入力を行わず中止しました");
+    return result("declined", true, analysis.highRiskFlags);
+  }
+  if (guard.fillCard) {
     deps.log("無料トライアル→サブスク課金をユーザーが承認。保存カードを自動入力します（ガード2の例外）");
   } else {
     entriesToFill = entriesToFill.filter((e) => !e.profileKey.startsWith("card."));
@@ -289,7 +292,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
         deps.log(`通常の規約同意「${box.label}」を承認済みゲートに基づきチェックしました`);
       }
     } else if (box.role === "attestation") {
-      if (decision.attestationApprovals[box.fieldId]) {
+      if (shouldCheckAttestation(decision, box.fieldId)) {
         await setCheckbox(page, box.fieldId, true);
         deps.log(`ユーザーの明示判断により「${box.label}」をチェックしました`);
       } else {
@@ -336,7 +339,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   };
 
   // 8. Q2c: sites that prohibit automated account creation get assisted fill only.
-  if (analysis.prohibitsAutoCreation) {
+  if (guard.action === "assisted-fill") {
     deps.log("このサイトは自動アカウント作成を禁止しているため、最後の登録ボタンはご自身で押してください。");
     notes.push("自動作成禁止サイト: 入力のみ行い、最終送信はユーザーに委ねました");
     record("assistedFill");

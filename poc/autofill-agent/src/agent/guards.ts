@@ -4,7 +4,7 @@
 // Pure text analysis over terms / page wording; vocabulary is the deterministic
 // starting point for open question Q2a.
 
-import type { HighRiskFlag, PaymentClassification, TermsAnalysis } from "../types.js";
+import type { GateDecision, HighRiskFlag, PaymentClassification, TermsAnalysis } from "../types.js";
 import { normalizeTermsAnalysis } from "./normalization.js";
 
 const HIGH_RISK_PATTERNS: { flag: HighRiskFlag; re: RegExp }[] = [
@@ -71,4 +71,64 @@ export function analyzeTermsDeterministic(termsText: string, pageText: string, h
 function excerpt(text: string, index: number): string {
   const start = Math.max(0, index - 10);
   return text.slice(start, index + 60).replace(/\s+/g, " ").trim();
+}
+
+// --- Shared guard decision (SAFE-001) ---------------------------------------
+// The three guards are enforced through this single seam so the deterministic
+// and AI variants reach identical stop conditions. Both variants must pass
+// their TermsAnalysis through `normalizeTermsAnalysis` first (the gate already
+// does), so this function assumes a normalized analysis.
+
+export type GuardAction =
+  | "proceed-submit" // ordinary registration: agent fills, accepts ordinary terms, submits
+  | "assisted-fill" // auto-creation prohibited: fill only, the human presses the final button
+  | "stop-handoff" // payment stop (guard 2): hand off, do not auto-fill/submit
+  | "declined"; // gate denied, or card auto-fill not approved
+
+export interface GuardOutcome {
+  action: GuardAction;
+  /** Whether stored card values may be filled — only on an approved trial→subscription (guard 2 exception). */
+  fillCard: boolean;
+  /** Stable reason code for logging/audit (no personal data). */
+  reason: string;
+}
+
+export interface GuardInputs {
+  /** MUST be normalized via normalizeTermsAnalysis. */
+  analysis: TermsAnalysis;
+  decision: GateDecision;
+  hasCardFields: boolean;
+}
+
+/**
+ * Combine the three guards into one decision:
+ *  1. high-risk escalation already surfaced at the gate (reflected in `decision`);
+ *  2. payment stop with the free-trial→subscription exception (guard 2);
+ *  3. no auto-attestation is enforced per-checkbox via `shouldCheckAttestation`.
+ * Plus the auto-creation ban (Q2c) which downgrades a submit to assisted fill.
+ */
+export function evaluateGuards({ analysis, decision, hasCardFields }: GuardInputs): GuardOutcome {
+  if (!decision.approved) return { action: "declined", fillCard: false, reason: "gate-not-approved" };
+
+  let fillCard = false;
+  if (hasCardFields) {
+    // Guard 2: any card/payment field stops the run, except an approved trial→subscription.
+    if (analysis.payment !== "trial-subscription") {
+      return { action: "stop-handoff", fillCard: false, reason: `payment:${analysis.payment ?? "unknown"}` };
+    }
+    if (!decision.cardApproved) {
+      return { action: "declined", fillCard: false, reason: "card-not-approved" };
+    }
+    fillCard = true;
+  }
+
+  if (analysis.prohibitsAutoCreation) {
+    return { action: "assisted-fill", fillCard, reason: "no-auto-creation" };
+  }
+  return { action: "proceed-submit", fillCard, reason: "ok" };
+}
+
+/** Guard 3: an attestation is checked only with an explicit per-item user decision. */
+export function shouldCheckAttestation(decision: GateDecision, fieldId: string): boolean {
+  return decision.attestationApprovals[fieldId] === true;
 }
