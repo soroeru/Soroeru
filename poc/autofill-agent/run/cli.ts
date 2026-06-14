@@ -32,7 +32,7 @@ import { askSecret, AppUI } from "../src/app/ui.js";
 import { checkBypassDenylist } from "../src/dev/bypass-check.js";
 import { checkNetworkEgress } from "../src/dev/egress-check.js";
 import { checkLocalPersistence } from "../src/dev/privacy-check.js";
-import { formatResult, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
+import { formatResult, hasFailures, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = "state/autofill-poc";
 
@@ -102,6 +102,14 @@ async function cmdMatrix(variantArg: string, enginesArg: string): Promise<void> 
     // persist: measurement-output — notes are masked via maskForArtifact (docs/security.md §3)
     await writeFile(out, JSON.stringify(results, null, 2), "utf8");
     console.log(`\n詳細結果: ${out}`);
+  }
+
+  // TEST-001 (#45): fail the command (and CI) if any variant/engine hit a
+  // safety-critical regression (registration, guards, bulk update, wall
+  // detection/resume, or the trial-card decline path).
+  if (results.some((r) => hasFailures(r))) {
+    console.error("\nNG: 上記いずれかの結果が安全性に関わる検証に失敗しました（詳細は各行の note を参照）。");
+    process.exitCode = 1;
   }
 }
 
