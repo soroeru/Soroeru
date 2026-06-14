@@ -69,6 +69,12 @@ npm run poc -- check-persistence
   `ANTHROPIC_API_KEY=...`）と書く（`npm run poc*` は `.env` があれば自動で読み込む。
   `.env` は gitignore 済み・コミットしない）。キーはローカルでのみ使用し、ログ・計測結果・
   ストアには出力しない。
+- `npm run poc:matrix` は各結果行の末尾に `overall: OK|NG` を出力する。新規登録・3ガード・
+  一括更新（mandate含む）・トライアルカード解約・wall検知/復帰のいずれかが失敗すると `NG`
+  となり、コマンドは非ゼロ終了する（`hasFailures`, TEST-001 / #45）。CI
+  （`.github/workflows/ci.yml`）はこれを `e2e-deterministic` ジョブ
+  （`npm run poc:matrix -- deterministic chromium`）のゲートとして使う。詳細は
+  `docs/testing.md` §7・§8。
 
 ## テストサイト10パターン
 

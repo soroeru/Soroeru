@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 25
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: PRIV-001 network egress allowlist
+        run: npm run poc -- check-egress
+      - name: PRIV-002 local persistence allowlist
+        run: npm run poc -- check-persistence
+      - name: SEC-002 CAPTCHA / anti-bot dependency denylist
+        run: npm run poc -- check-bypass
+
+  e2e-deterministic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 25
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Deterministic-mapper matrix against local test sites (chromium)
+        run: npm run poc:matrix -- deterministic chromium

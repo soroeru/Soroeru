@@ -168,3 +168,84 @@ sites (`npm run poc:serve`, then `npm run poc -- demo` or
 | Terms or submit controls are touched automatically | Treat as a blocking safety bug. These controls must stay manual. |
 | Re-scan misses dynamic fields | Check whether the page update happened before the scan and whether the scanner reads the current DOM. |
 | UI overlaps important page controls | Adjust injected UI placement, sizing, or dismissal behavior. |
+
+## 11. PoC: Registration Walkthrough And Review-And-Confirm Gate (TEST-001 / REQ-003..006, SAFE-001)
+
+`npm run poc -- register <siteId> [deterministic|ai]` runs a single site headed
+with the interactive CLI gate (`CliGate` / `renderGate`).
+
+- [ ] `npm run poc -- register 01-basic` opens a headed browser, finds the
+      registration page, and fills the form from the seeded dummy profile
+- [ ] Before anything is submitted, the CLI prints the review-and-confirm
+      gate: service name and origin, every field to be submitted with its
+      profile key and value (sensitive fields masked), and any terms links
+- [ ] Answering `N` at "この内容で登録しますか？" aborts without submitting
+      (status `declined`; nothing is registered on the server)
+- [ ] Answering `y` submits and the CLI prints `status: registered`
+- [ ] `npm run poc -- register 05-choices` prompts for the field not in the
+      seeded store ("ご職業") with `未保存の項目「ご職業」の値を入力してください:`
+- [ ] Re-running a site that needs "ご職業" does not prompt again — the
+      entered value was saved for reuse (REQ-005)
+
+## 12. PoC: Three Guards (TEST-001 / REQ-007, SAFE-001)
+
+**Guard 1 — high-risk clause escalation (`08-terms`)**
+
+- [ ] `npm run poc -- register 08-terms`: the gate shows
+      "⚠ 高リスク条項（自動承認を停止し、ユーザー判断を仰ぐ項目）" listing
+      `auto-renewal` and `third-party-sharing`, each with the quoted clause
+      text — these are surfaced, never auto-accepted
+
+**Guard 3 — no auto-attestation (`08-terms`)**
+
+- [ ] The gate asks separately, per attestation:
+      "「私は18歳以上です」にチェックを入れますか？ [y/N]"
+- [ ] Answering `N` registers without the `adult` checkbox checked (verify via
+      "2. サイト一覧 / mandate" in `npm run poc -- ui`, §13)
+
+**Guard 2 — payment stop with trial→subscription exception (`09-trial-card`)**
+
+- [ ] `npm run poc -- register 09-trial-card`: the gate shows
+      "支払い項目の判定: ..." (trial-subscription) and explains the card is
+      filled only on approval
+- [ ] Answering `N` to the card-approval prompt: card fields (number / expiry
+      / holder / CVV) are not filled and the run ends as `declined`
+- [ ] Re-run and answer `y` to the card-approval prompt: card fields are
+      filled and registration completes
+
+**Auto-creation-prohibited site (`10-no-auto`, REQ-008)**
+
+- [ ] `npm run poc -- register 10-no-auto`: the gate shows
+      "※ このサイトは自動アカウント作成を禁止しています。入力のみ行い、最後の登録ボタンはご自身で押してください。"
+- [ ] The agent fills the ordinary fields but does not check the consent
+      checkbox or click the final submit button
+- [ ] The user checks the consent box and clicks the final button themselves
+      in the headed browser; the result status is `assistedFill`, not
+      `registered`
+
+## 13. PoC: Bulk Update, Local App UI, And Encrypted Store (TEST-001 / REQ-001/002/010/011, SEC-001/003, UI-001)
+
+`npm run poc -- ui [deterministic|ai]`
+
+- [ ] Unlocking with a wrong master passphrase fails closed (no data shown)
+- [ ] "1. 個人情報": values are masked per `maskValue` (card number → last 4
+      digits; CVV / card expiry / holder / password → `••••••`; email / phone
+      → partial mask); "r) 表示" on a sensitive field requires re-entering the
+      master passphrase before revealing it
+- [ ] Edit a stored field (e.g. phone number or address) from "1. 個人情報"
+- [ ] After at least one registration (§11/§12), "2. サイト一覧 / mandate"
+      shows the site's filled fields and its mandate (high-risk flags /
+      payment stop / card-filled, as applicable)
+- [ ] "3. 一括更新": after the edit above, the affected site(s) are listed as
+      having stale fields; confirming runs the gate + three guards + wall
+      handoff per site and updates only the changed field(s)
+- [ ] After bulk update, "2. サイト一覧 / mandate" shows a new mandate entry
+      per updated site
+- [ ] "5. 設定": generate a recovery key (shown once), then lock and unlock
+      using the recovery key instead of the passphrase
+- [ ] "5. 設定": run encrypted export, then import into a fresh store path and
+      confirm the same data is available after unlocking with the same
+      passphrase
+- [ ] Open the exported file under `state/autofill-poc/` in a text editor and
+      confirm it contains only encrypted JSON (`version` / `kdf` / `records`),
+      no plaintext personal data

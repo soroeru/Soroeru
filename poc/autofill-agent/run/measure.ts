@@ -15,7 +15,7 @@ import { snapshotPage } from "../src/agent/scan.js";
 import { detectWall } from "../src/agent/walls.js";
 import { applyTransform, DUMMY_PROFILE_SEED, UPDATED_VALUES } from "../src/profile.js";
 import { PocStore } from "../src/store/store.js";
-import type { ProfileKey, Transform } from "../src/types.js";
+import { MOST_SENSITIVE_KEY, type ProfileKey, type Transform } from "../src/types.js";
 
 export type EngineName = "chromium" | "firefox" | "webkit";
 const ENGINES: Record<EngineName, BrowserType> = { chromium, firefox, webkit };
@@ -88,11 +88,16 @@ function groundTruth(site: SiteDef): { mapped: GtField[]; unmappedNames: string[
   return { mapped, unmappedNames };
 }
 
-function expectedValue(gt: GtField, profile: ReadonlyMap<ProfileKey, string>): string {
+/**
+ * `profile` (the shared transform view) excludes the most-sensitive field
+ * (CVV) by design (see `profileView`), so its ground truth is read via the
+ * same sanctioned fill-time accessor the agent itself uses.
+ */
+function expectedValue(gt: GtField, profile: ReadonlyMap<ProfileKey, string>, store: PocStore): string {
   if (gt.profileKey.startsWith("custom.")) {
     return PROMPTED_VALUES[gt.profileKey.slice("custom.".length)] ?? "";
   }
-  const master = profile.get(gt.profileKey) ?? "";
+  const master = gt.profileKey === MOST_SENSITIVE_KEY ? store.getValueForFill(gt.profileKey) ?? "" : profile.get(gt.profileKey) ?? "";
   return applyTransform(master, gt.transform, profile);
 }
 
@@ -189,7 +194,7 @@ async function runSiteRegistration(
     let ok = result.status === expectedStatus && state.registered !== undefined;
     if (state.registered) {
       for (const g of gt.mapped) {
-        const expected = expectedValue(g, profile);
+        const expected = expectedValue(g, profile, deps.store);
         if ((state.registered[g.name] ?? "") !== expected) {
           ok = false;
           row.notes.push(`値の不一致 ${g.name}: 期待="${maskNote(g, expected)}" 実際="${maskNote(g, state.registered[g.name] ?? "")}"`);
@@ -313,8 +318,8 @@ async function runBulkUpdate(
     const gt = groundTruth(site);
     const changedFields = gt.mapped.filter((g) => {
       if (!server.state(site.id).registered) return false;
-      const before = expectedValue(g, profile);
-      const after = expectedValue(g, newProfile);
+      const before = expectedValue(g, profile, deps.store);
+      const after = expectedValue(g, newProfile, deps.store);
       return before !== after && site.specs.some((s) => s.name === g.name && s.type !== "password" && s.inEdit !== false && s.name !== "mail_confirm");
     });
     const expected = changedFields.length > 0 ? "updated" : "skipped";
@@ -335,7 +340,7 @@ async function runBulkUpdate(
     const state = server.state(site.id);
     if (expected === "updated" && state.registered) {
       for (const g of changedFields) {
-        if ((state.registered[g.name] ?? "") !== expectedValue(g, newProfile)) valuesOk = false;
+        if ((state.registered[g.name] ?? "") !== expectedValue(g, newProfile, deps.store)) valuesOk = false;
       }
     }
     if (expected === "skipped" && state.events.some((e) => e.type === "update")) valuesOk = false;
@@ -451,9 +456,23 @@ export function formatResult(result: VariantRunResult): string {
   lines.push(
     `success rate: ${(result.successRate * 100).toFixed(0)}%  mis-mapping rate: ${(result.misMappingRate * 100).toFixed(1)}%`,
   );
+  lines.push(`overall: ${hasFailures(result) ? "NG" : "OK"}`);
   return lines.join("\n");
 }
 
 export function deterministicMapper(): Mapper {
   return new DeterministicMapper();
+}
+
+/**
+ * True if any safety-critical check in this variant's run failed: a site's
+ * registration result or guard evaluation, a bulk-update result or its
+ * mandate record, the trial-card decline path, or wall detection / resume.
+ * Used by `cli.ts`'s `matrix` command as the CI pass/fail gate (TEST-001 / #45).
+ */
+export function hasFailures(result: VariantRunResult): boolean {
+  if (result.registration.some((r) => !r.registrationOk || !r.guardsOk)) return true;
+  if (result.update.some((u) => !u.valuesOk || !u.mandateOk)) return true;
+  if (!result.trialCardDeclinePathOk || !result.wallDetectionOk || !result.wallResumeFlowOk) return true;
+  return false;
 }
