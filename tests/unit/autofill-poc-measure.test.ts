@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { emptyPhaseTimings } from "../../poc/autofill-agent/src/agent/perf.js";
 import { hasFailures, type VariantRunResult } from "../../poc/autofill-agent/run/measure.js";
 
 function okResult(): VariantRunResult {
@@ -19,9 +20,12 @@ function okResult(): VariantRunResult {
         guardsOk: true,
         guardNotes: [],
         notes: [],
+        phaseTimingsMs: emptyPhaseTimings(),
       },
     ],
-    update: [{ siteId: "01-basic", expected: "updated", actual: "updated", valuesOk: true, mandateOk: true }],
+    update: [
+      { siteId: "01-basic", expected: "updated", actual: "updated", valuesOk: true, mandateOk: true, phaseTimingsMs: emptyPhaseTimings() },
+    ],
     trialCardDeclinePathOk: true,
     wallDetectionOk: true,
     wallResumeFlowOk: true,
