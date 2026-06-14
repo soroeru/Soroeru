@@ -11,6 +11,7 @@ import { startPocServer, type PocServer } from "../sites/server.js";
 import { runRegistration, runUpdate, type AgentDeps } from "../src/agent/agent.js";
 import { maskForArtifact, ScriptedGate } from "../src/agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../src/agent/mapper.js";
+import { emptyPhaseTimings, PHASES, type PhaseTimings } from "../src/agent/perf.js";
 import { snapshotPage } from "../src/agent/scan.js";
 import { detectWall } from "../src/agent/walls.js";
 import { applyTransform, DUMMY_PROFILE_SEED, UPDATED_VALUES } from "../src/profile.js";
@@ -44,6 +45,8 @@ export interface SiteResultRow {
   guardsOk: boolean;
   guardNotes: string[];
   notes: string[];
+  /** Phase-timing breakdown for this run (PERF-001 / #18) — phase name + ms only. */
+  phaseTimingsMs: PhaseTimings;
 }
 
 export interface UpdateResultRow {
@@ -52,6 +55,8 @@ export interface UpdateResultRow {
   actual: string;
   valuesOk: boolean;
   mandateOk: boolean;
+  /** Phase-timing breakdown for this run (PERF-001 / #18) — phase name + ms only. */
+  phaseTimingsMs: PhaseTimings;
 }
 
 export interface VariantRunResult {
@@ -158,11 +163,15 @@ async function runSiteRegistration(
     guardsOk: true,
     guardNotes: [],
     notes: [],
+    phaseTimingsMs: emptyPhaseTimings(),
   };
 
   const page = await browser.newPage();
   let agentSubmitted = true;
   try {
+    deps.onPhase = (phase, durationMs) => {
+      row.phaseTimingsMs[phase] += durationMs;
+    };
     // Q2c surrogate: the human checks the consent box and presses the final button.
     deps.humanFinalSubmit = async (p, finalButtonSelector, consentFieldIds) => {
       agentSubmitted = false;
@@ -219,6 +228,7 @@ async function runSiteRegistration(
     row.notes.push(String(err));
     row.registrationOk = false;
   } finally {
+    delete deps.onPhase;
     delete deps.humanFinalSubmit;
     await page.close();
   }
@@ -326,13 +336,18 @@ async function runBulkUpdate(
 
     const page = await browser.newPage();
     const mandateCount = deps.store.listMandates().length;
+    const phaseTimingsMs = emptyPhaseTimings();
     let actual = "error";
     try {
+      deps.onPhase = (phase, durationMs) => {
+        phaseTimingsMs[phase] += durationMs;
+      };
       const result = await runUpdate(page, server.siteUrl(site.id), site.id, deps);
       actual = result.status;
     } catch (err) {
       deps.log(`${site.id}: update error ${String(err)}`);
     } finally {
+      delete deps.onPhase;
       await page.close();
     }
 
@@ -346,7 +361,7 @@ async function runBulkUpdate(
     if (expected === "skipped" && state.events.some((e) => e.type === "update")) valuesOk = false;
     const mandateDelta = deps.store.listMandates().length - mandateCount;
     const mandateOk = actual === "updated" ? mandateDelta === 1 : mandateDelta === 0;
-    rows.push({ siteId: site.id, expected, actual, valuesOk, mandateOk });
+    rows.push({ siteId: site.id, expected, actual, valuesOk, mandateOk, phaseTimingsMs });
   }
   return rows;
 }
@@ -434,6 +449,23 @@ export async function runDemo(
   }
 }
 
+/**
+ * Renders a phase-timing table (PERF-001 / #18): one row per site, one column
+ * per phase, in milliseconds. Only phase names and numbers are ever printed —
+ * no profile values, page content, or AI request/response data.
+ */
+function formatPhaseTimings(rows: { siteId: string; phaseTimingsMs: PhaseTimings }[]): string[] {
+  const lines: string[] = [];
+  lines.push(`site                 ${PHASES.map((p) => p.padStart(8)).join(" ")}    total`);
+  for (const r of rows) {
+    const total = PHASES.reduce((a, p) => a + r.phaseTimingsMs[p], 0);
+    lines.push(
+      `${r.siteId.padEnd(20)} ${PHASES.map((p) => String(Math.round(r.phaseTimingsMs[p])).padStart(8)).join(" ")} ${String(Math.round(total)).padStart(8)}`,
+    );
+  }
+  return lines;
+}
+
 export function formatResult(result: VariantRunResult): string {
   const lines: string[] = [];
   lines.push(`\n== ${result.variant} / ${result.engine} ==`);
@@ -444,12 +476,16 @@ export function formatResult(result: VariantRunResult): string {
     );
     for (const note of r.notes) lines.push(`    note: ${note}`);
   }
+  lines.push("\nphase timings (ms) — registration:");
+  lines.push(...formatPhaseTimings(result.registration));
   lines.push("update:");
   for (const u of result.update) {
     lines.push(
       `  ${u.siteId.padEnd(20)} expected=${u.expected.padEnd(7)} actual=${u.actual.padEnd(7)} ${u.valuesOk ? "OK" : "NG"} mandate=${u.mandateOk ? "OK" : "NG"}`,
     );
   }
+  lines.push("\nphase timings (ms) — update:");
+  lines.push(...formatPhaseTimings(result.update));
   lines.push(`trial-card decline path (card approval=no): ${result.trialCardDeclinePathOk ? "OK" : "NG"}`);
   lines.push(`wall detection fixtures: ${result.wallDetectionOk ? "OK" : "NG"}`);
   lines.push(`wall resume flow fixture: ${result.wallResumeFlowOk ? "OK" : "NG"}`);

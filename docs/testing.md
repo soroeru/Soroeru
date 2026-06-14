@@ -49,6 +49,7 @@ isolation. Current coverage:
 | Agent — deterministic mapper | `agent/classifier.ts`, `agent/guards.ts` | `autofill-poc-classifier.test.ts`, `autofill-poc-guards.test.ts` |
 | Agent — AI mapper | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `autofill-poc-ai-mapper.test.ts` |
 | Agent — wall detection | `agent/walls.ts` | `autofill-poc-walls.test.ts` |
+| Agent — phase timing (PERF-001) | `agent/perf.ts` | `autofill-poc-perf.test.ts` |
 | Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `autofill-poc-contracts.test.ts` |
 | Automation (DOM scan) | `content/scanner.ts`, `agent/scan.ts` | `scanner.test.ts` |
 | Measurement / CI gate | `poc/autofill-agent/run/measure.ts` | `autofill-poc-measure.test.ts` |
@@ -204,3 +205,39 @@ All data, terms text, and prohibitions in the local test sites are fictional
 tests, real CAPTCHA/MFA services, and a performance dashboard are explicitly
 non-scope for this issue (see Issue #45 non-scope; performance baselines are
 tracked separately under PERF-001 / #18).
+
+## 9. Phase-Timing Measurement (PERF-001 / #18)
+
+Every `runRegistration` / `runUpdate` call reports per-phase elapsed time via
+`AgentDeps.onPhase`, defined in `poc/autofill-agent/src/agent/perf.ts`:
+
+| Phase | Covers |
+| --- | --- |
+| `discover` | navigate to the site, find the registration / edit link, navigate to it |
+| `scan` | snapshot the page, wait for fields, clear any wall |
+| `map` | run the mapper (`mapCurrentPage`) over the current page |
+| `terms` | fetch terms-link text and run `analyzeTerms` |
+| `gate` | build the `GateRequest` and render the review-and-confirm gate (excludes the human/scripted `gate.decide()` wait) |
+| `fill` | fill mapped fields and set checkboxes (including intermediate wizard-step fills) |
+| `submit` | click the final / save button and wait for the result page |
+| `record` | update the site record, build the mandate, and persist the store |
+
+`npm run poc:matrix` (`poc/autofill-agent/run/measure.ts`) accumulates these
+into `SiteResultRow.phaseTimingsMs` / `UpdateResultRow.phaseTimingsMs`, prints
+a per-site phase-timing table (`formatResult`), and persists them in
+`state/autofill-poc/matrix-*.json` — phase name and a millisecond number only,
+satisfying PRIV-001/PRIV-002 (no raw personal values, page content, AI request
+payloads, or provider API keys ever appear in these tables).
+
+A phase that exceeds `AF_POC_SLOW_PHASE_MS` (default 5000ms) emits a
+user-visible progress note via `deps.log` (`slowPhaseNote`) so a long-running
+phase (e.g. a slow page render) does not look like the agent is stuck.
+`autofill-poc-perf.test.ts` covers `emptyPhaseTimings` and `slowPhaseNote`
+(threshold behavior, per-phase labels, and that the note contains only the
+phase label and a duration).
+
+Baseline numbers for the ordinary (`01-basic`), wizard (`06-wizard`), and
+dynamic (`07-dynamic`) fixtures are recorded in
+[`poc/autofill-agent/README.md`](../poc/autofill-agent/README.md). A
+CI-mandatory performance gate, remote telemetry, and a full benchmark
+dashboard are non-scope for this issue.

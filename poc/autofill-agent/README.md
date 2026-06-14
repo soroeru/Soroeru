@@ -115,6 +115,36 @@ npm run poc -- check-persistence
 - AI 版はマッピング精度の測定が目的なので chromium のみで実行（エンジン横断は決定的版が担当）。
   測定値は `state/autofill-poc/matrix-*.json` にも出力される。
 
+### フェーズ別タイミング計測（PERF-001 / #18）
+
+`src/agent/perf.ts` が定義する8フェーズ（discover / scan / map / terms / gate /
+fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要時間（ms）を
+`AgentDeps.onPhase` で報告する。`npm run poc:matrix` はこれを各サイトごとに集計し、
+結果表とフェーズ名＋ms数のみを `state/autofill-poc/matrix-*.json` に出力する
+（実値・ページ内容・AIリクエスト本文・APIキーは一切含まない。詳細は `docs/testing.md` §9）。
+
+代表3サイト（通常フォーム / ウィザード / 動的フォーム）の baseline
+（deterministic / chromium, macOS / Node 25 / Playwright 1.60）:
+
+| siteId | discover | scan | map | terms | gate | fill | submit | record | 合計 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `01-basic`（通常フォーム・新規登録） | 307 | 26 | 7 | 1 | 4 | 764 | 200 | 36 | 1345 |
+| `06-wizard`（多段ウィザード・新規登録） | 79 | 5127 | 0 | 0 | 2 | 242 | 200 | 29 | 5679 |
+| `07-dynamic`（動的描画・新規登録） | 129 | 421 | 0 | 0 | 1 | 140 | 53 | 12 | 756 |
+| `01-basic`（差分一括更新） | 92 | 256 | 1 | 0 | 0 | 203 | 282 | 15 | 848 |
+| `06-wizard`（差分一括更新） | 139 | 17 | 0 | 0 | 0 | 86 | 113 | 9 | 365 |
+| `07-dynamic`（差分一括更新） | 76 | 13 | 0 | 0 | 0 | 65 | 378 | 26 | 559 |
+
+- `06-wizard` の新規登録は `scan` フェーズ（ステップ1→2→確認の遷移待ち）が約5.1秒で
+  既定の `AF_POC_SLOW_PHASE_MS`（5000ms）を超え、
+  「処理に時間がかかっています（フォームのスキャン: 5.1秒）。このまま自動で続行します…」が
+  ユーザー向けに表示されることを確認した（`slowPhaseNote`）。
+- `fill` フェーズは新規登録で最も時間を占める（フォーム入力＋確認画面への遷移を含む）。
+- 全10サイトの値は `npm run poc:matrix` 実行時の `phase timings (ms)` 表と
+  `state/autofill-poc/matrix-*.json` の `phaseTimingsMs` で確認できる。AI 版
+  （`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 設定時）では `map` / `terms` フェーズに
+  プロバイダ呼び出しの時間が加わる。
+
 ### 確認ゲート・3ガードの発火（シナリオ別）
 
 | 検証点 | 結果 |

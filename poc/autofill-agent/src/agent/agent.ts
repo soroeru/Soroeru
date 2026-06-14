@@ -27,6 +27,7 @@ import { buildMandate, staleFilledFields, toFilledFieldRecords } from "./records
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
+import { slowPhaseNote, type Phase } from "./perf.js";
 import { snapshotPage, waitForFields } from "./scan.js";
 import { clearWalls, type HumanHandoff } from "./walls.js";
 
@@ -51,6 +52,13 @@ export interface AgentDeps {
    * simulate the human completing the registration.
    */
   humanFinalSubmit?: (page: Page, finalButtonSelector: string | undefined, consentFieldIds: string[]) => Promise<void>;
+  /**
+   * Phase-timing hook (PERF-001 / #18): called once per phase with that
+   * phase's cumulative duration (ms) for this run. Multi-step forms add to
+   * the same phase across steps. Carries no profile values, page content, AI
+   * request payloads, or provider API keys — only a phase name and a number.
+   */
+  onPhase?: (phase: Phase, durationMs: number) => void;
   log: (message: string) => void;
 }
 
@@ -121,6 +129,14 @@ function clearWallsFor(
   });
 }
 
+/** Report a phase's elapsed time (PERF-001 / #18) and, if it ran long, log a slow-path note. */
+function recordPhase(deps: AgentDeps, phase: Phase, startedAt: number): void {
+  const durationMs = performance.now() - startedAt;
+  deps.onPhase?.(phase, durationMs);
+  const note = slowPhaseNote(phase, durationMs);
+  if (note) deps.log(note);
+}
+
 interface StepState {
   entries: { entry: MappingEntry; field: FormField }[];
   checkboxes: { box: CheckboxClassification; field: FormField }[];
@@ -166,11 +182,15 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
     notes,
   });
 
+  const discoverStart = performance.now();
   await page.goto(siteTopUrl);
   let snapshot = await snapshotPage(page);
   {
     const observed = await clearWallsFor(snapshot, deps, () => snapshotPage(page));
-    if (observed.status === "abort") return result("manualHandoff", false);
+    if (observed.status === "abort") {
+      recordPhase(deps, "discover", discoverStart);
+      return result("manualHandoff", false);
+    }
     snapshot = observed.snapshot;
   }
 
@@ -178,10 +198,12 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   const registerLink = await deps.mapper.discoverRegistrationLink(snapshot.links, snapshot.visibleText);
   if (!registerLink) {
     notes.push("登録ページへのリンクを発見できませんでした");
+    recordPhase(deps, "discover", discoverStart);
     return result("failed", false);
   }
   deps.log(`登録ページを発見: 「${registerLink.text}」 ${registerLink.href}`);
   await page.goto(registerLink.href);
+  recordPhase(deps, "discover", discoverStart);
 
   // 2. Analyze (and, for wizards, advance through) the form.
   const allCheckboxes: { box: CheckboxClassification; field: FormField }[] = [];
@@ -194,10 +216,14 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   const view = deps.store.profileView();
 
   for (let step = 0; step < 6; step++) {
+    const scanStart = performance.now();
     snapshot = await waitForFields(page);
     {
       const observed = await clearWallsFor(snapshot, deps, () => waitForFields(page));
-      if (observed.status === "abort") return result("manualHandoff", false);
+      if (observed.status === "abort") {
+        recordPhase(deps, "scan", scanStart);
+        return result("manualHandoff", false);
+      }
       snapshot = observed.snapshot;
     }
     pageTexts.push(snapshot.visibleText);
@@ -205,7 +231,9 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
       if (TERMS_LINK_RE.test(link.text)) termsLinks.set(link.href, link);
     }
     cardPresent ||= hasCardFields(snapshot.fields);
+    recordPhase(deps, "scan", scanStart);
 
+    const mapStart = performance.now();
     currentStep = snapshot.fields.length > 0 ? await mapCurrentPage(snapshot, deps) : { entries: [], checkboxes: [] };
     for (const { entry, field } of currentStep.entries) {
       const plannedEntry: PlannedField = { fieldName: field.name || field.id, profileKey: entry.profileKey };
@@ -213,18 +241,21 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
       planned.push(plannedEntry);
     }
     allCheckboxes.push(...currentStep.checkboxes);
+    recordPhase(deps, "map", mapStart);
 
     const nextButton = snapshot.buttons.find((b) => NEXT_BUTTON_RE.test(b.text));
     const finalButton = snapshot.buttons.find((b) => !NEXT_BUTTON_RE.test(b.text) && FINAL_BUTTON_RE.test(b.text));
     if (nextButton) {
       // Multi-step form: values must be typed to reach the next step. They stay
       // local in the controlled browser; the single gate still precedes the submit.
+      const wizardFillStart = performance.now();
       filledOutcomes.push(
         ...(await fillEntries(
           { page, fieldsById: new Map(snapshot.fields.map((f) => [f.fieldId, f])), getValue: (k) => deps.store.getValue(k), profileView: view },
           currentStep.entries.map((e) => e.entry),
         )),
       );
+      recordPhase(deps, "fill", wizardFillStart);
       currentStep = { entries: [], checkboxes: [] };
       await page.click(nextButton.selector);
       await page.waitForLoadState();
@@ -240,11 +271,14 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   }
 
   // 3. Terms analysis (guards 1-2, Q2c). Linked terms pages are fetched locally.
+  const termsStart = performance.now();
   let termsText = "";
   for (const link of termsLinks.values()) termsText += `\n${await fetchVisibleText(link.href)}`;
   const analysis = normalizeTermsAnalysis(await deps.mapper.analyzeTerms(termsText, pageTexts.join("\n"), cardPresent));
+  recordPhase(deps, "terms", termsStart);
 
   // 4. The single review-and-confirm gate.
+  const gateStart = performance.now();
   const attestations = allCheckboxes.filter((c) => c.box.role === "attestation");
   const gateRequest: GateRequest = {
     origin: new URL(page.url()).origin,
@@ -264,6 +298,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
     attestations: attestations.map((a) => ({ fieldId: a.box.fieldId, label: a.box.label })),
   };
   deps.log(renderGate(gateRequest));
+  recordPhase(deps, "gate", gateStart);
   const decision = await deps.gate.decide(gateRequest);
   if (!decision.approved) {
     notes.push("確認ゲートで承認されなかったため中止しました");
@@ -303,8 +338,10 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   let entriesToFill = currentStep.entries.map((e) => e.entry);
   if (guard.action === "stop-handoff") {
     notes.push(`支払い項目を検知（判定: ${analysis.payment ?? "unknown"}）。自動進行を停止しハンドオフします`);
+    const recordStart = performance.now();
     record("manualHandoff"); // audit the payment stop (no fields are filled/submitted)
     await deps.store.save();
+    recordPhase(deps, "record", recordStart);
     return result("manualHandoff", true, analysis.highRiskFlags);
   }
   if (guard.action === "declined") {
@@ -318,6 +355,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   }
 
   // 6. Fill remaining fields (single-step sites fill here, after the gate).
+  const fillStart = performance.now();
   filledOutcomes.push(
     ...(await fillEntries(
       {
@@ -350,18 +388,22 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
       }
     }
   }
+  recordPhase(deps, "fill", fillStart);
 
   // 8. Q2c: sites that prohibit automated account creation get assisted fill only.
   if (guard.action === "assisted-fill") {
     deps.log("このサイトは自動アカウント作成を禁止しているため、最後の登録ボタンはご自身で押してください。");
     notes.push("自動作成禁止サイト: 入力のみ行い、最終送信はユーザーに委ねました");
+    const recordStart = performance.now();
     record("assistedFill");
     await deps.store.save();
+    recordPhase(deps, "record", recordStart);
     if (deps.humanFinalSubmit) await deps.humanFinalSubmit(page, finalButtonSelector, consentIds);
     return result("assistedFill", true, analysis.highRiskFlags);
   }
 
   // 9. Submit on the user's single approval (terms acceptance + final submit delegated).
+  const submitStart = performance.now();
   await page.click(finalButtonSelector);
   await page.waitForLoadState();
   try {
@@ -369,8 +411,11 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   } catch {
     const after = await clearWallsFor(await snapshotPage(page), deps, () => snapshotPage(page));
     if (after.status === "abort") {
+      recordPhase(deps, "submit", submitStart);
+      const recordStart = performance.now();
       record("manualHandoff");
       await deps.store.save();
+      recordPhase(deps, "record", recordStart);
       return result("manualHandoff", true, analysis.highRiskFlags);
     }
     try {
@@ -378,15 +423,21 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
     } catch {
       if (!after.snapshot.visibleText.includes(SUCCESS_TEXT)) {
         notes.push("送信後に完了画面を確認できませんでした");
+        recordPhase(deps, "submit", submitStart);
+        const recordStart = performance.now();
         record("failed");
         await deps.store.save();
+        recordPhase(deps, "record", recordStart);
         return result("failed", true, analysis.highRiskFlags);
       }
     }
   }
+  recordPhase(deps, "submit", submitStart);
 
+  const recordStart = performance.now();
   record("registered");
   await deps.store.save();
+  recordPhase(deps, "record", recordStart);
   deps.log("登録を完遂しました");
   return result("registered", true, analysis.highRiskFlags);
 }
@@ -412,29 +463,38 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   }
   const changedKeySet = new Set(changed.map((c) => `${c.profileKey}|${c.transform ?? ""}`));
 
+  const discoverStart = performance.now();
   await page.goto(siteTopUrl);
   let snapshot = await snapshotPage(page);
   {
     const observed = await clearWallsFor(snapshot, deps, () => snapshotPage(page));
     if (observed.status === "abort") {
+      recordPhase(deps, "discover", discoverStart);
       return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned: [], notes };
     }
     snapshot = observed.snapshot;
   }
   const editLink = findEditLink(snapshot.links);
   if (!editLink) {
+    recordPhase(deps, "discover", discoverStart);
     return { siteId, status: "failed", changedKeys: [...changedKeySet], planned: [], notes: ["編集ページが見つかりません"] };
   }
   await page.goto(editLink.href);
+  recordPhase(deps, "discover", discoverStart);
+
+  const scanStart = performance.now();
   snapshot = await waitForFields(page);
   {
     const observed = await clearWallsFor(snapshot, deps, () => waitForFields(page));
     if (observed.status === "abort") {
+      recordPhase(deps, "scan", scanStart);
       return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned: [], notes };
     }
     snapshot = observed.snapshot;
   }
+  recordPhase(deps, "scan", scanStart);
 
+  const mapStart = performance.now();
   const step = await mapCurrentPage(snapshot, deps);
   const toFill = step.entries.filter((e) => changedKeySet.has(`${e.entry.profileKey}|${e.entry.transform ?? ""}`));
   const planned: PlannedField[] = toFill.map(({ entry, field }) => ({
@@ -442,12 +502,14 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
     profileKey: entry.profileKey,
     ...(entry.transform ? { transform: entry.transform } : {}),
   }));
+  recordPhase(deps, "map", mapStart);
 
   const saveButton = snapshot.buttons.find((b) => FINAL_BUTTON_RE.test(b.text));
   if (!saveButton) {
     return { siteId, status: "failed", changedKeys: [...changedKeySet], planned, notes: ["保存ボタンが見つかりません"] };
   }
 
+  const termsStart = performance.now();
   const termsLinks = new Map<string, PageLink>();
   for (const link of snapshot.links) {
     if (TERMS_LINK_RE.test(link.text)) termsLinks.set(link.href, link);
@@ -455,6 +517,9 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   let termsText = "";
   for (const link of termsLinks.values()) termsText += `\n${await fetchVisibleText(link.href)}`;
   const rawAnalysis = normalizeTermsAnalysis(await deps.mapper.analyzeTerms(termsText, snapshot.visibleText, hasCardFields(snapshot.fields)));
+  recordPhase(deps, "terms", termsStart);
+
+  const gateStart = performance.now();
   const analysis = {
     ...rawAnalysis,
     highRiskFlags: rawAnalysis.highRiskFlags.filter((flag): flag is HighRiskFlag => flag !== "no-auto-creation"),
@@ -477,6 +542,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
     attestations: attestations.map((a) => ({ fieldId: a.box.fieldId, label: a.box.label })),
   };
   deps.log(renderGate(gateRequest));
+  recordPhase(deps, "gate", gateStart);
   const decision = await deps.gate.decide(gateRequest);
   const guard = evaluateGuards({ analysis, decision, hasCardFields: hasCardFields(snapshot.fields) });
   const addUpdateMandate = (result: "updated" | RegistrationStatus): void => {
@@ -501,11 +567,14 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   }
   if (guard.action === "stop-handoff") {
     notes.push(`更新フォームで支払い項目を検知（判定: ${analysis.payment ?? "unknown"}）。自動進行を停止しハンドオフします`);
+    const recordStart = performance.now();
     addUpdateMandate("manualHandoff");
     await deps.store.save();
+    recordPhase(deps, "record", recordStart);
     return { siteId, status: "manualHandoff", changedKeys: [...changedKeySet], planned, notes };
   }
 
+  const fillStart = performance.now();
   const outcomes = await fillEntries(
     {
       page,
@@ -529,16 +598,24 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
       }
     }
   }
+  recordPhase(deps, "fill", fillStart);
+
+  const submitStart = performance.now();
   await page.click(saveButton.selector);
   await page.waitForLoadState();
   try {
     await page.getByText(UPDATE_SUCCESS_TEXT).first().waitFor({ timeout: 5000 });
   } catch {
+    recordPhase(deps, "submit", submitStart);
+    const recordStart = performance.now();
     record.status = "failed";
     await deps.store.save();
+    recordPhase(deps, "record", recordStart);
     return { siteId, status: "failed", changedKeys: [...changedKeySet], planned, notes: ["保存完了画面を確認できませんでした"] };
   }
+  recordPhase(deps, "submit", submitStart);
 
+  const recordStart = performance.now();
   for (const outcome of outcomes.filter((o) => o.ok)) {
     for (const ff of record.filledFields) {
       if (ff.profileKey === outcome.profileKey && (ff.fieldName === outcome.fieldName || ff.transform === undefined)) {
@@ -559,6 +636,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   deps.store.upsertSiteRecord(record);
   addUpdateMandate("updated");
   await deps.store.save();
+  recordPhase(deps, "record", recordStart);
   deps.log(`${siteId}: 差分 ${changed.length} 項目を更新しました`);
   return { siteId, status: "updated", changedKeys: [...changedKeySet], planned, notes };
 }
