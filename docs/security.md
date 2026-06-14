@@ -219,6 +219,28 @@ Do not implement:
 At a wall, the agent pauses in the same headed Playwright session, the user resolves it,
 and the agent resumes from where it paused.
 
+**Static enforcement (SEC-002 / #23)**: `npm run poc -- check-bypass`
+(`poc/autofill-agent/src/dev/bypass-check.ts`, tested by
+`tests/unit/autofill-poc-bypass.test.ts`) scans `package.json` `dependencies` /
+`devDependencies` for package names matching a CAPTCHA-solving or anti-bot /
+browser-fingerprint-evasion denylist (e.g. `2captcha`, `anticaptcha`,
+`capsolver`, `*-stealth`, `rebrowser`, `fingerprint-injector`,
+`fingerprint-suite`). A dependency matching this denylist fails the check and
+must be reviewed against this section before it is added — `autofill` detects
+walls and hands off; it never solves, bypasses, hides, or outsources them.
+
+**Detect-only invariant (SEC-002 / #23)**:
+`tests/unit/autofill-poc-walls.test.ts` fixes two invariants that hold
+regardless of which wall kind `detectWall` reports:
+
+- `handoffInstruction` copy never suggests solving, automating, bypassing, or
+  skipping the wall — it only asks the human to resolve it themselves.
+- `clearWalls` resolves to `status: "abort"` (never proceeds, never
+  re-observes) for **every** `WallDetection["kind"]` when no handoff is wired.
+  This is the fail-safe side of a detector false negative in the handoff
+  path: a wall that is detected but cannot be handed off must stop the run
+  (recorded as `manualHandoff`), not be treated as cleared.
+
 ## 8. Registration Safety Boundaries
 
 - Submit only after the user approves the post-analysis review-and-confirm gate.
@@ -260,4 +282,5 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
 - [ ] Auto-creation-prohibited sites are fill-only
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed
+- [ ] No CAPTCHA-solving / anti-bot / fingerprint-evasion dependency is present (`npm run poc -- check-bypass`, SEC-002 §7)
 - [ ] Security-sensitive behavior is tested or manually verified

@@ -136,7 +136,28 @@ Load the unpacked extension from `dist/extension/`.
 - [ ] No local state, logs, or AI review artifacts are staged for commit
 - [ ] Rollback or recovery path documented
 
-## 9. Troubleshooting
+## 9. PoC: CAPTCHA / MFA / Verification Wall Handoff (SEC-002)
+
+This section checks the `autofill` PoC's (`poc/autofill-agent/`) wall
+detection and handoff/resume behavior end to end against the local test
+sites (`npm run poc:serve`, then `npm run poc -- demo` or
+`npm run poc -- register <siteId>`).
+
+- [ ] When a CAPTCHA / OTP / email-verification wall fixture is reached, the
+      agent pauses in the same headed browser session
+- [ ] The handoff message asks the user to resolve the wall themselves and
+      does not suggest any way to solve, automate, or bypass it
+- [ ] The user resolves the wall directly in the browser (e.g. the fixture's
+      "human confirms" control)
+- [ ] After resolution, the agent re-observes the page and resumes
+      automation from the resumed page (mapper / gate / fill / submit all run
+      against the post-handoff page, not the pre-handoff one)
+- [ ] If the wall is never resolved, the run ends as `manualHandoff` — the
+      agent does not retry, solve, or proceed
+- [ ] `npm run poc -- check-bypass` reports no CAPTCHA-solving / anti-bot /
+      fingerprint-evasion dependency (docs/security.md §7)
+
+## 10. Troubleshooting
 
 | Symptom | Cause / Action |
 | --- | --- |

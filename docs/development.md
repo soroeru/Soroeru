@@ -93,6 +93,7 @@ npm run poc -- app                 # app-shell lifecycle smoke test (unlock/brow
 npm run poc -- ui                  # interactive local app UI (personal data, sites, settings, ...)
 npm run poc -- check-egress        # PRIV-001 static network-egress allowlist check
 npm run poc -- check-persistence   # PRIV-002 static local-persistence allowlist check
+npm run poc -- check-bypass        # SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
 ```
 
 PoC state (encrypted store, measurement JSON) is written under
@@ -194,6 +195,8 @@ For code changes, run the available gates:
 - for changes touching profile-value display/logging or local file writes:
   `npm run poc -- check-persistence` and re-check the `maskValue` /
   `maskForArtifact` policy (PRIV-002, see [`security.md`](security.md) §3)
+- for changes touching `package.json` dependencies or wall detection / handoff:
+  `npm run poc -- check-bypass` (SEC-002, see [`security.md`](security.md) §7)
 
 `npm test` runs the extension build and Node unit tests.
 
