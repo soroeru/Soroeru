@@ -178,6 +178,55 @@ test("clearWalls aborts safely when no handoff is wired", async () => {
   assert.equal(reobserved, false);
 });
 
+test("clearWalls aborts on every wall kind when no handoff is wired (fail-safe, SEC-002)", async () => {
+  // SEC-002 (#23): regardless of which wall kind is detected, the agent must
+  // never proceed past it without a human resolving it — this holds even if a
+  // future detector change introduces a kind not yet covered by handoff
+  // wiring (a "false negative" in the handoff path, not the detector).
+  const fixtures: { kind: WallDetection["kind"]; snap: PageSnapshot }[] = [
+    { kind: "captcha", snap: snapshot({ wallMarkers: ["g-recaptcha"] }) },
+    {
+      kind: "mfa",
+      snap: snapshot({
+        fields: [
+          {
+            fieldId: "otp",
+            tag: "input",
+            type: "text",
+            name: "otp",
+            id: "",
+            autocomplete: "one-time-code",
+            required: true,
+            placeholder: "",
+            labels: [],
+            nearbyText: "",
+          },
+        ],
+      }),
+    },
+    { kind: "email-verification", snap: snapshot({ visibleText: "確認メールを送信しました。" }) },
+    {
+      kind: "identity-verification",
+      snap: snapshot({ visibleText: "本人確認のため、運転免許証をアップロードしてください。" }),
+    },
+  ];
+
+  for (const { kind, snap } of fixtures) {
+    assert.equal(detectWall(snap)?.kind, kind);
+    let reobserved = false;
+    const out = await clearWalls(snap, {
+      reobserve: async () => {
+        reobserved = true;
+        return snap;
+      },
+      log: () => {},
+    });
+    assert.equal(out.status, "abort", kind);
+    assert.equal(out.snapshot, snap, kind);
+    assert.equal(reobserved, false, kind);
+  }
+});
+
 test("clearWalls aborts without re-observing when the human handoff is not resolved", async () => {
   let reobserved = false;
   const initial = snapshot({ visibleText: "確認メールを送信しました。" });
