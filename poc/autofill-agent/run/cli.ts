@@ -3,7 +3,8 @@
 //   matrix [variant] [engines]        — run measurements (variant: deterministic | ai | both)
 //   register <siteId> [variant]      — headed demo run with the interactive CLI gate
 //   app                                — app-shell lifecycle smoke test (unlock/browser/lock)
-//   ui [variant]                       — interactive local app UI (personal data, sites, settings, ...)
+//   ui [variant] [port]                — local browser app UI (personal data, sites, settings, ...)
+//   ui:cli [variant]                   — legacy interactive terminal UI
 //   check-egress                       — PRIV-001 static network-egress allowlist check
 //   check-persistence                  — PRIV-002 static local-persistence allowlist check
 //   check-bypass                       — SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
@@ -14,6 +15,7 @@
 //   node dist/compiled/poc/autofill-agent/run/cli.js register 08-terms
 //   node dist/compiled/poc/autofill-agent/run/cli.js app
 //   node dist/compiled/poc/autofill-agent/run/cli.js ui
+//   node dist/compiled/poc/autofill-agent/run/cli.js ui:cli
 //   node dist/compiled/poc/autofill-agent/run/cli.js check-egress
 //   node dist/compiled/poc/autofill-agent/run/cli.js check-persistence
 //   node dist/compiled/poc/autofill-agent/run/cli.js check-bypass
@@ -29,6 +31,7 @@ import { DUMMY_PROFILE_SEED } from "../src/profile.js";
 import { AutofillApp, AutofillAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
 import { askSecret, AppUI } from "../src/app/ui.js";
+import { startWebUiServer } from "../src/app/web-ui.js";
 import { checkBypassDenylist } from "../src/dev/bypass-check.js";
 import { checkNetworkEgress } from "../src/dev/egress-check.js";
 import { checkLocalPersistence } from "../src/dev/privacy-check.js";
@@ -224,7 +227,7 @@ function cmdCheckBypass(): void {
   console.log("ok: no CAPTCHA-solving / anti-bot / fingerprint-evasion dependency found");
 }
 
-async function cmdUi(variantArg: string): Promise<void> {
+async function cmdCliUi(variantArg: string): Promise<void> {
   const server = await startPocServer();
   const app = new AutofillApp({ stateDir: join(STATE_ROOT, "manual") });
   try {
@@ -251,6 +254,40 @@ async function cmdUi(variantArg: string): Promise<void> {
   }
 }
 
+async function cmdWebUi(variantArg: string, portArg: string | undefined): Promise<void> {
+  const parsedPort = portArg === undefined ? undefined : Number(portArg);
+  if (parsedPort !== undefined && (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535)) {
+    throw new Error("port must be an integer between 0 and 65535");
+  }
+  const app = new AutofillApp({ stateDir: join(STATE_ROOT, "manual") });
+  const server = await startWebUiServer({
+    app,
+    ...(parsedPort !== undefined ? { port: parsedPort } : {}),
+    log: (message) => console.error(message),
+  });
+  console.log(`autofill local web app: ${server.url}`);
+  console.log(`mapper variant: ${variantArg}`);
+  console.log("Press Ctrl+C to stop.");
+
+  let shuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await app.shutdown();
+    await server.close();
+    process.exit(0);
+  };
+  process.once("SIGINT", () => {
+    void shutdown();
+  });
+  process.once("SIGTERM", () => {
+    void shutdown();
+  });
+  await new Promise<void>(() => {
+    // Keep the local UI process alive until a signal triggers shutdown.
+  });
+}
+
 const [, , command, arg1, arg2] = process.argv;
 switch (command) {
   case "serve":
@@ -271,7 +308,10 @@ switch (command) {
     await cmdApp();
     break;
   case "ui":
-    await cmdUi(arg1 ?? "deterministic");
+    await cmdWebUi(arg1 ?? "deterministic", arg2);
+    break;
+  case "ui:cli":
+    await cmdCliUi(arg1 ?? "deterministic");
     break;
   case "check-egress":
     cmdCheckEgress();
@@ -284,6 +324,6 @@ switch (command) {
     break;
   default:
     console.log(
-      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai] | check-egress | check-persistence | check-bypass",
+      "usage: cli.js serve [port] | matrix [deterministic|ai|both] [engines] | register <siteId> [variant] | demo [deterministic|ai] [engine] | app | ui [deterministic|ai] [port] | ui:cli [deterministic|ai] | check-egress | check-persistence | check-bypass",
     );
 }

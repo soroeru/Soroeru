@@ -90,7 +90,8 @@ npm run poc:serve                 # local 10-pattern test sites
 npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
 npm run poc -- register 09-trial-card   # headed demo with the interactive gate
 npm run poc -- app                 # app-shell lifecycle smoke test (unlock/browser/lock)
-npm run poc -- ui                  # interactive local app UI (personal data, sites, settings, ...)
+npm run poc -- ui                  # local browser web app UI (personal data, sites, settings, ...)
+npm run poc -- ui:cli              # legacy developer terminal UI fallback
 npm run poc -- check-egress        # PRIV-001 static network-egress allowlist check
 npm run poc -- check-persistence   # PRIV-002 static local-persistence allowlist check
 npm run poc -- check-bypass        # SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
