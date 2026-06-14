@@ -73,8 +73,9 @@ Never stored:
 a profile value can reach a display or a file:
 
 - `maskValue(key, value)` — for **interactive review surfaces** (the
-  review-and-confirm gate, `renderGate`, and the local UI's profile listing,
-  `AppUI`'s "1. 個人情報" menu): card number → last 4 digits; CVV, card
+  review-and-confirm gate, `renderGate`, and the local UI's profile listing:
+  the web UI's personal-data section and legacy `AppUI`'s "1. 個人情報"
+  menu): card number → last 4 digits; CVV, card
   expiry/holder, and account password → a strong mask (`isSensitiveKey`);
   email and phone → a partial mask (`du***@example.com`, `090-****-5678`)
   that still lets the user recognize their own value. Other fields (name,

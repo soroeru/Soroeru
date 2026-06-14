@@ -52,6 +52,8 @@ isolation. Current coverage:
 | Agent — phase timing (PERF-001) | `agent/perf.ts` | `autofill-poc-perf.test.ts` |
 | Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `autofill-poc-contracts.test.ts` |
 | Automation (DOM scan) | `content/scanner.ts`, `agent/scan.ts` | `scanner.test.ts` |
+| UI — local web app | `app/web-ui.ts` | `autofill-poc-web-ui.test.ts` |
+| UI — legacy terminal fallback | `app/ui.ts` | `autofill-poc-ui.test.ts` |
 | Measurement / CI gate | `poc/autofill-agent/run/measure.ts` | `autofill-poc-measure.test.ts` |
 | Dev checks (PRIV-001/002, SEC-002) | `src/dev/{egress,privacy,bypass}-check.ts` | `autofill-poc-{egress,privacy,bypass}.test.ts` |
 

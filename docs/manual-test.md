@@ -201,7 +201,7 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] The gate asks separately, per attestation:
       "「私は18歳以上です」にチェックを入れますか？ [y/N]"
 - [ ] Answering `N` registers without the `adult` checkbox checked (verify via
-      "2. サイト一覧 / mandate" in `npm run poc -- ui`, §13)
+      "2. サイト一覧 / mandate" in `npm run poc -- ui:cli`, §13)
 
 **Guard 2 — payment stop with trial→subscription exception (`09-trial-card`)**
 
@@ -225,27 +225,36 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 
 ## 13. PoC: Bulk Update, Local App UI, And Encrypted Store (TEST-001 / REQ-001/002/010/011, SEC-001/003, UI-001)
 
-`npm run poc -- ui [deterministic|ai]`
+- `npm run poc -- ui [deterministic|ai] [port]` starts the local browser UI.
+- `npm run poc -- ui:cli [deterministic|ai]` starts the legacy terminal UI fallback.
 
+- [ ] Web UI binds to `127.0.0.1`; opening the printed URL shows the onboarding
+      / unlock screen
 - [ ] Unlocking with a wrong master passphrase fails closed (no data shown)
-- [ ] "1. 個人情報": values are masked per `maskValue` (card number → last 4
-      digits; CVV / card expiry / holder / password → `••••••`; email / phone
-      → partial mask); "r) 表示" on a sensitive field requires re-entering the
-      master passphrase before revealing it
-- [ ] Edit a stored field (e.g. phone number or address) from "1. 個人情報"
-- [ ] After at least one registration (§11/§12), "2. サイト一覧 / mandate"
-      shows the site's filled fields and its mandate (high-risk flags /
-      payment stop / card-filled, as applicable)
-- [ ] "3. 一括更新": after the edit above, the affected site(s) are listed as
-      having stale fields; confirming runs the gate + three guards + wall
-      handoff per site and updates only the changed field(s)
-- [ ] After bulk update, "2. サイト一覧 / mandate" shows a new mandate entry
-      per updated site
-- [ ] "5. 設定": generate a recovery key (shown once), then lock and unlock
-      using the recovery key instead of the passphrase
-- [ ] "5. 設定": run encrypted export, then import into a fresh store path and
-      confirm the same data is available after unlocking with the same
-      passphrase
+- [ ] Web UI personal-data list masks values per `maskValue` (card number →
+      last 4 digits; CVV / card expiry / holder / password → `••••••`; email /
+      phone → partial mask); revealing a sensitive field requires re-entering
+      the master passphrase
+- [ ] The primary navigation has three tabs: `個人情報`, `登録済みサイト`, and `設定`
+- [ ] The personal-data page has a visible top-right `編集` button; edit mode
+      shows all profile fields in one form and has a single `保存` button at the
+      bottom
+- [ ] The `登録済みサイト` page places `新規登録` in the upper-left action area
+      and `一括更新` in the upper-right action area
+- [ ] Edit stored fields (e.g. phone number and address) together from the Web UI
+- [ ] After at least one registration (§11/§12), the Web UI registered-site list shows the
+      site's status, filled-field count, mandate count, and stale-field warning
+- [ ] Web UI settings can save provider/model/API key; API key display requires
+      re-entering the master passphrase
+- [ ] Web UI settings can generate a recovery key (shown once), then lock and
+      unlock using the recovery key instead of the passphrase
+- [ ] Legacy `ui:cli` still supports registration and bulk update until the Web
+      UI run pages are wired: "3. 一括更新" lists stale sites, runs the gate +
+      three guards + wall handoff per site, and writes a new mandate per updated
+      site
+- [ ] Legacy `ui:cli` still supports encrypted export, then import into a fresh
+      store path and confirm the same data is available after unlocking with
+      the same passphrase
 - [ ] Open the exported file under `state/autofill-poc/` in a text editor and
       confirm it contains only encrypted JSON (`version` / `kdf` / `records`),
       no plaintext personal data

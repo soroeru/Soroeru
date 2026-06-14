@@ -23,8 +23,9 @@ poc/autofill-agent/
 ```
 
 層構成は RFC-001 v3 §7（ストア / エージェント / Playwright 自動操作 / UI）に対応する。
-UI 層は `src/app/`（`AutofillApp` / `AppRunner` / `AppUI`、§9・§11）が提供する
-対話 CLI（`npm run poc -- ui`）。
+UI 層は `src/app/`（`AutofillApp` / `AppRunner` / `startWebUiServer` / `AppUI`、§9・§11）が提供する。
+`npm run poc -- ui` はローカルWebアプリを起動し、旧対話CLIは開発者向けに
+`npm run poc -- ui:cli` として残す。
 
 ## 使い方
 
@@ -48,8 +49,11 @@ npm run poc -- register 09-trial-card [deterministic|ai]
 # アプリシェルのlifecycle確認（unlock -> ブラウザ起動/終了 -> lock）
 npm run poc -- app
 
-# ローカルアプリUI（個人情報管理・サイト一覧/mandate・一括更新・新規登録・設定）
-npm run poc -- ui [deterministic|ai]
+# ローカルWebアプリUI（ブラウザで個人情報・サイト一覧・設定を管理）
+npm run poc -- ui [deterministic|ai] [port]
+
+# 旧ターミナルUI（新規登録・一括更新の開発者向けfallback）
+npm run poc -- ui:cli [deterministic|ai]
 
 # PRIV-001: network egressがtarget sites / AIプロバイダ以外に増えていないかの静的チェック
 npm run poc -- check-egress
@@ -166,8 +170,8 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
 ### Recovery key / encrypted export・import（SEC-003 / #44）
 
 `src/store/recovery.ts` と `store.ts` の `PocStore` に以下の zero-knowledge な復旧手段を実装した
-（詳細は `docs/security.md` §4）。`npm run poc -- ui` の「5. 設定」から生成・検証・削除できる
-（#17）。
+（詳細は `docs/security.md` §4）。`npm run poc -- ui` のWeb UI設定画面、または
+`npm run poc -- ui:cli` の「5. 設定」から生成・検証・削除できる（#17 / #66）。
 
 - `store.setupRecoveryKey()`: 256bit の recovery key を生成し、現在の master key をその key で
   wrap して `recovery` フィールドとして保存準備する。**戻り値の recovery key は一度しか
@@ -187,26 +191,32 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
   `verifyRecoveryKey`・`rekey` による無効化・export/import roundtrip（平文非混入を確認）・
   上書き拒否・バージョン不一致拒否をカバー。
 
-### ローカルアプリUI（UI-001 / #17）
+### ローカルアプリUI（UI-001 / #17, UI-002 / #66）
 
-`npm run poc -- ui [deterministic|ai]` で `src/app/ui.ts`（`AppUI`）の対話メニューが起動する
-（詳細は `docs/extension.md` §11）。
+`npm run poc -- ui [deterministic|ai] [port]` で `src/app/web-ui.ts` のローカルWebアプリが起動する
+（詳細は `docs/extension.md` §11、設計計画は `docs/issue-66-local-web-app-ui.md`）。
+既定では `127.0.0.1` にだけbindし、POSTはCSRF tokenを必須にする。フロントエンド依存は追加せず、
+Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する。
 
-1. **個人情報**: 既知フィールド（`KNOWN_PROFILE_KEYS`）またはカスタム項目の追加・編集・削除。
-   一覧表示は常に `maskValue` でマスク（カード番号は末尾4桁のみ、CVV/パスワード/APIキーは
-   `••••••`、メール/電話番号は部分マスク `du***@example.com` / `090-****-5678`）。
-   機密項目（カード/CVV/パスワード）の表示（r）にはマスターパスフレーズの再入力
-   （`verifyPassphrase`）が必要（PRIV-002 / #21）。
-2. **サイト一覧 / mandate**: サイトごとの `filledFields` と `RegistrationMandate`
-   （高リスク条項・支払い停止・カード入力の有無）を表示、ローカル一覧から削除（実アカウントは
-   削除しない）。
-3. **一括更新**: `staleFilledFields()`（`agent.ts` の `runUpdate` と共有）で差分のあるサイトを
-   検出し、選択したサイトを確認ゲート・3ガード・壁ハンドオフ込みで更新。
-4. **新規登録**: URL を入力して確認ゲート経由で新規登録。
-5. **設定**: AI プロバイダ（provider/model/APIキー、暗号化保存）、APIキー表示（要再認証）、
-   recovery key の生成・検証・削除、暗号化エクスポート/インポート。PRIV-001 / PRIV-002 の
-   方針も画面に表示する。
-- ユニットテスト `tests/unit/autofill-poc-ui.test.ts`: 全メニューを注入可能な `UiIo`
+現在のWeb UI foundation:
+
+1. **オンボーディング / unlock**: マスターパスフレーズ、またはリカバリーキーで暗号化ストアを開く。
+2. **個人情報**: 右上の「編集」から、既知フィールド（`KNOWN_PROFILE_KEYS`）とカスタム項目を
+   1つの登録情報編集フォームでまとめて編集する。保存ボタンは画面下部。一覧表示は常に
+   `maskValue` でマスクし、機密項目の表示にはマスターパスフレーズ再入力が必要。
+3. **登録済みサイト**: サイトごとの `filledFields` / mandate数 / statusと、
+   `staleFilledFields()` による一括更新候補をブラウザで確認できる。ページ上部の左に
+   「新規登録」、右に「一括更新」を配置する。
+4. **設定**: AIプロバイダ（provider/model/APIキー、暗号化保存）、APIキー表示（要再認証）、
+   recovery key の生成・検証・削除。
+
+新規登録のWeb実行、review-and-confirm gate、missing-data prompt、wall hand-off / resume、
+一括更新実行は次の #66 実装スライスで `AppRunner` に接続する。そこまでの開発者向けfallbackとして、
+旧ターミナルメニューは `npm run poc -- ui:cli [deterministic|ai]` で利用できる。
+
+- ユニットテスト `tests/unit/autofill-poc-web-ui.test.ts`: ローカルWeb UIのroute、CSRF、マスク表示、
+  再認証、settings、recovery key、一括更新候補表示をlocalhost上で検証。
+- ユニットテスト `tests/unit/autofill-poc-ui.test.ts`: 旧CLIメニューを注入可能な `UiIo`
   フェイクで駆動（実ブラウザは起動しない）。
 
 ### ネットワークegress（PRIV-001 / #20）
