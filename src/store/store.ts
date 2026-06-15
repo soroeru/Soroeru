@@ -7,10 +7,12 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { validateCandidateDefinition } from "../agent/definitions.js";
 import {
   MOST_SENSITIVE_KEY,
   type AccountNextAction,
   type AccountState,
+  type LocalCandidateDefinition,
   type ProfileKey,
   type RegistrationMandate,
   type SiteRecord,
@@ -62,8 +64,8 @@ interface StoreFile {
 }
 
 interface StorePayload {
-  kind: "profile" | "site" | "mandate" | "settings";
-  data: ProfileEntry | SiteRecord | RegistrationMandate | ProviderSettings;
+  kind: "profile" | "site" | "mandate" | "settings" | "candidate";
+  data: ProfileEntry | SiteRecord | RegistrationMandate | ProviderSettings | LocalCandidateDefinition;
 }
 
 function nextActionForState(state: AccountState): AccountNextAction {
@@ -137,6 +139,14 @@ export class StoreCorruptError extends Error {
   }
 }
 
+/** Thrown by `upsertLocalCandidate` when a candidate fails validation (#80). Invalid candidates are never persisted. */
+export class CandidateValidationError extends Error {
+  constructor(errors: string[]) {
+    super(`invalid local candidate definition: ${errors.join("; ")}`);
+    this.name = "CandidateValidationError";
+  }
+}
+
 /**
  * Validate / upgrade a parsed store file to the current format. Throws on a
  * version newer than this build understands instead of silently mis-reading it.
@@ -159,6 +169,8 @@ export class PocStore {
   readonly profile = new Map<ProfileKey, ProfileEntry>();
   readonly siteRecords = new Map<string, SiteRecord>();
   readonly mandates: RegistrationMandate[] = [];
+  /** Local, unreviewed site definitions (#80, PRIV-003); never treated as official. */
+  readonly localCandidates = new Map<string, LocalCandidateDefinition>();
   private settings: ProviderSettings | undefined;
 
   private constructor(filePath: string, key: MasterKey, kdf: KdfParams, recovery?: EncryptedRecord) {
@@ -195,6 +207,9 @@ export class PocStore {
         store.siteRecords.set(rec.siteId, rec);
       } else if (payload.kind === "settings") {
         store.settings = payload.data as ProviderSettings;
+      } else if (payload.kind === "candidate") {
+        const candidate = payload.data as LocalCandidateDefinition;
+        store.localCandidates.set(candidate.id, candidate);
       } else {
         store.mandates.push(payload.data as RegistrationMandate);
       }
@@ -258,6 +273,7 @@ export class PocStore {
     this.profile.clear();
     this.siteRecords.clear();
     this.mandates.length = 0;
+    this.localCandidates.clear();
     this.settings = undefined;
   }
 
@@ -347,6 +363,36 @@ export class PocStore {
     return this.siteRecords.delete(siteId);
   }
 
+  // --- Local candidate definitions API (#80, PRIV-003) ---
+
+  /**
+   * Add or replace a local candidate definition. Validates the candidate
+   * (`validateCandidateDefinition`) first; invalid candidates are never
+   * stored.
+   */
+  upsertLocalCandidate(candidate: LocalCandidateDefinition): void {
+    this.requireKey();
+    const { ok, errors } = validateCandidateDefinition(candidate);
+    if (!ok) throw new CandidateValidationError(errors);
+    this.localCandidates.set(candidate.id, candidate);
+  }
+
+  getLocalCandidate(id: string): LocalCandidateDefinition | undefined {
+    this.requireKey();
+    return this.localCandidates.get(id);
+  }
+
+  listLocalCandidates(): LocalCandidateDefinition[] {
+    this.requireKey();
+    return [...this.localCandidates.values()];
+  }
+
+  /** Remove a local candidate definition (user-initiated). Returns true if it existed. */
+  deleteLocalCandidate(id: string): boolean {
+    this.requireKey();
+    return this.localCandidates.delete(id);
+  }
+
   /** Mandates for a given origin (or all), for audit display. */
   listMandates(origin?: string): RegistrationMandate[] {
     this.requireKey();
@@ -419,6 +465,7 @@ export class PocStore {
       ...[...this.profile.values()].map((data): StorePayload => ({ kind: "profile", data })),
       ...[...this.siteRecords.values()].map((data): StorePayload => ({ kind: "site", data })),
       ...this.mandates.map((data): StorePayload => ({ kind: "mandate", data })),
+      ...[...this.localCandidates.values()].map((data): StorePayload => ({ kind: "candidate", data })),
     ];
     if (this.settings) payloads.push({ kind: "settings", data: this.settings });
     const records: EncryptedRecord[] = [];

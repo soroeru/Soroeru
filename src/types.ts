@@ -298,3 +298,94 @@ export interface WallDetection {
   kind: "captcha" | "mfa" | "email-verification" | "identity-verification";
   evidence: string;
 }
+
+/**
+ * Shared site/form/field/wall/withdrawal definition model (#80, RFC-001 v3
+ * §8, extension.md §3.2). The same shape backs checked-in "official"
+ * definitions (`src/agent/official-definitions.ts`) and per-vault "local
+ * candidate" definitions. Matching, field-rule application, and candidate
+ * validation live in `src/agent/definitions.ts`; this file only defines the
+ * shape so the store layer can persist candidates without depending on the
+ * agent layer's logic.
+ */
+
+/** Identifies which pages a definition applies to. At least one of `domains` / `urlPatterns` must match for the definition to be considered. */
+export interface SiteMatchRule {
+  /** Hostnames or hostname suffixes (e.g. "example.test" also matches "www.example.test"), case-insensitive. */
+  domains?: string[];
+  /** Regex source strings matched against the full page URL. */
+  urlPatterns?: string[];
+}
+
+/** Structural fingerprint of the registration (or other target) page, used to score a match. */
+export interface FormSignature {
+  /** Regex source strings matched against the URL pathname. */
+  pathPatterns?: string[];
+  /** Substrings (case-insensitive) expected in some field's name/id/autocomplete. */
+  fieldTokens?: string[];
+  /** Regex source strings matched against the page's visible text. */
+  headingPatterns?: string[];
+  /** Regex source strings matched against button labels. */
+  buttonPatterns?: string[];
+}
+
+/** A field-mapping rule scoped to one site definition, in the same style as the deterministic classifier's rules. */
+export interface DefinitionFieldRule {
+  id: string;
+  profileKey: ProfileKey;
+  transform?: Transform;
+  /** Regex source matched against label-ish text (labels + placeholder + nearbyText). */
+  labelPattern?: string;
+  /** Regex source matched against `name`/`id` attributes. */
+  attrPattern?: string;
+}
+
+/** A known wall signal for this site, beyond the generic detectors in `src/agent/walls.ts`. */
+export interface WallSignalDefinition {
+  kind: WallDetection["kind"];
+  /** Regex source matched against visible text or DOM wall markers. */
+  pattern: string;
+}
+
+/**
+ * A planning-only step in a withdrawal flow. Never auto-executes irreversible
+ * actions; the agent uses this to locate the entry point and explain the flow
+ * to the user (#91).
+ */
+export interface WithdrawalStepDefinition {
+  description: string;
+  /** Regex source matched against link text to locate this step. */
+  linkPattern?: string;
+}
+
+/** A site/form/field/wall/withdrawal definition shared by deterministic mode and AI mode. */
+export interface SiteDefinition {
+  id: string;
+  serviceName: string;
+  match: SiteMatchRule;
+  registrationSignature?: FormSignature;
+  fieldRules?: DefinitionFieldRule[];
+  wallSignals?: WallSignalDefinition[];
+  withdrawalSteps?: WithdrawalStepDefinition[];
+  /** Free-text notes (e.g. known high-risk clauses); informational only — the gate re-analyzes terms each run. */
+  notes?: string;
+}
+
+/** Provenance of a local candidate definition (#80, security.md §9). */
+export type CandidateSource = "ai" | "user" | "observation";
+
+/** Lifecycle status of a local candidate definition (extension.md §3.2). */
+export type CandidateStatus = "candidate" | "validated" | "rejected";
+
+/**
+ * A local, unreviewed definition private to this vault (PRIV-003). Same shape
+ * as `SiteDefinition` plus provenance/lifecycle fields. Never treated as
+ * official; promotion to a shared definition is a future, explicit, opt-in
+ * step (out of scope for #80).
+ */
+export interface LocalCandidateDefinition extends SiteDefinition {
+  source: CandidateSource;
+  status: CandidateStatus;
+  createdAt: number;
+  updatedAt: number;
+}
