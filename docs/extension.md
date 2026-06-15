@@ -18,7 +18,8 @@ rationale (see [`security.md`](security.md)).
 
 ## 1. Architecture Overview
 
-`Catashiro` is a local application with four layers:
+`Catashiro` is a local Mac desktop application for the MVP private beta, with four
+layers:
 
 ```text
 Catashiro (local app)
@@ -52,6 +53,11 @@ Catashiro (local app)
 
 Keep shared logic — field classification, wall detection, the store/crypto boundary, and
 the provider abstraction — isolated so it can be tested outside a live browser.
+
+The MVP packaging target is a downloadable macOS app for about 10 invited beta users.
+The architecture still keeps Playwright's Chromium / Firefox / WebKit automation boundary
+because browser-engine independence is a product requirement, but Windows, Linux, mobile,
+and browser-extension distribution are post-MVP.
 
 ### 1.1 Layer seams and shared contracts (MAINT-001)
 
@@ -252,6 +258,11 @@ official/local-candidate definitions (§3.2, plus the related store-layer bullet
 and §4), and withdrawal management (§8) — describe design direction and are **not yet
 implemented**. Remaining work is tracked by open issues, including those additions and
 wiring the local web UI (§13) to `AppRunner`.
+
+The MVP parent scope is a Mac-only private beta (see
+[`requirements.md`](requirements.md) §1.1). Implementation issues should prefer Mac app
+packaging, first-run setup, the local browser UI, and support/diagnostics needed for that
+beta before expanding to other platforms or distribution channels.
 
 ## 11. App Shell (APP-001)
 

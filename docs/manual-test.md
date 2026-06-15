@@ -15,6 +15,25 @@ Out of scope here: the overall test strategy and test-type matrix (see
 [`testing.md`](testing.md)), and the canonical command list (see
 [`development.md`](development.md)).
 
+## 0. Mac Private Beta Acceptance Smoke
+
+Run this checklist on an Apple Silicon Mac with macOS 14 Sonoma or macOS 15 Sequoia before
+inviting or expanding the first private beta group.
+
+- [ ] The app is distributed as a Mac desktop build or clearly identified development
+      build; install instructions do not claim Windows, Linux, mobile, or browser
+      extension support
+- [ ] First-run onboarding creates an encrypted local vault in the documented default
+      location or a user-selected local folder
+- [ ] A beta user can complete onboarding, lock/unlock, and recovery-key setup without
+      maintainer help
+- [ ] A beta user can add or import at least one site and inspect the resulting per-site
+      inventory without raw secret values appearing in screenshots, logs, or diagnostics
+- [ ] The manual, landing/download page, and support instructions explain the local-only
+      vault, no-telemetry policy, AI provider boundary, and CAPTCHA/MFA hand-off boundary
+- [ ] Support bundles or diagnostics are local-only and contain no raw personal values
+- [ ] Signing/notarization status is stated plainly if the beta build is not notarized
+
 ## 1. CAPTCHA / MFA / Verification Wall Handoff (SEC-002)
 
 This section checks the `Catashiro` agent's wall detection and handoff/resume

@@ -47,6 +47,10 @@ Required tools for `Catashiro` development:
 - Playwright browser binaries (Chromium / Firefox / WebKit) for the agent
   runtime and E2E tests
 
+MVP development targets Apple Silicon Macs running macOS 14 Sonoma or macOS 15 Sequoia.
+Other development hosts may be useful for code review or docs, but release and manual QA
+for the private beta must run on the supported Mac target.
+
 After cloning, install dependencies and the Playwright browsers:
 
 ```bash
@@ -148,6 +152,9 @@ npm run typecheck
 
 For documentation-only changes, review the rendered Markdown and check for
 stale file references.
+
+For Mac beta scope, also confirm docs and release notes do not imply support for Windows,
+Linux, mobile apps, hosted vaults, telemetry, or a browser-extension distribution.
 
 For code changes, run the available gates:
 
