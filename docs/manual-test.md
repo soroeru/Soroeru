@@ -114,6 +114,9 @@ scenario set before sharing a build with the first 10 users.
 - [ ] Support bundle / diagnostics: generate or inspect the current diagnostic output, if
       available, and confirm it contains no raw personal values, API keys, vault bytes,
       cookies, screenshots with secrets, or Playwright traces from real sites
+- [ ] In `設定` -> `サポート診断`, export is blocked until the confirmation checkbox is
+      checked; after export, inspect the JSON and confirm it contains app/runtime version
+      and redacted diagnostic summaries only
 - [ ] Security release evidence records only high-level pass/fail, commit SHA, and changed
       risk areas; it does not include prompts, raw values, API keys, vault bytes, or
       real-site screenshots

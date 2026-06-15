@@ -33,6 +33,7 @@ import type { RegistrationResult, UpdateResult } from "../agent/agent.js";
 import type { PocStore, ProfileEntry, ProviderSettings } from "../store/store.js";
 import { CatashiroApp, CatashiroAppError } from "./app.js";
 import { BulkUpdateSession, type BulkUpdateSessionState, type BulkUpdateTarget } from "./bulk-update-session.js";
+import { exportSupportBundleJson } from "./diagnostics.js";
 import { AppRunner } from "./runner.js";
 import { RegistrationSession, type RegistrationSessionState } from "./registration-session.js";
 
@@ -301,6 +302,9 @@ class WebUiServer {
       case "/recovery/remove":
         await this.removeRecoveryKey(res);
         return;
+      case "/diagnostics/export":
+        await this.exportDiagnostics(form, res);
+        return;
       case "/registration/start":
         await this.startRegistration(form, res);
         return;
@@ -342,7 +346,18 @@ class WebUiServer {
   private handleError(err: unknown, res: ServerResponse): void {
     const status = err instanceof HttpError ? err.status : 500;
     const message = err instanceof Error ? err.message : "予期しないエラーが発生しました";
-    if (status >= 500) this.log(`web ui error: ${message}`);
+    if (status >= 500) {
+      this.log(`web ui error: ${message}`);
+      if (this.app.isUnlocked) {
+        this.app.store.addDiagnosticEvent({
+          type: "error",
+          severity: "error",
+          message: "web ui error",
+          metadata: { status, errorName: err instanceof Error ? err.name : "unknown" },
+        });
+        void this.app.store.save().catch(() => {});
+      }
+    }
     this.sendHtml(
       res,
       status,
@@ -1650,6 +1665,16 @@ class WebUiServer {
               </label>
               <button type="submit" class="secondary" ${settings ? "" : "disabled"}>APIキーを表示</button>
             </form>
+            <form class="panel stack" method="post" action="/diagnostics/export">
+              ${this.csrfInput()}
+              <h3>サポート診断</h3>
+              <p class="muted">ローカルに暗号化保存された診断イベントから、個人情報・APIキー・保管庫・Cookie・スクリーンショットを含まない要約JSONを作成します。自動送信はしません。</p>
+              <label class="field-delete">
+                <input type="checkbox" name="confirm" value="1">
+                redacted support bundle をローカルで作成することを確認しました
+              </label>
+              <button type="submit" class="secondary">診断JSONを作成</button>
+            </form>
             ${this.renderRecoveryControls()}
           </div>
         </div>
@@ -1973,6 +1998,27 @@ class WebUiServer {
     this.redirect(res, "ok", "リカバリーキーを削除しました。", "settings");
   }
 
+  private async exportDiagnostics(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    if (form.get("confirm") !== "1") {
+      this.redirect(res, "warn", "診断JSONを作成する前に確認チェックを入れてください。", "settings");
+      return;
+    }
+    this.app.store.addDiagnosticEvent({
+      type: "app",
+      severity: "info",
+      message: "support bundle exported by user",
+      metadata: { source: "web-ui" },
+    });
+    await this.app.store.save();
+    const body = exportSupportBundleJson(this.app.store);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", `attachment; filename="catashiro-support-${Date.now()}.json"`);
+    res.end(body);
+  }
+
   // --- Bulk update (#88) -----------------------------------------------------
 
   private bulkTargetsFromForm(form: URLSearchParams): BulkUpdateTarget[] {
@@ -2016,6 +2062,13 @@ class WebUiServer {
     const runner = new AppRunner(this.app, this.mapperFactory());
     const session = new BulkUpdateSession(runner, browser, targets);
     this.bulkUpdate = session;
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "info",
+      message: "bulk update started",
+      metadata: { flow: "bulk-update", siteCount: targets.length },
+    });
+    await this.app.store.save();
     session.start();
     this.redirect(res, "ok", "一括更新を開始しました。サイトごとの確認ゲートがこの画面に表示されます。", "sites");
   }
@@ -2044,6 +2097,16 @@ class WebUiServer {
       return;
     }
     const resolution = form.get("resolution") === "abort" ? "abort" : "resolved";
+    const state = session.getState();
+    if (state.kind === "awaiting-handoff") {
+      this.app.store.addDiagnosticEvent({
+        type: "wall",
+        severity: resolution === "abort" ? "warn" : "info",
+        message: "bulk update wall handoff resolved",
+        metadata: { siteId: state.siteId, wallKind: state.wall.kind, resolution },
+      });
+      await this.app.store.save();
+    }
     session.resolveHandoff(resolution);
     this.redirect(res, "ok", resolution === "abort" ? "このサイトの更新を中止しました。" : "一括更新を再開します。", "sites");
   }
@@ -2092,6 +2155,13 @@ class WebUiServer {
     const runner = new AppRunner(this.app, this.mapperFactory());
     const session = new RegistrationSession(runner, page, normalizeSiteUrl(url));
     this.registration = { session, browser };
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "info",
+      message: "registration started",
+      metadata: { flow: "registration", origin: new URL(normalizeSiteUrl(url)).origin },
+    });
+    await this.app.store.save();
     session.start();
     this.redirect(res, "ok", "新規登録を開始しました。進行状況はこのページに表示されます。", "sites");
   }
@@ -2168,6 +2238,16 @@ class WebUiServer {
       return;
     }
     const resolution = form.get("resolution") === "abort" ? "abort" : "resolved";
+    const state = session.getState();
+    if (state.kind === "awaiting-handoff") {
+      this.app.store.addDiagnosticEvent({
+        type: "wall",
+        severity: resolution === "abort" ? "warn" : "info",
+        message: "registration wall handoff resolved",
+        metadata: { wallKind: state.wall.kind, resolution },
+      });
+      await this.app.store.save();
+    }
     session.resolveHandoff(resolution);
     this.redirect(res, "ok", resolution === "abort" ? "登録を中止しました。" : "操作を再開します。", "sites");
   }
