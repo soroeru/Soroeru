@@ -180,6 +180,11 @@ With the local test sites running (`npm run poc:serve`) and the Web UI open
 - [ ] Choosing "すでに持っている" imports the URL as an existing-account site record
       with `accountState=imported`; choosing "わからない" asks the user to choose
       before continuing and does not create a record
+- [ ] For an existing-account profile/settings page, the import core extracts only
+      local form values after the user has reached the page, shows masked candidates
+      for review, saves only approved/edited values into the encrypted vault, and
+      records imported-field hashes in the site inventory. CAPTCHA/MFA/login walls
+      must be resolved by the user in the headed browser session.
 - [ ] For `05-choices`, the run pauses with an "追加情報の入力" prompt for
       「ご職業」; submitting a value resumes the run and the value is saved for
       reuse (REQ-005)

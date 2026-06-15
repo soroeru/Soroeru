@@ -382,6 +382,13 @@ Current web UI foundation:
   When the user chooses "すでに持っている", it stores an imported site inventory record
   without guessing credentials or attempting login. "わからない" is treated
   conservatively: the UI asks the user to choose before any workflow starts.
+- **既存アカウントの個人情報インポート (#84)** — `src/agent/importer.ts` provides the
+  local extraction/review/save core for existing-account import. `AppRunner.importExistingAccount()`
+  navigates to a user-opened account/profile page, scans form structure, asks the mapper
+  for field keys using structure only, then reads raw field values locally in Playwright.
+  Card fields and account passwords are excluded from import. `saveImportedProfileValues()`
+  persists only review-approved values into the encrypted profile store and records an
+  `accountState=imported` inventory entry with hashes, never duplicated raw values.
 - **新規登録 (#81)** — `POST /registration/start` launches a headed Playwright browser
   (`CatashiroApp.launchBrowser("chromium")`), opens a new page, and runs
   `AppRunner.register()` in the background via `RegistrationSession`
