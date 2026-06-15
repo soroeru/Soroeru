@@ -10,15 +10,15 @@
 //   check-bypass                       — SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
 //
 // Examples:
-//   node dist/compiled/poc/autofill-agent/run/cli.js serve 4333
-//   node dist/compiled/poc/autofill-agent/run/cli.js matrix deterministic chromium,firefox,webkit
-//   node dist/compiled/poc/autofill-agent/run/cli.js register 08-terms
-//   node dist/compiled/poc/autofill-agent/run/cli.js app
-//   node dist/compiled/poc/autofill-agent/run/cli.js ui
-//   node dist/compiled/poc/autofill-agent/run/cli.js ui:cli
-//   node dist/compiled/poc/autofill-agent/run/cli.js check-egress
-//   node dist/compiled/poc/autofill-agent/run/cli.js check-persistence
-//   node dist/compiled/poc/autofill-agent/run/cli.js check-bypass
+//   node dist/compiled/run/cli.js serve 4333
+//   node dist/compiled/run/cli.js matrix deterministic chromium,firefox,webkit
+//   node dist/compiled/run/cli.js register 08-terms
+//   node dist/compiled/run/cli.js app
+//   node dist/compiled/run/cli.js ui
+//   node dist/compiled/run/cli.js ui:cli
+//   node dist/compiled/run/cli.js check-egress
+//   node dist/compiled/run/cli.js check-persistence
+//   node dist/compiled/run/cli.js check-bypass
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -192,7 +192,7 @@ function aiMapperForUi(app: AutofillApp): Mapper {
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
 function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
-  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under poc/autofill-agent/{src,run}`);
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/ and run/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §6):");
     for (const v of result.violations) console.error(`  - ${v}`);
@@ -205,7 +205,7 @@ function cmdCheckEgress(): void {
 /** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
 function cmdCheckPersistence(): void {
   const result = checkLocalPersistence(process.cwd());
-  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under poc/autofill-agent/{src,run}`);
+  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under src/ and run/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §3):");
     for (const v of result.violations) console.error(`  - ${v}`);

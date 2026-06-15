@@ -8,9 +8,8 @@
 
 # --- TEMPORARY kill switch --------------------------------------
 # Set to 1 to skip the local cross-AI review entirely (post-commit
-# exits early). Currently 1 because Codex is rate-limited. Restore to
-# 0 to re-enable the review. Tracking: #45.
-LOCAL_AI_REVIEW_DISABLED=1
+# exits early). Set to 0 (default) to run the review.
+LOCAL_AI_REVIEW_DISABLED=0
 
 # --- Branch prefix mapping --------------------------------------
 # When the current branch starts with one of these prefixes, the
@@ -39,8 +38,11 @@ LOCAL_AI_REVIEW_TARGET_PATHS=(
   ".githooks/"
   ".github/"
   "src/"
-  "poc/"
+  "run/"
+  "sites/"
   "tests/"
+  "package.json"
+  "tsconfig.json"
   # "test/"      # Enable for Node.js / Java-style test directories.
   # ".claude/"   # Enable if shared Claude Code settings are tracked.
   # ".Codex/"    # Enable if shared Codex settings are tracked.

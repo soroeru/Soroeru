@@ -5,9 +5,9 @@ implementation conventions, and the canonical quality gate list** for `autofill`
 
 > **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
 > autonomous agent (Playwright-based; see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
-> The MV3-extension build / layout / command details below are historical and are being
-> updated alongside the PoC implementation (#33). General conventions (small reviewable
-> changes, quality gates before committing, fake data only) still apply.
+> The MV3-extension build / layout / command details that used to live below have been
+> removed along with that code (#68; history remains in git). This document now
+> describes the `autofill` agent's setup, layout, and commands.
 
 Out of scope here: application architecture (see [`extension.md`](extension.md)),
 product requirements (see [`requirements.md`](requirements.md)), test strategy
@@ -35,7 +35,7 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 
 ## 2. Environment Setup
 
-Required tools for current extension development:
+Required tools for `autofill` development:
 
 - `git`
 - `bash`
@@ -44,12 +44,14 @@ Required tools for current extension development:
 - Node.js
 - npm
 - TypeScript
-- Chrome or Chromium for extension loading
+- Playwright browser binaries (Chromium / Firefox / WebKit) for the agent
+  runtime and E2E tests
 
-After cloning, install dependencies:
+After cloning, install dependencies and the Playwright browsers:
 
 ```bash
 npm install
+npx playwright install chromium firefox webkit
 ```
 
 Install local hooks only if the local AI review workflow is in use:
@@ -60,33 +62,8 @@ bash scripts/setup-hooks.sh
 
 ## 3. Run Locally
 
-Build the unpacked extension:
-
 ```bash
-npm run build
-```
-
-The build output is `dist/extension/`. Manual loading flow:
-
-1. run `npm run build`;
-2. open Chrome's extensions page;
-3. enable developer mode;
-4. load `dist/extension/` as an unpacked extension;
-5. open the extension options page;
-6. add, edit, delete, list, and clear fake profile fields.
-
-The current implementation only includes the Manifest V3 shell, local profile
-storage abstraction, and options page profile editor. Content-script scanning,
-field filling, and background service worker behavior are not implemented yet.
-
-### Autofill-agent PoC (Issue #33)
-
-The Playwright-based autonomous-agent PoC lives in `poc/autofill-agent/`
-(see its [README](../poc/autofill-agent/README.md) for details and results):
-
-```bash
-npx playwright install chromium firefox webkit   # once
-npm run poc:serve                 # local 10-pattern test sites
+npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)
 npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
 npm run poc -- register 09-trial-card   # headed demo with the interactive gate
 npm run poc -- app                 # app-shell lifecycle smoke test (unlock/browser/lock)
@@ -97,8 +74,10 @@ npm run poc -- check-persistence   # PRIV-002 static local-persistence allowlist
 npm run poc -- check-bypass        # SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
 ```
 
-PoC state (encrypted store, measurement JSON) is written under
-`state/autofill-poc/` and must not be committed.
+Each `npm run poc ...` invocation runs `npm run build` first. State (the
+encrypted store, measurement JSON) is written under `state/autofill-poc/` and
+must not be committed. See [`verification-results.md`](verification-results.md)
+for full command reference and verification results.
 
 ## 4. Project Structure
 
@@ -111,15 +90,18 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
-├── poc/
-│   ├── issue-29-autofill-poc/   # throwaway PoC extension (RFC-001 R/R2/R3)
-│   └── autofill-agent/          # Issue #33 PoC: sites/ + src/ (agent, app, store) + run/
 ├── scripts/
+│   └── setup-hooks.sh
+├── sites/             # local 10-pattern test sites (defs.ts + server.ts)
 ├── src/
-│   ├── manifest.json
-│   ├── options/
-│   ├── shared/
-│   └── storage/
+│   ├── agent/         # scanner, deterministic classifier, guards, gate, walls, filler, orchestration
+│   │   └── ai/        # AI mapper + provider abstraction
+│   ├── app/           # AutofillApp / AppRunner / startWebUiServer / AppUI
+│   ├── dev/           # PRIV-001/002, SEC-002 static checks
+│   ├── store/         # encrypted store (crypto, recovery, store)
+│   ├── profile.ts
+│   └── types.ts
+├── run/               # measurement runner + CLI
 ├── tests/
 │   └── unit/
 ├── package.json
@@ -127,38 +109,20 @@ Current repository shape:
 └── tsconfig.json
 ```
 
-Expected future structure as remaining extension boundaries are added:
-
-```text
-.
-├── src/
-│   ├── background/
-│   ├── content/
-│   ├── options/
-│   ├── storage/
-│   └── shared/
-├── tests/
-│   ├── fixtures/
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
-└── docs/
-```
-
-The exact structure may change as remaining extension boundaries are added.
-Update this section when real directories are added.
+Update this section when real directories are added or removed.
 
 ## 5. Implementation Conventions
 
 - Keep DOM scanning and metadata extraction isolated from rendering.
-- Keep field classification rules isolated from content script orchestration.
-- Keep manual-step detection separate from field classification.
+- Keep field classification rules isolated from automation-layer orchestration.
+- Keep wall detection (CAPTCHA / MFA) separate from field classification.
 - Keep storage access behind a small module so future migrations or encryption
-  do not require changes across UI and content code.
-- Use typed profile field definitions when TypeScript is introduced.
+  do not require changes across UI and automation code.
+- Use typed profile field definitions (`src/types.ts`).
 - Treat page text, attributes, and URL data as untrusted input.
-- Keep injected UI styles scoped to avoid breaking host pages.
-- Prefer explicit, user-triggered commands for filling.
+- Keep the local web UI's styles scoped to its own server-rendered pages.
+- Prefer explicit, user-approved actions for filling and submission (the
+  review-and-confirm gate).
 - Use fake data in examples, tests, screenshots, and fixtures.
 - Avoid committed generated output unless the project later documents a reason
   to keep it under version control.
@@ -199,7 +163,7 @@ For code changes, run the available gates:
 - for changes touching `package.json` dependencies or wall detection / handoff:
   `npm run poc -- check-bypass` (SEC-002, see [`security.md`](security.md) §7)
 
-`npm test` runs the extension build and Node unit tests.
+`npm test` runs the build and Node unit tests.
 
 Only report checks as run when the command actually exists and has been
 executed. If a command is not available yet, state that plainly in the PR.

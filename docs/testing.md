@@ -45,16 +45,16 @@ isolation. Current coverage:
 
 | Layer / seam | Modules | Tests |
 | --- | --- | --- |
-| Store (crypto boundary) | `store/crypto.ts`, `store/store.ts` | `autofill-poc-crypto.test.ts`, `profile-store.test.ts` |
+| Store (crypto boundary) | `store/crypto.ts`, `store/store.ts` | `autofill-poc-crypto.test.ts` |
 | Agent — deterministic mapper | `agent/classifier.ts`, `agent/guards.ts` | `autofill-poc-classifier.test.ts`, `autofill-poc-guards.test.ts` |
 | Agent — AI mapper | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `autofill-poc-ai-mapper.test.ts` |
 | Agent — wall detection | `agent/walls.ts` | `autofill-poc-walls.test.ts` |
 | Agent — phase timing (PERF-001) | `agent/perf.ts` | `autofill-poc-perf.test.ts` |
 | Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `autofill-poc-contracts.test.ts` |
-| Automation (DOM scan) | `content/scanner.ts`, `agent/scan.ts` | `scanner.test.ts` |
+| Automation (DOM scan) | `agent/scan.ts` | exercised via the E2E matrix (§8, `autofill-poc-measure.test.ts`) |
 | UI — local web app | `app/web-ui.ts` | `autofill-poc-web-ui.test.ts` |
 | UI — legacy terminal fallback | `app/ui.ts` | `autofill-poc-ui.test.ts` |
-| Measurement / CI gate | `poc/autofill-agent/run/measure.ts` | `autofill-poc-measure.test.ts` |
+| Measurement / CI gate | `run/measure.ts` | `autofill-poc-measure.test.ts` |
 | Dev checks (PRIV-001/002, SEC-002) | `src/dev/{egress,privacy,bypass}-check.ts` | `autofill-poc-{egress,privacy,bypass}.test.ts` |
 
 `autofill-poc-contracts.test.ts` additionally locks the cross-layer invariant that the
@@ -118,11 +118,10 @@ Current automated test command:
 npm test
 ```
 
-`npm test` builds the extension and the `autofill` PoC, then runs unit tests
-from `tests/unit/` (Node's built-in test runner).
+`npm test` builds the project, then runs unit tests from `tests/unit/` (Node's
+built-in test runner).
 
-For the `autofill` PoC (`poc/autofill-agent/`, §8 below), the E2E test matrix
-is run via:
+For the `autofill` agent (§8 below), the E2E test matrix is run via:
 
 ```bash
 npm run poc:matrix -- deterministic chromium   # CI: see §7
@@ -170,8 +169,8 @@ push to `main`:
 
 ## 8. autofill PoC Test Matrix (TEST-001 / #45)
 
-`poc/autofill-agent/run/measure.ts` (`npm run poc:matrix`) is the E2E layer:
-for each of the 10 local test sites (`poc/autofill-agent/sites/defs.ts`) it
+`run/measure.ts` (`npm run poc:matrix`) is the E2E layer:
+for each of the 10 local test sites (`sites/defs.ts`) it
 runs registration end to end (discover → map → gate → fill → submit →
 record), then runs the bulk-update scenario, the trial-card decline path, and
 the wall-detection / wall-resume fixtures. Ground truth is embedded per field
@@ -211,7 +210,7 @@ tracked separately under PERF-001 / #18).
 ## 9. Phase-Timing Measurement (PERF-001 / #18)
 
 Every `runRegistration` / `runUpdate` call reports per-phase elapsed time via
-`AgentDeps.onPhase`, defined in `poc/autofill-agent/src/agent/perf.ts`:
+`AgentDeps.onPhase`, defined in `src/agent/perf.ts`:
 
 | Phase | Covers |
 | --- | --- |
@@ -224,7 +223,7 @@ Every `runRegistration` / `runUpdate` call reports per-phase elapsed time via
 | `submit` | click the final / save button and wait for the result page |
 | `record` | update the site record, build the mandate, and persist the store |
 
-`npm run poc:matrix` (`poc/autofill-agent/run/measure.ts`) accumulates these
+`npm run poc:matrix` (`run/measure.ts`) accumulates these
 into `SiteResultRow.phaseTimingsMs` / `UpdateResultRow.phaseTimingsMs`, prints
 a per-site phase-timing table (`formatResult`), and persists them in
 `state/autofill-poc/matrix-*.json` — phase name and a millisecond number only,
@@ -240,6 +239,6 @@ phase label and a duration).
 
 Baseline numbers for the ordinary (`01-basic`), wizard (`06-wizard`), and
 dynamic (`07-dynamic`) fixtures are recorded in
-[`poc/autofill-agent/README.md`](../poc/autofill-agent/README.md). A
+[`verification-results.md`](verification-results.md). A
 CI-mandatory performance gate, remote telemetry, and a full benchmark
 dashboard are non-scope for this issue.

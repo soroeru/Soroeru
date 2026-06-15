@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { clearWalls, detectWall, handoffInstruction } from "../../poc/autofill-agent/src/agent/walls.js";
-import type { PageSnapshot, WallDetection } from "../../poc/autofill-agent/src/types.js";
+import { clearWalls, detectWall, handoffInstruction } from "../../src/agent/walls.js";
+import type { PageSnapshot, WallDetection } from "../../src/types.js";
 
 function snapshot(partial: Partial<PageSnapshot>): PageSnapshot {
   return {

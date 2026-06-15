@@ -1,7 +1,7 @@
 // PRIV-001 (#20): network egress is limited to (a) the target sites the user
 // acts on and (b) the user's configured AI provider (docs/security.md §6).
 // `checkNetworkEgress` is the static check behind `npm run poc -- check-egress`:
-// every network-call site in poc/autofill-agent/{src,run} must carry a
+// every network-call site in src/ or run/ must carry a
 // `// egress: target-site|ai-provider` annotation, and no telemetry/analytics
 // dependency may be present in package.json.
 
@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkNetworkEgress } from "../../poc/autofill-agent/src/dev/egress-check.js";
+import { checkNetworkEgress } from "../../src/dev/egress-check.js";
 
 // dist/compiled/tests/unit/<this file> -> repo root is four levels up.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
@@ -37,9 +37,9 @@ test("real repo: every network-call site is annotated and no telemetry dependenc
 
 test("flags an unannotated network call", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src/agent"), { recursive: true });
+    await mkdir(join(root, "src/agent"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/src/agent/bad.ts"),
+      join(root, "src/agent/bad.ts"),
       ["export async function call(url: string) {", "  const res = await fetch(url);", "  return res.text();", "}", ""].join("\n"),
       "utf8",
     );
@@ -53,9 +53,9 @@ test("flags an unannotated network call", async () => {
 
 test("does not flag a network call annotated with an allowed egress category", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src/agent"), { recursive: true });
+    await mkdir(join(root, "src/agent"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/src/agent/good.ts"),
+      join(root, "src/agent/good.ts"),
       [
         "export async function call(url: string) {",
         "  // egress: target-site — terms link on the site the user is registering on",
@@ -75,9 +75,9 @@ test("does not flag a network call annotated with an allowed egress category", a
 
 test("rejects an annotation category that is not on the allowlist", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src/agent"), { recursive: true });
+    await mkdir(join(root, "src/agent"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/src/agent/bad.ts"),
+      join(root, "src/agent/bad.ts"),
       ["export async function call(url: string) {", "  // egress: analytics-backend", "  const res = await fetch(url);", "  return res.text();", "}", ""].join(
         "\n",
       ),
@@ -92,8 +92,8 @@ test("rejects an annotation category that is not on the allowlist", async () => 
 
 test("flags a telemetry/analytics dependency in package.json", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src"), { recursive: true });
-    await mkdir(join(root, "poc/autofill-agent/run"), { recursive: true });
+    await mkdir(join(root, "src"), { recursive: true });
+    await mkdir(join(root, "run"), { recursive: true });
     await writeMinimalPackageJson(root, { dependencies: { "@sentry/node": "^8.0.0" } });
 
     const result = checkNetworkEgress(root);
@@ -102,11 +102,11 @@ test("flags a telemetry/analytics dependency in package.json", async () => {
   });
 });
 
-test("ignores poc/autofill-agent/sites/ (the local 127.0.0.1 PoC test-site server)", async () => {
+test("ignores sites/ (the local 127.0.0.1 PoC test-site server)", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/sites"), { recursive: true });
+    await mkdir(join(root, "sites"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/sites/server.ts"),
+      join(root, "sites/server.ts"),
       ["export async function call(url: string) {", "  const res = await fetch(url);", "  return res.text();", "}", ""].join("\n"),
       "utf8",
     );

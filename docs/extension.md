@@ -52,12 +52,12 @@ the provider abstraction — isolated so it can be tested outside a live browser
 
 ### 1.1 Layer seams and shared contracts (MAINT-001)
 
-The PoC (`poc/autofill-agent/`) is the reference implementation of these boundaries; this
-issue locks the seams there rather than rewriting them into `src/`. Promotion of the PoC
-into a product `src/` tree is tracked separately (see APP-001 / #43).
+The code at `src/`, `run/`, and `sites/` (originally developed under
+`poc/autofill-agent/` during the PoC and promoted to the repository root in #68) is the
+reference implementation of these boundaries.
 
 The four layers communicate only through **typed contracts** declared in
-`poc/autofill-agent/src/types.ts`: `ProfileKey`, `Transform`, `PageSnapshot` /
+`src/types.ts`: `ProfileKey`, `Transform`, `PageSnapshot` /
 `FormField`, `MappingPlan`, `TermsAnalysis`, `WallDetection`, `GateRequest` /
 `GateDecision`, `SiteRecord` / `FilledFieldRecord`, and `RegistrationMandate`. No layer
 reaches across these types into another layer's internals.
@@ -150,7 +150,7 @@ variant.
 
 ## 9. App Shell (APP-001)
 
-`poc/autofill-agent/src/app/` is the local app shell that the UI layer and the automation
+`src/app/` is the local app shell that the UI layer and the automation
 layer both go through, rather than opening the store or launching browsers directly:
 
 - **`app.ts` — `AutofillApp`**: owns the encrypted store's unlock/lock lifecycle (incl.
@@ -180,16 +180,16 @@ store (reporting `AutofillAppError` on a bad passphrase), launch a headed Chromi
 browser, navigate to `about:blank`, then `shutdown()` (close the browser and lock the
 store).
 
-## 10. Status of Pre-Pivot MV3 Files
+## 10. Removal of Pre-Pivot MV3 Files
 
-The pre-pivot Chrome Extension (Manifest V3) files under `src/` —
+The pre-pivot Chrome Extension (Manifest V3) files that previously lived under `src/` —
 `src/manifest.json`, `src/options/*`, `src/content/scanner.ts`,
-`src/storage/profile-store.ts`, and `src/shared/*` — are **historical and frozen**. They
-predate the RFC-001 v3 pivot to a local Playwright application and are not part of the
-`autofill` runtime described in this document. They are retained for reference (the form
-scanner and rule-based classifier informed the PoC's deterministic mapper) and are not
-extended; new UI work happens in `poc/autofill-agent/` (see §9 and UI-001 / #17). Removal
-will be considered once the PoC UI supersedes their functionality.
+`src/storage/profile-store.ts`, and `src/shared/*` — predated the RFC-001 v3 pivot to a
+local Playwright application and were not part of the `autofill` runtime. They have been
+removed (#68); their history remains in git. The form scanner and rule-based classifier
+they contained informed the deterministic mapper now at `src/agent/scan.ts` and
+`src/agent/classifier.ts`. `src/` is now used exclusively for the `autofill` agent
+described in this document.
 
 ## 11. Local App UI (UI-001 / #17, UI-002 / #66)
 
@@ -200,7 +200,7 @@ launcher is now:
 npm run poc -- ui [deterministic|ai] [port]
 ```
 
-`poc/autofill-agent/src/app/web-ui.ts` starts a server-rendered local web app over
+`src/app/web-ui.ts` starts a server-rendered local web app over
 Node's built-in HTTP server. It binds to `127.0.0.1` by default, uses no frontend
 framework, sets a restrictive content security policy, requires an in-memory CSRF token
 on every POST, and reads/writes data only through `AutofillApp.store`. The server is a
@@ -216,8 +216,9 @@ Current web UI foundation:
   the `保存` button at the bottom. Listings always use `maskValue`; revealing sensitive
   values requires passphrase re-entry via `PocStore.verifyPassphrase()`.
 - **登録済みサイト** — shows per-site records, status, mandate count, filled-field count,
-  and stale-field candidates from `staleFilledFields()`. The page places `新規登録` in
-  the upper-left action area and `一括更新` in the upper-right action area.
+  and stale-field candidates from `staleFilledFields()`. The page always shows a
+  `新規登録` form near the top; a `一括更新` action appears below it only when stale
+  update candidates exist, otherwise "差分のあるサイトはありません" is shown.
 - **Settings** — save provider/model/API key into the encrypted store, reveal API key
   only after passphrase re-entry, and generate / verify / remove recovery keys.
 
@@ -231,7 +232,7 @@ remains available as:
 npm run poc -- ui:cli [deterministic|ai]
 ```
 
-`poc/autofill-agent/src/app/ui.ts` (`AppUI`) is that fallback CLI menu over
+`src/app/ui.ts` (`AppUI`) is that fallback CLI menu over
 `AutofillApp` + `AppRunner`. Its injectable `UiIo` remains covered by
 `tests/unit/autofill-poc-ui.test.ts`; the browser UI routes are covered by
 `tests/unit/autofill-poc-web-ui.test.ts`.

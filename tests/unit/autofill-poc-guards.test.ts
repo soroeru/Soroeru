@@ -7,9 +7,9 @@ import {
   detectsAutoCreationBan,
   evaluateGuards,
   shouldCheckAttestation,
-} from "../../poc/autofill-agent/src/agent/guards.js";
-import { normalizeTermsAnalysis } from "../../poc/autofill-agent/src/agent/normalization.js";
-import type { GateDecision, TermsAnalysis } from "../../poc/autofill-agent/src/types.js";
+} from "../../src/agent/guards.js";
+import { normalizeTermsAnalysis } from "../../src/agent/normalization.js";
+import type { GateDecision, TermsAnalysis } from "../../src/types.js";
 
 test("guard 1: auto-renewal and third-party-sharing clauses are flagged with evidence", () => {
   const terms =

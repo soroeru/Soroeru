@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { emptyPhaseTimings, PHASES, slowPhaseNote, SLOW_PHASE_THRESHOLD_MS } from "../../poc/autofill-agent/src/agent/perf.js";
+import { emptyPhaseTimings, PHASES, slowPhaseNote, SLOW_PHASE_THRESHOLD_MS } from "../../src/agent/perf.js";
 
 test("emptyPhaseTimings returns all 8 phases at zero", () => {
   const timings = emptyPhaseTimings();

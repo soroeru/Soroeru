@@ -10,10 +10,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser } from "playwright";
-import { AutofillApp } from "../../poc/autofill-agent/src/app/app.js";
-import { AppRunner } from "../../poc/autofill-agent/src/app/runner.js";
-import { AppUI, type UiIo } from "../../poc/autofill-agent/src/app/ui.js";
-import type { Mapper } from "../../poc/autofill-agent/src/agent/mapper.js";
+import { AutofillApp } from "../../src/app/app.js";
+import { AppRunner } from "../../src/app/runner.js";
+import { AppUI, type UiIo } from "../../src/app/ui.js";
+import type { Mapper } from "../../src/agent/mapper.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 

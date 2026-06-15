@@ -9,8 +9,8 @@ import {
   deriveKey,
   encryptRecord,
   newKdfParams,
-} from "../../poc/autofill-agent/src/store/crypto.js";
-import { PocStore, StoreLockedError, STORE_FORMAT_VERSION } from "../../poc/autofill-agent/src/store/store.js";
+} from "../../src/store/crypto.js";
+import { PocStore, StoreLockedError, STORE_FORMAT_VERSION } from "../../src/store/store.js";
 
 // Fake data only (docs/testing.md).
 const PASSPHRASE = "unit-test-passphrase";

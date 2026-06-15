@@ -8,9 +8,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright";
-import { AutofillApp, AutofillAppError } from "../../poc/autofill-agent/src/app/app.js";
-import { AppRunner, type AppRunnerHooks } from "../../poc/autofill-agent/src/app/runner.js";
-import type { Mapper } from "../../poc/autofill-agent/src/agent/mapper.js";
+import { AutofillApp, AutofillAppError } from "../../src/app/app.js";
+import { AppRunner, type AppRunnerHooks } from "../../src/app/runner.js";
+import type { Mapper } from "../../src/agent/mapper.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 

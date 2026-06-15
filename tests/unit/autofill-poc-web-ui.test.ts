@@ -6,9 +6,9 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AutofillApp } from "../../poc/autofill-agent/src/app/app.js";
-import { startWebUiServer, type WebUiServerHandle } from "../../poc/autofill-agent/src/app/web-ui.js";
-import { sha256Hex } from "../../poc/autofill-agent/src/store/store.js";
+import { AutofillApp } from "../../src/app/app.js";
+import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
+import { sha256Hex } from "../../src/store/store.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
@@ -130,7 +130,7 @@ test("profile tab uses a whole-page edit form with one bottom save action", asyn
   });
 });
 
-test("top navigation renders three tabs and site tab places new registration left and bulk update right", async () => {
+test("top navigation renders three tabs and the sites tab leads with new registration", async () => {
   await withWebUi(async (_app, server) => {
     await unlockThroughUi(server);
     const html = await getHtml(server, "/?tab=sites");
@@ -140,10 +140,9 @@ test("top navigation renders three tabs and site tab places new registration lef
     assert.match(html, /<a href="\/\?tab=settings"/);
     assert.match(html, /<h2>登録済みサイト<\/h2>/);
 
-    const registrationIndex = html.indexOf("<h3>新規登録</h3>");
-    const bulkIndex = html.indexOf("<h3>一括更新</h3>");
-    assert.ok(registrationIndex >= 0);
-    assert.ok(bulkIndex > registrationIndex);
+    assert.ok(html.indexOf("<h3>新規登録</h3>") >= 0);
+    assert.ok(!html.includes("<h3>一括更新</h3>"));
+    assert.match(html, /差分のあるサイトはありません/);
   });
 });
 
@@ -237,5 +236,10 @@ test("dashboard shows site inventory and stale bulk-update candidates without ra
     assert.match(html, /メールアドレス/);
     assert.ok(!html.includes("new@example.test"));
     assert.ok(!html.includes("old@example.test"));
+
+    const registrationIndex = html.indexOf("<h3>新規登録</h3>");
+    const bulkIndex = html.indexOf("<h3>一括更新</h3>");
+    assert.ok(registrationIndex >= 0);
+    assert.ok(bulkIndex > registrationIndex);
   });
 });

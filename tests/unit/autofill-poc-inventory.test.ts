@@ -6,11 +6,11 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PocStore } from "../../poc/autofill-agent/src/store/store.js";
-import { buildMandate } from "../../poc/autofill-agent/src/agent/records.js";
-import { paymentAudit } from "../../poc/autofill-agent/src/agent/guards.js";
-import type { GuardOutcome } from "../../poc/autofill-agent/src/agent/guards.js";
-import type { SiteRecord, TermsAnalysis } from "../../poc/autofill-agent/src/types.js";
+import { PocStore } from "../../src/store/store.js";
+import { buildMandate } from "../../src/agent/records.js";
+import { paymentAudit } from "../../src/agent/guards.js";
+import type { GuardOutcome } from "../../src/agent/guards.js";
+import type { SiteRecord, TermsAnalysis } from "../../src/types.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 

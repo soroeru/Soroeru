@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { emptyPhaseTimings } from "../../poc/autofill-agent/src/agent/perf.js";
-import { hasFailures, type VariantRunResult } from "../../poc/autofill-agent/run/measure.js";
+import { emptyPhaseTimings } from "../../src/agent/perf.js";
+import { hasFailures, type VariantRunResult } from "../../run/measure.js";
 
 function okResult(): VariantRunResult {
   return {

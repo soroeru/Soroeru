@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/build-extension.mjs",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js",
-    "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/poc/autofill-agent/run/cli.js",
+    "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/run/cli.js",
     "poc:serve": "npm run poc -- serve",
     "poc:matrix": "npm run poc -- matrix"
   },

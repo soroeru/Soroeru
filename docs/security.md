@@ -69,7 +69,7 @@ Never stored:
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
 
 **Mask policy (PRIV-002 / #21)**: a single mask module
-(`poc/autofill-agent/src/agent/gate.ts`) defines two policies, used everywhere
+(`src/agent/gate.ts`) defines two policies, used everywhere
 a profile value can reach a display or a file:
 
 - `maskValue(key, value)` — for **interactive review surfaces** (the
@@ -93,9 +93,9 @@ a profile value can reach a display or a file:
   `maskValue` shows in full for review purposes.
 
 **Local persistence (PRIV-002 / #21)**: `npm run poc -- check-persistence`
-(`poc/autofill-agent/src/dev/privacy-check.ts`, tested by
+(`src/dev/privacy-check.ts`, tested by
 `tests/unit/autofill-poc-privacy.test.ts`) scans
-`poc/autofill-agent/{src,run}/**/*.ts` for local-filesystem writes and fails
+`{src,run}/**/*.ts` for local-filesystem writes and fails
 unless each one carries a `// persist: encrypted-store`,
 `// persist: encrypted-export`, or `// persist: measurement-output`
 annotation — i.e. the encrypted store (`src/store/store.ts`), the encrypted
@@ -131,7 +131,7 @@ Per RFC §9. Use only widely vetted algorithms; do not roll custom crypto.
    (profile, site records, mandates, provider settings) from memory; further reads/writes
    throw until the store is reopened with the passphrase.
 
-The PoC reference implementation of this scheme is `poc/autofill-agent/src/store/`
+The reference implementation of this scheme is `src/store/`
 (`crypto.ts` + `store.ts`); the AI provider API key and model settings are persisted as an
 encrypted record in the same store, and the most-sensitive field (CVV) is kept out of the
 shared transform view and read only through a sanctioned fill-time accessor.
@@ -195,12 +195,12 @@ service. The user's data store is never uploaded anywhere. Adding any other dest
 requires an explicit issue updating requirements, this document, and the user-facing docs.
 
 **Static enforcement (PRIV-001 / #20)**: `npm run poc -- check-egress`
-(`poc/autofill-agent/src/dev/egress-check.ts`, tested by
+(`src/dev/egress-check.ts`, tested by
 `tests/unit/autofill-poc-egress.test.ts`) scans
-`poc/autofill-agent/{src,run}/**/*.ts` for network-call sites and fails unless each one
+`{src,run}/**/*.ts` for network-call sites and fails unless each one
 carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
 `package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
-Segment, Datadog, etc.). `poc/autofill-agent/sites/` (the local 127.0.0.1-only PoC
+Segment, Datadog, etc.). `sites/` (the local 127.0.0.1-only PoC
 test-site server) is out of scope — it is not external egress. A new, unannotated
 network destination — or a telemetry-shaped dependency — fails this check and must be
 reviewed against this section before it is annotated.
@@ -221,7 +221,7 @@ At a wall, the agent pauses in the same headed Playwright session, the user reso
 and the agent resumes from where it paused.
 
 **Static enforcement (SEC-002 / #23)**: `npm run poc -- check-bypass`
-(`poc/autofill-agent/src/dev/bypass-check.ts`, tested by
+(`src/dev/bypass-check.ts`, tested by
 `tests/unit/autofill-poc-bypass.test.ts`) scans `package.json` `dependencies` /
 `devDependencies` for package names matching a CAPTCHA-solving or anti-bot /
 browser-fingerprint-evasion denylist (e.g. `2captcha`, `anticaptcha`,

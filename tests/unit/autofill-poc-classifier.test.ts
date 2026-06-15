@@ -4,8 +4,8 @@ import {
   classifyCheckbox,
   classifyFields,
   classifyFieldsWithEvidence,
-} from "../../poc/autofill-agent/src/agent/classifier.js";
-import type { FormField } from "../../poc/autofill-agent/src/types.js";
+} from "../../src/agent/classifier.js";
+import type { FormField } from "../../src/types.js";
 
 function field(partial: Partial<FormField> & { fieldId: string }): FormField {
   return {

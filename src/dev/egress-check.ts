@@ -2,13 +2,13 @@
 // (docs/security.md §6) — the only allowed external destinations are (a) the
 // target sites the user acts on and (b) the user's configured AI provider.
 //
-// This scans `poc/autofill-agent/src/**/*.ts` and `poc/autofill-agent/run/**/*.ts`
+// This scans `src/**/*.ts` and `run/**/*.ts`
 // (excluding `*.test.ts`) for lines that perform or configure a network call.
 // Every match must carry a `// egress: <category>` annotation (on the same line
 // or the line above) naming one of the allowed categories below; an
 // unannotated match means a new, unreviewed network destination was added.
 //
-// `poc/autofill-agent/sites/` (the local 127.0.0.1-only PoC test-site server
+// `sites/` (the local 127.0.0.1-only PoC test-site server
 // and its served fixtures) is out of scope: it is not external egress.
 //
 // Also flags any dependency in package.json whose name matches a
@@ -18,7 +18,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["poc/autofill-agent/src", "poc/autofill-agent/run"];
+const SCAN_DIRS = ["src", "run"];
 
 /** Allowed `// egress: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([
