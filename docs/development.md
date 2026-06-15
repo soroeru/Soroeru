@@ -106,6 +106,11 @@ under `~/Library/Application Support/Catashiro` unless `CATASHIRO_STATE_ROOT` is
 Shutdown uses the existing `CatashiroApp.shutdown()` path, which closes tracked
 Playwright browser sessions and locks the vault.
 
+The shared default path is implemented in `src/store/vault.ts`. Use
+`CATASHIRO_STATE_ROOT=/path/to/local/folder` for manual migration tests or a
+user-selected local vault folder; do not point it at shared cloud storage until a future
+encrypted-sync issue defines the provider and egress controls.
+
 Runtime expectations for the first private beta:
 
 - Node.js 22 or newer must be installed on the beta Mac, or `CATASHIRO_NODE_BINARY` must

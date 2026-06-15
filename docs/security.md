@@ -181,6 +181,12 @@ all data unless the user set up a recovery key beforehand.
   store format version before writing anything (fails closed on an unsupported version,
   per §4.6) and refuses to overwrite an existing destination file unless the caller
   passes `{ overwrite: true }`.
+- **Error handling**: invalid JSON fails closed as `StoreCorruptError`; unsupported or
+  newer format versions fail closed as `StoreFormatError`; locked-store access fails as
+  `StoreLockedError`. Import validates JSON and format before writing the destination.
+- **Mac beta location**: app-bundle launches use `~/Library/Application Support/Catashiro`
+  by default (`CATASHIRO_STATE_ROOT` may override it for tests or an explicit
+  user-selected local folder). Development commands continue to use `state/catashiro-poc`.
 
 ## 5. AI Provider Disclosure Policy
 

@@ -10,7 +10,8 @@ import {
   encryptRecord,
   newKdfParams,
 } from "../../src/store/crypto.js";
-import { PocStore, StoreLockedError, STORE_FORMAT_VERSION } from "../../src/store/store.js";
+import { PocStore, StoreCorruptError, StoreFormatError, StoreLockedError, STORE_FORMAT_VERSION } from "../../src/store/store.js";
+import { CATASHIRO_APP_SUPPORT_DIR, defaultVaultStateDir } from "../../src/store/vault.js";
 
 // Fake data only (docs/testing.md).
 const PASSPHRASE = "unit-test-passphrase";
@@ -141,8 +142,25 @@ test("opening a newer store format version is rejected, not mis-read", async () 
     parsed.version = STORE_FORMAT_VERSION + 1;
     await writeFile(file, JSON.stringify(parsed), "utf8");
 
-    await assert.rejects(() => PocStore.open(file, PASSPHRASE), /newer than supported/);
+    await assert.rejects(() => PocStore.open(file, PASSPHRASE), StoreFormatError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("opening a corrupt store file fails closed with StoreCorruptError", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-store-"));
+  const file = join(dir, "store.json");
+  try {
+    await writeFile(file, "{not valid json", "utf8");
+    await assert.rejects(() => PocStore.open(file, PASSPHRASE), StoreCorruptError);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("default vault location is the Mac app-support directory for app bundles", () => {
+  assert.equal(defaultVaultStateDir({ appBundle: true }), CATASHIRO_APP_SUPPORT_DIR);
+  assert.equal(defaultVaultStateDir({ appBundle: true, override: "/tmp/catashiro-test" }), "/tmp/catashiro-test");
+  assert.equal(defaultVaultStateDir({ appBundle: false }), "state/catashiro-poc");
 });
