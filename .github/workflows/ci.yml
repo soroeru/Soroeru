@@ -16,6 +16,7 @@ jobs:
           node-version: 25
           cache: npm
       - run: npm ci
+      - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
       - run: npm test
       - name: PRIV-001 network egress allowlist
