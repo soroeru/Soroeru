@@ -123,6 +123,20 @@ export class StoreLockedError extends Error {
   }
 }
 
+export class StoreFormatError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StoreFormatError";
+  }
+}
+
+export class StoreCorruptError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "StoreCorruptError";
+  }
+}
+
 /**
  * Validate / upgrade a parsed store file to the current format. Throws on a
  * version newer than this build understands instead of silently mis-reading it.
@@ -130,10 +144,10 @@ export class StoreLockedError extends Error {
 function migrateStoreFile(file: StoreFile): StoreFile {
   if (file.version === STORE_FORMAT_VERSION) return file;
   if (file.version > STORE_FORMAT_VERSION) {
-    throw new Error(`store format version ${file.version} is newer than supported ${STORE_FORMAT_VERSION}`);
+    throw new StoreFormatError(`store format version ${file.version} is newer than supported ${STORE_FORMAT_VERSION}`);
   }
   // No older versions exist yet; future migrations slot in here per version.
-  throw new Error(`unsupported store format version ${file.version}`);
+  throw new StoreFormatError(`unsupported store format version ${file.version}`);
 }
 
 export class PocStore {
@@ -155,13 +169,19 @@ export class PocStore {
   }
 
   private static async readFile(filePath: string): Promise<StoreFile | undefined> {
-    let file: StoreFile | undefined;
+    let text: string;
     try {
-      file = JSON.parse(await readFile(filePath, "utf8")) as StoreFile;
+      text = await readFile(filePath, "utf8");
     } catch {
-      file = undefined;
+      return undefined;
     }
-    return file ? migrateStoreFile(file) : undefined;
+    let file: StoreFile;
+    try {
+      file = JSON.parse(text) as StoreFile;
+    } catch (err) {
+      throw new StoreCorruptError(`store file at ${filePath} is not valid JSON`, { cause: err });
+    }
+    return migrateStoreFile(file);
   }
 
   private static async loadRecords(store: PocStore, file: StoreFile | undefined, key: MasterKey): Promise<void> {
@@ -439,7 +459,13 @@ export class PocStore {
     passphrase: string,
     options?: { overwrite?: boolean },
   ): Promise<PocStore> {
-    const file = migrateStoreFile(JSON.parse(exported) as StoreFile);
+    let parsed: StoreFile;
+    try {
+      parsed = JSON.parse(exported) as StoreFile;
+    } catch (err) {
+      throw new StoreCorruptError("encrypted export is not valid JSON", { cause: err });
+    }
+    const file = migrateStoreFile(parsed);
     if (!options?.overwrite) {
       const exists = await readFile(filePath).then(
         () => true,

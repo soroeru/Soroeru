@@ -21,7 +21,6 @@
 //   node dist/compiled/run/cli.js check-bypass
 
 import { mkdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { startPocServer } from "../sites/server.js";
@@ -34,14 +33,16 @@ import { CatashiroApp, CatashiroAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
 import { askSecret, AppUI } from "../src/app/ui.js";
 import { startWebUiServer } from "../src/app/web-ui.js";
+import { defaultVaultStateDir } from "../src/store/vault.js";
 import { checkBypassDenylist } from "../src/dev/bypass-check.js";
 import { checkNetworkEgress } from "../src/dev/egress-check.js";
 import { checkLocalPersistence } from "../src/dev/privacy-check.js";
 import { formatResult, hasFailures, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
-const STATE_ROOT =
-  process.env["CATASHIRO_STATE_ROOT"] ??
-  (process.env["CATASHIRO_APP_BUNDLE"] === "1" ? join(homedir(), "Library", "Application Support", "Catashiro") : "state/catashiro-poc");
+const STATE_ROOT = defaultVaultStateDir({
+  appBundle: process.env["CATASHIRO_APP_BUNDLE"] === "1",
+  ...(process.env["CATASHIRO_STATE_ROOT"] ? { override: process.env["CATASHIRO_STATE_ROOT"] } : {}),
+});
 
 function openUrlInDefaultBrowser(url: string): void {
   if (process.platform !== "darwin") return;

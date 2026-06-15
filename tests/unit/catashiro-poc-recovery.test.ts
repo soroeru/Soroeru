@@ -202,5 +202,14 @@ test("importEncrypted rejects an export with an unsupported store format version
 
     const destFile = join(dir, "dest", "store.json");
     await assert.rejects(() => PocStore.importEncrypted(destFile, JSON.stringify(exported), PASSPHRASE), /newer than supported/);
+    await assert.rejects(() => readFile(destFile, "utf8"));
+  });
+});
+
+test("importEncrypted rejects corrupt JSON before writing destination", async () => {
+  await withTempDir(async (dir) => {
+    const destFile = join(dir, "dest", "store.json");
+    await assert.rejects(() => PocStore.importEncrypted(destFile, "{not json", PASSPHRASE));
+    await assert.rejects(() => readFile(destFile, "utf8"));
   });
 });
