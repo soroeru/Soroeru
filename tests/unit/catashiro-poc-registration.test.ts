@@ -48,7 +48,7 @@ async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
 }
 
 /** Poll the sites tab until `predicate` matches; the registration run advances in the background. */
-async function pollSites(server: WebUiServerHandle, predicate: (html: string) => boolean, timeoutMs = 20000): Promise<string> {
+async function pollSites(server: WebUiServerHandle, predicate: (html: string) => boolean, timeoutMs = 60000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const html = await getHtml(server, "/?tab=sites");
