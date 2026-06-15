@@ -21,8 +21,9 @@ see §6 / §9 / §10 / §10b). Requirement-level statements live in
 - Keep all personal data local and **encrypted at rest**; the user owns it.
 - Network egress is limited to **(a) the target sites the user asks the agent to act on**
   (the agent navigates, fills, and submits there) and **(b) the user's configured AI
-  provider** (form structure / terms text only, never raw personal values). No telemetry,
-  analytics, crash reporting, cloud sync, or any other destination.
+  provider** (form structure / terms text only, never raw personal values). Future
+  user-owned cloud-storage sync may write only encrypted vault bytes to a user-selected
+  location. No telemetry, analytics, crash reporting, or any other destination.
 - **Minimize disclosure to the AI model**: send form structure / terms text, not raw
   personal values. Do not use provider stateful features (prompt caching of PII, stored
   threads, memory).
@@ -46,6 +47,9 @@ see §6 / §9 / §10 / §10b). Requirement-level statements live in
 | CAPTCHA / MFA bypass behavior | Circumvents site protections; violates ToS and project policy. | Detect and hand off; never solve, bypass, hide, or outsource. |
 | Automated creation where ToS forbids it | Account-creation automation violates the site's terms. | Fill only; the user presses the final button. |
 | API key leak | The user's AI account is abused. | Encrypt the API key with the same scheme; never log it. |
+| User-owned cloud storage exposes the vault file | Encrypted bytes may be copied or synced by a third-party storage provider. | Store only authenticated encrypted vault bytes; never provide the passphrase, derived key, decrypted records, or raw values to the storage provider. |
+| Local candidate definitions reveal user activity | Even without raw values, a candidate can reveal which sites the user visited, tried to register with, updated, or withdrew from. | Store local candidates in the encrypted vault; sanitize and require explicit opt-in before sharing. |
+| MCP server overexposes local authority | External AI agents could inspect or act on sensitive account state beyond the user's intent. | Keep MCP disabled by default, local-only, permissioned, logged, and limited to summaries/planning/task creation; never expose raw values or bypass approval gates. |
 | DOM-based injection / unsafe rendering | Page-provided text affects the UI or is mis-mapped. | Treat page text as untrusted; render as text; validate before use. |
 | Real data committed in fixtures / logs | Sensitive data enters repository history. | Fake data only; keep local state Git-ignored. |
 
@@ -61,10 +65,14 @@ Stored locally, **encrypted** (RFC §3):
 - the AI provider API key;
 - user-defined custom fields;
 - per-site records (references + hashes, not duplicated raw values) and mandates.
+- local candidate definitions, because they reveal user activity and account-management
+  intent even when they do not contain raw personal values.
 
 Never stored:
 
 - raw personal values in per-site records (use references + hashes for diffing);
+- raw personal values in local candidate definitions, official definitions, shared
+  registry submissions, or AI prompts;
 - decrypted values in logs, error messages, or crash reports;
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
 
@@ -132,9 +140,10 @@ Per RFC §9. Use only widely vetted algorithms; do not roll custom crypto.
    throw until the store is reopened with the passphrase.
 
 The reference implementation of this scheme is `src/store/`
-(`crypto.ts` + `store.ts`); the AI provider API key and model settings are persisted as an
-encrypted record in the same store, and the most-sensitive field (CVV) is kept out of the
-shared transform view and read only through a sanctioned fill-time accessor.
+(`crypto.ts` + `store.ts`); the AI provider API key, model settings, local candidate
+definitions, and account-state metadata are persisted as encrypted records in the same
+store, and the most-sensitive field (CVV) is kept out of the shared transform view and
+read only through a sanctioned fill-time accessor.
 
 Convenience option: an OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret) may
 hold a session key to avoid re-entry, trading convenience for relying on the OS login
@@ -179,20 +188,33 @@ all data unless the user set up a recovery key beforehand.
   returns a mapping plan / high-risk findings; the automation layer fills values locally.
 - Use only the user's configured provider: Anthropic (Opus / Sonnet / Haiku) or OpenAI
   (GPT-5.4 / 5.4-mini / 5.3-Codex), via a provider-abstraction layer.
+- AI mode is optional and should be invoked only when deterministic confidence is too low,
+  a site/flow is unsupported, or the user explicitly asks for AI assistance.
 - Use stateless requests; do not enable prompt caching of PII, stored threads, or memory.
   Prefer zero-retention / no-training options where the provider offers them.
 - The model itself does not learn from inference and the context window is per-request;
   the residual risk is provider-side request logging and any stateful feature you enable
   — this policy avoids the latter and minimizes the former.
+- App-embedded terminals and CLI Provider integrations are not supported AI integration
+  paths. They make output stability, cost control, permissions, and structured validation
+  harder than API Provider integration.
 
 ## 6. Network And External Services
 
 Allowed external destinations are limited to: (a) the **target sites** the user asks the
-agent to register or update on (normal browser navigation and form submission), and
-(b) the user's **configured AI provider** (form structure / terms text only). No
-telemetry, analytics, crash reporting, cloud sync, or remote classification to any other
-service. The user's data store is never uploaded anywhere. Adding any other destination
-requires an explicit issue updating requirements, this document, and the user-facing docs.
+agent to register, update, or withdraw from (normal browser navigation and form
+submission), (b) the user's **configured AI provider** (form structure / terms text only),
+and (c) future user-owned storage locations that receive only encrypted vault bytes after
+an explicit design/implementation issue. No telemetry, analytics, crash reporting, hosted
+vault, or remote classification to any other service. The user's decrypted data store is
+never uploaded anywhere. Adding any other destination requires an explicit issue updating
+requirements, this document, and the user-facing docs.
+
+User-owned cloud storage is allowed only as encrypted-vault storage/sync. The storage
+provider must never receive the master passphrase, derived key, decrypted records, raw
+personal values, raw candidate evidence, or AI prompts. Conflict resolution, sync
+metadata, and provider authentication must be designed so they do not create plaintext
+shadow state.
 
 **Static enforcement (PRIV-001 / #20)**: `npm run poc -- check-egress`
 (`src/dev/egress-check.ts`, tested by
@@ -249,8 +271,43 @@ regardless of which wall kind `detectWall` reports:
   free-trial→subscription approved by the user); no auto-attestation of eligibility /
   identity statements.
 - Record a per-registration mandate (references, hashes, terms URL / version) for audit.
+- Withdrawal and account-deletion flows require the same gate discipline. Irreversible
+  withdrawal confirmation, eligibility/identity attestation, and any final action blocked
+  by site terms must remain under the user's explicit control.
 
-## 9. Input And DOM Safety
+## 9. Candidate Definition Privacy
+
+Candidate definitions are local, unreviewed site/form/field/withdrawal/wall definitions
+generated by AI mode, user input, or observation. They must not contain raw profile
+values, screenshots with personal information, cookies, session tokens, or raw HTML that
+captures user-entered values.
+
+Even sanitized candidates can reveal sensitive user activity, such as interest in a
+medical, financial, employment, political, religious, or adult service. Therefore:
+
+- store local candidates in the encrypted vault;
+- search them locally by structured metadata and fingerprints before invoking AI;
+- send at most the relevant sanitized candidate snippets to the configured AI Provider;
+- make sharing candidates fully opt-in;
+- strip user identifiers, raw values, account state, cookies, tokens, and screenshots
+  before submission;
+- promote candidates to official shared definitions only after review and tests.
+
+## 10. Local MCP Server Safety (future)
+
+A local MCP server is a future advanced-user extension and must be disabled by default.
+If added, it must be local-only, session-authorized, permission-scoped, and auditable.
+
+MCP tools may expose summaries, planning helpers, sanitized current-page structure,
+candidate-definition proposals, and `autofill` task creation for later review. MCP tools
+must not expose raw personal values, credentials, card numbers, CVV, API keys, decrypted
+vault exports, direct browser control, or submit/withdraw operations that skip
+`autofill`'s own review-and-confirm gates.
+
+All MCP calls should be logged in the encrypted vault with the tool name, time, requested
+scope, and sanitized result summary. Logs must not include decrypted values.
+
+## 11. Input And DOM Safety
 
 Page DOM is untrusted input. Labels, placeholders, nearby text, option labels, URLs, and
 attributes may be malformed, misleading, or adversarial.
@@ -260,7 +317,7 @@ attributes may be malformed, misleading, or adversarial.
 - Keep raw page text out of persisted per-site records (store references + hashes).
 - Validate stored data before use; never log decrypted values.
 
-## 10. Dependency And Supply Chain
+## 12. Dependency And Supply Chain
 
 New runtime dependencies now include Playwright and a vetted Argon2id implementation.
 
@@ -271,17 +328,20 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - Run the documented audit / update check when the toolchain supports it; document build /
   framework decisions in [`development.md`](development.md).
 
-## 11. Security Checklist
+## 13. Security Checklist
 
 - [ ] Secrets are not committed; local state and logs are Git-ignored
 - [ ] Fixtures, screenshots, tests, and docs use fake data only
 - [ ] Personal data, card data (incl. CVV), credentials, and the API key are encrypted at rest
+- [ ] Local candidate definitions and per-site activity metadata are encrypted at rest
 - [ ] The derived key lives in memory only; decrypted values are never logged
 - [ ] Raw personal values are not sent to the AI model; no provider stateful features used
-- [ ] No network egress except to the target sites the user acts on and the configured AI provider; no telemetry; data store never uploaded (`npm run poc -- check-egress`)
+- [ ] No network egress except to the target sites the user acts on, the configured AI provider, and explicitly designed user-owned encrypted vault storage; no telemetry; decrypted data store never uploaded (`npm run poc -- check-egress`)
 - [ ] Display/log/measurement-output masking follows the unified `maskValue` / `maskForArtifact` policy; local writes stay inside the encrypted store / encrypted export / masked measurement output (`npm run poc -- check-persistence`)
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
+- [ ] Withdrawal/account-deletion flows preserve explicit user confirmation for irreversible actions
 - [ ] Auto-creation-prohibited sites are fill-only
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed
 - [ ] No CAPTCHA-solving / anti-bot / fingerprint-evasion dependency is present (`npm run poc -- check-bypass`, SEC-002 §7)
+- [ ] Future MCP tools are disabled by default, local-only, permissioned, audited, and unable to expose raw values or bypass gates
 - [ ] Security-sensitive behavior is tested or manually verified
