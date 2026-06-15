@@ -178,9 +178,10 @@ In short, `autofill` is a **local Playwright-based application** with four layer
 
 Two variants are built and compared (see RFC §8):
 
-1. **Deterministic**: reuse the existing scanner (`scanFields`) and rule-based
-   classifier to map fields (`autocomplete`, `name`, `id`, `placeholder`, `label`,
-   nearby text). Examples: `autocomplete="email"` → email; `住所` label → address.
+1. **Deterministic**: reuse the scanner (`src/agent/scan.ts`) and rule-based classifier
+   (`src/agent/classifier.ts`) to map fields (`autocomplete`, `name`, `id`,
+   `placeholder`, `label`, nearby text). Examples: `autocomplete="email"` → email;
+   `住所` label → address.
 2. **AI-driven**: the model receives the form structure and returns a mapping plan;
    the automation layer fills the values locally.
 

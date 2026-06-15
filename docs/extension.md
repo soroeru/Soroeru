@@ -13,8 +13,8 @@ rationale (see [`security.md`](security.md)).
 > **Direction change (2026-06-12).** `autofill` is no longer a Chrome Extension
 > (Manifest V3). It is a **local Playwright-based application**. The previous MV3 design
 > (content script / background service worker / options page) is historical and lives in
-> git. Detailed component and file layout are finalized during the PoC (#33); this
-> document describes the intended boundaries.
+> git. Component and file layout were finalized during the PoC (#33, closed); this
+> document describes those boundaries and the reference implementation (§1.1).
 
 ## 1. Architecture Overview
 
@@ -240,10 +240,13 @@ review-and-confirm gate.
 
 ## 10. Status
 
-This is design intent. Concrete component structure, file layout, and the reusable scanner
-/ classifier integration are finalized during the PoC (#33). Reusable assets from the
-earlier work (the form scanner and rule-based classifier) feed the deterministic mapping
-variant.
+The PoC (#33, closed) delivered the reference implementation described throughout this
+document: the deterministic and AI mappers, the encrypted store, the review-and-confirm
+gate, the three guards, wall hand-off/resume, bulk update, and the Playwright E2E matrix
+(see [`testing.md`](testing.md) §8) under `src/`, `run/`, and `sites/` (§1.1). The form
+scanner and rule-based classifier from the earlier MV3-era work were carried forward into
+`src/agent/scan.ts` and `src/agent/classifier.ts` (§12). Remaining work is tracked by open
+issues, including wiring the local web UI (§13) to `AppRunner`.
 
 ## 11. App Shell (APP-001)
 
