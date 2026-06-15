@@ -13,6 +13,8 @@ const OTP_LABEL_RE =
 const EMAIL_VERIFY_RE = /確認メールを送信|認証メールを送信|メール内の(確認|認証)リンク|確認コードを送信しました/;
 // Identity / age verification (eKYC, ID upload). Detect only — hand off; never automate.
 const IDENTITY_VERIFY_RE = /本人確認|身分証|運転免許証|マイナンバーカード|eKYC|顔写真の?(撮影|アップロード)|年齢確認(書類|のため)/;
+const AMBIGUOUS_WALL_RE =
+  /不正なアクセス|通常と異なるアクセス|自動化されたアクセス|アクセスを一時的に制限|しばらくしてから再度|security check|suspicious activity|unusual traffic/i;
 
 export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
   if (snapshot.wallMarkers.length > 0) {
@@ -41,6 +43,9 @@ export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
   if (IDENTITY_VERIFY_RE.test(snapshot.visibleText)) {
     return { kind: "identity-verification", evidence: "identity-verification wording" };
   }
+  if (AMBIGUOUS_WALL_RE.test(snapshot.visibleText)) {
+    return { kind: "ambiguous", evidence: "ambiguous access-control wording" };
+  }
   return undefined;
 }
 
@@ -61,6 +66,8 @@ const HANDOFF_INSTRUCTIONS: Record<WallDetection["kind"], string> = {
     "メール／SMSの確認が必要です。届いた確認リンクまたはコードをあなた自身で処理してください。完了後に続行します。",
   "identity-verification":
     "本人確認（身分証の提出など）が必要です。あなた自身で手続きを進めてください。完了後に続行します。",
+  ambiguous:
+    "通常のフォーム操作ではない確認画面が表示されています。内容を確認し、あなた自身で必要な操作を完了してください。完了後に続行します。",
 };
 
 /**

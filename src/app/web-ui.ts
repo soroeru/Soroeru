@@ -145,6 +145,7 @@ const WALL_KIND_LABELS: Record<WallDetection["kind"], string> = {
   mfa: "ワンタイムコード（MFA）",
   "email-verification": "メール／SMS確認",
   "identity-verification": "本人確認",
+  ambiguous: "確認画面",
 };
 
 function splitTerms(value: string): string[] | undefined {
@@ -1375,6 +1376,7 @@ class WebUiServer {
       <section class="callout callout--risk stack">
         <h3>新規登録: ${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
         <p>${escapeHtml(instruction)}</p>
+        <p class="small muted">このまま開いているブラウザで対応してください。完了後、この画面の「対応が完了したので再開する」を押すと、Catashiroは同じセッションを再観測して続行します。</p>
         <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
         <form method="post" action="/registration/handoff-resolve">
           ${this.csrfInput()}

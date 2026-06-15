@@ -83,12 +83,17 @@ test("identity verification wording is detected", () => {
   );
 });
 
+test("ambiguous access-control wording is detected conservatively", () => {
+  assert.equal(detectWall(snapshot({ visibleText: "通常と異なるアクセスを検知しました。しばらくしてから再度お試しください。" }))?.kind, "ambiguous");
+  assert.equal(detectWall(snapshot({ visibleText: "Security check: suspicious activity detected." }))?.kind, "ambiguous");
+});
+
 test("an ordinary registration page is not a wall", () => {
   assert.equal(detectWall(snapshot({ visibleText: "会員登録フォーム。氏名とメールアドレスを入力してください。" })), undefined);
 });
 
 test("handoff instruction asks the human to resolve the wall, never how to bypass it", () => {
-  const kinds: WallDetection["kind"][] = ["captcha", "mfa", "email-verification", "identity-verification"];
+  const kinds: WallDetection["kind"][] = ["captcha", "mfa", "email-verification", "identity-verification", "ambiguous"];
   for (const kind of kinds) {
     const msg = handoffInstruction({ kind, evidence: "x" });
     assert.ok(msg.length > 0, kind);
@@ -208,6 +213,10 @@ test("clearWalls aborts on every wall kind when no handoff is wired (fail-safe, 
     {
       kind: "identity-verification",
       snap: snapshot({ visibleText: "本人確認のため、運転免許証をアップロードしてください。" }),
+    },
+    {
+      kind: "ambiguous",
+      snap: snapshot({ visibleText: "通常と異なるアクセスを検知しました。" }),
     },
   ];
 
