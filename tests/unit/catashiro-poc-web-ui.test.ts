@@ -227,7 +227,9 @@ test("dashboard shows site inventory and stale bulk-update candidates without ra
           filledAt: Date.now(),
         },
       ],
+      accountState: "registered",
       status: "registered",
+      nextAction: "reviewInventory",
     });
 
     const html = await getHtml(server, "/?tab=sites");

@@ -134,7 +134,10 @@ test("exportEncrypted/importEncrypted roundtrip restores profile, site records, 
       serviceName: "Example",
       registeredAt: 1,
       filledFields: [],
+      accountState: "registered",
       status: "registered",
+      lastCheckedAt: 1,
+      nextAction: "reviewInventory",
     });
     store.addMandate({
       origin: "https://example.test",

@@ -23,7 +23,7 @@ import type { CustomFieldDef } from "./classifier.js";
 import { findEditLink } from "./discovery.js";
 import { evaluateGuards, paymentAudit, shouldCheckAttestation } from "./guards.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
-import { buildMandate, staleFilledFields, toFilledFieldRecords } from "./records.js";
+import { accountStateFromRegistrationStatus, applyAccountState, buildMandate, staleFilledFields, toFilledFieldRecords } from "./records.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "./normalization.js";
@@ -311,14 +311,16 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
 
   const record = (status: RegistrationStatus): void => {
     const filledFields: FilledFieldRecord[] = toFilledFieldRecords(filledOutcomes, planned);
-    deps.store.upsertSiteRecord({
+    const now = Date.now();
+    deps.store.upsertSiteRecord(applyAccountState({
       origin: new URL(page.url()).origin,
       siteId: siteIdFromUrl(page.url()),
       serviceName: gateRequest.serviceName,
-      registeredAt: Date.now(),
+      registeredAt: now,
       filledFields,
+      accountState: "unknown",
       status,
-    });
+    }, accountStateFromRegistrationStatus(status), now));
     deps.store.addMandate(
       buildMandate({
         origin: gateRequest.origin,
@@ -458,7 +460,11 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
 
   const view = deps.store.profileView();
   const changed = staleFilledFields(deps.store, record);
+  if (changed.length > 0 && (record.accountState === "registered" || record.accountState === "imported")) {
+    deps.store.setSiteAccountState(siteId, "updateNeeded");
+  }
   if (changed.length === 0) {
+    deps.store.setSiteAccountState(siteId, record.accountState === "imported" ? "imported" : "registered");
     return { siteId, status: "skipped", changedKeys: [], planned: [], notes: ["差分なし"] };
   }
   const changedKeySet = new Set(changed.map((c) => `${c.profileKey}|${c.transform ?? ""}`));
@@ -609,6 +615,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
     recordPhase(deps, "submit", submitStart);
     const recordStart = performance.now();
     record.status = "failed";
+    applyAccountState(record, "updateFailed");
     await deps.store.save();
     recordPhase(deps, "record", recordStart);
     return { siteId, status: "failed", changedKeys: [...changedKeySet], planned, notes: ["保存完了画面を確認できませんでした"] };
@@ -631,8 +638,10 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
       ff.filledValueHash = sha256Hex(applyTransform(master, ff.transform, view));
     }
   }
+  const now = Date.now();
   record.status = "updated";
-  record.lastUpdatedAt = Date.now();
+  record.lastUpdatedAt = now;
+  applyAccountState(record, "registered", now);
   deps.store.upsertSiteRecord(record);
   addUpdateMandate("updated");
   await deps.store.save();

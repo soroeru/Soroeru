@@ -235,6 +235,24 @@ export type RegistrationStatus =
   | "manualHandoff" // wall detected (CAPTCHA / MFA / verification)
   | "failed";
 
+export type AccountState =
+  | "unknown"
+  | "notRegistered"
+  | "registrationPending"
+  | "registered"
+  | "imported"
+  | "updateNeeded"
+  | "updateFailed"
+  | "withdrawalCandidate";
+
+export type AccountNextAction =
+  | "startRegistration"
+  | "resumeRegistration"
+  | "reviewInventory"
+  | "runUpdate"
+  | "retryUpdate"
+  | "prepareWithdrawal";
+
 export interface FilledFieldRecord {
   profileKey: ProfileKey;
   transform?: Transform;
@@ -250,8 +268,12 @@ export interface SiteRecord {
   serviceName: string;
   registeredAt: number;
   filledFields: FilledFieldRecord[];
+  accountState: AccountState;
   status: RegistrationStatus | "needsUpdate" | "updated";
+  lastCheckedAt?: number;
   lastUpdatedAt?: number;
+  nextAction?: AccountNextAction;
+  withdrawalCandidateAt?: number;
 }
 
 export interface RegistrationMandate {

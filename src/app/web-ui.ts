@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { maskValue } from "../agent/gate.js";
-import { staleFilledFields } from "../agent/records.js";
+import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
 import {
   isSensitiveKey,
   KNOWN_PROFILE_KEYS,
@@ -1031,6 +1031,8 @@ class WebUiServer {
 
   private renderSiteRecord(record: SiteRecord): string {
     const stale = staleFilledFields(this.app.store, record);
+    const state = deriveAccountState(record, stale.length);
+    const nextAction = nextActionForAccountState(state);
     const labels = stale.map((field) => this.app.store.profile.get(field.profileKey)?.label ?? field.profileKey);
     const mandates = this.app.store.listMandates(record.origin);
     return `
@@ -1041,11 +1043,15 @@ class WebUiServer {
             <div class="small muted">${escapeHtml(record.origin)} · ${escapeHtml(new Date(record.registeredAt).toLocaleString("ja-JP"))}</div>
           </div>
           <div class="actions">
-            <span class="badge">${escapeHtml(record.status)}</span>
+            <span class="badge">${escapeHtml(state)}</span>
             ${stale.length > 0 ? `<span class="badge warn">更新候補 ${stale.length}</span>` : ""}
           </div>
         </div>
-        <p class="small muted">送信済み項目: ${escapeHtml(record.filledFields.length)} / mandate: ${escapeHtml(mandates.length)}</p>
+        <p class="small muted">
+          送信済み項目: ${escapeHtml(record.filledFields.length)} / mandate: ${escapeHtml(mandates.length)}
+          / 最終確認: ${escapeHtml(new Date(record.lastCheckedAt ?? record.registeredAt).toLocaleString("ja-JP"))}
+          / 次の操作: ${escapeHtml(nextAction)}
+        </p>
         ${labels.length > 0 ? `<p class="small">差分: ${escapeHtml(labels.join(", "))}</p>` : ""}
       </article>
     `;

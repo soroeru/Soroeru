@@ -184,6 +184,26 @@ Registration flow:
 | REQ-016 | Support withdrawal management so the user can identify and leave services they no longer use. | Should | Planned |
 | REQ-017 | Allow the user to place the encrypted vault in a user-owned storage location, including future cloud-storage sync, without giving `Catashiro` a hosted copy. | Could | Planned |
 
+### 6.1 Per-Site Account-State Model
+
+Each site in the inventory has an `accountState` separate from the latest operation
+result. The state drives the next user-visible action:
+
+| State | Meaning | Next action |
+| --- | --- | --- |
+| `unknown` | Catashiro has seen the site but has no account evidence yet. | Start registration |
+| `notRegistered` | The user declined or confirmed there is no account. | Start registration |
+| `registrationPending` | The agent filled data or hit a wall, but account creation is not complete. | Resume registration |
+| `registered` | Catashiro registered the account and has submitted-field hashes. | Review inventory |
+| `imported` | Catashiro imported an existing account into the inventory. | Review inventory |
+| `updateNeeded` | Stored field hashes are stale against current profile values. | Run update |
+| `updateFailed` | The last update attempt failed or could not confirm completion. | Retry update |
+| `withdrawalCandidate` | The user or diagnostics marked the service as a withdrawal candidate. | Prepare withdrawal |
+
+Inventory records store references and hashes for submitted/imported fields, never raw
+personal values. `lastCheckedAt`, `lastUpdatedAt`, mandates, stale-field labels, and the
+next action are safe inventory metadata and may be shown in the UI.
+
 ## 7. Non-Functional Requirements
 
 Detailed security and privacy decisions live in [`security.md`](security.md). This
