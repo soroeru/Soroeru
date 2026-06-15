@@ -275,6 +275,9 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
     app,
     ...(parsedPort !== undefined ? { port: parsedPort } : {}),
     log: (message) => console.error(message),
+    // Lazy: called after the store is unlocked, so the "ai" variant can read
+    // the user's configured provider from `app.store.getSettings()`.
+    mapperFactory: variantArg === "ai" ? () => aiMapperForUi(app) : () => new DeterministicMapper(),
   });
   console.log(`Catashiro local web app: ${server.url}`);
   console.log(`mapper variant: ${variantArg}`);

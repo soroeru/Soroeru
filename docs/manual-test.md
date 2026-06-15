@@ -140,7 +140,7 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] The personal-data page has a visible top-right `編集` button; edit mode
       shows all profile fields in one form and has a single `保存` button at the
       bottom
-- [ ] The `登録済みサイト` page always shows a `新規登録` form near the top; a
+- [ ] The `登録済みサイト` page always shows a `新規登録` action near the top; a
       `一括更新` action appears below it only when stale update candidates
       exist, otherwise "差分のあるサイトはありません" is shown
 - [ ] Edit stored fields (e.g. phone number and address) together from the Web UI
@@ -157,16 +157,45 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] Revealing `card.cvv`（セキュリティコード） shows the value plus an extra
       warning not to copy it elsewhere; revealing other sensitive fields
       (e.g. `card.number`) does not show that extra warning
-- [ ] After at least one registration (§2/§3), the Web UI registered-site list shows the
-      site's status, filled-field count, mandate count, and stale-field warning
+- [ ] After at least one registration (§2/§3 or below), the Web UI registered-site list
+      shows the site's status, filled-field count, mandate count, and stale-field warning
 - [ ] Web UI settings can save provider/model/API key; API key display requires
       re-entering the master passphrase
 - [ ] Web UI settings can generate a recovery key (shown once), then lock and
       unlock using the recovery key instead of the passphrase
-- [ ] Legacy `ui:cli` still supports registration and bulk update until the Web
-      UI run pages are wired: "3. 一括更新" lists stale sites, runs the gate +
-      three guards + wall handoff per site, and writes a new mandate per updated
-      site
+- [ ] Legacy `ui:cli` still supports bulk update until the Web UI run pages are
+      wired (#88): "3. 一括更新" lists stale sites, runs the gate + three guards
+      + wall handoff per site, and writes a new mandate per updated site
+
+### 4a. Web UI New-Registration Run (#81)
+
+With the local test sites running (`npm run poc:serve`) and the Web UI open
+(`npm run poc -- ui`):
+
+- [ ] On `登録済みサイト`, entering a site URL (e.g. the `01-basic` test site)
+      under `新規登録` and submitting opens a headed browser and shows a
+      progress state that auto-refreshes every few seconds
+- [ ] For `05-choices`, the run pauses with an "追加情報の入力" prompt for
+      「ご職業」; submitting a value resumes the run and the value is saved for
+      reuse (REQ-005)
+- [ ] The run pauses at "確認ゲート" showing the service name/origin, every
+      field to be submitted (sensitive fields masked), terms links, and any
+      high-risk clauses (guard 1) or attestation checkboxes (guard 3)
+- [ ] Declining the gate ends the run as "ユーザーの判断で中止しました" without
+      submitting anything
+- [ ] Approving the gate for `01-basic` ends the run as "登録が完了しました" and
+      adds/updates the site's entry in `登録済みサイト`
+- [ ] For `09-trial-card`, the gate shows the `cardApproved` checkbox and
+      "無料トライアル終了後の課金を承認"; approving the gate without checking it
+      ends the run as "ユーザーの判断で中止しました" and no card data is filled
+      (guard 2)
+- [ ] For `10-no-auto`, the gate explains the site prohibits automated account
+      creation; approving fills the form but ends the run as
+      "入力のみ完了しました" (`assistedFill`), not `registered`
+- [ ] Dismissing a finished run (`閉じる`) closes the browser/page and restores
+      the `新規登録` form
+- [ ] Starting a second registration while one is in progress shows
+      "別の登録処理が進行中です" and does not start a second browser session
 - [ ] Legacy `ui:cli` still supports encrypted export, then import into a fresh
       store path and confirm the same data is available after unlocking with
       the same passphrase

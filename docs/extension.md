@@ -373,17 +373,38 @@ Current web UI foundation:
   values requires passphrase re-entry via `PocStore.verifyPassphrase()`.
 - **登録済みサイト** — shows per-site records, status, mandate count, filled-field count,
   and stale-field candidates from `staleFilledFields()`. The page always shows a
-  `新規登録` form near the top; a `一括更新` action appears below it only when stale
+  `新規登録` action near the top; a `一括更新` action appears below it only when stale
   update candidates exist, otherwise "差分のあるサイトはありません" is shown.
+- **新規登録 (#81)** — `POST /registration/start` launches a headed Playwright browser
+  (`CatashiroApp.launchBrowser("chromium")`), opens a new page, and runs
+  `AppRunner.register()` in the background via `RegistrationSession`
+  (`src/app/registration-session.ts`). Because `AppRunner.register()` runs to completion
+  in one call but pauses on its `gate.decide` / `promptUser` / `handoff` hooks,
+  `RegistrationSession` resolves each hook with a `Promise` and exposes the current pause
+  point through `getState()`. The sites tab renders whichever state is current
+  (`running`, `awaiting-data`, `awaiting-gate`, `awaiting-handoff`, `done`, or `error`)
+  and auto-refreshes every 2 seconds while `running`. Each pause point is resolved by its
+  own POST route:
+  - `POST /registration/provide-data` — answers a missing-data prompt (or skips it),
+    saving the value as a new custom field for reuse;
+  - `POST /registration/gate-decision` — approves or declines the review-and-confirm
+    gate, rendered via `renderGate()`, including per-attestation checkboxes (guard 3) and
+    the trial-card `cardApproved` checkbox (guard 2 exception);
+  - `POST /registration/handoff-resolve` — resumes or aborts after the user clears a
+    detected CAPTCHA / MFA / verification wall in the same browser session;
+  - `POST /registration/dismiss` — closes a finished (`done` / `error`) run, closing the
+    page and browser.
+
+  Only one registration run is tracked at a time; starting a new one while another is
+  in progress (and not yet dismissed) is rejected with a warning.
 - **Settings** — save provider/model/API key into the encrypted store, reveal API key
   only after passphrase re-entry, generate / verify / remove recovery keys, and shows the
   local vault file path for reference.
 
-Registration execution, web review-and-confirm gate decisions, missing-data prompts,
-bulk-update execution, and wall hand-off/resume are designed in
-[`issue-66-local-web-app-ui.md`](issue-66-local-web-app-ui.md) and will be wired through
-`AppRunner` in the next slice. Until that reaches parity, the legacy developer CLI menu
-remains available as:
+Bulk-update execution is designed in
+[`issue-66-local-web-app-ui.md`](issue-66-local-web-app-ui.md) and remains future work
+(#88); `POST /bulk/start` is still a placeholder. The legacy developer CLI menu remains
+available as:
 
 ```bash
 npm run poc -- ui:cli [deterministic|ai]
@@ -391,5 +412,6 @@ npm run poc -- ui:cli [deterministic|ai]
 
 `src/app/ui.ts` (`AppUI`) is that fallback CLI menu over
 `CatashiroApp` + `AppRunner`. Its injectable `UiIo` remains covered by
-`tests/unit/catashiro-poc-ui.test.ts`; the browser UI routes are covered by
-`tests/unit/catashiro-poc-web-ui.test.ts`.
+`tests/unit/catashiro-poc-ui.test.ts`; the browser UI routes (including the
+`RegistrationSession` state machine and the new-registration routes) are covered by
+`tests/unit/catashiro-poc-web-ui.test.ts` and `tests/unit/catashiro-poc-registration.test.ts`.

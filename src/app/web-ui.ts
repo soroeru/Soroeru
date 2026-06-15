@@ -8,20 +8,29 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { maskValue } from "../agent/gate.js";
+import type { Browser } from "playwright";
+import { maskValue, renderGate } from "../agent/gate.js";
+import { DeterministicMapper, type Mapper } from "../agent/mapper.js";
 import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
 import { PROFILE_FIELD_INPUT, validateProfileValue } from "../profile.js";
 import {
+  HIGH_RISK_FLAG_DESCRIPTIONS,
   isSensitiveKey,
   KNOWN_PROFILE_KEYS,
   MOST_SENSITIVE_KEY,
   PROFILE_FIELD_LABELS,
+  type GateRequest,
   type KnownProfileKey,
   type ProfileKey,
+  type RegistrationStatus,
   type SiteRecord,
+  type WallDetection,
 } from "../types.js";
+import type { RegistrationResult } from "../agent/agent.js";
 import type { PocStore, ProfileEntry, ProviderSettings } from "../store/store.js";
 import { CatashiroApp, CatashiroAppError } from "./app.js";
+import { AppRunner } from "./runner.js";
+import { RegistrationSession, type RegistrationSessionState } from "./registration-session.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4127;
@@ -65,6 +74,13 @@ export interface WebUiServerOptions {
   host?: string;
   port?: number;
   log?: (message: string) => void;
+  /**
+   * Builds the field-mapping `Mapper` for a registration run (#81). Called
+   * lazily when `/registration/start` is handled, after the store is
+   * unlocked, so an AI-mode factory can read `app.store.getSettings()`.
+   * Defaults to `DeterministicMapper`.
+   */
+  mapperFactory?: () => Mapper;
 }
 
 export interface WebUiServerHandle {
@@ -95,6 +111,31 @@ function profileLabel(key: ProfileKey): string {
   const known = asKnownProfileKey(key);
   return known ? PROFILE_FIELD_LABELS[known] : key;
 }
+
+/** Accept bare-domain input (the form's placeholder is `example.com/register`) by defaulting to https. */
+function normalizeSiteUrl(value: string): string {
+  // egress: target-site — defaults the scheme for the site the user is about to register on
+  return /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value) ? value : `https://${value}`;
+}
+
+function highRiskFlagLabel(flag: string): string {
+  return (HIGH_RISK_FLAG_DESCRIPTIONS as Record<string, string>)[flag] ?? flag;
+}
+
+const REGISTRATION_STATUS_LABELS: Record<RegistrationStatus, string> = {
+  registered: "登録が完了しました",
+  assistedFill: "入力のみ完了しました（最終送信は未実施）",
+  declined: "ユーザーの判断で中止しました",
+  manualHandoff: "対応が必要なため停止しました",
+  failed: "失敗しました",
+};
+
+const WALL_KIND_LABELS: Record<WallDetection["kind"], string> = {
+  captcha: "CAPTCHA",
+  mfa: "ワンタイムコード（MFA）",
+  "email-verification": "メール／SMS確認",
+  "identity-verification": "本人確認",
+};
 
 function splitTerms(value: string): string[] | undefined {
   const terms = value
@@ -147,14 +188,18 @@ class WebUiServer {
   private readonly host: string;
   private readonly port: number;
   private readonly log: (message: string) => void;
+  private readonly mapperFactory: () => Mapper;
   private readonly csrfToken = randomBytes(24).toString("base64url");
   private readonly server: Server;
+  /** At most one in-flight registration run (#81); the UI is single-user/single-session. */
+  private registration: { session: RegistrationSession; browser: Browser } | undefined;
 
   constructor(options: WebUiServerOptions) {
     this.app = options.app;
     this.host = options.host ?? DEFAULT_HOST;
     this.port = options.port ?? DEFAULT_PORT;
     this.log = options.log ?? (() => {});
+    this.mapperFactory = options.mapperFactory ?? (() => new DeterministicMapper());
     this.server = createServer((req, res) => {
       void this.handle(req, res).catch((err: unknown) => this.handleError(err, res));
     });
@@ -241,7 +286,19 @@ class WebUiServer {
         await this.removeRecoveryKey(res);
         return;
       case "/registration/start":
-        this.redirect(res, "warn", "新規登録のWeb実行は次の実装スライスで有効化します。", "sites");
+        await this.startRegistration(form, res);
+        return;
+      case "/registration/provide-data":
+        await this.provideRegistrationData(form, res);
+        return;
+      case "/registration/gate-decision":
+        await this.decideRegistrationGate(form, res);
+        return;
+      case "/registration/handoff-resolve":
+        await this.resolveRegistrationHandoff(form, res);
+        return;
+      case "/registration/dismiss":
+        await this.dismissRegistration(res);
         return;
       case "/bulk/start":
         this.redirect(res, "warn", "一括更新のWeb実行は次の実装スライスで有効化します。", "sites");
@@ -391,6 +448,9 @@ class WebUiServer {
       .map((record) => ({ record, stale: staleFilledFields(store, record) }))
       .filter((candidate) => candidate.stale.length > 0);
     const settings = store.getSettings();
+    // While a registration is running (no user action pending), poll so the
+    // sites tab picks up the next pause point or the final result (#81).
+    const autoRefreshSeconds = this.registration?.session.getState().kind === "running" ? 2 : undefined;
     return this.renderLayout(
       "Catashiro dashboard",
       `
@@ -417,6 +477,7 @@ class WebUiServer {
         </nav>
         ${this.renderActiveTab(state, profile, sites, updateCandidates, settings)}
       `,
+      autoRefreshSeconds,
     );
   }
 
@@ -436,12 +497,13 @@ class WebUiServer {
     return this.renderProfileSection(profile, state.profileMode);
   }
 
-  private renderLayout(title: string, body: string): string {
+  private renderLayout(title: string, body: string, autoRefreshSeconds?: number): string {
     return `<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  ${autoRefreshSeconds ? `<meta http-equiv="refresh" content="${autoRefreshSeconds}">` : ""}
   <title>${escapeHtml(title)}</title>
   <style>
     :root {
@@ -795,6 +857,18 @@ class WebUiServer {
       border-radius: var(--radius-sm);
       margin-top: var(--space-3);
     }
+    .codeblock {
+      display: block;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: var(--surface-sunken);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: .85rem;
+      padding: var(--space-4);
+      border-radius: var(--radius-sm);
+      margin: 0;
+    }
     details { border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }
     summary { cursor: pointer; font-weight: 600; }
     .empty { padding: var(--space-5); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text-muted); }
@@ -1088,7 +1162,27 @@ class WebUiServer {
     `;
   }
 
+  /** New-registration action (#81): the start form, or the in-flight session's current pause point. */
   private renderRegistrationAction(): string {
+    if (!this.registration) return this.renderRegistrationForm();
+    const state = this.registration.session.getState();
+    switch (state.kind) {
+      case "running":
+        return this.renderRegistrationRunning();
+      case "awaiting-data":
+        return this.renderRegistrationDataPrompt(state.label);
+      case "awaiting-gate":
+        return this.renderRegistrationGate(state.request);
+      case "awaiting-handoff":
+        return this.renderRegistrationHandoff(state.wall, state.instruction);
+      case "done":
+        return `${this.renderRegistrationResult(state.result)}${this.renderRegistrationForm()}`;
+      case "error":
+        return `${this.renderRegistrationError(state.message)}${this.renderRegistrationForm()}`;
+    }
+  }
+
+  private renderRegistrationForm(): string {
     return `
       <form class="reghero stack" method="post" action="/registration/start">
         ${this.csrfInput()}
@@ -1099,6 +1193,120 @@ class WebUiServer {
         </label>
         <button type="submit">新規登録を開始</button>
       </form>
+    `;
+  }
+
+  private renderRegistrationRunning(): string {
+    return `
+      <section class="reghero stack">
+        <h3>新規登録: 実行中</h3>
+        <p class="muted">サイトを解析し、フォームの入力を進めています。しばらくお待ちください。このページは自動的に更新されます。</p>
+      </section>
+    `;
+  }
+
+  private renderRegistrationDataPrompt(label: string): string {
+    return `
+      <section class="callout stack">
+        <h3>新規登録: 追加情報の入力</h3>
+        <p>フォームに必要な項目「${escapeHtml(label)}」が保存されていません。値を入力すると新しい項目として保存し、再利用します。</p>
+        <form class="stack" method="post" action="/registration/provide-data">
+          ${this.csrfInput()}
+          <label>${escapeHtml(label)}
+            <input name="value" type="text">
+          </label>
+          <button type="submit">この値で続行</button>
+        </form>
+        <form method="post" action="/registration/provide-data">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">スキップ</button>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderRegistrationGate(request: GateRequest): string {
+    const attestations = request.attestations
+      .map(
+        (a) => `
+          <label class="field-delete">
+            <input type="checkbox" name="attest_${escapeHtml(a.fieldId)}" value="1">
+            ${escapeHtml(a.label)}
+          </label>
+        `,
+      )
+      .join("");
+    const cardApproval =
+      request.analysis.payment === "trial-subscription"
+        ? `
+          <label class="field-delete">
+            <input type="checkbox" name="cardApproved" value="1">
+            無料トライアル終了後の課金を承認し、保存済みのカード情報を自動入力する
+          </label>
+        `
+        : "";
+    return `
+      <section class="callout callout--risk stack">
+        <h3>新規登録: 確認ゲート</h3>
+        <pre class="codeblock">${escapeHtml(renderGate(request))}</pre>
+        <form class="stack" method="post" action="/registration/gate-decision">
+          ${this.csrfInput()}
+          ${attestations}
+          ${cardApproval}
+          <div class="actions">
+            <button type="submit" name="decision" value="approve">この内容で登録する</button>
+            <button type="submit" name="decision" value="decline" class="secondary">中止する</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderRegistrationHandoff(wall: WallDetection, instruction: string): string {
+    return `
+      <section class="callout callout--risk stack">
+        <h3>新規登録: ${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
+        <p>${escapeHtml(instruction)}</p>
+        <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
+        <form method="post" action="/registration/handoff-resolve">
+          ${this.csrfInput()}
+          <div class="actions">
+            <button type="submit" name="resolution" value="resolved">対応が完了したので再開する</button>
+            <button type="submit" name="resolution" value="abort" class="secondary">中止する</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderRegistrationResult(result: RegistrationResult): string {
+    return `
+      <section class="callout stack">
+        <h3>新規登録: ${escapeHtml(REGISTRATION_STATUS_LABELS[result.status])}</h3>
+        ${
+          result.highRiskFlags.length > 0
+            ? `<p>⚠ 高リスク項目: ${result.highRiskFlags.map((flag) => escapeHtml(highRiskFlagLabel(flag))).join(", ")}</p>`
+            : ""
+        }
+        ${result.notes.length > 0 ? `<ul>${result.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
+        <form method="post" action="/registration/dismiss">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">閉じる</button>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderRegistrationError(message: string): string {
+    return `
+      <section class="callout callout--risk stack">
+        <h3>新規登録: エラー</h3>
+        <p>${escapeHtml(message)}</p>
+        <form method="post" action="/registration/dismiss">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">閉じる</button>
+        </form>
+      </section>
     `;
   }
 
@@ -1492,6 +1700,95 @@ class WebUiServer {
     this.app.store.removeRecoveryKey();
     await this.app.store.save();
     this.redirect(res, "ok", "リカバリーキーを削除しました。", "settings");
+  }
+
+  // --- New registration (#81) -----------------------------------------------
+  //
+  // `AppRunner.register()` runs to completion in one call, pausing on the
+  // `gate`, `promptUser`, and `handoff` hooks. `RegistrationSession` exposes
+  // its current pause point so each pause is resolved by its own POST route
+  // below, and the sites tab renders whatever the session is currently
+  // waiting on (see `renderRegistrationAction`).
+
+  private async startRegistration(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const url = formValue(form, "url");
+    if (!url) {
+      this.redirect(res, "warn", "サイトのURLを入力してください。", "sites");
+      return;
+    }
+    if (this.registration) {
+      const state = this.registration.session.getState();
+      if (state.kind !== "done" && state.kind !== "error") {
+        this.redirect(res, "warn", "別の登録処理が進行中です。完了してから次の登録を開始してください。", "sites");
+        return;
+      }
+      await this.closeRegistration();
+    }
+    const browser = await this.app.launchBrowser("chromium");
+    const page = await browser.newPage();
+    const runner = new AppRunner(this.app, this.mapperFactory());
+    const session = new RegistrationSession(runner, page, normalizeSiteUrl(url));
+    this.registration = { session, browser };
+    session.start();
+    this.redirect(res, "ok", "新規登録を開始しました。進行状況はこのページに表示されます。", "sites");
+  }
+
+  private async provideRegistrationData(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const session = this.registration?.session;
+    if (!session || session.getState().kind !== "awaiting-data") {
+      this.redirect(res, "warn", "入力待ちの項目はありません。", "sites");
+      return;
+    }
+    const value = formValue(form, "value");
+    session.provideData(value || undefined);
+    this.redirect(res, "ok", "入力内容を反映しました。", "sites");
+  }
+
+  private async decideRegistrationGate(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const session = this.registration?.session;
+    const state = session?.getState();
+    if (!session || !state || state.kind !== "awaiting-gate") {
+      this.redirect(res, "warn", "確認待ちの登録はありません。", "sites");
+      return;
+    }
+    const approved = form.get("decision") === "approve";
+    const attestationApprovals: Record<string, boolean> = {};
+    for (const attestation of state.request.attestations) {
+      attestationApprovals[attestation.fieldId] = form.get(`attest_${attestation.fieldId}`) === "1";
+    }
+    const cardApproved = form.get("cardApproved") === "1";
+    session.decideGate({ approved, attestationApprovals, cardApproved });
+    this.redirect(res, "ok", approved ? "確認内容を承認しました。" : "登録を中止しました。", "sites");
+  }
+
+  private async resolveRegistrationHandoff(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const session = this.registration?.session;
+    if (!session || session.getState().kind !== "awaiting-handoff") {
+      this.redirect(res, "warn", "対応待ちの操作はありません。", "sites");
+      return;
+    }
+    const resolution = form.get("resolution") === "abort" ? "abort" : "resolved";
+    session.resolveHandoff(resolution);
+    this.redirect(res, "ok", resolution === "abort" ? "登録を中止しました。" : "操作を再開します。", "sites");
+  }
+
+  private async dismissRegistration(res: ServerResponse): Promise<void> {
+    const state = this.registration?.session.getState();
+    if (!state || (state.kind !== "done" && state.kind !== "error")) {
+      this.redirect(res, "warn", "完了していない登録処理は閉じられません。", "sites");
+      return;
+    }
+    await this.closeRegistration();
+    this.redirect(res, "ok", "登録処理を閉じました。", "sites");
+  }
+
+  /** Close the in-flight registration's page/browser and drop the session. */
+  private async closeRegistration(): Promise<void> {
+    if (!this.registration) return;
+    const { session, browser } = this.registration;
+    this.registration = undefined;
+    await session.page.close();
+    await this.app.closeBrowser(browser);
   }
 }
 
