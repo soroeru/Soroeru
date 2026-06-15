@@ -9,6 +9,8 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Browser } from "playwright";
+import { AiMapper } from "../agent/ai/ai-mapper.js";
+import { createProvider } from "../agent/ai/provider.js";
 import { maskValue } from "../agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../agent/mapper.js";
 import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
@@ -210,7 +212,7 @@ class WebUiServer {
     this.host = options.host ?? DEFAULT_HOST;
     this.port = options.port ?? DEFAULT_PORT;
     this.log = options.log ?? (() => {});
-    this.mapperFactory = options.mapperFactory ?? (() => new DeterministicMapper());
+    this.mapperFactory = options.mapperFactory ?? (() => this.defaultMapper());
     this.server = createServer((req, res) => {
       void this.handle(req, res).catch((err: unknown) => this.handleError(err, res));
     });
@@ -1463,6 +1465,7 @@ class WebUiServer {
   }
 
   private renderSettingsSection(settings: ProviderSettings | undefined): string {
+    const mode = settings?.mode ?? "deterministic";
     return `
       <section id="settings" class="panel">
         <h2>設定</h2>
@@ -1470,7 +1473,13 @@ class WebUiServer {
           <form class="stack" method="post" action="/settings/provider">
             ${this.csrfInput()}
             <h3>AIプロバイダー</h3>
-            <p class="muted">APIキーは暗号化ストアに保存します。AIにはフォーム構造と規約テキストだけを送ります。</p>
+            <p class="muted">APIキーは暗号化ストアに保存します。AIにはフォーム構造と規約テキストだけを送り、個人情報の値は送りません。AI mode はAPI利用料金が発生する場合があります。</p>
+            <label>動作モード
+              <select name="mode">
+                <option value="deterministic" ${mode === "deterministic" ? "selected" : ""}>Deterministic（既定・AIを使わない）</option>
+                <option value="ai" ${mode === "ai" ? "selected" : ""}>AI Provider（曖昧・未対応ケース向け）</option>
+              </select>
+            </label>
             <label>プロバイダー
               <select name="provider" required>
                 <option value="">選択してください</option>
@@ -1490,7 +1499,7 @@ class WebUiServer {
             <form class="panel stack" method="post" action="/settings/reveal-api-key">
               ${this.csrfInput()}
               <h3>APIキー表示</h3>
-              <p class="muted">${settings ? `${escapeHtml(settings.provider)} / ${escapeHtml(settings.model)} が設定済みです。` : "AIプロバイダーは未設定です。"}</p>
+              <p class="muted">${settings ? `${escapeHtml(settings.provider)} / ${escapeHtml(settings.model)} が設定済みです。mode=${escapeHtml(mode)}` : "AIプロバイダーは未設定です。"}</p>
               <label>マスターパスフレーズ
                 <input name="passphrase" type="password" autocomplete="current-password" required>
               </label>
@@ -1763,9 +1772,16 @@ class WebUiServer {
       this.redirect(res, "error", "APIキーを入力してください。");
       return;
     }
-    this.app.store.setProviderSettings({ provider, model, apiKey });
+    const mode = formValue(form, "mode") === "ai" ? "ai" : "deterministic";
+    this.app.store.setProviderSettings({ provider, model, apiKey, mode });
     await this.app.store.save();
     this.redirect(res, "ok", "AIプロバイダー設定を保存しました。", "settings");
+  }
+
+  private defaultMapper(): Mapper {
+    const settings = this.app.store.getSettings();
+    if (settings?.mode === "ai") return new AiMapper(createProvider(settings));
+    return new DeterministicMapper();
   }
 
   private async revealApiKey(form: URLSearchParams, res: ServerResponse): Promise<void> {

@@ -112,14 +112,14 @@ invariant is asserted in `tests/unit/catashiro-poc-contracts.test.ts`.
   and returns a mapping plan and high-risk findings. It does not receive raw personal
   values and is not given direct browser control (the automation layer executes the plan).
 - Stateless requests only; no prompt caching of personal data, stored threads, or memory.
-- AI mode is invoked only when deterministic confidence is too low, a site/flow is
-  unsupported, or the user explicitly asks for AI assistance. This keeps the default path
-  predictable and limits the user's AI cost.
+- AI mode is invoked only when the user enables `mode=ai` in settings and deterministic
+  confidence is too low, a site/flow is unsupported, or the user explicitly asks for AI
+  assistance. This keeps the default path predictable and limits the user's AI cost.
 - App-embedded terminals and CLI Provider integrations (for example driving Claude Code or
   Codex CLI from inside `Catashiro`) are intentionally out of scope. API Providers are the
   supported AI integration path.
 
-### 3.1 Mode Model (design direction, not yet implemented)
+### 3.1 Mode Model
 
 `Catashiro` exposes two product modes over the same execution and definition contracts:
 
@@ -162,6 +162,8 @@ The app resolves definitions before asking AI (`src/agent/definitions.ts`):
    producing new local candidates from this resolution step).
 
 AI output is stored as a **local candidate definition**, not as an official definition.
+`candidateFromAiMapping()` converts a structure-only AI mapping result into a sanitized
+encrypted local candidate after validation.
 Candidate definitions are lifecycle-managed:
 
 ```text
@@ -417,9 +419,9 @@ Current web UI foundation:
 
   Only one registration run is tracked at a time; starting a new one while another is
   in progress (and not yet dismissed) is rejected with a warning.
-- **Settings** — save provider/model/API key into the encrypted store, reveal API key
-  only after passphrase re-entry, generate / verify / remove recovery keys, and shows the
-  local vault file path for reference.
+- **Settings** — save provider/model/API key plus deterministic-vs-AI mode into the
+  encrypted store, reveal API key only after passphrase re-entry, generate / verify /
+  remove recovery keys, and shows the local vault file path for reference.
 
 Bulk-update execution is designed in
 [`issue-66-local-web-app-ui.md`](issue-66-local-web-app-ui.md) and remains future work

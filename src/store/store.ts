@@ -52,6 +52,8 @@ export interface ProviderSettings {
   provider: "anthropic" | "openai";
   model: string;
   apiKey: string;
+  /** Deterministic remains the default; AI is used only when the user enables it. */
+  mode?: "deterministic" | "ai";
 }
 
 interface StoreFile {

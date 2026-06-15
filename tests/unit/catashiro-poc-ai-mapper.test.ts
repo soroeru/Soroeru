@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AiMapper } from "../../src/agent/ai/ai-mapper.js";
+import { AiMapper, candidateFromAiMapping } from "../../src/agent/ai/ai-mapper.js";
 import {
   AiProviderError,
   AnthropicProvider,
@@ -157,6 +157,31 @@ test("AI mapper keeps provider failures explicit instead of silently falling bac
   const mapper = new AiMapper(provider);
 
   await assert.rejects(() => mapper.mapFields(snapshot([]), []), /network down/);
+});
+
+test("AI mapping can become a sanitized local candidate definition", () => {
+  const snap = snapshot([
+    field({ fieldId: "email", name: "mail", labels: ["メールアドレス"] }),
+    field({ fieldId: "name", name: "full_name", labels: ["氏名"] }),
+  ]);
+  const candidate = candidateFromAiMapping(
+    snap,
+    {
+      entries: [
+        { fieldId: "email", profileKey: "email" },
+        { fieldId: "name", profileKey: "name.full" },
+      ],
+      checkboxes: [],
+      unmappedRequired: [],
+    },
+    { now: 1 },
+  );
+
+  assert.equal(candidate.source, "ai");
+  assert.equal(candidate.status, "candidate");
+  assert.deepEqual(candidate.match.domains, ["127.0.0.1"]);
+  assert.equal(candidate.fieldRules?.length, 2);
+  assert.ok(!JSON.stringify(candidate).includes("dummy@example.com"));
 });
 
 test("Anthropic provider maps refusal and invalid JSON to explicit provider errors", async () => {
