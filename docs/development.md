@@ -76,6 +76,7 @@ npm run poc -- ui:cli              # legacy developer terminal UI fallback
 npm run poc -- check-egress        # PRIV-001 static network-egress allowlist check
 npm run poc -- check-persistence   # PRIV-002 static local-persistence allowlist check
 npm run poc -- check-bypass        # SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
+npm run release:check              # beta privacy/security release gate (typecheck, unit, static hardening checks)
 ```
 
 Each `npm run poc ...` invocation runs `npm run build` first. State (the
@@ -207,6 +208,15 @@ Linux, mobile apps, hosted vaults, telemetry, or a browser-extension distributio
 Before a private beta build is distributed, run the full Mac beta checklist in
 [`manual-test.md`](manual-test.md) §0 and record the tested commit SHA or beta tag in the
 release notes.
+
+For production privacy/security hardening, run:
+
+- `npm run release:check`
+
+This command is the beta release gate for typecheck, unit tests, network-egress
+allowlisting, local-persistence allowlisting, and CAPTCHA / anti-bot bypass dependency
+denylisting. Treat any failure as a release blocker; the owning policy is
+[`security.md`](security.md) §13.
 
 For code changes, run the available gates:
 

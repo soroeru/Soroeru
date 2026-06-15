@@ -368,6 +368,26 @@ separate signing/notarization issue and a repeat of the security checklist below
 
 ## 13. Security Checklist
 
+Before distributing a Mac private beta, run the consolidated production privacy/security
+gate:
+
+```bash
+npm run release:check
+```
+
+`release:check` runs typecheck, the unit test suite, and the three static hardening gates
+that protect the beta boundary:
+
+- `npm run poc -- check-egress` — network egress annotations plus telemetry /
+  analytics dependency denylist (PRIV-001, §6)
+- `npm run poc -- check-persistence` — local-write annotations, limiting persistence to
+  encrypted store/export and masked measurement output (PRIV-002, §3)
+- `npm run poc -- check-bypass` — CAPTCHA-solving / anti-bot / fingerprint-evasion
+  dependency denylist (SEC-002, §7)
+
+Treat a failure in any of these as a release blocker. Fix the code or update the owning
+security section with an explicit reviewed exception before sharing the build.
+
 - [ ] Secrets are not committed; local state and logs are Git-ignored
 - [ ] Fixtures, screenshots, tests, and docs use fake data only
 - [ ] Personal data, card data (incl. CVV), credentials, and the API key are encrypted at rest
@@ -385,3 +405,22 @@ separate signing/notarization issue and a repeat of the security checklist below
 - [ ] Signing/notarization status is documented before distributing a Mac beta ZIP
 - [ ] Future MCP tools are disabled by default, local-only, permissioned, audited, and unable to expose raw values or bypass gates
 - [ ] Security-sensitive behavior is tested or manually verified
+
+### 13.1 Release Review Evidence
+
+For each beta release PR or release note, record only high-level evidence:
+
+- `npm run release:check` result and timestamp / commit SHA
+- GitHub `ci / unit`, `ci / e2e-deterministic`, and `shellcheck` status
+- whether any dependency, network egress, local write, diagnostic, support bundle, log, or
+  packaging path changed since the previous beta
+- whether AI Provider prompt shape changed, and confirmation that raw personal values are
+  still excluded
+- whether wall detection / hand-off changed, and confirmation that no bypass behavior or
+  bypass-oriented dependency was added
+- whether Mac beta artifacts were inspected for excluded files: vaults, `.env`, API keys,
+  recovery keys, cookies, browser sessions, local logs, support bundles, screenshots, and
+  `state/`
+
+Do not paste AI prompts, raw personal values, API keys, vault bytes, support bundles, or
+real-site screenshots into release evidence.
