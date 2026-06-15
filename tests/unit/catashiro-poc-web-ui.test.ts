@@ -444,6 +444,36 @@ test("recovery key routes generate, verify, and remove the local recovery wrap",
   });
 });
 
+test("diagnostics export requires confirmation and returns a redacted support bundle", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    app.store.addDiagnosticEvent({
+      type: "error",
+      severity: "error",
+      message: "fake error for taro@example.test",
+      metadata: { note: "card 4111 1111 1111 1111" },
+    });
+
+    const settings = await getHtml(server, "/?tab=settings");
+    assert.match(settings, /サポート診断/);
+
+    const missingConfirm = await post(server, "/diagnostics/export", { csrf: token });
+    assert.equal(missingConfirm.status, 303);
+    assert.match(decodeURIComponent(missingConfirm.headers.get("location") ?? ""), /確認チェック/);
+
+    const exported = await fetch(new URL("/diagnostics/export", server.url), {
+      method: "POST",
+      body: new URLSearchParams({ csrf: token, confirm: "1" }),
+    });
+    assert.equal(exported.status, 200);
+    assert.match(exported.headers.get("content-type") ?? "", /application\/json/);
+    const body = await exported.text();
+    assert.match(body, /catashiro-support-bundle-v1/);
+    assert.ok(!body.includes("taro@example.test"));
+    assert.ok(!body.includes("4111 1111 1111 1111"));
+  });
+});
+
 test("dashboard shows site inventory and stale bulk-update candidates without raw values", async () => {
   await withWebUi(async (app, server) => {
     await app.unlock(PASSPHRASE);

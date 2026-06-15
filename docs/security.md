@@ -366,6 +366,19 @@ The first beta ZIP is allowed to be unsigned / not notarized only for the invite
 10-user private beta, and release notes must say so. Wider distribution requires a
 separate signing/notarization issue and a repeat of the security checklist below.
 
+### 12.2 Local Diagnostics And Support Bundles
+
+Diagnostics are local-only and telemetry-free. `DiagnosticEvent` records are stored in
+the encrypted vault because even sanitized app lifecycle, flow-state, error, wall, or
+site-activity summaries can reveal sensitive behavior. They must not contain raw profile
+values, API keys, passphrases, recovery keys, AI prompts, cookies, browser sessions,
+screenshots, Playwright traces, or decrypted vault bytes.
+
+Support bundles are generated only after explicit user confirmation in the local Web UI.
+`exportSupportBundleJson()` returns a redacted JSON summary with app version, OS/runtime
+versions, and recent sanitized diagnostic events. It is never uploaded automatically and
+must not be pasted into public issues if it contains sensitive site/activity context.
+
 ## 13. Security Checklist
 
 Before distributing a Mac private beta, run the consolidated production privacy/security
@@ -402,6 +415,7 @@ security section with an explicit reviewed exception before sharing the build.
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed
 - [ ] No CAPTCHA-solving / anti-bot / fingerprint-evasion dependency is present (`npm run poc -- check-bypass`, SEC-002 §7)
 - [ ] Mac beta artifacts exclude vault data, secrets, browser sessions, local logs, and support bundles
+- [ ] Support bundles are user-initiated, local-only, redacted, and exclude raw values, vault bytes, API keys, prompts, cookies, screenshots, and traces
 - [ ] Signing/notarization status is documented before distributing a Mac beta ZIP
 - [ ] Future MCP tools are disabled by default, local-only, permissioned, audited, and unable to expose raw values or bypass gates
 - [ ] Security-sensitive behavior is tested or manually verified

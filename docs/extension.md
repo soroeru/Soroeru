@@ -421,7 +421,8 @@ Current web UI foundation:
   in progress (and not yet dismissed) is rejected with a warning.
 - **Settings** — save provider/model/API key plus deterministic-vs-AI mode into the
   encrypted store, reveal API key only after passphrase re-entry, generate / verify /
-  remove recovery keys, and shows the local vault file path for reference.
+  remove recovery keys, export a user-confirmed redacted support bundle, and shows the
+  local vault file path for reference.
 
 Bulk-update execution (#88) uses the same `AppRunner.update()` automation boundary as
 the CLI fallback. The Web UI renders stale site/field candidates from

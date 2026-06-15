@@ -56,6 +56,16 @@ export interface ProviderSettings {
   mode?: "deterministic" | "ai";
 }
 
+export interface DiagnosticEvent {
+  id: string;
+  at: number;
+  type: "app" | "flow" | "error" | "wall";
+  message: string;
+  severity: "info" | "warn" | "error";
+  /** Sanitized metadata only: no raw profile values, prompts, cookies, or tokens. */
+  metadata?: Record<string, string | number | boolean>;
+}
+
 interface StoreFile {
   version: number;
   kdf: KdfParams;
@@ -66,8 +76,8 @@ interface StoreFile {
 }
 
 interface StorePayload {
-  kind: "profile" | "site" | "mandate" | "settings" | "candidate";
-  data: ProfileEntry | SiteRecord | RegistrationMandate | ProviderSettings | LocalCandidateDefinition;
+  kind: "profile" | "site" | "mandate" | "settings" | "candidate" | "diagnostic";
+  data: ProfileEntry | SiteRecord | RegistrationMandate | ProviderSettings | LocalCandidateDefinition | DiagnosticEvent;
 }
 
 function nextActionForState(state: AccountState): AccountNextAction {
@@ -173,6 +183,8 @@ export class PocStore {
   readonly mandates: RegistrationMandate[] = [];
   /** Local, unreviewed site definitions (#80, PRIV-003); never treated as official. */
   readonly localCandidates = new Map<string, LocalCandidateDefinition>();
+  /** Local support diagnostics (#90); encrypted because even site/activity summaries are sensitive. */
+  readonly diagnostics: DiagnosticEvent[] = [];
   private settings: ProviderSettings | undefined;
 
   private constructor(filePath: string, key: MasterKey, kdf: KdfParams, recovery?: EncryptedRecord) {
@@ -212,6 +224,8 @@ export class PocStore {
       } else if (payload.kind === "candidate") {
         const candidate = payload.data as LocalCandidateDefinition;
         store.localCandidates.set(candidate.id, candidate);
+      } else if (payload.kind === "diagnostic") {
+        store.diagnostics.push(payload.data as DiagnosticEvent);
       } else {
         store.mandates.push(payload.data as RegistrationMandate);
       }
@@ -276,6 +290,7 @@ export class PocStore {
     this.siteRecords.clear();
     this.mandates.length = 0;
     this.localCandidates.clear();
+    this.diagnostics.length = 0;
     this.settings = undefined;
   }
 
@@ -406,6 +421,25 @@ export class PocStore {
     this.mandates.push(mandate);
   }
 
+  addDiagnosticEvent(event: Omit<DiagnosticEvent, "id" | "at"> & { id?: string; at?: number }): DiagnosticEvent {
+    this.requireKey();
+    const diagnostic: DiagnosticEvent = {
+      id: event.id ?? `diag-${Date.now()}-${this.diagnostics.length + 1}`,
+      at: event.at ?? Date.now(),
+      type: event.type,
+      message: event.message,
+      severity: event.severity,
+    };
+    if (event.metadata) diagnostic.metadata = event.metadata;
+    this.diagnostics.push(diagnostic);
+    return diagnostic;
+  }
+
+  listDiagnosticEvents(limit = 100): DiagnosticEvent[] {
+    this.requireKey();
+    return [...this.diagnostics].sort((a, b) => b.at - a.at).slice(0, limit);
+  }
+
   /** True once a recovery key has been set up (SEC-003 / #44). */
   get hasRecoveryKey(): boolean {
     return this.recovery !== undefined;
@@ -468,6 +502,7 @@ export class PocStore {
       ...[...this.siteRecords.values()].map((data): StorePayload => ({ kind: "site", data })),
       ...this.mandates.map((data): StorePayload => ({ kind: "mandate", data })),
       ...[...this.localCandidates.values()].map((data): StorePayload => ({ kind: "candidate", data })),
+      ...this.diagnostics.map((data): StorePayload => ({ kind: "diagnostic", data })),
     ];
     if (this.settings) payloads.push({ kind: "settings", data: this.settings });
     const records: EncryptedRecord[] = [];
