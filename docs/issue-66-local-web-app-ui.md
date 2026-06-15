@@ -48,10 +48,11 @@ and detect-only wall hand-off.
 4. The web UI reads and writes personal data only through the unlocked
    `CatashiroApp.store`. Raw values are never logged or persisted outside the
    encrypted store. Display masking uses the existing `maskValue` policy.
-5. Registration, bulk update, gate, missing-data prompt, and wall hand-off will
-   be wired as background runs with in-memory pending steps. The browser UI
-   resolves `Gate.decide`, missing-data prompts, and wall/final-submit
-   hand-offs by POSTing explicit user decisions back to the local server.
+5. Registration, gate, missing-data prompt, and wall hand-off are wired as a
+   background run with in-memory pending steps (#81). The browser UI resolves
+   `Gate.decide`, missing-data prompts, and wall hand-offs by POSTing explicit
+   user decisions back to the local server. Bulk update will follow the same
+   pattern (#88).
 
 ## Architecture
 
@@ -88,14 +89,26 @@ Current foundation routes:
 - `POST /recovery/generate`, `POST /recovery/verify`, `POST /recovery/remove`:
   manage recovery keys locally.
 
-Next workflow routes:
+Registration run routes (implemented, #81 — see
+[`extension.md`](extension.md) §13 for the as-built description of
+`RegistrationSession`):
 
-- `POST /registration/start`: create an in-memory background registration run.
-- `GET /runs/:id`: show progress, logs, pending gate/missing-data/wall steps,
-  and final result.
-- `POST /runs/:id/gate`: resolve `Gate.decide`.
-- `POST /runs/:id/missing-data`: resolve `promptUser`.
-- `POST /runs/:id/handoff`: resume or abort wall hand-off.
+- `POST /registration/start`: create the single in-memory background
+  registration run and launch a headed Playwright session.
+- The sites tab (`GET /?tab=sites`) renders the run's current
+  `RegistrationSession` state (`running` / `awaiting-data` / `awaiting-gate` /
+  `awaiting-handoff` / `done` / `error`) in place of `GET /runs/:id`, and
+  auto-refreshes while `running`.
+- `POST /registration/provide-data`: resolve `promptUser` (replaces
+  `POST /runs/:id/missing-data`).
+- `POST /registration/gate-decision`: resolve `Gate.decide` (replaces
+  `POST /runs/:id/gate`).
+- `POST /registration/handoff-resolve`: resume or abort wall hand-off
+  (replaces `POST /runs/:id/handoff`).
+- `POST /registration/dismiss`: close a finished (`done` / `error`) run.
+
+Bulk-update routes (remaining, #88):
+
 - `POST /bulk/start`: create an in-memory background bulk-update run over
   selected stale sites.
 
@@ -136,21 +149,26 @@ Next workflow routes:
      bulk-update candidate display;
    - add unit tests for local-only routing, CSRF protection, masking, profile
      persistence, and settings persistence.
-2. **Registration run wiring**:
-   - add in-memory run state and progress pages;
-   - implement web `Gate`, missing-data prompt, wall hand-off, and final-submit
-     hand-off resolvers;
-   - launch headed Playwright sessions through `CatashiroApp.launchBrowser`;
-   - show phase-progress notes from PERF-001 in the run page.
-3. **Bulk-update execution**:
+2. **Registration run wiring (done, #81)**:
+   - `RegistrationSession` (`src/app/registration-session.ts`) holds the
+     in-memory run state and pause point;
+   - the web `Gate`, missing-data prompt, and wall hand-off resolvers are the
+     `/registration/*` routes above;
+   - registration launches a headed Playwright session through
+     `CatashiroApp.launchBrowser`;
+   - `RegistrationSession.notes` carries the run's log messages, rendered on
+     the sites tab.
+3. **Bulk-update execution (remaining, #88)**:
    - turn stale-field candidates into selected background update runs;
    - show before/after field labels and per-site progress;
    - preserve existing guard and wall behavior through `AppRunner.update`.
 4. **Manual UX verification and polish**:
    - run the fake-data manual path: unlock -> add profile -> start local test
-     registration -> approve gate -> complete -> see site record;
+     registration -> approve gate -> complete -> see site record (covered by
+     `docs/manual-test.md` §2/§3 and `tests/unit/catashiro-poc-registration.test.ts`);
    - verify responsive layout on narrow and desktop widths;
-   - update `docs/manual-test.md` once the registration run wiring is usable.
+   - update `docs/manual-test.md` again once bulk-update run wiring (#88) is
+     usable.
 
 ## Verification Plan
 
