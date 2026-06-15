@@ -132,6 +132,12 @@ function statusText(status: number): string {
   return "Error";
 }
 
+const ICON_LOCK =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>';
+
+const BRAND_MARK =
+  '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="#1f5f8b"></rect><path d="M12 6v8m0 0-3.5-3.5M12 14l3.5-3.5" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7 18h10" stroke="#ffffff" stroke-width="2" stroke-linecap="round"></path></svg>';
+
 class WebUiServer {
   private readonly app: AutofillApp;
   private readonly host: string;
@@ -231,6 +237,9 @@ class WebUiServer {
         return;
       case "/bulk/start":
         this.redirect(res, "warn", "一括更新のWeb実行は次の実装スライスで有効化します。", "sites");
+        return;
+      case "/chat/send":
+        this.redirect(res, "warn", "チャットでの操作は今後実装予定です。");
         return;
       default:
         throw new HttpError(404, "ページが見つかりません");
@@ -351,12 +360,8 @@ class WebUiServer {
         </header>
         ${this.renderFlash(flash)}
         ${this.renderReveal(reveal)}
-        <section class="summary-grid" aria-label="概要">
-          ${this.metric("個人情報", `${profile.length}`, "保存済みフィールド")}
-          ${this.metric("登録済みサイト", `${sites.length}`, "保存済みサイト")}
-          ${this.metric("更新候補", `${updateCandidates.length}`, "差分のあるサイト")}
-          ${this.metric("AI設定", settings ? settings.provider : "未設定", settings?.model ?? "APIキーは暗号化保存")}
-        </section>
+        ${this.renderAttention(updateCandidates)}
+        ${this.renderStats(profile.length, sites.length, settings)}
         <nav class="tabs" aria-label="主要画面">
           ${this.tabLink("profile", "個人情報", state.tab)}
           ${this.tabLink("sites", "登録済みサイト", state.tab)}
@@ -393,168 +398,355 @@ class WebUiServer {
   <style>
     :root {
       color-scheme: light;
-      --bg: #f7f8f7;
-      --surface: #ffffff;
-      --surface-2: #eef5f2;
-      --text: #24312f;
-      --muted: #66736f;
-      --line: #d7dfdc;
-      --accent: #0f766e;
-      --accent-2: #0b5f59;
-      --warn: #a35b00;
-      --error: #b42318;
-      --ok: #16703a;
+      /* Primary: steel blue */
+      --blue-50: #eef4f9;
+      --blue-100: #d6e5f0;
+      --blue-200: #aecbe0;
+      --blue-400: #4985ac;
+      --blue-500: #1f5f8b;
+      --blue-600: #195175;
+      --blue-700: #163f5a;
+      /* Neutral: cool slate */
+      --neutral-0: #ffffff;
+      --neutral-25: #fafbfc;
+      --neutral-50: #f6f7f9;
+      --neutral-100: #eef0f4;
+      --neutral-200: #d9dee7;
+      --neutral-300: #c1c7d0;
+      --neutral-500: #6b7480;
+      --neutral-600: #4d5560;
+      --neutral-900: #202124;
+      /* Signal colors */
+      --green-50: #e9f5ef;
+      --green-100: #cde9dc;
+      --green-600: #0f6243;
+      --amber-50: #fdf3e3;
+      --amber-100: #f9e3c2;
+      --amber-700: #6f3f0a;
+      --red-50: #fcece9;
+      --red-100: #f7d3cd;
+      --red-500: #c4392a;
+      --red-600: #a82317;
+      /* Semantic aliases */
+      --bg-app: var(--neutral-50);
+      --surface-card: var(--neutral-0);
+      --surface-sunken: var(--neutral-25);
+      --surface-accent-soft: var(--blue-50);
+      --border-subtle: var(--neutral-200);
+      --border-strong: var(--neutral-300);
+      --border-focus: var(--blue-400);
+      --text-primary: var(--neutral-900);
+      --text-secondary: var(--neutral-600);
+      --text-muted: var(--neutral-500);
+      --text-accent: var(--blue-600);
+      --text-link: var(--blue-600);
+      --action-primary-bg: var(--blue-500);
+      --action-primary-bg-hover: var(--blue-600);
+      --action-primary-bg-press: var(--blue-700);
+      --action-primary-fg: var(--neutral-0);
+      --action-secondary-bg: var(--neutral-0);
+      --action-secondary-bg-hover: var(--neutral-100);
+      --action-secondary-border: var(--neutral-300);
+      --action-secondary-fg: var(--neutral-900);
+      --action-danger-bg: var(--red-500);
+      --action-danger-bg-hover: var(--red-600);
+      --action-danger-fg: var(--neutral-0);
+      --status-safe-fg: var(--green-600);
+      --status-safe-bg: var(--green-50);
+      --status-safe-border: var(--green-100);
+      --status-risk-fg: var(--amber-700);
+      --status-risk-bg: var(--amber-50);
+      --status-risk-border: var(--amber-100);
+      --status-blocked-fg: var(--red-600);
+      --status-blocked-bg: var(--red-50);
+      --status-blocked-border: var(--red-100);
+      --lock-accent: var(--blue-700);
+      --ring: 0 0 0 3px color-mix(in srgb, var(--blue-400) 45%, transparent);
+      /* Spacing (4px grid) */
+      --space-2: 4px;
+      --space-3: 8px;
+      --space-4: 12px;
+      --space-5: 16px;
+      --space-6: 20px;
+      --space-7: 24px;
+      --space-9: 40px;
+      /* Radii & sizing */
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-pill: 999px;
+      --control-height-md: 34px;
+      --container-max: 1080px;
+      --rail-width: 360px;
+      /* Type (fallback stack only - no external font loads) */
+      --font-sans: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Segoe UI", system-ui, sans-serif;
+      --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
+      font-family: var(--font-sans);
+      background: var(--bg-app);
+      color: var(--text-primary);
       line-height: 1.5;
+      font-size: 14px;
     }
-    a { color: var(--accent-2); }
-    h1, h2, h3 { margin: 0; line-height: 1.2; }
-    h1 { font-size: 2rem; }
-    h2 { font-size: 1.25rem; }
+    a { color: var(--text-link); }
+    h1, h2, h3 { margin: 0; line-height: 1.2; font-weight: 600; }
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.15rem; }
     h3 { font-size: 1rem; }
-    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 56px; }
-    .hero-band, .app-header {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 24px;
-      margin-bottom: 16px;
-    }
-    .hero-band p { max-width: 760px; }
-    .app-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-    .eyebrow { margin: 0 0 6px; color: var(--accent-2); font-size: .82rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
-    .muted { color: var(--muted); }
-    .grid { display: grid; gap: 16px; }
-    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
-    .metric, .panel, .item-card {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-    .metric { padding: 16px; }
-    .metric strong { display: block; font-size: 1.4rem; }
-    .metric span { color: var(--muted); font-size: .9rem; }
-    .panel { padding: 18px; margin: 16px 0; }
-    .panel > h2 { margin-bottom: 12px; }
-    .item-list { display: grid; gap: 10px; }
-    .item-card { padding: 14px; display: grid; gap: 12px; }
-    .row { display: flex; justify-content: space-between; align-items: start; gap: 12px; flex-wrap: wrap; }
-    .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-    .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-    .tabs a {
-      display: inline-flex;
-      padding: 8px 12px;
-      background: var(--surface-2);
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      text-decoration: none;
-      color: var(--text);
+    /* Window shell */
+    .win { min-height: 100vh; display: flex; flex-direction: column; }
+    .win__bar {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-5);
+      background: var(--surface-card);
+      border-bottom: 1px solid var(--border-subtle);
       font-weight: 600;
     }
-    .tabs a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .win__bar svg { color: var(--lock-accent); flex: none; }
+    .win__body { flex: 1; display: flex; min-height: 0; }
+    .canvas { flex: 1; min-width: 0; }
+    .canvas--locked { background: radial-gradient(ellipse 60% 50% at 50% 0%, var(--surface-accent-soft), transparent 70%); }
+    /* Chat rail (visual only) */
+    .rail {
+      width: var(--rail-width);
+      flex: none;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-5);
+      padding: var(--space-5);
+      background: var(--surface-card);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .rail__brand { display: flex; align-items: center; gap: var(--space-3); }
+    .rail__brand strong { display: block; }
+    .rail__status { display: flex; align-items: center; gap: var(--space-2); color: var(--text-secondary); font-size: .82rem; margin-top: 2px; }
+    .dot { width: 8px; height: 8px; border-radius: var(--radius-pill); display: inline-block; }
+    .dot--safe { background: var(--status-safe-fg); }
+    .rail__intro { margin: 0; font-size: .88rem; }
+    .thread { display: grid; gap: var(--space-3); }
+    .bubble { border-radius: var(--radius-md); padding: var(--space-4); font-size: .88rem; }
+    .bubble--ai { background: var(--surface-sunken); border: 1px solid var(--border-subtle); }
+    .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .chip-form { display: inline-flex; }
+    .chip {
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border-subtle);
+      background: var(--surface-card);
+      color: var(--text-secondary);
+      padding: var(--space-2) var(--space-4);
+      font-size: .8rem;
+      font-weight: 600;
+      height: auto;
+    }
+    .chip:hover { background: var(--neutral-100); }
+    .inputrow { display: flex; gap: var(--space-2); margin-top: auto; }
+    .inputrow input { flex: 1; }
+    main { width: min(var(--container-max), calc(100% - 48px)); margin: 0 auto; padding: var(--space-7) 0 var(--space-9); }
+    .hero-band, .app-header {
+      background: var(--surface-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: var(--space-7);
+      margin-bottom: var(--space-5);
+    }
+    .hero-band { background: linear-gradient(180deg, var(--surface-accent-soft), var(--surface-card)); }
+    .hero-band p { max-width: 760px; }
+    .app-header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-5); }
+    .eyebrow { margin: 0 0 6px; color: var(--text-accent); font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+    .muted { color: var(--text-muted); }
+    .grid { display: grid; gap: var(--space-5); }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    /* Attention banner */
+    .attn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-4);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      padding: var(--space-5);
+      margin: var(--space-5) 0;
+    }
+    .attn--risk { background: var(--status-risk-bg); border-color: var(--status-risk-border); color: var(--status-risk-fg); }
+    .attn--calm { background: var(--status-safe-bg); border-color: var(--status-safe-border); color: var(--status-safe-fg); }
+    .attn p { margin: 4px 0 0; color: inherit; opacity: .85; }
+    /* Stats */
+    .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-5) 0; }
+    .stat {
+      background: var(--surface-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: var(--space-5);
+      display: grid;
+      gap: 4px;
+    }
+    .stat__label, .stat__help { color: var(--text-muted); font-size: .8rem; }
+    .stat__value { font-size: 1.3rem; font-weight: 600; }
+    .panel, .item-card {
+      background: var(--surface-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+    }
+    .panel { padding: var(--space-6); margin: var(--space-5) 0; box-shadow: 0 1px 2px rgba(32, 33, 36, .04); }
+    .panel > h2 { margin-bottom: var(--space-4); }
+    .item-list { display: grid; gap: var(--space-3); }
+    .item-card { padding: var(--space-4); display: grid; gap: var(--space-4); }
+    .row { display: flex; justify-content: space-between; align-items: start; gap: var(--space-4); flex-wrap: wrap; }
+    .actions { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: end; }
+    /* Tabs */
+    .tabs { display: flex; gap: var(--space-5); border-bottom: 1px solid var(--border-subtle); margin: var(--space-5) 0; }
+    .tabs a {
+      display: inline-flex;
+      padding: var(--space-3) 0;
+      text-decoration: none;
+      color: var(--text-secondary);
+      font-weight: 600;
+      border-bottom: 2px solid transparent;
+    }
+    .tabs a.active { color: var(--text-accent); border-bottom-color: var(--blue-500); }
     .section-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: var(--space-4);
       flex-wrap: wrap;
-      margin-bottom: 12px;
+      margin-bottom: var(--space-4);
     }
     .section-header h2 { margin: 0; }
-    .site-action-grid {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-      gap: 12px;
-      margin-bottom: 16px;
+    /* Sites */
+    .site-action-grid { display: grid; gap: var(--space-4); margin-bottom: var(--space-5); }
+    .reghero {
+      background: linear-gradient(135deg, var(--surface-accent-soft), var(--surface-card));
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: var(--space-6);
     }
+    .callout {
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-subtle);
+      padding: var(--space-5);
+      margin-bottom: var(--space-5);
+    }
+    .callout--risk { background: var(--status-risk-bg); border-color: var(--status-risk-border); }
+    .callout--risk h3, .callout--risk p { color: var(--status-risk-fg); }
     .action-panel {
-      background: var(--surface-2);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 14px;
+      background: var(--surface-sunken);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: var(--space-4);
     }
     .profile-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
+      gap: var(--space-4);
     }
     .profile-row {
       display: grid;
       grid-template-columns: minmax(120px, 220px) minmax(0, 1fr);
-      gap: 10px;
+      gap: var(--space-3);
       align-items: center;
-      padding: 10px 0;
-      border-bottom: 1px solid var(--line);
+      padding: var(--space-3) 0;
+      border-bottom: 1px solid var(--border-subtle);
     }
     .profile-row:last-child { border-bottom: 0; }
-    .profile-label { font-weight: 700; }
+    .profile-label { font-weight: 600; }
+    .mask { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); }
+    .mask svg { width: 12px; height: 12px; color: var(--text-muted); flex: none; }
     .form-footer {
       display: flex;
       justify-content: flex-end;
-      padding-top: 18px;
-      margin-top: 8px;
-      border-top: 1px solid var(--line);
+      padding-top: var(--space-5);
+      margin-top: var(--space-3);
+      border-top: 1px solid var(--border-subtle);
     }
-    form.stack, .stack { display: grid; gap: 12px; }
-    label { display: grid; gap: 5px; font-weight: 650; }
+    form.stack, .stack { display: grid; gap: var(--space-4); align-content: start; }
+    label { display: grid; gap: 5px; font-weight: 600; font-size: .9rem; }
     input, select, textarea {
       width: 100%;
-      border: 1px solid #b9c4c0;
-      border-radius: 6px;
-      padding: 10px 11px;
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 8px 11px;
       font: inherit;
-      background: #fff;
-      color: var(--text);
+      background: var(--surface-card);
+      color: var(--text-primary);
+      height: var(--control-height-md);
     }
-    textarea { min-height: 72px; resize: vertical; }
+    textarea { min-height: 72px; height: auto; resize: vertical; }
+    input:focus, select:focus, textarea:focus, button:focus-visible, .chip:focus-visible {
+      outline: none;
+      box-shadow: var(--ring);
+      border-color: var(--border-focus);
+    }
     button, .button {
       border: 0;
-      border-radius: 6px;
-      background: var(--accent);
-      color: #fff;
-      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--action-primary-bg);
+      color: var(--action-primary-fg);
+      padding: 9px 14px;
       font: inherit;
-      font-weight: 700;
+      font-weight: 600;
       cursor: pointer;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      height: var(--control-height-md);
     }
-    button.secondary, .button.secondary { background: #e7ecea; color: var(--text); border: 1px solid var(--line); }
-    button.danger { background: var(--error); }
-    button:disabled { opacity: .55; cursor: not-allowed; }
-    .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 3px 8px; background: var(--surface-2); color: var(--muted); font-size: .82rem; font-weight: 700; }
-    .badge.warn { color: var(--warn); background: #fff4df; }
-    .flash, .reveal { border-radius: 8px; padding: 12px 14px; margin: 12px 0; border: 1px solid var(--line); background: var(--surface); }
-    .flash.ok { border-color: #9fd5b5; color: var(--ok); background: #eefaf2; }
-    .flash.warn { border-color: #f1cd8a; color: var(--warn); background: #fff8e8; }
-    .flash.error, .panel.error { border-color: #f0aaa5; color: var(--error); background: #fff1f0; }
+    button:hover, .button:hover { background: var(--action-primary-bg-hover); }
+    button.secondary, .button.secondary {
+      background: var(--action-secondary-bg);
+      color: var(--action-secondary-fg);
+      border: 1px solid var(--action-secondary-border);
+    }
+    button.secondary:hover, .button.secondary:hover { background: var(--action-secondary-bg-hover); }
+    button.danger { background: var(--action-danger-bg); color: var(--action-danger-fg); }
+    button.danger:hover { background: var(--action-danger-bg-hover); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: var(--radius-pill);
+      padding: 3px 10px;
+      background: var(--neutral-100);
+      color: var(--text-secondary);
+      font-size: .78rem;
+      font-weight: 600;
+    }
+    .badge.warn { color: var(--status-risk-fg); background: var(--status-risk-bg); }
+    .flash, .reveal {
+      border-radius: var(--radius-md);
+      padding: var(--space-4) var(--space-5);
+      margin: var(--space-4) 0;
+      border: 1px solid var(--border-subtle);
+      background: var(--surface-card);
+    }
+    .flash.ok { border-color: var(--status-safe-border); color: var(--status-safe-fg); background: var(--status-safe-bg); }
+    .flash.warn { border-color: var(--status-risk-border); color: var(--status-risk-fg); background: var(--status-risk-bg); }
+    .flash.error, .panel.error { border-color: var(--status-blocked-border); color: var(--status-blocked-fg); background: var(--status-blocked-bg); }
     .reveal code {
       display: block;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      background: #f0f3f2;
-      color: var(--text);
-      padding: 12px;
-      border-radius: 6px;
-      margin-top: 8px;
+      background: var(--surface-sunken);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      padding: var(--space-4);
+      border-radius: var(--radius-sm);
+      margin-top: var(--space-3);
     }
-    details { border-top: 1px solid var(--line); padding-top: 10px; }
-    summary { cursor: pointer; font-weight: 700; }
-    .empty { padding: 14px; border: 1px dashed #b9c4c0; border-radius: 8px; color: var(--muted); }
-    .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .small { font-size: .88rem; }
+    details { border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }
+    summary { cursor: pointer; font-weight: 600; }
+    .empty { padding: var(--space-5); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text-muted); }
+    .cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+    .small { font-size: .85rem; }
     @media (max-width: 820px) {
-      main { width: min(100% - 20px, 680px); padding-top: 12px; }
-      .grid.two, .summary-grid, .cols { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      main { width: min(100% - 20px, 680px); padding-top: var(--space-4); }
+      .grid.two, .stats, .cols { grid-template-columns: 1fr; }
       .site-action-grid, .profile-grid, .profile-row { grid-template-columns: 1fr; }
       .app-header { align-items: stretch; }
       .app-header form { width: 100%; }
@@ -563,11 +755,57 @@ class WebUiServer {
   </style>
 </head>
 <body>
-  <main>
-    ${body}
-  </main>
+  <div class="win">
+    <div class="win__bar">
+      ${ICON_LOCK}
+      <span>autofill — ローカルアプリ</span>
+    </div>
+    <div class="win__body">
+      ${this.app.isUnlocked ? this.renderChatRail() : ""}
+      <div class="canvas${this.app.isUnlocked ? "" : " canvas--locked"}">
+        <main>
+          ${body}
+        </main>
+      </div>
+    </div>
+  </div>
 </body>
 </html>`;
+  }
+
+  private renderChatRail(): string {
+    return `
+      <aside class="rail" aria-label="チャット">
+        <div class="rail__brand">
+          ${BRAND_MARK}
+          <div>
+            <strong>autofill</strong>
+            <div class="rail__status"><span class="dot dot--safe"></span>ローカルで実行中</div>
+          </div>
+        </div>
+        <p class="rail__intro muted">言葉で指示すると、保存済みの情報でフォームを下書きします。送信は確認後のみ。</p>
+        <div class="thread">
+          <div class="bubble bubble--ai">ロックを解除しました。登録や情報の更新を言葉で指示できます。送信前には必ず確認画面を出します。</div>
+        </div>
+        <div class="chips">
+          <form class="chip-form" method="post" action="/chat/send">
+            ${this.csrfInput()}
+            <input type="hidden" name="message" value="ストリームプラスに登録">
+            <button type="submit" class="chip">ストリームプラスに登録</button>
+          </form>
+          <form class="chip-form" method="post" action="/chat/send">
+            ${this.csrfInput()}
+            <input type="hidden" name="message" value="住所を更新して">
+            <button type="submit" class="chip">住所を更新して</button>
+          </form>
+        </div>
+        <form class="inputrow" method="post" action="/chat/send">
+          ${this.csrfInput()}
+          <input name="message" type="text" placeholder="登録や更新したい内容を入力" autocomplete="off">
+          <button type="submit">送信</button>
+        </form>
+      </aside>
+    `;
   }
 
   private renderFlash(flash?: Flash): string {
@@ -580,8 +818,40 @@ class WebUiServer {
     return `<section class="reveal" role="status"><strong>${escapeHtml(reveal.label)}</strong>${reveal.warning ? `<p class="muted">${escapeHtml(reveal.warning)}</p>` : ""}<code>${escapeHtml(reveal.value)}</code></section>`;
   }
 
-  private metric(label: string, value: string, help: string): string {
-    return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><span>${escapeHtml(help)}</span></div>`;
+  private renderAttention(updateCandidates: { record: SiteRecord; stale: ReturnType<typeof staleFilledFields> }[]): string {
+    if (updateCandidates.length > 0) {
+      return `
+        <div class="attn attn--risk" role="status">
+          <div>
+            <strong>更新候補が${escapeHtml(updateCandidates.length)}件あります</strong>
+            <p>保存済み情報との差分があるサイトがあります。一括更新で反映できます。</p>
+          </div>
+          <a class="button secondary" href="/?tab=sites">一括更新を確認</a>
+        </div>
+      `;
+    }
+    return `
+      <div class="attn attn--calm" role="status">
+        <div>
+          <strong>すべて最新です</strong>
+          <p>登録済みサイトに保存済み情報との差分はありません。</p>
+        </div>
+      </div>
+    `;
+  }
+
+  private renderStats(profileCount: number, siteCount: number, settings: ProviderSettings | undefined): string {
+    return `
+      <section class="stats" aria-label="概要">
+        ${this.stat("個人情報", `${profileCount}`, "保存済みフィールド")}
+        ${this.stat("登録済みサイト", `${siteCount}`, "保存済みサイト")}
+        ${this.stat("AI設定", settings ? settings.provider : "未設定", settings?.model ?? "APIキーは暗号化保存")}
+      </section>
+    `;
+  }
+
+  private stat(label: string, value: string, help: string): string {
+    return `<div class="stat"><span class="stat__label">${escapeHtml(label)}</span><strong class="stat__value">${escapeHtml(value)}</strong><span class="stat__help">${escapeHtml(help)}</span></div>`;
   }
 
   private renderProfileSection(entries: ProfileEntry[], mode: ProfileMode): string {
@@ -623,7 +893,7 @@ class WebUiServer {
         </div>
         <div class="row">
           <div>
-            <span class="badge">${escapeHtml(maskValue(entry.key, entry.value))}</span>
+            <span class="badge mask">${sensitive ? ICON_LOCK : ""}${escapeHtml(maskValue(entry.key, entry.value))}</span>
             <div class="small muted">更新 ${escapeHtml(new Date(entry.updatedAt).toLocaleString("ja-JP"))}</div>
           </div>
           ${
@@ -722,8 +992,8 @@ class WebUiServer {
         </div>
         <div class="site-action-grid">
           ${this.renderRegistrationAction()}
-          ${this.renderBulkAction(candidates)}
         </div>
+        ${this.renderBulkAction(candidates)}
         <div class="item-list">
           ${records.length === 0 ? `<div class="empty">登録済みサイトはまだありません。</div>` : records.map((record) => this.renderSiteRecord(record)).join("")}
         </div>
@@ -733,7 +1003,7 @@ class WebUiServer {
 
   private renderRegistrationAction(): string {
     return `
-      <form class="action-panel stack" method="post" action="/registration/start">
+      <form class="reghero stack" method="post" action="/registration/start">
         ${this.csrfInput()}
         <h3>新規登録</h3>
         <p class="muted">登録したいサイトのURLを入力します。</p>
@@ -746,12 +1016,15 @@ class WebUiServer {
   }
 
   private renderBulkAction(candidates: { record: SiteRecord; stale: ReturnType<typeof staleFilledFields> }[]): string {
+    if (candidates.length === 0) {
+      return `<p class="muted small">差分のあるサイトはありません。</p>`;
+    }
     return `
-      <form class="action-panel stack" method="post" action="/bulk/start">
+      <form class="callout callout--risk stack" method="post" action="/bulk/start">
         ${this.csrfInput()}
         <h3>一括更新</h3>
-        <p class="muted">更新候補 ${escapeHtml(candidates.length)} 件。保存済み情報との差分があるサイトをまとめて更新します。</p>
-        <button type="submit" ${candidates.length === 0 ? "disabled" : ""}>一括更新を開始</button>
+        <p>更新候補 ${escapeHtml(candidates.length)} 件。保存済み情報との差分があるサイトをまとめて更新します。</p>
+        <button type="submit">一括更新を開始</button>
       </form>
     `;
   }
