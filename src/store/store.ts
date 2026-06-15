@@ -7,7 +7,14 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MOST_SENSITIVE_KEY, type ProfileKey, type RegistrationMandate, type SiteRecord } from "../types.js";
+import {
+  MOST_SENSITIVE_KEY,
+  type AccountNextAction,
+  type AccountState,
+  type ProfileKey,
+  type RegistrationMandate,
+  type SiteRecord,
+} from "../types.js";
 import {
   decryptRecord,
   deriveKey,
@@ -57,6 +64,51 @@ interface StoreFile {
 interface StorePayload {
   kind: "profile" | "site" | "mandate" | "settings";
   data: ProfileEntry | SiteRecord | RegistrationMandate | ProviderSettings;
+}
+
+function nextActionForState(state: AccountState): AccountNextAction {
+  switch (state) {
+    case "unknown":
+    case "notRegistered":
+      return "startRegistration";
+    case "registrationPending":
+      return "resumeRegistration";
+    case "registered":
+    case "imported":
+      return "reviewInventory";
+    case "updateNeeded":
+      return "runUpdate";
+    case "updateFailed":
+      return "retryUpdate";
+    case "withdrawalCandidate":
+      return "prepareWithdrawal";
+  }
+}
+
+function stateFromLegacyStatus(status: SiteRecord["status"]): AccountState {
+  switch (status) {
+    case "registered":
+    case "updated":
+      return "registered";
+    case "assistedFill":
+    case "manualHandoff":
+      return "registrationPending";
+    case "declined":
+      return "notRegistered";
+    case "needsUpdate":
+      return "updateNeeded";
+    case "failed":
+      return "updateFailed";
+  }
+}
+
+function normalizeSiteRecord(record: SiteRecord): SiteRecord {
+  const rec = record as SiteRecord & { accountState?: AccountState };
+  const accountState = rec.accountState ?? stateFromLegacyStatus(record.status);
+  rec.accountState = accountState;
+  rec.nextAction = rec.nextAction ?? nextActionForState(accountState);
+  rec.lastCheckedAt = rec.lastCheckedAt ?? rec.lastUpdatedAt ?? rec.registeredAt;
+  return rec;
 }
 
 export function sha256Hex(value: string): string {
@@ -119,7 +171,7 @@ export class PocStore {
         const entry = payload.data as ProfileEntry;
         store.profile.set(entry.key, entry);
       } else if (payload.kind === "site") {
-        const rec = payload.data as SiteRecord;
+        const rec = normalizeSiteRecord(payload.data as SiteRecord);
         store.siteRecords.set(rec.siteId, rec);
       } else if (payload.kind === "settings") {
         store.settings = payload.data as ProviderSettings;
@@ -243,7 +295,19 @@ export class PocStore {
 
   upsertSiteRecord(record: SiteRecord): void {
     this.requireKey();
-    this.siteRecords.set(record.siteId, record);
+    this.siteRecords.set(record.siteId, normalizeSiteRecord(record));
+  }
+
+  setSiteAccountState(siteId: string, accountState: AccountState, now: number = Date.now()): SiteRecord | undefined {
+    this.requireKey();
+    const record = this.siteRecords.get(siteId);
+    if (!record) return undefined;
+    record.accountState = accountState;
+    record.nextAction = nextActionForState(accountState);
+    record.lastCheckedAt = now;
+    if (accountState === "withdrawalCandidate") record.withdrawalCandidateAt = now;
+    this.siteRecords.set(siteId, record);
+    return record;
   }
 
   // --- Per-site inventory API (REQ-010) for the UI / bulk update ---

@@ -190,7 +190,9 @@ test("site menu: view shows filled fields and mandates", async () => {
       serviceName: "Example Service",
       registeredAt: Date.now(),
       filledFields: [],
+      accountState: "registered",
       status: "registered",
+      nextAction: "reviewInventory",
     });
     app.store.addMandate({
       origin: "https://example.test",
@@ -217,7 +219,9 @@ test("site menu: delete requires confirmation", async () => {
       serviceName: "Example Service",
       registeredAt: Date.now(),
       filledFields: [],
+      accountState: "registered",
       status: "registered",
+      nextAction: "reviewInventory",
     });
 
     const io = new FakeIo(["2", "d", "1", "y", "0", "0"]);
@@ -234,7 +238,9 @@ test("bulk update: nothing to do when no site has stale fields", async () => {
       serviceName: "Example Service",
       registeredAt: Date.now(),
       filledFields: [],
+      accountState: "registered",
       status: "registered",
+      nextAction: "reviewInventory",
     });
 
     const io = new FakeIo(["3", "0"]);

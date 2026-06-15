@@ -7,7 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PocStore } from "../../src/store/store.js";
-import { buildMandate } from "../../src/agent/records.js";
+import { accountStateFromRegistrationStatus, deriveAccountState, nextActionForAccountState, buildMandate } from "../../src/agent/records.js";
 import { paymentAudit } from "../../src/agent/guards.js";
 import type { GuardOutcome } from "../../src/agent/guards.js";
 import type { SiteRecord, TermsAnalysis } from "../../src/types.js";
@@ -23,7 +23,10 @@ function siteRecord(siteId: string): SiteRecord {
     filledFields: [
       { profileKey: "email", filledValueHash: "abc123", fieldName: "email", filledAt: 1 },
     ],
+    accountState: "registered",
     status: "registered",
+    lastCheckedAt: 1,
+    nextAction: "reviewInventory",
   };
 }
 
@@ -43,6 +46,49 @@ test("inventory API lists, gets, and deletes site records through the store", as
     assert.equal(reopened.deleteSiteRecord("alpha"), false);
     assert.equal(reopened.getSiteRecord("alpha"), undefined);
     assert.equal(reopened.listSiteRecords().length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("account-state helpers cover every MVP state and registration transition", () => {
+  assert.equal(accountStateFromRegistrationStatus("registered"), "registered");
+  assert.equal(accountStateFromRegistrationStatus("updated"), "registered");
+  assert.equal(accountStateFromRegistrationStatus("assistedFill"), "registrationPending");
+  assert.equal(accountStateFromRegistrationStatus("manualHandoff"), "registrationPending");
+  assert.equal(accountStateFromRegistrationStatus("declined"), "notRegistered");
+  assert.equal(accountStateFromRegistrationStatus("failed"), "updateFailed");
+
+  assert.equal(nextActionForAccountState("unknown"), "startRegistration");
+  assert.equal(nextActionForAccountState("notRegistered"), "startRegistration");
+  assert.equal(nextActionForAccountState("registrationPending"), "resumeRegistration");
+  assert.equal(nextActionForAccountState("registered"), "reviewInventory");
+  assert.equal(nextActionForAccountState("imported"), "reviewInventory");
+  assert.equal(nextActionForAccountState("updateNeeded"), "runUpdate");
+  assert.equal(nextActionForAccountState("updateFailed"), "retryUpdate");
+  assert.equal(nextActionForAccountState("withdrawalCandidate"), "prepareWithdrawal");
+});
+
+test("store persists account-state transitions and derives update-needed from stale fields", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-state-"));
+  const file = join(dir, "store.json");
+  try {
+    const store = await PocStore.open(file, PASSPHRASE, "pbkdf2-sha512");
+    store.setProfileValue("email", "メール", "new@example.test");
+    store.upsertSiteRecord({
+      ...siteRecord("stateful"),
+      filledFields: [{ profileKey: "email", filledValueHash: "old-hash", fieldName: "email", filledAt: 1 }],
+    });
+
+    assert.equal(deriveAccountState(store.getSiteRecord("stateful")!, 1), "updateNeeded");
+    assert.equal(store.setSiteAccountState("stateful", "withdrawalCandidate", 123)?.nextAction, "prepareWithdrawal");
+    await store.save();
+
+    const reopened = await PocStore.open(file, PASSPHRASE);
+    const record = reopened.getSiteRecord("stateful")!;
+    assert.equal(record.accountState, "withdrawalCandidate");
+    assert.equal(record.nextAction, "prepareWithdrawal");
+    assert.equal(record.withdrawalCandidateAt, 123);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

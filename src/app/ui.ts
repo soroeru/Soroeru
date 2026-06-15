@@ -12,7 +12,7 @@
 import { createInterface } from "node:readline/promises";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { staleFilledFields } from "../agent/records.js";
+import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
 import { CliGate, maskValue } from "../agent/gate.js";
 import {
   isSensitiveKey,
@@ -305,7 +305,8 @@ export class AppUI {
         const stale = staleFilledFields(this.app.store, r);
         const flag = stale.length > 0 ? ` ⚠ 更新候補 ${stale.length}件` : "";
         const updated = r.lastUpdatedAt ? ` / 最終更新 ${new Date(r.lastUpdatedAt).toLocaleString("ja-JP")}` : "";
-        this.io.log(`${i + 1}. ${r.serviceName} (${r.origin}) [${r.status}]${updated}${flag}`);
+        const state = deriveAccountState(r, stale.length);
+        this.io.log(`${i + 1}. ${r.serviceName} (${r.origin}) [${state} / next=${nextActionForAccountState(state)}]${updated}${flag}`);
       });
       this.io.log("v) 詳細・mandateを表示  d) 削除  0) 戻る");
       const choice = (await this.io.ask("> ")).toLowerCase();
@@ -327,6 +328,10 @@ export class AppUI {
       return;
     }
     this.io.log(`\n${record.serviceName} (${record.origin})`);
+    const stale = staleFilledFields(this.app.store, record);
+    const state = deriveAccountState(record, stale.length);
+    this.io.log(`accountState: ${state} / nextAction: ${nextActionForAccountState(state)}`);
+    this.io.log(`lastCheckedAt: ${new Date(record.lastCheckedAt ?? record.registeredAt).toLocaleString("ja-JP")}`);
     this.io.log(`status: ${record.status} / registeredAt: ${new Date(record.registeredAt).toLocaleString("ja-JP")}`);
     if (record.lastUpdatedAt) this.io.log(`lastUpdatedAt: ${new Date(record.lastUpdatedAt).toLocaleString("ja-JP")}`);
     this.io.log("filledFields:");

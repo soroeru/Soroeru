@@ -6,6 +6,8 @@
 import { applyTransform } from "../profile.js";
 import { sha256Hex, type PocStore } from "../store/store.js";
 import type {
+  AccountNextAction,
+  AccountState,
   FilledFieldRecord,
   HighRiskFlag,
   ProfileKey,
@@ -29,6 +31,54 @@ export function staleFilledFields(store: PocStore, record: SiteRecord): FilledFi
     if (master === undefined) return false;
     return sha256Hex(applyTransform(master, ff.transform, view)) !== ff.filledValueHash;
   });
+}
+
+export function accountStateFromRegistrationStatus(status: RegistrationStatus | "updated"): AccountState {
+  switch (status) {
+    case "registered":
+    case "updated":
+      return "registered";
+    case "assistedFill":
+    case "manualHandoff":
+      return "registrationPending";
+    case "declined":
+      return "notRegistered";
+    case "failed":
+      return "updateFailed";
+  }
+}
+
+export function nextActionForAccountState(state: AccountState): AccountNextAction {
+  switch (state) {
+    case "unknown":
+    case "notRegistered":
+      return "startRegistration";
+    case "registrationPending":
+      return "resumeRegistration";
+    case "registered":
+    case "imported":
+      return "reviewInventory";
+    case "updateNeeded":
+      return "runUpdate";
+    case "updateFailed":
+      return "retryUpdate";
+    case "withdrawalCandidate":
+      return "prepareWithdrawal";
+  }
+}
+
+export function deriveAccountState(record: SiteRecord, staleCount = 0): AccountState {
+  if (record.accountState === "withdrawalCandidate") return "withdrawalCandidate";
+  if (staleCount > 0 && (record.accountState === "registered" || record.accountState === "imported")) return "updateNeeded";
+  return record.accountState ?? accountStateFromRegistrationStatus(record.status === "needsUpdate" ? "updated" : record.status);
+}
+
+export function applyAccountState(record: SiteRecord, state: AccountState, now: number = Date.now()): SiteRecord {
+  record.accountState = state;
+  record.lastCheckedAt = now;
+  record.nextAction = nextActionForAccountState(state);
+  if (state === "withdrawalCandidate") record.withdrawalCandidateAt = now;
+  return record;
 }
 
 /** Minimal planned-field shape needed to attach the transform to a record. */
