@@ -84,6 +84,15 @@ C にしたことで連想される **cat（猫）** の可愛らしさを重ね
 サイトで「登録」と「情報更新」を検証する PoC から進めます。設計の詳細は
 [`docs/rfc/rfc-001-chrome-autofill-pivot.md`](docs/rfc/rfc-001-chrome-autofill-pivot.md) を参照してください。
 
+最初の MVP は **Mac 専用デスクトップアプリの private beta** として、既知の初期ユーザー約10名に絞って
+検証します。対象は Apple Silicon Mac の macOS 14 Sonoma / macOS 15 Sequoia です。Windows / Linux /
+モバイルアプリ / ブラウザ拡張としての配布は MVP では扱いません。
+
+MVP で beta ユーザーが完了できるべき最小ワークフローは、初回セットアップ、個人情報管理、サイト追加
+（新規登録または既存アカウント取り込み）、確認ゲートつき登録、登録済みサイト一覧、一括更新、退会タスク
+準備、ユーザーマニュアルとダウンロード導線です。詳しいスコープと成功基準は
+[`docs/requirements.md`](docs/requirements.md) の「MVP And Private Beta Target」を参照してください。
+
 ## License
 
 TBD

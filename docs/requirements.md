@@ -33,6 +33,50 @@ than the product's only purpose.
 Browser automation uses Playwright so the agent works across browser engines (Chromium /
 Firefox / WebKit) rather than depending on one browser's built-in autofill.
 
+## 1.1 MVP And Private Beta Target
+
+The MVP target is a **Mac-only desktop private beta for about 10 known users**. This is a
+scope boundary for the first usable release, not a permanent product limitation.
+
+MVP platform and support boundaries:
+
+- Supported OS: macOS 14 Sonoma and macOS 15 Sequoia on Apple Silicon Macs.
+- Distribution: a downloadable Mac desktop app for invited beta users.
+- Install path: the user installs the app in `/Applications`; development builds may run
+  from the checkout during testing.
+- Data location: the encrypted vault lives on local disk by default under the user's app
+  support directory; the user may choose another local folder. User-owned cloud storage is
+  post-MVP unless a later issue explicitly enables it as encrypted bytes only.
+- Browser engines: Playwright-driven Chromium, Firefox, and WebKit remain the automation
+  target. The beta app must at least verify the default packaged engine path, with the
+  cross-engine matrix kept as development coverage.
+- Support model: invited users report issues directly to the maintainer using fake data
+  screenshots where possible; support bundles must be local-only and must not include raw
+  personal values.
+- Signing/notarization: desirable before wider distribution, but not required to start the
+  first 10-user private beta if the install instructions clearly explain the limitation.
+
+Minimum beta workflows:
+
+1. First-run onboarding, vault setup, lock/unlock, and recovery key flow.
+2. Personal-data management for required fields, card fields, credentials, custom fields,
+   and AI provider settings.
+3. Add Site flow that can branch between new registration and existing-account import.
+4. Autonomous new registration with the review-and-confirm gate, three guards, wall
+   hand-off/resume, and per-site inventory recording.
+5. Existing-account import sufficient to seed the inventory for sites the user already
+   uses.
+6. Bulk update for stale personal data across selected sites.
+7. Withdrawal task preparation with irreversible final actions behind explicit user
+   confirmation.
+8. Local-only diagnostics and a user manual / landing page suitable for the invited beta.
+
+Private beta success means at least 8 of the 10 invited users can complete onboarding,
+add or import at least one site, inspect what Catashiro recorded, and understand the
+safety boundaries without maintainer intervention. At least 3 users should complete a
+bulk-update or withdrawal-preparation flow using fake or low-risk test accounts before
+the beta expands.
+
 ## 2. Product Principles
 
 - The user's personal data stays local and encrypted; the user owns it.
@@ -97,9 +141,12 @@ Registration flow:
   mode.
 - Local AI-generated candidate definitions that can be reused by the same user and, only
   after explicit opt-in sanitization/review, proposed for shared official definitions.
+- Mac desktop private beta distribution, docs, manual QA, and support workflow for the
+  first invited users.
 
 ## 5. Non-Scope
 
+- Windows, Linux, mobile apps, and browser-extension distribution for the MVP;
 - checkout / purchase / payment (except the approved free-trial→subscription card case);
 - **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls;
 - auto-submitting on sites whose terms prohibit automated account creation (fill only);
