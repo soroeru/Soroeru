@@ -122,6 +122,13 @@ Runtime expectations for the first private beta:
   bundles.
 - This package is Mac-only; Windows/Linux/App Store/auto-update packaging is out of scope.
 
+Before sharing any private beta build, run the release-candidate checklist in
+[`manual-test.md`](manual-test.md) §0. It is the owning checklist for release
+branch/tag/artifact steps, required local and GitHub checks, install/uninstall, first
+run, vault recovery, Add Site branches, registration, import, update, wall hand-off,
+support-bundle review, and beta release-note limitations. Keep this section focused on
+commands and packaging facts; keep the executable QA checklist in `manual-test.md`.
+
 ## 4. Project Structure
 
 Current repository shape:
@@ -196,6 +203,10 @@ stale file references.
 
 For Mac beta scope, also confirm docs and release notes do not imply support for Windows,
 Linux, mobile apps, hosted vaults, telemetry, or a browser-extension distribution.
+
+Before a private beta build is distributed, run the full Mac beta checklist in
+[`manual-test.md`](manual-test.md) §0 and record the tested commit SHA or beta tag in the
+release notes.
 
 For code changes, run the available gates:
 
