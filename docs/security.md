@@ -246,7 +246,8 @@ Do not implement:
 - auto-submitting on sites whose terms prohibit automated account creation.
 
 At a wall, the agent pauses in the same headed Playwright session, the user resolves it,
-and the agent resumes from where it paused.
+and the agent resumes only after re-observing the page. Ambiguous access-control or
+security-check wording is treated as a wall too: when unsure, stop and ask the user.
 
 **Static enforcement (SEC-002 / #23)**: `npm run poc -- check-bypass`
 (`src/dev/bypass-check.ts`, tested by
