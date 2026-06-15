@@ -299,6 +299,17 @@ medical, financial, employment, political, religious, or adult service. Therefor
   before submission;
 - promote candidates to official shared definitions only after review and tests.
 
+**Implementation (#80):** `validateCandidateDefinition` (`src/agent/definitions.ts`) runs
+a heuristic scan over every free-text/pattern string in a candidate for email-like,
+card-number-like, and phone-number-like values, plus structural checks (site-identity
+rule present, regex patterns compile, field-rule profile keys known/custom).
+`PocStore.upsertLocalCandidate` (`src/store/store.ts`) runs this validation and throws
+`CandidateValidationError` rather than persisting an invalid candidate; valid candidates
+are stored encrypted in `localCandidates` alongside profile data, site records, and
+mandates. This heuristic is defense-in-depth, not a guarantee — callers that generate
+candidates (AI mode, future observation-based generation) must still avoid embedding raw
+values in the first place.
+
 ## 10. Local MCP Server Safety (future)
 
 A local MCP server is a future advanced-user extension and must be disabled by default.

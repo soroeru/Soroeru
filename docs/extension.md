@@ -134,24 +134,32 @@ The chat / agent sidebar is part of AI Mode only. Users without an API Provider 
 see task-oriented UI for registration, inventory, update, and withdrawal workflows rather
 than a low-capability placeholder chatbot.
 
-### 3.2 Shared Definitions and Local Candidates (design direction, not yet implemented)
+### 3.2 Shared Definitions and Local Candidates
 
-Deterministic Mode and AI Mode share one definition model for:
+Deterministic Mode and AI Mode share one definition model (`SiteDefinition` /
+`LocalCandidateDefinition` in `src/types.ts`) for:
 
-- site and URL patterns;
-- form signatures and field mappings;
-- withdrawal-flow steps;
-- wall-detection patterns;
-- terms links and high-risk signals.
+- site and URL patterns (`match.domains` / `match.urlPatterns`);
+- form signatures and field mappings (`registrationSignature`, `fieldRules`);
+- withdrawal-flow steps (`withdrawalSteps`);
+- wall-detection patterns (`wallSignals`);
+- terms links and high-risk signals (`notes`; full terms analysis stays in
+  `src/agent/guards.ts`).
 
-The app resolves definitions before asking AI:
+The app resolves definitions before asking AI (`src/agent/definitions.ts`):
 
-1. scan the current page / flow with Playwright;
-2. build a deterministic signature from domain, URL pattern, form action, field
-   fingerprints, labels, headings, buttons, and wall signals;
-3. score official definitions and encrypted local candidate definitions;
-4. use a high-confidence match directly;
-5. ask the API Provider only for ambiguous or unsupported cases.
+1. scan the current page / flow with Playwright (`PageSnapshot`);
+2. `matchDefinition` builds a score from domain/URL pattern, path pattern, field-token,
+   heading, button, and wall-signal hits — a definition must positively match
+   `match.domains` or `match.urlPatterns` before any other signal counts;
+3. `resolveDefinitions` scores checked-in official definitions
+   (`src/agent/official-definitions.ts`) together with this vault's non-rejected local
+   candidate definitions, best first;
+4. `applyFieldRules` maps fields the matched definition has rules for (first matching
+   rule wins, same convention as `src/agent/classifier.ts`); unmapped fields fall back to
+   the deterministic/AI mapper;
+5. ask the API Provider only for ambiguous or unsupported cases (future work: AI mode
+   producing new local candidates from this resolution step).
 
 AI output is stored as a **local candidate definition**, not as an official definition.
 Candidate definitions are lifecycle-managed:
@@ -164,8 +172,21 @@ unknown or changed site
   -> human review and tests promote it to official/shared definition
 ```
 
+`validateCandidateDefinition` (`src/agent/definitions.ts`) is the "local runs validate or
+reject it" step: it checks that the candidate identifies a site, that every embedded
+regex compiles, that field-rule profile keys are known/custom, and — per
+[`security.md`](security.md) §9 — that no embedded string looks like a raw personal value
+(email, card-number-like, or phone-number-like). `PocStore.upsertLocalCandidate`
+(`src/store/store.ts`) runs this validation and throws `CandidateValidationError` rather
+than persisting an invalid candidate; candidates are stored in the encrypted vault
+(`localCandidates`) alongside profile data, site records, and mandates.
+
 This avoids duplicate deterministic-vs-AI definition stores. AI Mode gets the
 "early access" value by generating and using local candidates before they are promoted.
+The sanitized opt-in submission and official-promotion steps remain future, explicit, and
+opt-in (#80 non-scope); wiring `resolveDefinitions` into the agent's field-mapping
+pipeline (`src/agent/mapper.ts` / `src/agent/agent.ts`) and AI-driven candidate generation
+are tracked by later issues.
 
 ## 4. Store Layer (encrypted)
 
@@ -253,11 +274,19 @@ and the Playwright E2E matrix (see [`testing.md`](testing.md) §8). The form sca
 rule-based classifier from the earlier MV3-era work were carried forward into
 `src/agent/scan.ts` and `src/agent/classifier.ts` (§12).
 
-The data-sovereignty additions from the 2026-06-12 pivot — the Mode Model (§3.1), shared
-official/local-candidate definitions (§3.2, plus the related store-layer bullets in §1
-and §4), and withdrawal management (§8) — describe design direction and are **not yet
-implemented**. Remaining work is tracked by open issues, including those additions and
-wiring the local web UI (§13) to `AppRunner`.
+The data-sovereignty additions from the 2026-06-12 pivot include the Mode Model (§3.1),
+shared official/local-candidate definitions (§3.2, plus the related store-layer bullets in
+§1 and §4), and withdrawal management (§8). Of these, §3.2's definition schema, matching
+(`matchDefinition` / `resolveDefinitions`), field-rule application (`applyFieldRules`),
+candidate validation (`validateCandidateDefinition`), and encrypted local-candidate
+storage (`PocStore.upsertLocalCandidate` etc.) are implemented (#80) with a small set of
+checked-in official definitions for the local test sites
+(`src/agent/official-definitions.ts`). The Mode Model (§3.1), wiring
+`resolveDefinitions`/`applyFieldRules` into the agent's mapping pipeline, AI-driven
+candidate generation, the sanitized opt-in submission/promotion flow, and withdrawal
+management (§8) remain design direction and are **not yet implemented**. Remaining work
+is tracked by open issues, including those additions and wiring the local web UI (§13) to
+`AppRunner`.
 
 The MVP parent scope is a Mac-only private beta (see
 [`requirements.md`](requirements.md) §1.1). Implementation issues should prefer Mac app
