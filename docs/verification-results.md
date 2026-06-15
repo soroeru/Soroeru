@@ -23,7 +23,7 @@ run/                  # 計測ランナーと CLI
 ```
 
 層構成は RFC-001 v3 §7（ストア / エージェント / Playwright 自動操作 / UI）に対応する。
-UI 層は `src/app/`（`AutofillApp` / `AppRunner` / `startWebUiServer` / `AppUI`、§9・§11）が提供する。
+UI 層は `src/app/`（`AutofillApp` / `AppRunner` / `startWebUiServer` / `AppUI`、§11・§13）が提供する。
 `npm run poc -- ui` はローカルWebアプリを起動し、旧対話CLIは開発者向けに
 `npm run poc -- ui:cli` として残す。
 

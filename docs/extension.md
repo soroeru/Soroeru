@@ -113,7 +113,7 @@ invariant is asserted in `tests/unit/autofill-poc-contracts.test.ts`.
   Codex CLI from inside `autofill`) are intentionally out of scope. API Providers are the
   supported AI integration path.
 
-### 3.1 Mode Model
+### 3.1 Mode Model (design direction, not yet implemented)
 
 `autofill` exposes two product modes over the same execution and definition contracts:
 
@@ -128,7 +128,7 @@ The chat / agent sidebar is part of AI Mode only. Users without an API Provider 
 see task-oriented UI for registration, inventory, update, and withdrawal workflows rather
 than a low-capability placeholder chatbot.
 
-### 3.2 Shared Definitions and Local Candidates
+### 3.2 Shared Definitions and Local Candidates (design direction, not yet implemented)
 
 Deterministic Mode and AI Mode share one definition model for:
 
@@ -206,7 +206,7 @@ The user selects sites and runs an update. For each, the agent diffs the per-sit
 hashes against the latest stored values, opens the sites with changes, logs in with stored
 credentials, updates the changed fields, and handles walls via §6.
 
-## 8. Withdrawal Management
+## 8. Withdrawal Management (design direction, not yet implemented)
 
 The per-site inventory should help the user identify services they no longer use and start
 withdrawal tasks. The agent may find the withdrawal page, prepare a flow plan, fill
@@ -240,13 +240,18 @@ review-and-confirm gate.
 
 ## 10. Status
 
-The PoC (#33, closed) delivered the reference implementation described throughout this
-document: the deterministic and AI mappers, the encrypted store, the review-and-confirm
-gate, the three guards, wall hand-off/resume, bulk update, and the Playwright E2E matrix
-(see [`testing.md`](testing.md) §8) under `src/`, `run/`, and `sites/` (§1.1). The form
-scanner and rule-based classifier from the earlier MV3-era work were carried forward into
-`src/agent/scan.ts` and `src/agent/classifier.ts` (§12). Remaining work is tracked by open
-issues, including wiring the local web UI (§13) to `AppRunner`.
+The PoC (#33, closed) delivered the reference implementation under `src/`, `run/`, and
+`sites/` (§1.1) for its original scope: the deterministic and AI mappers, the encrypted
+store, the review-and-confirm gate, the three guards, wall hand-off/resume, bulk update,
+and the Playwright E2E matrix (see [`testing.md`](testing.md) §8). The form scanner and
+rule-based classifier from the earlier MV3-era work were carried forward into
+`src/agent/scan.ts` and `src/agent/classifier.ts` (§12).
+
+The data-sovereignty additions from the 2026-06-12 pivot — the Mode Model (§3.1), shared
+official/local-candidate definitions (§3.2, plus the related store-layer bullets in §1
+and §4), and withdrawal management (§8) — describe design direction and are **not yet
+implemented**. Remaining work is tracked by open issues, including those additions and
+wiring the local web UI (§13) to `AppRunner`.
 
 ## 11. App Shell (APP-001)
 
