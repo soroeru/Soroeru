@@ -216,8 +216,9 @@ Current web UI foundation:
   the `保存` button at the bottom. Listings always use `maskValue`; revealing sensitive
   values requires passphrase re-entry via `PocStore.verifyPassphrase()`.
 - **登録済みサイト** — shows per-site records, status, mandate count, filled-field count,
-  and stale-field candidates from `staleFilledFields()`. The page places `新規登録` in
-  the upper-left action area and `一括更新` in the upper-right action area.
+  and stale-field candidates from `staleFilledFields()`. The page always shows a
+  `新規登録` form near the top; a `一括更新` action appears below it only when stale
+  update candidates exist, otherwise "差分のあるサイトはありません" is shown.
 - **Settings** — save provider/model/API key into the encrypted store, reveal API key
   only after passphrase re-entry, and generate / verify / remove recovery keys.
 

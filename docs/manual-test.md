@@ -105,8 +105,9 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] The personal-data page has a visible top-right `編集` button; edit mode
       shows all profile fields in one form and has a single `保存` button at the
       bottom
-- [ ] The `登録済みサイト` page places `新規登録` in the upper-left action area
-      and `一括更新` in the upper-right action area
+- [ ] The `登録済みサイト` page always shows a `新規登録` form near the top; a
+      `一括更新` action appears below it only when stale update candidates
+      exist, otherwise "差分のあるサイトはありません" is shown
 - [ ] Edit stored fields (e.g. phone number and address) together from the Web UI
 - [ ] After at least one registration (§2/§3), the Web UI registered-site list shows the
       site's status, filled-field count, mandate count, and stale-field warning
