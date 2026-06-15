@@ -4,9 +4,9 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { toFilledFieldRecords } from "../../poc/autofill-agent/src/agent/records.js";
-import { sha256Hex } from "../../poc/autofill-agent/src/store/store.js";
-import type { FillOutcome } from "../../poc/autofill-agent/src/agent/filler.js";
+import { toFilledFieldRecords } from "../../src/agent/records.js";
+import { sha256Hex } from "../../src/store/store.js";
+import type { FillOutcome } from "../../src/agent/filler.js";
 
 function outcome(partial: Partial<FillOutcome> & { fieldId: string }): FillOutcome {
   return {

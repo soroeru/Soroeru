@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeRecoveryKey } from "../../poc/autofill-agent/src/store/recovery.js";
-import { PocStore } from "../../poc/autofill-agent/src/store/store.js";
+import { normalizeRecoveryKey } from "../../src/store/recovery.js";
+import { PocStore } from "../../src/store/store.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 

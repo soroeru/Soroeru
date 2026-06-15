@@ -2,7 +2,7 @@
 // abstraction, the encrypted export/import (SEC-003 / #44), and the masked
 // measurement output (docs/security.md §3). `checkLocalPersistence` is the
 // static check behind `npm run poc -- check-persistence`: every local-write
-// site in poc/autofill-agent/{src,run} must carry a
+// site in src/ or run/ must carry a
 // `// persist: encrypted-store|encrypted-export|measurement-output` annotation.
 
 import assert from "node:assert/strict";
@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkLocalPersistence } from "../../poc/autofill-agent/src/dev/privacy-check.js";
+import { checkLocalPersistence } from "../../src/dev/privacy-check.js";
 
 // dist/compiled/tests/unit/<this file> -> repo root is four levels up.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
@@ -33,9 +33,9 @@ test("real repo: every local-write site is annotated", () => {
 
 test("flags an unannotated local write", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src/store"), { recursive: true });
+    await mkdir(join(root, "src/store"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/src/store/bad.ts"),
+      join(root, "src/store/bad.ts"),
       ["export async function save(path: string, data: string) {", "  await writeFile(path, data, \"utf8\");", "}", ""].join("\n"),
       "utf8",
     );
@@ -48,9 +48,9 @@ test("flags an unannotated local write", async () => {
 
 test("does not flag a local write annotated with an allowed persist category", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src/store"), { recursive: true });
+    await mkdir(join(root, "src/store"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/src/store/good.ts"),
+      join(root, "src/store/good.ts"),
       [
         "export async function save(path: string, data: string) {",
         "  // persist: encrypted-store — AES-256-GCM encrypted records only",
@@ -68,9 +68,9 @@ test("does not flag a local write annotated with an allowed persist category", a
 
 test("rejects an annotation category that is not on the allowlist", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/src/store"), { recursive: true });
+    await mkdir(join(root, "src/store"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/src/store/bad.ts"),
+      join(root, "src/store/bad.ts"),
       ["export async function save(path: string, data: string) {", "  // persist: plaintext-cache", "  await writeFile(path, data, \"utf8\");", "}", ""].join(
         "\n",
       ),
@@ -82,11 +82,11 @@ test("rejects an annotation category that is not on the allowlist", async () => 
   });
 });
 
-test("ignores poc/autofill-agent/sites/ (the local 127.0.0.1 PoC test-site server)", async () => {
+test("ignores sites/ (the local 127.0.0.1 PoC test-site server)", async () => {
   await withFixture(async (root) => {
-    await mkdir(join(root, "poc/autofill-agent/sites"), { recursive: true });
+    await mkdir(join(root, "sites"), { recursive: true });
     await writeFile(
-      join(root, "poc/autofill-agent/sites/server.ts"),
+      join(root, "sites/server.ts"),
       ["export async function save(path: string, data: string) {", "  await writeFile(path, data, \"utf8\");", "}", ""].join("\n"),
       "utf8",
     );

@@ -2,20 +2,20 @@
 // encrypted storage abstraction, the encrypted export/import (SEC-003 / #44),
 // and the masked measurement output (docs/security.md §3).
 //
-// This scans `poc/autofill-agent/src/**/*.ts` and `poc/autofill-agent/run/**/*.ts`
+// This scans `src/**/*.ts` and `run/**/*.ts`
 // (excluding `*.test.ts`) for lines that write to the local filesystem. Every
 // match must carry a `// persist: <category>` annotation (on the same line or
 // the line above) naming one of the allowed categories below; an unannotated
 // match means a new, unreviewed local-write site was added that may bypass the
 // encrypted storage abstraction.
 //
-// `poc/autofill-agent/sites/` (the local 127.0.0.1-only PoC test-site server
+// `sites/` (the local 127.0.0.1-only PoC test-site server
 // and its served fixtures) is out of scope.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["poc/autofill-agent/src", "poc/autofill-agent/run"];
+const SCAN_DIRS = ["src", "run"];
 
 /** Allowed `// persist: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([

@@ -10,14 +10,14 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DeterministicMapper, type Mapper } from "../../poc/autofill-agent/src/agent/mapper.js";
-import { AiMapper } from "../../poc/autofill-agent/src/agent/ai/ai-mapper.js";
-import type { AiProvider, CompleteJsonOptions } from "../../poc/autofill-agent/src/agent/ai/provider.js";
+import { DeterministicMapper, type Mapper } from "../../src/agent/mapper.js";
+import { AiMapper } from "../../src/agent/ai/ai-mapper.js";
+import type { AiProvider, CompleteJsonOptions } from "../../src/agent/ai/provider.js";
 import {
   normalizeMappingPlan,
   normalizeTermsAnalysis,
-} from "../../poc/autofill-agent/src/agent/normalization.js";
-import type { FormField, MappingPlan, PageSnapshot } from "../../poc/autofill-agent/src/types.js";
+} from "../../src/agent/normalization.js";
+import type { FormField, MappingPlan, PageSnapshot } from "../../src/types.js";
 
 class CapturingProvider implements AiProvider {
   readonly id = "capture";

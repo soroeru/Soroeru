@@ -9,7 +9,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkBypassDenylist } from "../../poc/autofill-agent/src/dev/bypass-check.js";
+import { checkBypassDenylist } from "../../src/dev/bypass-check.js";
 
 // dist/compiled/tests/unit/<this file> -> repo root is four levels up.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");

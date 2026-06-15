@@ -1,7 +1,7 @@
-# PoC: 自律 autofill エージェント（Issue #33）
+# 検証結果: ローカルテストサイト10パターンでの新規登録・一括更新（Issue #33）
 
-RFC-001 v3（[`docs/rfc/rfc-001-chrome-autofill-pivot.md`](../../docs/rfc/rfc-001-chrome-autofill-pivot.md)）§8 の
-PoC。実サイトを使わず、**ローカルのテストサイト10パターン**に対して
+RFC-001 v3（[`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)）§8 の
+検証。実サイトを使わず、**ローカルのテストサイト10パターン**に対して
 「URL → 登録ページ発見 → 項目マッピング → 確認ゲート → 入力 → 送信」と「差分一括更新」を
 Chromium / Firefox / WebKit で検証し、**決定的版と AI 版のマッピング精度を比較**する。
 
@@ -12,14 +12,14 @@ Chromium / Firefox / WebKit で検証し、**決定的版と AI 版のマッピ�
 ## 構成
 
 ```text
-poc/autofill-agent/
-├── sites/            # テストサイト10パターン（defs.ts に正解マッピングを内包）＋ローカルサーバー
-├── src/
-│   ├── store/        # 暗号化ストア最小実装（Argon2id + AES-256-GCM、PBKDF2-SHA-512 フォールバック）
-│   ├── agent/        # スキャナ / 決定的分類器 / ガード / 確認ゲート / 壁検知 / 充填 / オーケストレーション
-│   │   └── ai/       # AI 版（プロバイダ抽象化＋AIマッパー。実値はモデルに渡さない）
-│   └── types.ts      # 共有型
-└── run/              # 計測ランナーと CLI
+sites/                # テストサイト10パターン（defs.ts に正解マッピングを内包）＋ローカルサーバー
+src/
+├── store/            # 暗号化ストア最小実装（Argon2id + AES-256-GCM、PBKDF2-SHA-512 フォールバック）
+├── agent/            # スキャナ / 決定的分類器 / ガード / 確認ゲート / 壁検知 / 充填 / オーケストレーション
+│   └── ai/           # AI 版（プロバイダ抽象化＋AIマッパー。実値はモデルに渡さない）
+├── app/              # AutofillApp / AppRunner / startWebUiServer / AppUI（ローカルWebアプリ＋旧CLI）
+└── types.ts          # 共有型
+run/                  # 計測ランナーと CLI
 ```
 
 層構成は RFC-001 v3 §7（ストア / エージェント / Playwright 自動操作 / UI）に対応する。
@@ -205,8 +205,8 @@ Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する�
    1つの登録情報編集フォームでまとめて編集する。保存ボタンは画面下部。一覧表示は常に
    `maskValue` でマスクし、機密項目の表示にはマスターパスフレーズ再入力が必要。
 3. **登録済みサイト**: サイトごとの `filledFields` / mandate数 / statusと、
-   `staleFilledFields()` による一括更新候補をブラウザで確認できる。ページ上部の左に
-   「新規登録」、右に「一括更新」を配置する。
+   `staleFilledFields()` による一括更新候補をブラウザで確認できる。ページ上部に
+   「新規登録」、差分のあるサイトがある場合のみその下に「一括更新」を表示する。
 4. **設定**: AIプロバイダ（provider/model/APIキー、暗号化保存）、APIキー表示（要再認証）、
    recovery key の生成・検証・削除。
 

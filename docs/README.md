@@ -22,6 +22,7 @@ owns the relevant topic.
 | [`development.md`](development.md) | Local setup, project structure, implementation conventions, and quality gates. |
 | [`testing.md`](testing.md) | Automated and manual testing strategy, test data policy, fixture location, commands, and CI expectations. |
 | [`manual-test.md`](manual-test.md) | Manual test checklist for registration, the review-and-confirm gate, the three guards, and wall hand-off. (Being updated for the new direction alongside #33.) |
+| [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, and the local web UI (Issue #33). |
 | [`issue-66-local-web-app-ui.md`](issue-66-local-web-app-ui.md) | Plan for replacing the terminal PoC UI with a local browser web app for Issue #66. |
 | [`github-operations.md`](github-operations.md) | Issue, branch, commit, pull request, review, and merge workflow rules. |
 | [`local-ai-review.md`](local-ai-review.md) | Local cross-AI review hook setup, behavior, outputs, and troubleshooting. |

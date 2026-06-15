@@ -10,7 +10,7 @@ import {
   createProvider,
   OpenAiProvider,
   type FetchLike,
-} from "../../poc/autofill-agent/src/agent/ai/provider.js";
+} from "../../src/agent/ai/provider.js";
 
 function okResponse(payload: unknown): Awaited<ReturnType<FetchLike>> {
   return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(payload)) };

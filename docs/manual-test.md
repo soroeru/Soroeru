@@ -4,144 +4,22 @@ This document owns the **browser-based manual test checklist** for `autofill`.
 
 > **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
 > autonomous agent (see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
-> The MV3-extension checklist below is historical. A new checklist (registration, the
-> review-and-confirm gate, the three guards, wall hand-off / resume, encrypted store) is
-> being written alongside the PoC implementation (#33). The fake-data-only rule still applies.
+> The previous MV3-extension checklist (build, load, options page, content-script
+> scanning) described code that has since been removed (#68) and has been deleted from
+> this document along with that code (history remains in git). The checklist below
+> (registration, the review-and-confirm gate, the three guards, wall hand-off / resume,
+> bulk update, and the encrypted store / local web UI) is the current manual checklist
+> for `autofill`. The fake-data-only rule still applies.
 
 Out of scope here: the overall test strategy and test-type matrix (see
 [`testing.md`](testing.md)), and the canonical command list (see
 [`development.md`](development.md)).
 
-## 0. Preparation
+## 1. CAPTCHA / MFA / Verification Wall Handoff (SEC-002)
 
-Use fake profile data only. Do not test with real personal, customer, contract,
-or payment information.
-
-Before manual checks:
-
-- [ ] `npm run build` has been run and `dist/extension/` exists
-- [ ] Chrome or Chromium is available
-- [ ] The unpacked extension has been loaded from the documented build output
-- [ ] Fake profile data is configured
-- [ ] Fixture pages or safe test pages are available
-- [ ] Local environment is clean
-- [ ] Logs are enabled if needed
-- [ ] No real accounts, credentials, passwords, or credit card data are used
-
-Current build command:
-
-```bash
-npm run build
-```
-
-Load the unpacked extension from `dist/extension/`.
-
-## 0.1 Options Page Profile Storage
-
-- [ ] Open the extension options page
-- [ ] Add fake profile data using the options page button
-- [ ] Confirm the fake profile fields are listed
-- [ ] Edit one fake profile field and confirm the update persists after reload
-- [ ] Delete one profile field and confirm it is removed after reload
-- [ ] Clear all profile fields and confirm the list is empty after reload
-- [ ] Try to add a custom field with a credit-card-like label and confirm it is
-      rejected
-- [ ] Try to add a custom field with a password-like label and confirm it is
-      rejected
-- [ ] Confirm profile storage still works while the machine is offline
-
-## 1. Smoke Test
-
-- [ ] Open a simple fixture containing name and email fields
-- [ ] Confirm the extension loads without console errors that block use
-- [ ] Trigger scanning from the extension UI
-- [ ] Confirm the fields are detected
-- [ ] Confirm suggestions are shown before any values are written
-- [ ] Select one suggestion and confirm only that selected field is filled
-- [ ] Confirm the form is not submitted automatically
-
-## 2. English Form Fixture
-
-- [ ] `autocomplete="email"` is suggested as email
-- [ ] `autocomplete="tel"` is suggested as phone number
-- [ ] `name` or `id` containing `email` is suggested as email
-- [ ] `name` or `id` containing `phone` or `tel` is suggested as phone number
-- [ ] `name` or `id` containing `zip` or `postal` is suggested as postal code
-- [ ] Placeholder text is considered when labels are absent
-- [ ] Labels linked by `for` are considered
-- [ ] Labels wrapping inputs are considered
-- [ ] Ambiguous fields are not filled without user selection
-
-## 3. Japanese Form Fixture
-
-- [ ] `氏名` or equivalent name labels are suggested as full name
-- [ ] `メール` or equivalent email labels are suggested as email
-- [ ] `電話` labels are suggested as phone number
-- [ ] `郵便番号` labels are suggested as postal code
-- [ ] `住所` labels or placeholders are suggested as address
-- [ ] `会社名` labels are suggested as company name
-- [ ] `部署` labels are suggested as department name
-- [ ] Suggestions remain visible for user confirmation before filling
-
-## 4. Dynamic Form Fixture
-
-- [ ] Open a fixture where fields appear after a user action
-- [ ] Confirm the initial scan reports only currently available fields
-- [ ] Perform the user action that reveals additional fields
-- [ ] Re-scan the page
-- [ ] Confirm newly rendered fields are detected
-- [ ] Confirm previously filled fields are not overwritten without another user
-      action
-- [ ] Confirm the page does not need a full reload when re-scanning is enough
-
-## 5. Manual-Step Fixture
-
-- [ ] CAPTCHA-like placeholder is detected as requiring user action
-- [ ] MFA / one-time-code-like field is detected as requiring user action
-- [ ] Terms or consent checkbox is not checked automatically
-- [ ] Final confirmation or submit-like control is not clicked automatically
-- [ ] The UI tells the user that manual action is required
-- [ ] The user can complete the manual step directly on the page
-- [ ] After the user continues, re-scan resumes suggestions for remaining
-      ordinary fields
-- [ ] The extension does not hide, obscure, solve, or bypass the manual step
-
-## 6. Select And Textarea Fields
-
-- [ ] `textarea` fields are detected
-- [ ] Address or message-like textareas are classified only when there is a
-      clear label or attribute signal
-- [ ] `select` fields are detected
-- [ ] Select suggestions are shown only when a matching option exists or when a
-      safe user-confirmed mapping is available
-- [ ] The extension does not force invalid values into selects
-
-## 7. Error And Recovery
-
-- [ ] User can ignore or dismiss an incorrect suggestion
-- [ ] User can manually edit a filled value after filling
-- [ ] Re-scanning does not erase manual edits without user action
-- [ ] Missing profile values are handled with a clear empty or unavailable state
-- [ ] Extension UI can recover after page DOM changes
-- [ ] Console errors, if present, are recorded for follow-up
-
-## 8. Release Readiness
-
-- [ ] Requirements reviewed
-- [ ] Automated tests passed
-- [ ] Manual tests completed
-- [ ] Extension permissions reviewed
-- [ ] Security-sensitive behavior reviewed
-- [ ] No real personal data appears in fixtures, screenshots, tests, or docs
-- [ ] No local state, logs, or AI review artifacts are staged for commit
-- [ ] Rollback or recovery path documented
-
-## 9. PoC: CAPTCHA / MFA / Verification Wall Handoff (SEC-002)
-
-This section checks the `autofill` PoC's (`poc/autofill-agent/`) wall
-detection and handoff/resume behavior end to end against the local test
-sites (`npm run poc:serve`, then `npm run poc -- demo` or
-`npm run poc -- register <siteId>`).
+This section checks the `autofill` agent's wall detection and handoff/resume
+behavior end to end against the local test sites (`npm run poc:serve`, then
+`npm run poc -- demo` or `npm run poc -- register <siteId>`).
 
 - [ ] When a CAPTCHA / OTP / email-verification wall fixture is reached, the
       agent pauses in the same headed browser session
@@ -157,19 +35,7 @@ sites (`npm run poc:serve`, then `npm run poc -- demo` or
 - [ ] `npm run poc -- check-bypass` reports no CAPTCHA-solving / anti-bot /
       fingerprint-evasion dependency (docs/security.md §7)
 
-## 10. Troubleshooting
-
-| Symptom | Cause / Action |
-| --- | --- |
-| Extension does not appear in Chrome | Confirm the unpacked extension path and manifest are valid. |
-| Scan finds no fields | Check whether the content script is loaded and whether the fixture fields are visible. |
-| Suggestions are wrong | Inspect field metadata and classification rules for label, placeholder, `name`, `id`, and `autocomplete` signals. |
-| Values are filled without selection | Treat as a blocking safety bug. Filling must require explicit user action. |
-| Terms or submit controls are touched automatically | Treat as a blocking safety bug. These controls must stay manual. |
-| Re-scan misses dynamic fields | Check whether the page update happened before the scan and whether the scanner reads the current DOM. |
-| UI overlaps important page controls | Adjust injected UI placement, sizing, or dismissal behavior. |
-
-## 11. PoC: Registration Walkthrough And Review-And-Confirm Gate (TEST-001 / REQ-003..006, SAFE-001)
+## 2. Registration Walkthrough And Review-And-Confirm Gate (TEST-001 / REQ-003..006, SAFE-001)
 
 `npm run poc -- register <siteId> [deterministic|ai]` runs a single site headed
 with the interactive CLI gate (`CliGate` / `renderGate`).
@@ -187,7 +53,7 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] Re-running a site that needs "ご職業" does not prompt again — the
       entered value was saved for reuse (REQ-005)
 
-## 12. PoC: Three Guards (TEST-001 / REQ-007, SAFE-001)
+## 3. Three Guards (TEST-001 / REQ-007, SAFE-001)
 
 **Guard 1 — high-risk clause escalation (`08-terms`)**
 
@@ -201,7 +67,7 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] The gate asks separately, per attestation:
       "「私は18歳以上です」にチェックを入れますか？ [y/N]"
 - [ ] Answering `N` registers without the `adult` checkbox checked (verify via
-      "2. サイト一覧 / mandate" in `npm run poc -- ui:cli`, §13)
+      "2. サイト一覧 / mandate" in `npm run poc -- ui:cli`, §4)
 
 **Guard 2 — payment stop with trial→subscription exception (`09-trial-card`)**
 
@@ -223,7 +89,7 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
       in the headed browser; the result status is `assistedFill`, not
       `registered`
 
-## 13. PoC: Bulk Update, Local App UI, And Encrypted Store (TEST-001 / REQ-001/002/010/011, SEC-001/003, UI-001)
+## 4. Bulk Update, Local App UI, And Encrypted Store (TEST-001 / REQ-001/002/010/011, SEC-001/003, UI-001)
 
 - `npm run poc -- ui [deterministic|ai] [port]` starts the local browser UI.
 - `npm run poc -- ui:cli [deterministic|ai]` starts the legacy terminal UI fallback.
@@ -242,7 +108,7 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] The `登録済みサイト` page places `新規登録` in the upper-left action area
       and `一括更新` in the upper-right action area
 - [ ] Edit stored fields (e.g. phone number and address) together from the Web UI
-- [ ] After at least one registration (§11/§12), the Web UI registered-site list shows the
+- [ ] After at least one registration (§2/§3), the Web UI registered-site list shows the
       site's status, filled-field count, mandate count, and stale-field warning
 - [ ] Web UI settings can save provider/model/API key; API key display requires
       re-entering the master passphrase

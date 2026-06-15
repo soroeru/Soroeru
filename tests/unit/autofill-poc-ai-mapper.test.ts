@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AiMapper } from "../../poc/autofill-agent/src/agent/ai/ai-mapper.js";
+import { AiMapper } from "../../src/agent/ai/ai-mapper.js";
 import {
   AiProviderError,
   AnthropicProvider,
   type AiProvider,
   type CompleteJsonOptions,
-} from "../../poc/autofill-agent/src/agent/ai/provider.js";
-import { HIGH_RISK_FLAGS, TRANSFORMS, type FormField, type PageSnapshot } from "../../poc/autofill-agent/src/types.js";
+} from "../../src/agent/ai/provider.js";
+import { HIGH_RISK_FLAGS, TRANSFORMS, type FormField, type PageSnapshot } from "../../src/types.js";
 
 class StubProvider implements AiProvider {
   readonly id = "stub";

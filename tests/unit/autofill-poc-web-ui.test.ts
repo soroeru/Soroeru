@@ -6,9 +6,9 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AutofillApp } from "../../poc/autofill-agent/src/app/app.js";
-import { startWebUiServer, type WebUiServerHandle } from "../../poc/autofill-agent/src/app/web-ui.js";
-import { sha256Hex } from "../../poc/autofill-agent/src/store/store.js";
+import { AutofillApp } from "../../src/app/app.js";
+import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
+import { sha256Hex } from "../../src/store/store.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 

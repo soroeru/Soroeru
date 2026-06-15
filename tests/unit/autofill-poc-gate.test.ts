@@ -4,8 +4,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { maskForArtifact, maskValue, renderGate, ScriptedGate } from "../../poc/autofill-agent/src/agent/gate.js";
-import type { GateRequest, ProfileKey } from "../../poc/autofill-agent/src/types.js";
+import { maskForArtifact, maskValue, renderGate, ScriptedGate } from "../../src/agent/gate.js";
+import type { GateRequest, ProfileKey } from "../../src/types.js";
 
 function gateRequest(overrides: Partial<GateRequest> = {}): GateRequest {
   return {
