@@ -64,6 +64,107 @@ test("locked screen renders onboarding and rejects POSTs without the CSRF token"
   });
 });
 
+test("first run shows a vault setup form with passphrase confirmation and the vault location", async () => {
+  await withWebUi(async (app, server) => {
+    const html = await getHtml(server);
+    assert.match(html, /action="\/setup"/);
+    assert.match(html, /name="passphrase"/);
+    assert.match(html, /name="confirmPassphrase"/);
+    assert.ok(html.includes(app.storeFilePath));
+    assert.ok(!html.includes('action="/unlock"'));
+  });
+});
+
+test("vault setup creates the encrypted store with a confirmed passphrase and points to recovery-key setup", async () => {
+  await withWebUi(async (app, server) => {
+    assert.equal(await app.hasVault(), false);
+    const token = csrf(await getHtml(server));
+    const newPassphrase = "correct horse battery staple";
+
+    const res = await post(server, "/setup", { csrf: token, passphrase: newPassphrase, confirmPassphrase: newPassphrase });
+    assert.equal(res.status, 303);
+    const location = decodeURIComponent(res.headers.get("location") ?? "");
+    assert.match(location, /tab=settings/);
+    assert.match(location, /リカバリーキー/);
+
+    assert.equal(app.isUnlocked, true);
+    assert.equal(await app.hasVault(), true);
+    assert.equal(await app.store.verifyPassphrase(newPassphrase), true);
+  });
+});
+
+test("vault setup rejects mismatched or too-short passphrases without creating a vault", async () => {
+  await withWebUi(async (app, server) => {
+    const token = csrf(await getHtml(server));
+
+    const tooShort = await post(server, "/setup", { csrf: token, passphrase: "short1", confirmPassphrase: "short1" });
+    assert.match(decodeURIComponent(tooShort.headers.get("location") ?? ""), /8文字以上/);
+    assert.equal(await app.hasVault(), false);
+
+    const mismatched = await post(server, "/setup", {
+      csrf: token,
+      passphrase: "long-enough-pass",
+      confirmPassphrase: "long-enough-pass2",
+    });
+    assert.match(decodeURIComponent(mismatched.headers.get("location") ?? ""), /一致しません/);
+    assert.equal(await app.hasVault(), false);
+  });
+});
+
+test("vault setup is rejected once a vault already exists", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+
+    const res = await post(server, "/setup", { csrf: token, passphrase: "another-passphrase", confirmPassphrase: "another-passphrase" });
+    assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /すでに保管庫が作成されています/);
+  });
+});
+
+test("locked screen shows passphrase and recovery-key unlock forms once a vault exists", async () => {
+  await withWebUi(async (app, server) => {
+    await unlockThroughUi(server);
+    app.lock();
+
+    const html = await getHtml(server);
+    assert.match(html, /action="\/unlock"/);
+    assert.match(html, /action="\/unlock-recovery"/);
+    assert.ok(!html.includes('action="/setup"'));
+    assert.match(html, /パスフレーズとリカバリーキーの両方が分からない場合/);
+  });
+});
+
+test("dashboard shows a recovery-key reminder until a recovery key is generated", async () => {
+  await withWebUi(async (_app, server) => {
+    const token = await unlockThroughUi(server);
+
+    const before = await getHtml(server);
+    assert.match(before, /リカバリーキーが未設定です/);
+
+    await fetch(new URL("/recovery/generate", server.url), {
+      method: "POST",
+      body: new URLSearchParams({ csrf: token }),
+    });
+
+    const after = await getHtml(server);
+    assert.ok(!after.includes("リカバリーキーが未設定です"));
+  });
+});
+
+test("dashboard explains idle auto-lock duration when idle auto-lock is enabled", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-web-ui-"));
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 5 * 60 * 1000 });
+  const server = await startWebUiServer({ app, port: 0 });
+  try {
+    await unlockThroughUi(server);
+    const html = await getHtml(server);
+    assert.match(html, /5分で自動的にロックされます/);
+  } finally {
+    await server.close();
+    await app.shutdown();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("profile routes save locally, mask sensitive values, and require re-authentication to reveal", async () => {
   await withWebUi(async (app, server) => {
     const token = await unlockThroughUi(server);

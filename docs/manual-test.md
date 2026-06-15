@@ -115,7 +115,23 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 
 - [ ] Web UI binds to `127.0.0.1`; opening the printed URL shows the onboarding
       / unlock screen
+- [ ] On first run (no vault file yet), the screen shows a vault-setup form with
+      a passphrase and a confirmation field, the local vault file path, and
+      guidance that losing both the passphrase and the recovery key means the
+      data cannot be recovered
+- [ ] Entering passphrases shorter than 8 characters, or two passphrases that
+      do not match, shows a clear Japanese error and does not create the vault
+      file
+- [ ] Submitting matching passphrases of at least 8 characters creates the
+      encrypted vault file at the shown path, unlocks it, and redirects to
+      `設定` with guidance to set up a recovery key next
+- [ ] After locking or restarting once a vault exists, the screen instead shows
+      the passphrase-unlock and recovery-key-unlock forms (not the setup form)
 - [ ] Unlocking with a wrong master passphrase fails closed (no data shown)
+- [ ] Until a recovery key is generated, the dashboard shows a reminder banner
+      linking to `設定`; generating a recovery key removes the reminder
+- [ ] When idle auto-lock is enabled, the dashboard states how many minutes of
+      inactivity trigger an automatic lock
 - [ ] Web UI personal-data list masks values per `maskValue` (card number →
       last 4 digits; CVV / card expiry / holder / password → `••••••`; email /
       phone → partial mask); revealing a sensitive field requires re-entering

@@ -9,6 +9,7 @@ import type { Browser } from "playwright";
 import { chromium, firefox, webkit } from "playwright";
 import { join } from "node:path";
 import { PocStore } from "../store/store.js";
+import { vaultExists } from "../store/vault.js";
 
 export type EngineName = "chromium" | "firefox" | "webkit";
 
@@ -49,7 +50,8 @@ export interface CatashiroAppOptions {
  * browsers directly.
  */
 export class CatashiroApp {
-  private readonly idleLockMs: number;
+  /** Idle auto-lock timeout in ms (0 disables). Exposed so the UI can explain the behavior. */
+  readonly idleLockMs: number;
   private readonly launchBrowserFn: BrowserLauncher;
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
   private readonly clearTimeoutFn: (handle: unknown) => void;
@@ -69,6 +71,16 @@ export class CatashiroApp {
 
   get isUnlocked(): boolean {
     return this._store !== undefined && !this._store.isLocked;
+  }
+
+  /**
+   * True if an encrypted store file already exists on disk for this app's
+   * `stateDir` (first-run detection, #79). `PocStore.open()` creates a new
+   * in-memory store when none exists but does not write it until `save()`,
+   * so this is the source of truth for "has the vault been created yet".
+   */
+  hasVault(): Promise<boolean> {
+    return vaultExists(this.storeFilePath);
   }
 
   /**
