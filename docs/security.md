@@ -328,6 +328,25 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - Run the documented audit / update check when the toolchain supports it; document build /
   framework decisions in [`development.md`](development.md).
 
+### 12.1 Mac Beta Artifact Safety
+
+The Mac private-beta artifact is generated locally by `npm run package:mac` and written to
+`release/` (gitignored). It bundles compiled application code and installed npm
+dependencies, but must not bundle:
+
+- encrypted vault files from `state/` or `~/Library/Application Support/Catashiro`;
+- `.env`, API keys, passphrases, recovery keys, browser sessions, or cookies;
+- local AI review output under `state/ai-reviews/`;
+- screenshots, logs, diagnostics, or support bundles containing raw personal values.
+
+The generated launcher stores beta data under the user's app-support directory and writes
+process logs under `~/Library/Logs/Catashiro`. Logs must remain operational only; never
+log decrypted profile values, credentials, card data, CVV, API keys, or raw AI prompts.
+
+The first beta ZIP is allowed to be unsigned / not notarized only for the invited
+10-user private beta, and release notes must say so. Wider distribution requires a
+separate signing/notarization issue and a repeat of the security checklist below.
+
 ## 13. Security Checklist
 
 - [ ] Secrets are not committed; local state and logs are Git-ignored
@@ -343,5 +362,7 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - [ ] Auto-creation-prohibited sites are fill-only
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed
 - [ ] No CAPTCHA-solving / anti-bot / fingerprint-evasion dependency is present (`npm run poc -- check-bypass`, SEC-002 §7)
+- [ ] Mac beta artifacts exclude vault data, secrets, browser sessions, local logs, and support bundles
+- [ ] Signing/notarization status is documented before distributing a Mac beta ZIP
 - [ ] Future MCP tools are disabled by default, local-only, permissioned, audited, and unable to expose raw values or bypass gates
 - [ ] Security-sensitive behavior is tested or manually verified
