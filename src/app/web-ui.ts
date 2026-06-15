@@ -305,6 +305,12 @@ class WebUiServer {
       case "/diagnostics/export":
         await this.exportDiagnostics(form, res);
         return;
+      case "/withdrawal/mark":
+        await this.markWithdrawalCandidate(form, res);
+        return;
+      case "/withdrawal/prepare":
+        await this.prepareWithdrawalTask(form, res);
+        return;
       case "/registration/start":
         await this.startRegistration(form, res);
         return;
@@ -1620,8 +1626,44 @@ class WebUiServer {
           / 次の操作: ${escapeHtml(nextAction)}
         </p>
         ${labels.length > 0 ? `<p class="small">差分: ${escapeHtml(labels.join(", "))}</p>` : ""}
+        ${this.renderWithdrawalAction(record, state)}
       </article>
     `;
+  }
+
+  private renderWithdrawalAction(record: SiteRecord, state: ReturnType<typeof deriveAccountState>): string {
+    if (state === "withdrawalCandidate") {
+      return `
+        <div class="callout callout--risk stack">
+          <h4>退会タスク</h4>
+          <p class="small">このサービスは退会候補です。Catashiroは退会ページ探しや通常項目の準備を支援できますが、不可逆な退会・アカウント削除の最終ボタンは自動で押しません。</p>
+          ${
+            record.withdrawalPreparedAt
+              ? `<p class="small muted">準備済み: ${escapeHtml(new Date(record.withdrawalPreparedAt).toLocaleString("ja-JP"))} / 最終操作はユーザー確認が必要です。</p>`
+              : ""
+          }
+          <form class="stack" method="post" action="/withdrawal/prepare">
+            ${this.csrfInput()}
+            <input type="hidden" name="siteId" value="${escapeHtml(record.siteId)}">
+            <label class="field-delete">
+              <input type="checkbox" name="confirmFinalManual" value="1">
+              退会・アカウント削除の最終確認は自分で行い、Catashiroに自動実行させません
+            </label>
+            <button type="submit" class="secondary">退会タスクを準備</button>
+          </form>
+        </div>
+      `;
+    }
+    if (state === "registered" || state === "imported" || state === "updateNeeded" || state === "updateFailed") {
+      return `
+        <form method="post" action="/withdrawal/mark">
+          ${this.csrfInput()}
+          <input type="hidden" name="siteId" value="${escapeHtml(record.siteId)}">
+          <button type="submit" class="secondary">退会候補にする</button>
+        </form>
+      `;
+    }
+    return "";
   }
 
   private renderSettingsSection(settings: ProviderSettings | undefined): string {
@@ -2017,6 +2059,50 @@ class WebUiServer {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Disposition", `attachment; filename="catashiro-support-${Date.now()}.json"`);
     res.end(body);
+  }
+
+  private async markWithdrawalCandidate(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const siteId = formValue(form, "siteId");
+    const record = siteId ? this.app.store.setSiteAccountState(siteId, "withdrawalCandidate") : undefined;
+    if (!record) {
+      this.redirect(res, "warn", "退会候補にするサイトが見つかりません。", "sites");
+      return;
+    }
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "info",
+      message: "withdrawal candidate marked",
+      metadata: { siteId: record.siteId },
+    });
+    await this.app.store.save();
+    this.redirect(res, "ok", "退会候補にしました。最終退会操作は必ずユーザー確認が必要です。", "sites");
+  }
+
+  private async prepareWithdrawalTask(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const siteId = formValue(form, "siteId");
+    const record = siteId ? this.app.store.getSiteRecord(siteId) : undefined;
+    if (!record || record.accountState !== "withdrawalCandidate") {
+      this.redirect(res, "warn", "退会候補のサイトを選んでください。", "sites");
+      return;
+    }
+    if (form.get("confirmFinalManual") !== "1") {
+      this.redirect(res, "warn", "不可逆な退会・削除の最終操作を自動化しない確認が必要です。", "sites");
+      return;
+    }
+    const now = Date.now();
+    record.withdrawalPreparedAt = now;
+    record.withdrawalFinalConfirmationRequired = true;
+    record.lastCheckedAt = now;
+    record.nextAction = "prepareWithdrawal";
+    this.app.store.upsertSiteRecord(record);
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "warn",
+      message: "withdrawal task prepared with final manual confirmation required",
+      metadata: { siteId: record.siteId },
+    });
+    await this.app.store.save();
+    this.redirect(res, "ok", "退会タスクを準備しました。不可逆な最終操作はブラウザ上でご自身が確認して実行してください。", "sites");
   }
 
   // --- Bulk update (#88) -----------------------------------------------------

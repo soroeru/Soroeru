@@ -539,3 +539,45 @@ test("bulk update start requires selected stale site fields", async () => {
     assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /更新するサイトと項目を選択してください/);
   });
 });
+
+test("withdrawal task flow requires explicit final-action confirmation", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    app.store.upsertSiteRecord({
+      origin: "https://example.test",
+      siteId: "example",
+      serviceName: "Example Service",
+      registeredAt: Date.now(),
+      filledFields: [],
+      accountState: "registered",
+      status: "registered",
+      nextAction: "reviewInventory",
+    });
+
+    const html = await getHtml(server, "/?tab=sites");
+    assert.match(html, /退会候補にする/);
+
+    const marked = await post(server, "/withdrawal/mark", { csrf: token, siteId: "example" });
+    assert.equal(marked.status, 303);
+    assert.equal(app.store.getSiteRecord("example")?.accountState, "withdrawalCandidate");
+    assert.equal(app.store.getSiteRecord("example")?.nextAction, "prepareWithdrawal");
+
+    const candidate = await getHtml(server, "/?tab=sites");
+    assert.match(candidate, /退会タスク/);
+    assert.match(candidate, /最終ボタンは自動で押しません/);
+
+    const missingConfirm = await post(server, "/withdrawal/prepare", { csrf: token, siteId: "example" });
+    assert.equal(missingConfirm.status, 303);
+    assert.equal(app.store.getSiteRecord("example")?.withdrawalPreparedAt, undefined);
+
+    const prepared = await post(server, "/withdrawal/prepare", {
+      csrf: token,
+      siteId: "example",
+      confirmFinalManual: "1",
+    });
+    assert.equal(prepared.status, 303);
+    const record = app.store.getSiteRecord("example")!;
+    assert.ok(record.withdrawalPreparedAt);
+    assert.equal(record.withdrawalFinalConfirmationRequired, true);
+  });
+});
