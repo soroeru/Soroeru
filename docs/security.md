@@ -194,8 +194,9 @@ all data unless the user set up a recovery key beforehand.
   returns a mapping plan / high-risk findings; the automation layer fills values locally.
 - Use only the user's configured provider: Anthropic (Opus / Sonnet / Haiku) or OpenAI
   (GPT-5.4 / 5.4-mini / 5.3-Codex), via a provider-abstraction layer.
-- AI mode is optional and should be invoked only when deterministic confidence is too low,
-  a site/flow is unsupported, or the user explicitly asks for AI assistance.
+- AI mode is optional and should be invoked only when the user enables `mode=ai` and
+  deterministic confidence is too low, a site/flow is unsupported, or the user explicitly
+  asks for AI assistance.
 - Use stateless requests; do not enable prompt caching of PII, stored threads, or memory.
   Prefer zero-retention / no-training options where the provider offers them.
 - The model itself does not learn from inference and the context window is per-request;

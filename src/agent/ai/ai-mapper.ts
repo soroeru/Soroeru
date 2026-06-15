@@ -13,6 +13,7 @@ import {
   type CheckboxClassification,
   type HighRiskFlag,
   type KnownProfileKey,
+  type LocalCandidateDefinition,
   type MappingEntry,
   type MappingPlan,
   type PageLink,
@@ -23,6 +24,7 @@ import {
   type Transform,
 } from "../../types.js";
 import type { CustomFieldDef } from "../classifier.js";
+import { validateCandidateDefinition } from "../definitions.js";
 import type { Mapper } from "../mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "../normalization.js";
 import type { AiProvider } from "./provider.js";
@@ -66,6 +68,47 @@ ${TRANSFORMS.map((transform) => `- ${transform}: ${TRANSFORM_DESCRIPTIONS[transf
 `;
 
 const HIGH_RISK_GUIDE = HIGH_RISK_FLAGS.map((flag) => `${flag}（${HIGH_RISK_FLAG_DESCRIPTIONS[flag]}）`).join(" / ");
+
+export function candidateFromAiMapping(
+  snapshot: PageSnapshot,
+  plan: MappingPlan,
+  options: { id?: string; now?: number } = {},
+): LocalCandidateDefinition {
+  const url = new URL(snapshot.url);
+  const now = options.now ?? Date.now();
+  const fieldsById = new Map(snapshot.fields.map((field) => [field.fieldId, field]));
+  const candidate: LocalCandidateDefinition = {
+    id: options.id ?? `ai-${url.host}`,
+    serviceName: snapshot.title.split(" - ")[0] || url.host,
+    match: { domains: [url.host] },
+    registrationSignature: {
+      pathPatterns: [escapeRegex(url.pathname)],
+      fieldTokens: snapshot.fields.flatMap((field) => [field.name, field.id, field.autocomplete]).filter(Boolean).slice(0, 8),
+    },
+    fieldRules: plan.entries.map((entry) => {
+      const field = fieldsById.get(entry.fieldId);
+      const labelish = field ? [...field.labels, field.nearbyText, field.placeholder].find(Boolean) : undefined;
+      return {
+        id: `ai-${entry.fieldId}`,
+        profileKey: entry.profileKey,
+        ...(entry.transform ? { transform: entry.transform } : {}),
+        ...(labelish ? { labelPattern: escapeRegex(labelish) } : {}),
+        ...(field && (field.name || field.id) ? { attrPattern: escapeRegex(field.name || field.id) } : {}),
+      };
+    }),
+    source: "ai",
+    status: "candidate",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const validation = validateCandidateDefinition(candidate);
+  if (!validation.ok) throw new Error(`invalid AI candidate definition: ${validation.errors.join("; ")}`);
+  return candidate;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function mapFieldsSchema(): Record<string, unknown> {
   return {

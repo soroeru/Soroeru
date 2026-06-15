@@ -397,11 +397,12 @@ test("custom profile fields and provider settings persist through the encrypted 
     const settings = await post(server, "/settings/provider", {
       csrf: token,
       provider: "openai",
+      mode: "ai",
       model: "gpt-5.4",
       apiKey: "sk-test",
     });
     assert.equal(settings.status, 303);
-    assert.deepEqual(app.store.getSettings(), { provider: "openai", model: "gpt-5.4", apiKey: "sk-test" });
+    assert.deepEqual(app.store.getSettings(), { provider: "openai", model: "gpt-5.4", apiKey: "sk-test", mode: "ai" });
 
     const dashboard = await getHtml(server);
     assert.match(dashboard, /gpt-5\.4/);
