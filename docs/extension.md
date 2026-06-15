@@ -324,8 +324,19 @@ local UI facade, not a hosted backend or cloud service.
 
 Current web UI foundation:
 
-- **Onboarding / unlock** — master-passphrase unlock or recovery-key unlock, with plain
-  language copy about local encrypted storage and no cloud sync.
+- **Onboarding / unlock** (#79) — `GET /` branches on `CatashiroApp.hasVault()` (whether
+  `<stateDir>/store.json` exists yet):
+  - **First run** (no vault file): a vault-setup form (`POST /setup`) asks for the master
+    passphrase twice (min. 8 chars, must match), shows the local vault file path, and
+    explains that losing the passphrase and the recovery key together means the data
+    cannot be recovered. On success it creates and persists the store immediately and
+    redirects to `設定` with a nudge to set up a recovery key next.
+  - **Returning user** (vault file exists): the existing master-passphrase unlock
+    (`POST /unlock`) or recovery-key unlock (`POST /unlock-recovery`) forms, with the same
+    reset-guidance copy.
+  - The dashboard shows a persistent reminder banner linking to `設定` until a recovery
+    key has been generated, and states the idle auto-lock duration
+    (`CatashiroApp.idleLockMs`) when enabled.
 - **Tabs** — the primary navigation is `個人情報`, `登録済みサイト`, and `設定`.
 - **Personal data** — the page has a top-right `編集` button and a single whole-page
   registration-info form. All known fields and custom fields are edited together, with
@@ -336,7 +347,8 @@ Current web UI foundation:
   `新規登録` form near the top; a `一括更新` action appears below it only when stale
   update candidates exist, otherwise "差分のあるサイトはありません" is shown.
 - **Settings** — save provider/model/API key into the encrypted store, reveal API key
-  only after passphrase re-entry, and generate / verify / remove recovery keys.
+  only after passphrase re-entry, generate / verify / remove recovery keys, and shows the
+  local vault file path for reference.
 
 Registration execution, web review-and-confirm gate decisions, missing-data prompts,
 bulk-update execution, and wall hand-off/resume are designed in

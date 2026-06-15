@@ -20,13 +20,15 @@ import {
   type ProfileKey,
   type SiteRecord,
 } from "../types.js";
-import type { ProfileEntry, ProviderSettings } from "../store/store.js";
+import type { PocStore, ProfileEntry, ProviderSettings } from "../store/store.js";
 import { CatashiroApp, CatashiroAppError } from "./app.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4127;
 const FORM_LIMIT_BYTES = 128 * 1024;
 const URL_BASE = "http" + "://127.0.0.1";
+/** Minimum master-passphrase length enforced on first-run vault setup (#79). */
+const MIN_PASSPHRASE_LENGTH = 8;
 
 type FlashKind = "ok" | "error" | "warn";
 type AppTab = "profile" | "sites" | "settings";
@@ -189,7 +191,8 @@ class WebUiServer {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", URL_BASE);
     if (method === "GET" && url.pathname === "/") {
-      this.sendHtml(res, 200, this.renderHome(this.flashFromQuery(url.searchParams), undefined, this.pageState(url.searchParams)));
+      const hasVault = this.app.isUnlocked || (await this.app.hasVault());
+      this.sendHtml(res, 200, this.renderHome(this.flashFromQuery(url.searchParams), undefined, this.pageState(url.searchParams), hasVault));
       return;
     }
     if (method !== "POST") throw new HttpError(404, "ページが見つかりません");
@@ -197,6 +200,9 @@ class WebUiServer {
     const form = await readForm(req);
     this.assertCsrf(form);
     switch (url.pathname) {
+      case "/setup":
+        await this.setupVault(form, res);
+        return;
       case "/unlock":
         await this.unlock(form, res);
         return;
@@ -298,45 +304,83 @@ class WebUiServer {
     return `<input type="hidden" name="csrf" value="${escapeHtml(this.csrfToken)}">`;
   }
 
-  private renderHome(flash?: Flash, reveal?: Reveal, state: PageState = { tab: "profile", profileMode: "view" }): string {
-    if (!this.app.isUnlocked) return this.renderLocked(flash);
+  private renderHome(flash?: Flash, reveal?: Reveal, state: PageState = { tab: "profile", profileMode: "view" }, hasVault = true): string {
+    if (!this.app.isUnlocked) return this.renderLocked(flash, hasVault);
     return this.renderUnlocked(flash, reveal, state);
   }
 
-  private renderLocked(flash?: Flash): string {
-    return this.renderLayout(
-      "Catashiro",
-      `
-        <section class="hero-band">
-          <div>
-            <p class="eyebrow">Local-first Catashiro</p>
-            <h1>Catashiro を開く</h1>
-            <p>この画面はあなたのPC上だけで動きます。個人情報は暗号化して保存し、クラウド同期やテレメトリは使いません。</p>
-          </div>
-        </section>
-        ${this.renderFlash(flash)}
-        <section class="grid two">
-          <form class="panel" method="post" action="/unlock">
-            ${this.csrfInput()}
-            <h2>マスターパスフレーズ</h2>
-            <p class="muted">初回はここで入力した言葉が今後の鍵になります。忘れると復旧キーなしでは開けません。</p>
-            <label>パスフレーズ
-              <input name="passphrase" type="password" autocomplete="current-password" required>
-            </label>
-            <button type="submit">開く / はじめる</button>
-          </form>
-          <form class="panel" method="post" action="/unlock-recovery">
-            ${this.csrfInput()}
-            <h2>リカバリーキーで開く</h2>
-            <p class="muted">事前に作ったリカバリーキーがある場合だけ使えます。キーはこのPCから外部送信されません。</p>
-            <label>リカバリーキー
-              <input name="recoveryKey" type="password" autocomplete="off">
-            </label>
-            <button type="submit" class="secondary">リカバリーキーで開く</button>
-          </form>
-        </section>
-      `,
-    );
+  private renderLocked(flash: Flash | undefined, hasVault: boolean): string {
+    return this.renderLayout("Catashiro", hasVault ? this.renderUnlockPanels(flash) : this.renderSetupPanels(flash));
+  }
+
+  /** First-run onboarding: no encrypted store file exists yet (#79). */
+  private renderSetupPanels(flash?: Flash): string {
+    return `
+      <section class="hero-band">
+        <div>
+          <p class="eyebrow">Local-first Catashiro</p>
+          <h1>Catashiro を開く</h1>
+          <p>初めての起動です。この画面はあなたのPC上だけで動きます。個人情報は暗号化して保存し、クラウド同期やテレメトリは使いません。</p>
+        </div>
+      </section>
+      ${this.renderFlash(flash)}
+      <section class="grid two">
+        <form class="panel" method="post" action="/setup">
+          ${this.csrfInput()}
+          <h2>マスターパスフレーズを設定</h2>
+          <p class="muted">ここで決めた言葉が今後の暗号化の鍵になります。${MIN_PASSPHRASE_LENGTH}文字以上で、忘れにくく他人に推測されにくい言葉にしてください。</p>
+          <label>パスフレーズ
+            <input name="passphrase" type="password" autocomplete="new-password" minlength="${MIN_PASSPHRASE_LENGTH}" required>
+          </label>
+          <label>パスフレーズ（確認）
+            <input name="confirmPassphrase" type="password" autocomplete="new-password" minlength="${MIN_PASSPHRASE_LENGTH}" required>
+          </label>
+          <button type="submit">保管庫を作成して開く</button>
+        </form>
+        <div class="panel stack">
+          <h2>保存場所</h2>
+          <p class="muted">個人情報はこのPC内に暗号化して保存されます。</p>
+          <p class="small"><code>${escapeHtml(this.app.storeFilePath)}</code></p>
+          <h2>パスフレーズを忘れた場合</h2>
+          <p class="muted">パスフレーズを忘れると、リカバリーキー（保管庫を作成した後に設定画面で生成できます）がない限り、保存した個人情報は復元できません。リカバリーキーは外部に送信されず、このPC上にのみ表示されます。</p>
+        </div>
+      </section>
+    `;
+  }
+
+  /** Returning user: an encrypted store file exists; unlock with passphrase or recovery key. */
+  private renderUnlockPanels(flash?: Flash): string {
+    return `
+      <section class="hero-band">
+        <div>
+          <p class="eyebrow">Local-first Catashiro</p>
+          <h1>Catashiro を開く</h1>
+          <p>この画面はあなたのPC上だけで動きます。個人情報は暗号化して保存し、クラウド同期やテレメトリは使いません。</p>
+        </div>
+      </section>
+      ${this.renderFlash(flash)}
+      <section class="grid two">
+        <form class="panel" method="post" action="/unlock">
+          ${this.csrfInput()}
+          <h2>マスターパスフレーズ</h2>
+          <p class="muted">保管庫を作成したときに設定した言葉を入力してください。</p>
+          <label>パスフレーズ
+            <input name="passphrase" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">開く</button>
+        </form>
+        <form class="panel" method="post" action="/unlock-recovery">
+          ${this.csrfInput()}
+          <h2>リカバリーキーで開く</h2>
+          <p class="muted">事前に作ったリカバリーキーがある場合だけ使えます。キーはこのPCから外部送信されません。</p>
+          <label>リカバリーキー
+            <input name="recoveryKey" type="password" autocomplete="off">
+          </label>
+          <button type="submit" class="secondary">リカバリーキーで開く</button>
+        </form>
+      </section>
+      <p class="muted small">パスフレーズとリカバリーキーの両方が分からない場合、保存されている個人情報を復元する方法はありません。</p>
+    `;
   }
 
   private renderUnlocked(flash: Flash | undefined, reveal: Reveal | undefined, state: PageState): string {
@@ -354,6 +398,7 @@ class WebUiServer {
           <div>
             <p class="eyebrow">Local web app</p>
             <h1>Catashiro</h1>
+            ${this.renderIdleLockNote()}
           </div>
           <form method="post" action="/lock">
             ${this.csrfInput()}
@@ -362,6 +407,7 @@ class WebUiServer {
         </header>
         ${this.renderFlash(flash)}
         ${this.renderReveal(reveal)}
+        ${this.renderRecoveryReminder(store)}
         ${this.renderAttention(updateCandidates)}
         ${this.renderStats(profile.length, sites.length, settings)}
         <nav class="tabs" aria-label="主要画面">
@@ -829,6 +875,25 @@ class WebUiServer {
     return `<section class="reveal" role="status"><strong>${escapeHtml(reveal.label)}</strong>${reveal.warning ? `<p class="muted">${escapeHtml(reveal.warning)}</p>` : ""}<code>${escapeHtml(reveal.value)}</code></section>`;
   }
 
+  private renderIdleLockNote(): string {
+    if (this.app.idleLockMs <= 0) return "";
+    const minutes = Math.round(this.app.idleLockMs / 60000);
+    return `<p class="muted small">操作がない場合は${minutes}分で自動的にロックされます。</p>`;
+  }
+
+  private renderRecoveryReminder(store: PocStore): string {
+    if (store.hasRecoveryKey) return "";
+    return `
+      <div class="attn attn--risk" role="status">
+        <div>
+          <strong>リカバリーキーが未設定です</strong>
+          <p>パスフレーズを忘れた場合、リカバリーキーがないと保存した個人情報を復元できません。設定画面で生成できます。</p>
+        </div>
+        <a class="button secondary" href="/?tab=settings">設定を開く</a>
+      </div>
+    `;
+  }
+
   private renderAttention(updateCandidates: { record: SiteRecord; stale: ReturnType<typeof staleFilledFields> }[]): string {
     if (updateCandidates.length > 0) {
       return `
@@ -1126,6 +1191,7 @@ class WebUiServer {
       <div class="panel stack">
         <h3>リカバリーキー</h3>
         <p class="muted">状態: ${hasRecovery ? "設定済み" : "未設定"}。生成したキーは一度だけ表示されます。</p>
+        <p class="muted small">パスフレーズとリカバリーキーの両方を失うと、保存した個人情報は復元できません。生成したキーは安全な場所に保管してください。</p>
         <div class="actions">
           <form method="post" action="/recovery/generate">
             ${this.csrfInput()}
@@ -1143,8 +1209,36 @@ class WebUiServer {
           </label>
           <button type="submit" class="secondary" ${hasRecovery ? "" : "disabled"}>検証</button>
         </form>
+        <h3>保存場所</h3>
+        <p class="muted small">個人情報はこのPC内の以下の場所に暗号化して保存されています。</p>
+        <p class="small"><code>${escapeHtml(this.app.storeFilePath)}</code></p>
       </div>
     `;
+  }
+
+  /** First-run vault creation (#79): set the master passphrase (with confirmation) and create the encrypted store file. */
+  private async setupVault(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    if (await this.app.hasVault()) {
+      this.redirect(res, "error", "すでに保管庫が作成されています。パスフレーズで開いてください。");
+      return;
+    }
+    const passphrase = formValue(form, "passphrase");
+    const confirmPassphrase = formValue(form, "confirmPassphrase");
+    if (!passphrase || !confirmPassphrase) {
+      this.redirect(res, "error", "パスフレーズを2回入力してください。");
+      return;
+    }
+    if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+      this.redirect(res, "error", `パスフレーズは${MIN_PASSPHRASE_LENGTH}文字以上で入力してください。`);
+      return;
+    }
+    if (passphrase !== confirmPassphrase) {
+      this.redirect(res, "error", "確認用パスフレーズが一致しません。もう一度入力してください。");
+      return;
+    }
+    await this.app.unlock(passphrase);
+    await this.app.store.save();
+    this.redirect(res, "ok", "保管庫を作成しました。続けてリカバリーキーを作成しておくことをおすすめします。", "settings");
   }
 
   private async unlock(form: URLSearchParams, res: ServerResponse): Promise<void> {
@@ -1153,8 +1247,10 @@ class WebUiServer {
       this.redirect(res, "error", "パスフレーズを入力してください。");
       return;
     }
+    const isNewVault = !(await this.app.hasVault());
     try {
       await this.app.unlock(passphrase);
+      if (isNewVault) await this.app.store.save();
       this.redirect(res, "ok", "暗号化ストアを開きました。", "profile");
     } catch (err) {
       const message = err instanceof CatashiroAppError ? err.message : "ストアを開けませんでした。";
