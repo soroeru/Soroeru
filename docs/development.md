@@ -83,6 +83,40 @@ encrypted store, measurement JSON) is written under `state/catashiro-poc/` and
 must not be committed. See [`verification-results.md`](verification-results.md)
 for full command reference and verification results.
 
+## 3.1 Mac Beta Packaging
+
+The first beta packaging path intentionally avoids adding Electron, Tauri, auto-update,
+or a hosted backend. `npm run package:mac` creates a small macOS `.app` wrapper around
+the existing compiled TypeScript app and local web UI:
+
+```bash
+npm ci
+npx playwright install chromium
+npm run package:mac
+```
+
+The script writes:
+
+- `release/Catashiro.app`
+- `release/Catashiro-mac-beta.zip`
+
+The generated app starts `dist/compiled/run/cli.js ui deterministic 0`, binds the local
+web UI to `127.0.0.1`, opens the default browser, and stores the encrypted beta vault
+under `~/Library/Application Support/Catashiro` unless `CATASHIRO_STATE_ROOT` is set.
+Shutdown uses the existing `CatashiroApp.shutdown()` path, which closes tracked
+Playwright browser sessions and locks the vault.
+
+Runtime expectations for the first private beta:
+
+- Node.js 22 or newer must be installed on the beta Mac, or `CATASHIRO_NODE_BINARY` must
+  point to a bundled Node executable. The launcher checks common Homebrew locations and
+  shows a macOS alert if Node is missing.
+- The ZIP is unsigned and not notarized until a later signing issue provides developer
+  credentials and release automation. Beta install notes must state this plainly.
+- `release/` is ignored by Git. Do not commit `.app`, ZIP, logs, vault files, or support
+  bundles.
+- This package is Mac-only; Windows/Linux/App Store/auto-update packaging is out of scope.
+
 ## 4. Project Structure
 
 Current repository shape:
@@ -95,6 +129,7 @@ Current repository shape:
 ├── .githooks/
 ├── docs/
 ├── scripts/
+│   ├── package-mac.sh
 │   └── setup-hooks.sh
 ├── sites/             # local 10-pattern test sites (defs.ts + server.ts)
 ├── src/
@@ -110,6 +145,7 @@ Current repository shape:
 │   └── unit/
 ├── package.json
 ├── package-lock.json
+├── release/           # generated Mac app/ZIP artifacts (gitignored)
 └── tsconfig.json
 ```
 
@@ -185,6 +221,7 @@ once in §2 above as part of environment setup; do not duplicate it elsewhere.
 
 - `state/` is local state and must not be committed.
 - `state/ai-reviews/` contains local AI review artifacts.
+- `release/` contains generated `.app` / ZIP artifacts and must not be committed.
 - `node_modules/`, build outputs, coverage, and common caches are ignored by
   Git.
 - Keep durable workflow lessons near the owning document, Issue, or PR instead

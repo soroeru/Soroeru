@@ -9,7 +9,8 @@
     "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js",
     "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/run/cli.js",
     "poc:serve": "npm run poc -- serve",
-    "poc:matrix": "npm run poc -- matrix"
+    "poc:matrix": "npm run poc -- matrix",
+    "package:mac": "bash scripts/package-mac.sh"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

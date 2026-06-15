@@ -21,7 +21,9 @@
 //   node dist/compiled/run/cli.js check-bypass
 
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { startPocServer } from "../sites/server.js";
 import { AiMapper } from "../src/agent/ai/ai-mapper.js";
 import { aiProviderFromEnv, createProvider } from "../src/agent/ai/provider.js";
@@ -37,7 +39,15 @@ import { checkNetworkEgress } from "../src/dev/egress-check.js";
 import { checkLocalPersistence } from "../src/dev/privacy-check.js";
 import { formatResult, hasFailures, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
-const STATE_ROOT = "state/catashiro-poc";
+const STATE_ROOT =
+  process.env["CATASHIRO_STATE_ROOT"] ??
+  (process.env["CATASHIRO_APP_BUNDLE"] === "1" ? join(homedir(), "Library", "Application Support", "Catashiro") : "state/catashiro-poc");
+
+function openUrlInDefaultBrowser(url: string): void {
+  if (process.platform !== "darwin") return;
+  const child = spawn("open", [url], { detached: true, stdio: "ignore" });
+  child.unref();
+}
 
 function aiMapperFromEnv(): Mapper | undefined {
   const provider = aiProviderFromEnv();
@@ -268,6 +278,7 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
   console.log(`Catashiro local web app: ${server.url}`);
   console.log(`mapper variant: ${variantArg}`);
   console.log("Press Ctrl+C to stop.");
+  if (process.env["CATASHIRO_OPEN_BROWSER"] === "1") openUrlInDefaultBrowser(server.url);
 
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
