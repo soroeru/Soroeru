@@ -115,19 +115,15 @@ PR descriptions should include:
 - how it was verified
 - remaining risks or skipped checks
 
-AI review convention:
-
-- Codex-authored branches should be reviewed by Claude when possible.
-- Claude-authored branches should be reviewed by Codex when possible.
-- Local AI review output under `state/ai-reviews/` is fast feedback, not a
-  replacement for final judgment.
+See §8 for the cross-AI review convention.
 
 ## 8. Local AI Review
 
 Setup, branch rules, skip conditions, follow-up policy, cleanup policy, output,
 and troubleshooting live in [`local-ai-review.md`](local-ai-review.md). PRs
 authored by Codex are reviewed by Claude when possible, and PRs authored by
-Claude are reviewed by Codex when possible.
+Claude are reviewed by Codex when possible. Local AI review output under
+`state/ai-reviews/` is fast feedback, not a replacement for final judgment.
 
 GitHub Actions based cross-AI review is not enabled by default. If a project
 adds it as fallback automation, keep PAT / secret requirements in that
@@ -149,7 +145,7 @@ Examples:
 
 - A lesson about branch naming belongs in this document.
 - A lesson about local review hooks belongs in [`local-ai-review.md`](local-ai-review.md).
-- A lesson about extension manual testing belongs in [`manual-test.md`](manual-test.md).
+- A lesson about manual testing belongs in [`manual-test.md`](manual-test.md).
 - A one-off decision for a specific task may stay in that Issue or PR.
 
 Reintroduce a separate lessons document only after ownership and update

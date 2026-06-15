@@ -19,11 +19,16 @@ security rationale (see [`security.md`](security.md)), and agent operating rules
 People register the same personal information across many sites and must keep it current
 when it changes (moving, new phone number, new card). Doing this by hand is repetitive.
 
-`autofill` keeps the user's personal data **locally and encrypted** and uses an AI agent
-plus Playwright browser automation to register on new sites and update existing accounts
-on the user's behalf, with a single review-and-confirm step per registration. Keeping the
-data local means the user owns and manages their own information rather than handing it to
-a third-party service.
+`autofill` keeps the user's personal data **locally and encrypted** and uses Playwright
+browser automation to register on new sites, update existing accounts, and help the user
+withdraw from services they no longer use. Keeping the data local means the user owns and
+manages their own information rather than handing it to a third-party service.
+
+The core product is a **personal-data ledger and per-site account-state manager**: the
+user can see which sites hold which classes of personal information, what was approved,
+which records are stale, and which services are candidates for withdrawal. Form filling is
+an important automation capability, but it is a means to keep that ledger current rather
+than the product's only purpose.
 
 Browser automation uses Playwright so the agent works across browser engines (Chromium /
 Firefox / WebKit) rather than depending on one browser's autofill.
@@ -31,12 +36,22 @@ Firefox / WebKit) rather than depending on one browser's autofill.
 ## 2. Product Principles
 
 - The user's personal data stays local and encrypted; the user owns it.
+- `autofill` should be provided as OSS so the code managing the user's personal-data
+  single source of truth is inspectable, self-buildable, and portable.
+- The app should be a local-first desktop application; `autofill` must not operate a
+  hosted vault that stores users' personal data.
+- The user should be able to choose where the encrypted vault lives: local disk by
+  default, and later a user-owned cloud-storage folder/provider for encrypted sync.
 - The AI agent acts autonomously; required human intervention is minimized.
+- AI must be optional. The default experience must work in deterministic mode without an
+  AI API key; AI mode is an enhancement for ambiguous or unsupported cases.
 - Registration auto-submits only after the user approves a review-and-confirm gate.
 - Never bypass CAPTCHA, MFA, bot detection, or access controls — detect and hand off.
 - No checkout / payment, except a free-trial→subscription card case approved by the user.
 - Prefer deterministic, inspectable matching; also evaluate an AI-driven variant.
-- Network egress only to the target sites the user acts on and the user's configured AI provider; no telemetry; never upload the data store.
+- Network egress only to the target sites the user acts on, the user's configured AI
+  provider, and future user-owned encrypted vault storage (encrypted bytes only); no
+  telemetry; never upload the decrypted data store or raw personal values.
 - Treat all stored data (including card data and credentials) as sensitive.
 
 ## 3. Autonomy and Human Hand-off Model
@@ -66,13 +81,22 @@ Registration flow:
   email, phone, postal code, addresses (home / work / shipping / billing), company,
   department, **credit card (number, expiry, holder, CVV)**, **per-site login ID /
   password**, and dynamically added fields.
+- Per-site account-state inventory: registration state, submitted-field references,
+  mandates, stale fields, update status, withdrawal status, and service-use status.
 - URL-driven autonomous registration with the review-and-confirm gate and three guards.
 - Per-site inventory of submitted fields (references + hashes, not duplicated raw values)
   and authorization records.
 - Bulk update across selected sites by diffing against the latest stored values.
-- Settings, including the user's own AI provider API key.
+- Withdrawal assistance for services the user no longer uses, subject to the same wall
+  hand-off and final-confirmation boundaries.
+- Settings, including the user's own AI provider API key when AI mode is enabled.
+- Optional user-owned encrypted cloud-storage sync for the vault, after a dedicated
+  design/implementation issue defines provider support and egress controls.
 - CAPTCHA / MFA / verification wall detection with seamless hand-off and resume.
-- Two field-detection variants (deterministic and AI-driven) compared for accuracy.
+- Shared site/form/field/withdrawal/wall definitions used by deterministic mode and AI
+  mode.
+- Local AI-generated candidate definitions that can be reused by the same user and, only
+  after explicit opt-in sanitization/review, proposed for shared official definitions.
 
 ## 5. Non-Scope
 
@@ -81,7 +105,13 @@ Registration flow:
 - auto-submitting on sites whose terms prohibit automated account creation (fill only);
 - auto-attesting eligibility / identity statements;
 - multi-locale form detection in the PoC (PoC is Japanese-only);
-- cloud sync, backend API servers, telemetry;
+- `autofill`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
+  reporting;
+- app-embedded terminals, CLI Provider integration, or using Claude Code / Codex CLI as
+  the primary AI integration path;
+- MCP server support in the MVP; a strictly permissioned local MCP server may be added
+  later for advanced users, but it must not expose raw personal values or bypass
+  `autofill`'s approval gates;
 - mobile apps, iOS app autofill, Android Autofill Service;
 - using any AI provider other than the user's configured one.
 
@@ -101,6 +131,11 @@ Registration flow:
 | REQ-010 | Keep a per-site inventory and an authorization record (mandate) per registration. | Must | Planned |
 | REQ-011 | Bulk-update selected sites by diffing against the latest stored values. | Must | Planned |
 | REQ-012 | Use the user's configured AI provider only; never send raw personal values to the model. | Must | Planned |
+| REQ-013 | Work without AI by default through deterministic definitions and classifiers. | Must | Planned |
+| REQ-014 | Use AI mode only as an optional enhancement for ambiguous or unsupported cases, via API Provider integration. | Should | Planned |
+| REQ-015 | Store AI-generated candidate definitions locally and encrypted; never treat them as official until reviewed/promoted. | Should | Planned |
+| REQ-016 | Support withdrawal management so the user can identify and leave services they no longer use. | Should | Planned |
+| REQ-017 | Allow the user to place the encrypted vault in a user-owned storage location, including future cloud-storage sync, without giving `autofill` a hosted copy. | Could | Planned |
 
 ## 7. Non-Functional Requirements
 
@@ -112,8 +147,9 @@ section records requirement-level statements.
 | SEC-001 | Security | Personal data (incl. card data and credentials) is encrypted at rest with AES-256-GCM under a master-passphrase-derived key. | No plaintext at rest; derived key in memory only. |
 | SEC-002 | Security | Never bypass CAPTCHA, MFA, bot detection, or access controls. | Detect and hand off to the user. |
 | SEC-003 | Security | Raw personal values are not sent to the AI model; only form structure / terms text. | Structure to model, values local. |
-| PRIV-001 | Privacy | Network egress only to the target sites the user acts on and the user's configured AI provider; no telemetry; the data store is never uploaded. | Local-first. |
+| PRIV-001 | Privacy | Network egress only to the target sites the user acts on, the user's configured AI provider, and future user-owned encrypted vault storage (encrypted bytes only); no telemetry; the decrypted data store is never uploaded. | Local-first. |
 | PRIV-002 | Privacy | No provider stateful features (prompt caching of PII, stored threads, memory). | Stateless requests; zero-retention where available. |
+| PRIV-003 | Privacy | Local candidate definitions and per-site activity metadata are treated as private, even when they do not contain raw profile values. | Encrypted with the vault. |
 | SAFE-001 | Safety | Registrations submit only after the user approves the review-and-confirm gate. | No blind auto-submit. |
 | PERF-001 | Performance | Form analysis and filling should complete without excessive delay on ordinary forms. | Usable per-site latency. |
 | MAINT-001 | Maintainability | Field classification, wall detection, and storage/encryption are isolated and testable. | No scattered DOM or crypto logic. |
@@ -153,19 +189,45 @@ walls.
 The user opens the data-management UI to add, edit, or delete fields (including card data
 and credentials) and set the AI provider API key.
 
+### UC-007: Track and Withdraw from Unused Services
+
+The user reviews their per-site inventory, identifies services they no longer use, and
+asks `autofill` to help find the withdrawal flow. The app prepares a withdrawal task and
+hands off at walls; irreversible account deletion or final withdrawal confirmation must
+remain gated by the user.
+
+### UC-008: Use AI Only When Needed
+
+The user normally runs deterministic mode. When a form or withdrawal flow is unsupported
+or ambiguous and the user has enabled AI mode with their own API key, the app sends only
+the sanitized form/flow structure and relevant candidate definitions to the configured AI
+provider, then validates the returned candidate before reuse.
+
+### UC-009: Sync an Encrypted Vault Through User-Owned Storage
+
+The user chooses a local folder or supported cloud-storage folder for the encrypted vault.
+The storage provider receives only encrypted vault bytes and never receives the passphrase,
+derived key, decrypted records, or raw personal values from `autofill`.
+
 ## 9. Field Detection Requirements
 
-Two variants are built and compared (RFC §8):
+Two variants share the same site/form definition format and are compared (RFC §8):
 
 1. **Deterministic** — reuse the scanner and rule-based classifier, inspecting
    `autocomplete`, `name`, `id`, `placeholder`, associated and wrapping `label` text, and
    safely collectible nearby text. Examples: `autocomplete="email"` → email; `住所` →
    address; `会社名` → company.
 2. **AI-driven** — the model receives form structure and returns a mapping plan; values
-   are filled locally.
+   are filled locally. AI mode is used for unsupported or ambiguous cases, not as a
+   requirement for the standard experience.
 
 The PoC measures success and mis-mapping rates for both, Japanese-only. Ambiguous fields
-should be low-confidence or deferred to the user, not guessed with false confidence.
+should be low-confidence, resolved by AI mode if configured, or deferred to the user, not
+guessed with false confidence.
+
+AI-generated local candidate definitions are private user state. They may improve that
+user's later runs immediately, but they become shared official definitions only after
+explicit user opt-in, sanitization, review, and tests.
 
 ## 10. Wall Detection Requirements
 
@@ -187,8 +249,12 @@ build a heavy schema engine early.
 | Personal data field | A locally stored, encrypted value (name, address, phone, email, card data, per-site credential, or a custom field). |
 | Field detection | Finding form controls and collecting metadata about them. |
 | Field classification | Mapping a detected control to a stored field type (deterministic or AI-driven). |
+| Deterministic Mode | The default mode that uses official definitions, local candidate definitions, and rule-based classifiers without an AI API key. |
+| AI Mode | Optional mode that uses the user's configured API Provider for ambiguous or unsupported form, terms, or withdrawal analysis. |
+| Candidate definition | A local, unreviewed site/form/field/withdrawal/wall definition generated by AI mode, user input, or observation; private until explicitly submitted. |
 | Review-and-confirm gate | The single post-analysis approval the user gives before the agent submits a registration. |
 | Three guards | High-risk clause escalation, payment stop (free-trial exception), and no auto-attestation. |
 | Wall | A step that cannot/should not be automated: CAPTCHA, MFA, identity / email / SMS verification. |
 | Mandate | A per-registration authorization record of what the user approved (references, hashes, terms URL). |
 | Per-site record | Local record of what was submitted to a site (references + hashes, not duplicated raw values). |
+| User-owned cloud storage | A storage location chosen and controlled by the user where only encrypted vault bytes may be synced. |

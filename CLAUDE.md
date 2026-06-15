@@ -21,13 +21,15 @@ section with Claude Code-specific guidance. When the shared sections in
 
 ## Project Overview
 
-`autofill` is a **local-first, autonomous form-filling agent** for personal use.
+`autofill` is a **local-first, autonomous personal-data ledger and account-state
+agent** for personal use.
 
 The user stores their personal data locally (encrypted). When the user gives a URL,
 the agent finds the registration page on that site, fills the form, and completes the
 registration on the user's behalf after a single review-and-confirm step. The agent
 also keeps a per-site inventory of what was submitted and can update the user's
-information across many sites when their data changes.
+information across many sites when their data changes, plus help the user withdraw from
+services they no longer use.
 
 The project starts as a personal tool. Browser automation is performed with
 **Playwright** so the agent is not tied to one browser engine (Chromium / Firefox /
@@ -37,6 +39,12 @@ WebKit).
 
 - Build a small, working autonomous agent the user can run locally.
 - Keep the user's personal data **local and encrypted**; the user owns and manages it.
+- Provide `autofill` as OSS so the code managing the user's personal-data single source
+  of truth is inspectable, self-buildable, and portable.
+- Do not operate a hosted vault. The encrypted vault lives on local disk by default and
+  may later sync through user-owned cloud storage as encrypted bytes only.
+- AI is optional: deterministic mode must be the default usable experience, and AI mode
+  is an API Provider enhancement for ambiguous or unsupported cases.
 - Give the AI agent maximum autonomy; minimize required human intervention.
 - The agent may auto-fill and auto-submit registrations after the user approves a
   single review-and-confirm gate; it may accept terms and complete the final submit
@@ -48,9 +56,9 @@ WebKit).
   user's explicit approval.
 - Prefer deterministic, inspectable form-matching logic; also evaluate an AI-driven
   variant and compare accuracy.
-- Limit network egress to the target sites the user acts on and the user's own AI
-  provider; no telemetry, no cloud sync, no other external services; never upload the
-  data store.
+- Limit network egress to the target sites the user acts on, the user's own AI provider,
+  and future user-owned encrypted-vault storage; no telemetry or other external services;
+  never upload decrypted data or raw personal values.
 - Treat all stored personal data (including card data and per-site credentials) as
   sensitive by default.
 
@@ -107,7 +115,12 @@ Planned capabilities:
   values) and an authorization record (mandate) of what the user approved.
 - Bulk update: select sites, diff against the latest stored values, and update the
   changed fields on each site.
+- Withdrawal management: identify unused services, prepare withdrawal tasks, and keep
+  irreversible final actions behind explicit user confirmation.
 - Settings, including the user's own AI provider API key.
+- Shared site/form/field/withdrawal/wall definitions for deterministic and AI modes.
+- Local candidate definitions are stored encrypted; they may be shared only after
+  explicit opt-in sanitization/review.
 - Detect CAPTCHA / MFA / verification walls and hand off / resume seamlessly.
 
 ## Explicitly Out of Scope
@@ -117,7 +130,13 @@ Do not implement these unless the user explicitly changes the scope:
 - checkout / purchase / payment (except the free-trial→subscription card case above)
 - **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls
 - multi-locale form detection in the PoC (PoC is Japanese-only; multi-locale is later)
-- cloud sync, backend API servers, telemetry
+- `autofill`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
+  reporting
+- app-embedded terminals, CLI Provider integration, or using Claude Code / Codex CLI as
+  the primary AI integration path
+- MCP server support in the MVP; a strictly permissioned local MCP server may be added
+  later for advanced users, but it must not expose raw personal values or bypass
+  `autofill`'s approval gates
 - mobile apps, iOS app autofill, Android Autofill Service
 - using any AI provider other than the user's configured one
 
@@ -142,21 +161,24 @@ reason and update the relevant docs.
 Canonical architecture lives in [`docs/extension.md`](docs/extension.md) and the RFC.
 In short, `autofill` is a **local Playwright-based application** with four layers:
 
-- **store layer**: encrypted personal data, per-site records, mandates;
-- **agent layer**: the user's AI (form discovery, field mapping, high-risk clause
-  detection) — receives form structure, not raw values;
+- **store layer**: encrypted personal data, per-site records, mandates, and local
+  candidate definitions;
+- **definition / agent layer**: deterministic definitions/classifiers by default, with
+  optional API Provider analysis for ambiguous cases — receives form structure, not raw
+  values;
 - **automation layer**: Playwright drives a (headed) browser to navigate, fill, submit,
   observe, and hand off / resume across Chromium / Firefox / WebKit;
-- **UI layer**: personal-data management, per-site inventory, the review-and-confirm
-  gate, and settings (API key).
+- **UI layer**: personal-data management, per-site inventory, update/withdrawal tasks,
+  the review-and-confirm gate, and settings (vault location, API key).
 
 ## Field Detection Strategy
 
 Two variants are built and compared (see RFC §8):
 
-1. **Deterministic**: reuse the existing scanner (`scanFields`) and rule-based
-   classifier to map fields (`autocomplete`, `name`, `id`, `placeholder`, `label`,
-   nearby text). Examples: `autocomplete="email"` → email; `住所` label → address.
+1. **Deterministic**: reuse the scanner (`src/agent/scan.ts`) and rule-based classifier
+   (`src/agent/classifier.ts`) to map fields (`autocomplete`, `name`, `id`,
+   `placeholder`, `label`, nearby text). Examples: `autocomplete="email"` → email;
+   `住所` label → address.
 2. **AI-driven**: the model receives the form structure and returns a mapping plan;
    the automation layer fills the values locally.
 
@@ -304,8 +326,9 @@ Primary responsibilities:
 - Prefer the dedicated `Read`, `Edit`, and `Write` tools over `cat`, `sed`, or `echo`.
 - Use parallel tool calls only for independent operations.
 - Do not add new dependencies, frameworks, or build tools without a clear, documented reason.
-- Do not add AI providers beyond the user's configured set, cloud sync, telemetry, or a
-  backend server unless the user explicitly requests them.
+- Do not add AI providers beyond the user's configured set, telemetry, backend servers,
+  hosted vaults, or user-owned cloud-sync implementations unless the user explicitly
+  requests them.
 - Do not weaken encryption, log decrypted values, or send raw personal data to the model.
 - Do not use real user data when creating examples, tests, or fixtures.
 
