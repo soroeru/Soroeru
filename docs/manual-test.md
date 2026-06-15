@@ -306,6 +306,10 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
       selected field, runs selected sites independently through the review gate,
       surfaces per-site success/failure/wall states, and writes a new mandate per
       updated site
+- [ ] Web UI site inventory can mark a registered/imported site as a withdrawal
+      candidate; the resulting `退会タスク` panel requires an explicit checkbox before
+      preparation and states that irreversible withdrawal/account deletion final actions
+      are never automated
 - [ ] Legacy `ui:cli` still supports bulk update as a developer fallback:
       "3. 一括更新" lists stale sites, runs the gate + three guards + wall handoff
       per site, and writes a new mandate per updated site

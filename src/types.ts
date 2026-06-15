@@ -274,6 +274,8 @@ export interface SiteRecord {
   lastUpdatedAt?: number;
   nextAction?: AccountNextAction;
   withdrawalCandidateAt?: number;
+  withdrawalPreparedAt?: number;
+  withdrawalFinalConfirmationRequired?: boolean;
 }
 
 export interface RegistrationMandate {

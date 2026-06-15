@@ -235,13 +235,16 @@ The user selects sites and runs an update. For each, the agent diffs the per-sit
 hashes against the latest stored values, opens the sites with changes, logs in with stored
 credentials, updates the changed fields, and handles walls via §6.
 
-## 8. Withdrawal Management (design direction, not yet implemented)
+## 8. Withdrawal Management
 
-The per-site inventory should help the user identify services they no longer use and start
-withdrawal tasks. The agent may find the withdrawal page, prepare a flow plan, fill
-ordinary fields, and hand off at CAPTCHA / MFA / verification walls. Irreversible account
-deletion, final withdrawal confirmation, auto-attestation, and any prohibited automated
-action must remain gated by the user.
+The per-site inventory helps the user identify services they no longer use and start
+withdrawal tasks. The Web UI can mark a site as `withdrawalCandidate`
+(`nextAction=prepareWithdrawal`) and prepare the task only after the user explicitly
+confirms that irreversible withdrawal / account-deletion final actions are manual. The
+agent may later find the withdrawal page, prepare a flow plan, fill ordinary fields, and
+hand off at CAPTCHA / MFA / verification walls. Irreversible account deletion, final
+withdrawal confirmation, auto-attestation, and any prohibited automated action must
+remain gated by the user and are never auto-clicked.
 
 Withdrawal flows use the same shared definition model as registration/update flows:
 official definitions when available, encrypted local candidates for user-specific
