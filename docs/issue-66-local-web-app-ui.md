@@ -158,17 +158,19 @@ Bulk-update routes (remaining, #88):
      `CatashiroApp.launchBrowser`;
    - `RegistrationSession.notes` carries the run's log messages, rendered on
      the sites tab.
-3. **Bulk-update execution (remaining, #88)**:
-   - turn stale-field candidates into selected background update runs;
-   - show before/after field labels and per-site progress;
-   - preserve existing guard and wall behavior through `AppRunner.update`.
+3. **Bulk-update execution (done, #88)**:
+   - stale-field candidates render as selected site/field checkboxes;
+   - `BulkUpdateSession` turns those selections into background update runs;
+   - the Web UI shows per-site progress, confirmation gates, wall hand-off, and
+     per-site results;
+   - existing guard and wall behavior is preserved through `AppRunner.update`.
 4. **Manual UX verification and polish**:
    - run the fake-data manual path: unlock -> add profile -> start local test
      registration -> approve gate -> complete -> see site record (covered by
      `docs/manual-test.md` §2/§3 and `tests/unit/catashiro-poc-registration.test.ts`);
    - verify responsive layout on narrow and desktop widths;
-   - update `docs/manual-test.md` again once bulk-update run wiring (#88) is
-     usable.
+  - keep `docs/manual-test.md` aligned as run pages grow beyond the MVP bulk
+    update wiring.
 
 ## Verification Plan
 
@@ -179,4 +181,3 @@ Bulk-update routes (remaining, #88):
 - `npm run poc -- check-bypass`
 - After run wiring lands: `npm run poc:matrix -- deterministic chromium` and a
   manual browser walkthrough using fake data only.
-

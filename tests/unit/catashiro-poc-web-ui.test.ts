@@ -470,6 +470,8 @@ test("dashboard shows site inventory and stale bulk-update candidates without ra
     assert.match(html, /Example Service/);
     assert.match(html, /更新候補 1/);
     assert.match(html, /メールアドレス/);
+    assert.match(html, /name="bulkField"/);
+    assert.match(html, /value="example\|email"/);
     assert.ok(!html.includes("new@example.test"));
     assert.ok(!html.includes("old@example.test"));
 
@@ -477,5 +479,33 @@ test("dashboard shows site inventory and stale bulk-update candidates without ra
     const bulkIndex = html.indexOf("<h3>一括更新</h3>");
     assert.ok(registrationIndex >= 0);
     assert.ok(bulkIndex > registrationIndex);
+  });
+});
+
+test("bulk update start requires selected stale site fields", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    app.store.setProfileValue("email", "メールアドレス", "new@example.test");
+    app.store.upsertSiteRecord({
+      origin: "https://example.test",
+      siteId: "example",
+      serviceName: "Example Service",
+      registeredAt: Date.now(),
+      filledFields: [
+        {
+          profileKey: "email",
+          filledValueHash: sha256Hex("old@example.test"),
+          fieldName: "email",
+          filledAt: Date.now(),
+        },
+      ],
+      accountState: "registered",
+      status: "registered",
+      nextAction: "reviewInventory",
+    });
+
+    const res = await post(server, "/bulk/start", { csrf: token });
+    assert.equal(res.status, 303);
+    assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /更新するサイトと項目を選択してください/);
   });
 });

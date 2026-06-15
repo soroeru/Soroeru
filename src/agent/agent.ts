@@ -452,14 +452,20 @@ export interface UpdateResult {
   notes: string[];
 }
 
+export interface UpdateOptions {
+  /** Optional profile keys selected by the UI. Omitted means all stale fields. */
+  profileKeys?: readonly ProfileKey[];
+}
+
 /** Bulk-update flow (§5): hash-diff against the latest master values, then fix only the stale fields. */
-export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, deps: AgentDeps): Promise<UpdateResult> {
+export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, deps: AgentDeps, options: UpdateOptions = {}): Promise<UpdateResult> {
   const notes: string[] = [];
   const record = deps.store.siteRecords.get(siteId);
   if (!record) return { siteId, status: "skipped", changedKeys: [], planned: [], notes: ["登録記録がありません"] };
 
   const view = deps.store.profileView();
-  const changed = staleFilledFields(deps.store, record);
+  const selectedKeys = options.profileKeys ? new Set(options.profileKeys) : undefined;
+  const changed = staleFilledFields(deps.store, record).filter((field) => !selectedKeys || selectedKeys.has(field.profileKey));
   if (changed.length > 0 && (record.accountState === "registered" || record.accountState === "imported")) {
     deps.store.setSiteAccountState(siteId, "updateNeeded");
   }

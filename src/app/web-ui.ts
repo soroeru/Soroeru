@@ -29,9 +29,10 @@ import {
   type SiteRecord,
   type WallDetection,
 } from "../types.js";
-import type { RegistrationResult } from "../agent/agent.js";
+import type { RegistrationResult, UpdateResult } from "../agent/agent.js";
 import type { PocStore, ProfileEntry, ProviderSettings } from "../store/store.js";
 import { CatashiroApp, CatashiroAppError } from "./app.js";
+import { BulkUpdateSession, type BulkUpdateSessionState, type BulkUpdateTarget } from "./bulk-update-session.js";
 import { AppRunner } from "./runner.js";
 import { RegistrationSession, type RegistrationSessionState } from "./registration-session.js";
 
@@ -206,6 +207,8 @@ class WebUiServer {
   private readonly server: Server;
   /** At most one in-flight registration run (#81); the UI is single-user/single-session. */
   private registration: { session: RegistrationSession; browser: Browser } | undefined;
+  /** At most one in-flight bulk update run (#88); selected sites run independently. */
+  private bulkUpdate: BulkUpdateSession | undefined;
 
   constructor(options: WebUiServerOptions) {
     this.app = options.app;
@@ -317,7 +320,16 @@ class WebUiServer {
         await this.dismissRegistration(res);
         return;
       case "/bulk/start":
-        this.redirect(res, "warn", "一括更新のWeb実行は次の実装スライスで有効化します。", "sites");
+        await this.startBulkUpdate(form, res);
+        return;
+      case "/bulk/gate-decision":
+        await this.decideBulkGate(form, res);
+        return;
+      case "/bulk/handoff-resolve":
+        await this.resolveBulkHandoff(form, res);
+        return;
+      case "/bulk/dismiss":
+        await this.dismissBulkUpdate(res);
         return;
       case "/chat/send":
         this.redirect(res, "warn", "チャットでの操作は今後実装予定です。");
@@ -1423,6 +1435,7 @@ class WebUiServer {
   }
 
   private renderBulkAction(candidates: { record: SiteRecord; stale: ReturnType<typeof staleFilledFields> }[]): string {
+    if (this.bulkUpdate) return this.renderBulkUpdateState(this.bulkUpdate.getState());
     if (candidates.length === 0) {
       return `<p class="muted small">差分のあるサイトはありません。</p>`;
     }
@@ -1430,9 +1443,141 @@ class WebUiServer {
       <form class="callout callout--risk stack" method="post" action="/bulk/start">
         ${this.csrfInput()}
         <h3>一括更新</h3>
-        <p>更新候補 ${escapeHtml(candidates.length)} 件。保存済み情報との差分があるサイトをまとめて更新します。</p>
+        <p>更新候補 ${escapeHtml(candidates.length)} 件。サイトと項目を選び、1サイトずつ確認してから更新します。</p>
+        <div class="item-list">
+          ${candidates
+            .map(({ record, stale }) => {
+              const fields = stale
+                .map((field) => {
+                  const label = this.app.store.profile.get(field.profileKey)?.label ?? field.profileKey;
+                  return `
+                    <label class="field-delete small">
+                      <input type="checkbox" name="bulkField" value="${escapeHtml(record.siteId)}|${escapeHtml(field.profileKey)}" checked>
+                      ${escapeHtml(label)}
+                    </label>
+                  `;
+                })
+                .join("");
+              return `
+                <article class="item-card">
+                  <h4>${escapeHtml(record.serviceName)}</h4>
+                  <p class="small muted">${escapeHtml(record.origin)}</p>
+                  ${fields}
+                </article>
+              `;
+            })
+            .join("")}
+        </div>
         <button type="submit">一括更新を開始</button>
       </form>
+    `;
+  }
+
+  private renderBulkUpdateState(state: BulkUpdateSessionState): string {
+    switch (state.kind) {
+      case "running":
+        return `
+          <section class="callout stack">
+            <h3>一括更新: 実行中</h3>
+            <p class="muted">${state.currentSiteId ? `${escapeHtml(state.currentSiteId)} を更新しています。` : "選択したサイトを順番に更新しています。"}このページは自動的に更新されます。</p>
+          </section>
+        `;
+      case "awaiting-gate":
+        return this.renderBulkGate(state.siteId, state.request);
+      case "awaiting-handoff":
+        return this.renderBulkHandoff(state.siteId, state.wall, state.instruction);
+      case "done":
+        return this.renderBulkResults("一括更新: 完了", state.results);
+      case "error":
+        return `${this.renderBulkResults("一括更新: エラー", state.results)}<section class="callout callout--risk"><p>${escapeHtml(state.message)}</p></section>`;
+    }
+  }
+
+  private renderBulkGate(siteId: string, request: GateRequest): string {
+    const fields = request.fields
+      .map(
+        (f) => `
+          <div class="profile-row">
+            <div class="profile-label">${escapeHtml(f.label)}</div>
+            <div><span class="badge mask">${escapeHtml(f.maskedValue)}</span></div>
+          </div>
+        `,
+      )
+      .join("");
+    const attestations =
+      request.attestations.length > 0
+        ? request.attestations
+            .map(
+              (a) => `
+                <label class="field-delete">
+                  <input type="checkbox" name="attest_${escapeHtml(a.fieldId)}" value="1">
+                  ${escapeHtml(a.label)}
+                </label>
+              `,
+            )
+            .join("")
+        : "";
+    return `
+      <section class="callout stack">
+        <h3>一括更新: 確認ゲート</h3>
+        <p class="muted">${escapeHtml(siteId)} / ${escapeHtml(request.serviceName)} (${escapeHtml(request.origin)}) に、以下の差分だけ反映します。</p>
+        <form class="stack" method="post" action="/bulk/gate-decision">
+          ${this.csrfInput()}
+          <div>
+            <h4>更新する項目</h4>
+            <div class="profile-list">${fields}</div>
+          </div>
+          ${this.renderGatePayment(request.analysis.payment)}
+          ${attestations ? `<div><h4>ご自身でご確認のうえチェックしてください</h4>${attestations}</div>` : ""}
+          <div class="actions">
+            <button type="submit" name="decision" value="approve">この内容で更新する</button>
+            <button type="submit" name="decision" value="decline" class="secondary">このサイトを中止する</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderBulkHandoff(siteId: string, wall: WallDetection, instruction: string): string {
+    return `
+      <section class="callout callout--risk stack">
+        <h3>一括更新: ${escapeHtml(siteId)} で${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
+        <p>${escapeHtml(instruction)}</p>
+        <p class="small muted">このサイトだけ一時停止しています。開いているブラウザで対応し、完了後に再開してください。Catashiroは同じセッションを再観測して続行します。</p>
+        <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
+        <form method="post" action="/bulk/handoff-resolve">
+          ${this.csrfInput()}
+          <div class="actions">
+            <button type="submit" name="resolution" value="resolved">対応が完了したので再開する</button>
+            <button type="submit" name="resolution" value="abort" class="secondary">このサイトを中止する</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderBulkResults(title: string, results: UpdateResult[]): string {
+    return `
+      <section class="callout stack">
+        <h3>${escapeHtml(title)}</h3>
+        <div class="item-list">
+          ${results
+            .map(
+              (result) => `
+                <article class="item-card">
+                  <h4>${escapeHtml(result.siteId)}</h4>
+                  <p><span class="badge">${escapeHtml(result.status)}</span> 更新対象 ${escapeHtml(result.changedKeys.length)} 項目</p>
+                  ${result.notes.length > 0 ? `<ul>${result.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
+                </article>
+              `,
+            )
+            .join("")}
+        </div>
+        <form method="post" action="/bulk/dismiss">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">閉じる</button>
+        </form>
+      </section>
     `;
   }
 
@@ -1826,6 +1971,98 @@ class WebUiServer {
     this.app.store.removeRecoveryKey();
     await this.app.store.save();
     this.redirect(res, "ok", "リカバリーキーを削除しました。", "settings");
+  }
+
+  // --- Bulk update (#88) -----------------------------------------------------
+
+  private bulkTargetsFromForm(form: URLSearchParams): BulkUpdateTarget[] {
+    const selected = new Map<string, Set<ProfileKey>>();
+    for (const raw of form.getAll("bulkField")) {
+      const [siteId, rawKey] = String(raw).split("|", 2);
+      const profileKey = rawKey ? asProfileKey(rawKey) : undefined;
+      if (!siteId || !profileKey) continue;
+      const set = selected.get(siteId) ?? new Set<ProfileKey>();
+      set.add(profileKey);
+      selected.set(siteId, set);
+    }
+
+    const targets: BulkUpdateTarget[] = [];
+    for (const record of this.app.store.listSiteRecords()) {
+      const keys = selected.get(record.siteId);
+      if (!keys || keys.size === 0) continue;
+      const staleKeys = new Set(staleFilledFields(this.app.store, record).map((field) => field.profileKey));
+      const profileKeys = [...keys].filter((key) => staleKeys.has(key));
+      if (profileKeys.length === 0) continue;
+      targets.push({ siteId: record.siteId, siteTopUrl: record.origin, profileKeys });
+    }
+    return targets;
+  }
+
+  private async startBulkUpdate(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    if (this.bulkUpdate) {
+      const state = this.bulkUpdate.getState();
+      if (state.kind !== "done" && state.kind !== "error") {
+        this.redirect(res, "warn", "別の一括更新が進行中です。完了してから次の更新を開始してください。", "sites");
+        return;
+      }
+      await this.closeBulkUpdate();
+    }
+    const targets = this.bulkTargetsFromForm(form);
+    if (targets.length === 0) {
+      this.redirect(res, "warn", "更新するサイトと項目を選択してください。", "sites");
+      return;
+    }
+    const browser = await this.app.launchBrowser("chromium");
+    const runner = new AppRunner(this.app, this.mapperFactory());
+    const session = new BulkUpdateSession(runner, browser, targets);
+    this.bulkUpdate = session;
+    session.start();
+    this.redirect(res, "ok", "一括更新を開始しました。サイトごとの確認ゲートがこの画面に表示されます。", "sites");
+  }
+
+  private async decideBulkGate(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const session = this.bulkUpdate;
+    const state = session?.getState();
+    if (!session || !state || state.kind !== "awaiting-gate") {
+      this.redirect(res, "warn", "確認待ちの一括更新はありません。", "sites");
+      return;
+    }
+    const approved = form.get("decision") === "approve";
+    const attestationApprovals: Record<string, boolean> = {};
+    for (const attestation of state.request.attestations) {
+      attestationApprovals[attestation.fieldId] = form.get(`attest_${attestation.fieldId}`) === "1";
+    }
+    const cardApproved = form.get("cardApproved") === "1";
+    session.decideGate({ approved, attestationApprovals, cardApproved });
+    this.redirect(res, "ok", approved ? "このサイトの更新を承認しました。" : "このサイトの更新を中止しました。", "sites");
+  }
+
+  private async resolveBulkHandoff(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const session = this.bulkUpdate;
+    if (!session || session.getState().kind !== "awaiting-handoff") {
+      this.redirect(res, "warn", "対応待ちの一括更新はありません。", "sites");
+      return;
+    }
+    const resolution = form.get("resolution") === "abort" ? "abort" : "resolved";
+    session.resolveHandoff(resolution);
+    this.redirect(res, "ok", resolution === "abort" ? "このサイトの更新を中止しました。" : "一括更新を再開します。", "sites");
+  }
+
+  private async dismissBulkUpdate(res: ServerResponse): Promise<void> {
+    const state = this.bulkUpdate?.getState();
+    if (!state || (state.kind !== "done" && state.kind !== "error")) {
+      this.redirect(res, "warn", "完了していない一括更新は閉じられません。", "sites");
+      return;
+    }
+    await this.closeBulkUpdate();
+    this.redirect(res, "ok", "一括更新を閉じました。", "sites");
+  }
+
+  private async closeBulkUpdate(): Promise<void> {
+    if (!this.bulkUpdate) return;
+    const session = this.bulkUpdate;
+    this.bulkUpdate = undefined;
+    await this.app.closeBrowser(session.browser);
   }
 
   // --- New registration (#81) -----------------------------------------------
