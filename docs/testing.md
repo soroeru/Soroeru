@@ -1,7 +1,7 @@
 # Testing
 
 This document owns the **testing strategy** for `Catashiro`: what to test, which test
-types apply, and where fixtures live.
+types apply, and how the suites map to the architecture layers.
 
 > **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
 > autonomous agent. End-to-end tests use **Playwright** (Chromium / Firefox / WebKit)
@@ -18,25 +18,25 @@ Out of scope here: the browser-based manual checklist itself (see
 
 Testing should focus on the parts that carry product and safety risk:
 
-- deterministic field classification;
-- DOM scanning across common form shapes;
-- manual-step detection boundaries;
-- storage behavior for local profile data and site-field history;
-- message passing between extension components;
-- browser behavior for suggestion UI and user-confirmed filling.
+- deterministic and AI-driven field classification / mapping;
+- wall detection (CAPTCHA / MFA / verification) and hand-off / resume;
+- the review-and-confirm gate and the three guards;
+- the encrypted store, recovery key, and provider settings;
+- bulk update and per-site record diffing;
+- network egress and local-persistence boundaries (PRIV-001/002, SEC-002).
 
-Use automated tests for deterministic logic and fixture-based DOM behavior.
-Use manual browser checks for extension loading, injected UI, and workflows that
-require human judgment.
+Use unit tests (§2.1) for deterministic logic and isolated modules, the Playwright
+E2E matrix (§8) for end-to-end flows against the local test sites, and the manual
+checklist ([`manual-test.md`](manual-test.md)) for headed-browser UX that needs human
+judgment. Use **fake data only** everywhere (§4).
 
 ## 2. Test Types
 
 | Type | Purpose | Target |
 | --- | --- | --- |
-| Unit | Verify pure rules and small modules. | Field classification, normalization, manual-step heuristics, storage helpers. |
-| Integration | Verify modules together against controlled inputs. | DOM scanning with HTML fixtures, message payload handling, storage abstraction behavior. |
-| E2E | Verify the extension in a real browser once tooling exists. | Loading the extension, scanning fixture pages, showing suggestions, selected filling, re-scanning. |
-| Manual | Verify user experience and safety boundaries. | Human-in-the-loop behavior, UI placement, real Chrome extension loading, release readiness. |
+| Unit | Verify pure rules and small modules in isolation. | Field classification, normalization, wall detection, guards, store/crypto, AI mapper (stub provider). |
+| E2E | Verify the agent end to end in a real browser (Playwright). | Registration, bulk update, wall handoff/resume, and the review-and-confirm gate against the local test sites (§8). |
+| Manual | Verify UX and safety boundaries automation can't judge. | Review-and-confirm gate copy, wall handoff, local web UI, release readiness ([`manual-test.md`](manual-test.md)). |
 
 ### 2.1 Layer → test mapping (MAINT-001)
 
@@ -62,50 +62,31 @@ agent layer never receives raw personal values.
 
 ## 3. Test Environment
 
-The current automated test runner is Node's built-in test runner after
-TypeScript compilation.
+The automated test runner is Node's built-in test runner, run against compiled output
+(see [`development.md`](development.md) for commands).
 
-Frameworks:
-
-- Unit / integration: Node built-in test runner.
-- DOM scanning unit tests use `jsdom` to construct a `Document` from HTML
-  fixtures, since the content script's `scanFields` accepts a `Document`
-  argument for testability.
-- E2E: Playwright is the current candidate for future browser tests.
-- Manual: Chrome or Chromium with an unpacked local extension.
-
-Directory structure:
-
-```text
-tests/
-├── fixtures/
-├── unit/
-├── integration/
-└── e2e/
-```
-
-The directory structure is expected but not created yet. Update this document
-when real tests are added.
+- **Unit**: Node built-in test runner (`node --test`) over `tests/unit/*.test.ts`,
+  compiled to `dist/compiled/tests/unit/`.
+- **E2E**: Playwright drives the local test sites (`sites/`) across Chromium / Firefox
+  / WebKit; see §8.
+- **Manual**: a headed browser against the local test sites, per
+  [`manual-test.md`](manual-test.md).
 
 ## 4. Test Data And Fixtures
 
-HTML fixtures for automated and manual form tests should live under
-`tests/fixtures/` unless a later issue chooses a different location.
+The local test sites under `sites/` (`sites/defs.ts` for form definitions and ground
+truth, `sites/server.ts` to serve them) are the fixtures for both the E2E matrix (§8)
+and manual testing. §8 lists each site's form shape and the requirements it exercises.
 
-Fixture rules:
+Rules for any test data, fixtures, or local test sites:
 
-- Use fake names, emails, phone numbers, addresses, company names, and
-  department names.
-- Do not commit real personal data, real customer data, screenshots containing
-  private data, or copied production forms with sensitive content.
-- Include both English and Japanese forms.
-- Include forms with labels linked by `for`, labels wrapping inputs, missing
-  labels, placeholders, and `autocomplete` attributes.
-- Include `textarea` and `select` examples.
-- Include dynamic form examples that add fields after user action.
-- Include CAPTCHA-like, MFA-like, terms, consent, and final-confirmation
-  placeholders for safety testing. These fixtures must not use real CAPTCHA or
-  MFA services.
+- use fake names, emails, phone numbers, addresses, company names, and department
+  names — Japanese only (multi-locale form detection is out of scope for now, see
+  [`requirements.md`](requirements.md) §5);
+- never commit real personal data, real customer data, or screenshots/forms containing
+  private data;
+- CAPTCHA-like, MFA-like, terms, consent, and final-confirmation placeholders must not
+  use real CAPTCHA or MFA services.
 
 ## 5. Commands
 
@@ -130,17 +111,10 @@ npm run poc:matrix -- both                     # local: all engines + AI variant
 
 ## 6. Manual Testing
 
-Use [`manual-test.md`](manual-test.md) for browser-based checklists.
-
-Manual checks are required when a change affects:
-
-- extension loading;
-- content script DOM interaction;
-- injected UI;
-- selected filling behavior;
-- manual-step prompts;
-- permissions;
-- storage behavior that users can observe.
+Use [`manual-test.md`](manual-test.md) for browser-based checklists. Per AGENTS.md
+"Manual Testing Expectations", manual checks are required when a change affects form
+detection, filling, submission, the review-and-confirm gate, the three guards, wall
+hand-off, or storage/encryption behavior.
 
 ## 7. CI
 

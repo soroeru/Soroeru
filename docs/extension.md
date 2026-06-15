@@ -13,8 +13,8 @@ rationale (see [`security.md`](security.md)).
 > **Direction change (2026-06-12).** `Catashiro` is no longer a Chrome Extension
 > (Manifest V3). It is a **local Playwright-based application**. The previous MV3 design
 > (content script / background service worker / options page) is historical and lives in
-> git. Detailed component and file layout are finalized during the PoC (#33); this
-> document describes the intended boundaries.
+> git. Component and file layout were finalized during the PoC (#33, closed); this
+> document describes those boundaries and the reference implementation (§1.1).
 
 ## 1. Architecture Overview
 
@@ -26,12 +26,14 @@ Catashiro (local app)
 │   ├── personal data (name, address, phone, email, card incl. CVV, per-site credentials)
 │   ├── per-site records (references + hashes, not duplicated raw values)
 │   ├── authorization records (mandates)
+│   ├── local candidate definitions and site/account-state metadata
 │   └── all encrypted at rest (AES-256-GCM, master-passphrase-derived key)
 │
-├── agent layer (the user's AI; provider-abstracted)
-│   ├── finds the registration page
-│   ├── maps form fields to stored field types (AI variant)
-│   ├── detects high-risk terms clauses
+├── definition / agent layer
+│   ├── uses deterministic definitions and classifiers by default
+│   ├── optionally calls the user's API Provider for ambiguous cases
+│   ├── maps form fields and withdrawal flows to stored field types
+│   ├── detects high-risk terms clauses and walls
 │   └── receives form structure / terms text — never raw personal values
 │
 ├── automation layer (Playwright)
@@ -44,7 +46,8 @@ Catashiro (local app)
     ├── personal-data management (incl. card data, credentials)
     ├── per-site inventory and bulk-update selection
     ├── the review-and-confirm gate
-    └── settings (master passphrase, AI provider API key)
+    ├── settings (master passphrase, vault location, AI provider API key)
+    └── optional AI agent sidebar when API Provider mode is enabled
 ```
 
 Keep shared logic — field classification, wall detection, the store/crypto boundary, and
@@ -94,23 +97,85 @@ invariant is asserted in `tests/unit/catashiro-poc-contracts.test.ts`.
 
 ## 3. Agent Layer (AI)
 
-- Uses the user's configured provider only (Anthropic Opus / Sonnet / Haiku, or OpenAI
-  GPT-5.4 / 5.4-mini / 5.3-Codex) behind a provider-abstraction interface.
+- AI is optional. The standard experience uses deterministic definitions, local
+  candidate definitions, and rule-based classifiers without an AI API key.
+- When enabled, AI mode uses the user's configured API Provider only (Anthropic Opus /
+  Sonnet / Haiku, or OpenAI GPT-5.4 / 5.4-mini / 5.3-Codex) behind a
+  provider-abstraction interface.
 - Receives **form structure** (labels, `name`, `id`, type, nearby text) and **terms text**,
   and returns a mapping plan and high-risk findings. It does not receive raw personal
   values and is not given direct browser control (the automation layer executes the plan).
 - Stateless requests only; no prompt caching of personal data, stored threads, or memory.
-- A **deterministic** field-mapping variant (reusing the existing scanner and rule-based
-  classifier) is built alongside the AI variant and compared for accuracy (RFC §8).
+- AI mode is invoked only when deterministic confidence is too low, a site/flow is
+  unsupported, or the user explicitly asks for AI assistance. This keeps the default path
+  predictable and limits the user's AI cost.
+- App-embedded terminals and CLI Provider integrations (for example driving Claude Code or
+  Codex CLI from inside `Catashiro`) are intentionally out of scope. API Providers are the
+  supported AI integration path.
+
+### 3.1 Mode Model (design direction, not yet implemented)
+
+`Catashiro` exposes two product modes over the same execution and definition contracts:
+
+- **Deterministic Mode** (default): uses official site definitions, local candidate
+  definitions, form fingerprints, and rule-based classifiers. No AI API key or chat
+  surface is required.
+- **AI Mode** (optional): uses the same definitions plus the user's configured API
+  Provider for ambiguous forms, unsupported withdrawal flows, terms-risk analysis, and
+  candidate-definition generation.
+
+The chat / agent sidebar is part of AI Mode only. Users without an API Provider should
+see task-oriented UI for registration, inventory, update, and withdrawal workflows rather
+than a low-capability placeholder chatbot.
+
+### 3.2 Shared Definitions and Local Candidates (design direction, not yet implemented)
+
+Deterministic Mode and AI Mode share one definition model for:
+
+- site and URL patterns;
+- form signatures and field mappings;
+- withdrawal-flow steps;
+- wall-detection patterns;
+- terms links and high-risk signals.
+
+The app resolves definitions before asking AI:
+
+1. scan the current page / flow with Playwright;
+2. build a deterministic signature from domain, URL pattern, form action, field
+   fingerprints, labels, headings, buttons, and wall signals;
+3. score official definitions and encrypted local candidate definitions;
+4. use a high-confidence match directly;
+5. ask the API Provider only for ambiguous or unsupported cases.
+
+AI output is stored as a **local candidate definition**, not as an official definition.
+Candidate definitions are lifecycle-managed:
+
+```text
+unknown or changed site
+  -> AI/user/observation creates local_candidate
+  -> local runs validate or reject it
+  -> user may opt in to submit a sanitized candidate
+  -> human review and tests promote it to official/shared definition
+```
+
+This avoids duplicate deterministic-vs-AI definition stores. AI Mode gets the
+"early access" value by generating and using local candidates before they are promoted.
 
 ## 4. Store Layer (encrypted)
 
 - All personal data, card data (incl. CVV), per-site credentials, the API key, per-site
-  records, and mandates are encrypted at rest. Encryption is canonical in
-  [`security.md`](security.md) §4 (Argon2id / PBKDF2-SHA-512 + AES-256-GCM, key in memory
-  only).
+  records, mandates, and local candidate definitions are encrypted at rest. Encryption is
+  canonical in [`security.md`](security.md) §4 (Argon2id / PBKDF2-SHA-512 + AES-256-GCM,
+  key in memory only).
 - Per-site records hold **references + hashes**, not duplicated raw values, so bulk-update
   diffing works without multiplying sensitive data.
+- Local candidate definitions do not contain raw profile values, but they reveal site
+  visits, registration/update/withdrawal intent, and account-state context, so they live in
+  the encrypted vault.
+- Official shared definitions may be cached outside the vault because they should contain
+  only public site structure and no user activity.
+- The vault location is user-selected. Local disk is the default; future user-owned
+  cloud-storage sync stores only encrypted vault bytes outside the app.
 - Access goes through a small abstraction; never log decrypted values.
 
 ## 5. Registration Control Flow
@@ -141,14 +206,54 @@ The user selects sites and runs an update. For each, the agent diffs the per-sit
 hashes against the latest stored values, opens the sites with changes, logs in with stored
 credentials, updates the changed fields, and handles walls via §6.
 
-## 8. Status
+## 8. Withdrawal Management (design direction, not yet implemented)
 
-This is design intent. Concrete component structure, file layout, and the reusable scanner
-/ classifier integration are finalized during the PoC (#33). Reusable assets from the
-earlier work (the form scanner and rule-based classifier) feed the deterministic mapping
-variant.
+The per-site inventory should help the user identify services they no longer use and start
+withdrawal tasks. The agent may find the withdrawal page, prepare a flow plan, fill
+ordinary fields, and hand off at CAPTCHA / MFA / verification walls. Irreversible account
+deletion, final withdrawal confirmation, auto-attestation, and any prohibited automated
+action must remain gated by the user.
 
-## 9. App Shell (APP-001)
+Withdrawal flows use the same shared definition model as registration/update flows:
+official definitions when available, encrypted local candidates for user-specific
+discoveries, and optional API Provider analysis only when deterministic resolution is
+ambiguous or unsupported.
+
+## 9. Advanced Local MCP Server (future)
+
+A local MCP server is a future advanced-user extension, not part of the MVP. If added, it
+must expose only narrow, permissioned tools from `Catashiro` to an external AI agent. It is
+not an AI Provider and must not let an external CLI or agent bypass `Catashiro`'s own UI,
+store boundary, or approval gates.
+
+Initial MCP capability should be read-only or planning-oriented, such as:
+
+- inventory summaries without raw personal values;
+- stale-site and withdrawal-target discovery;
+- current-page structure inspection;
+- candidate mapping / withdrawal-flow proposals;
+- task creation inside `Catashiro` for later user review.
+
+MCP must not expose raw profile values, credentials, card numbers, CVV, decrypted vault
+exports, direct browser control, or submit/withdraw actions that skip the
+review-and-confirm gate.
+
+## 10. Status
+
+The PoC (#33, closed) delivered the reference implementation under `src/`, `run/`, and
+`sites/` (§1.1) for its original scope: the deterministic and AI mappers, the encrypted
+store, the review-and-confirm gate, the three guards, wall hand-off/resume, bulk update,
+and the Playwright E2E matrix (see [`testing.md`](testing.md) §8). The form scanner and
+rule-based classifier from the earlier MV3-era work were carried forward into
+`src/agent/scan.ts` and `src/agent/classifier.ts` (§12).
+
+The data-sovereignty additions from the 2026-06-12 pivot — the Mode Model (§3.1), shared
+official/local-candidate definitions (§3.2, plus the related store-layer bullets in §1
+and §4), and withdrawal management (§8) — describe design direction and are **not yet
+implemented**. Remaining work is tracked by open issues, including those additions and
+wiring the local web UI (§13) to `AppRunner`.
+
+## 11. App Shell (APP-001)
 
 `src/app/` is the local app shell that the UI layer and the automation
 layer both go through, rather than opening the store or launching browsers directly:
@@ -180,7 +285,7 @@ store (reporting `CatashiroAppError` on a bad passphrase), launch a headed Chrom
 browser, navigate to `about:blank`, then `shutdown()` (close the browser and lock the
 store).
 
-## 10. Removal of Pre-Pivot MV3 Files
+## 12. Removal of Pre-Pivot MV3 Files
 
 The pre-pivot Chrome Extension (Manifest V3) files that previously lived under `src/` —
 `src/manifest.json`, `src/options/*`, `src/content/scanner.ts`,
@@ -191,7 +296,7 @@ they contained informed the deterministic mapper now at `src/agent/scan.ts` and
 `src/agent/classifier.ts`. `src/` is now used exclusively for the `Catashiro` agent
 described in this document.
 
-## 11. Local App UI (UI-001 / #17, UI-002 / #66)
+## 13. Local App UI (UI-001 / #17, UI-002 / #66)
 
 Issue #66 starts replacing the terminal menu with a local browser UI. The default
 launcher is now:
