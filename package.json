@@ -10,7 +10,8 @@
     "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/run/cli.js",
     "poc:serve": "npm run poc -- serve",
     "poc:matrix": "npm run poc -- matrix",
-    "package:mac": "bash scripts/package-mac.sh"
+    "package:mac": "bash scripts/package-mac.sh",
+    "release:check": "npm run typecheck && npm test && npm run poc -- check-egress && npm run poc -- check-persistence && npm run poc -- check-bypass"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

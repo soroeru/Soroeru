@@ -58,6 +58,8 @@ issues or PRs.
 - [ ] `npm run poc -- check-egress`
 - [ ] `npm run poc -- check-persistence`
 - [ ] `npm run poc -- check-bypass`
+- [ ] `npm run release:check` passes, or the above equivalent commands are recorded
+      individually with the same commit SHA
 - [ ] `npm run poc:matrix -- deterministic chromium`
 - [ ] `npm run package:mac`
 - [ ] GitHub `ci / unit`, `ci / e2e-deterministic`, and `shellcheck` are green on the
@@ -112,6 +114,9 @@ scenario set before sharing a build with the first 10 users.
 - [ ] Support bundle / diagnostics: generate or inspect the current diagnostic output, if
       available, and confirm it contains no raw personal values, API keys, vault bytes,
       cookies, screenshots with secrets, or Playwright traces from real sites
+- [ ] Security release evidence records only high-level pass/fail, commit SHA, and changed
+      risk areas; it does not include prompts, raw values, API keys, vault bytes, or
+      real-site screenshots
 
 ### 0.5 Beta Release Notes Template
 
