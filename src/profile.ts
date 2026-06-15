@@ -1,6 +1,6 @@
 // Dummy master profile for the PoC. All values are fake (docs/testing.md: fake data only).
 
-import type { ProfileKey, Transform } from "./types.js";
+import type { KnownProfileKey, ProfileKey, Transform } from "./types.js";
 
 export interface ProfileSeed {
   key: ProfileKey;
@@ -78,4 +78,49 @@ function splitPhone(value: string): [string, string, string] {
   if (hyphenated.length === 3) return [hyphenated[0] ?? "", hyphenated[1] ?? "", hyphenated[2] ?? ""];
   const digits = value.replace(/\D/g, "");
   return [digits.slice(0, digits.length - 8), digits.slice(-8, -4), digits.slice(-4)];
+}
+
+/**
+ * Per-field input hints for the local profile editor (Issue #78): short
+ * Japanese format examples shown as placeholders, plus HTML5 `pattern` /
+ * `inputmode` / `type` attributes for inline browser validation. Fields not
+ * listed here have no special format and use plain text inputs.
+ */
+export interface ProfileFieldInput {
+  type?: string;
+  inputmode?: string;
+  pattern?: string;
+  hint?: string;
+}
+
+export const PROFILE_FIELD_INPUT: Partial<Record<KnownProfileKey, ProfileFieldInput>> = {
+  email: { type: "email", hint: "例: taro.yamada@example.com" },
+  "phone.full": { inputmode: "tel", pattern: "[0-9-]{8,15}", hint: "例: 03-1234-5678" },
+  "postal.full": { inputmode: "numeric", pattern: "\\d{3}-?\\d{4}", hint: "例: 100-0001" },
+  "card.number": { inputmode: "numeric", pattern: "\\d{12,19}", hint: "ハイフンなしの12〜19桁の数字" },
+  "card.exp.month": { inputmode: "numeric", pattern: "0?[1-9]|1[0-2]", hint: "例: 12（1〜12）" },
+  "card.exp.year": { inputmode: "numeric", pattern: "\\d{4}", hint: "例: 2030（4桁の西暦）" },
+  "card.cvv": { inputmode: "numeric", pattern: "\\d{3,4}", hint: "3〜4桁の数字" },
+};
+
+const PROFILE_VALUE_VALIDATORS: Partial<Record<KnownProfileKey, { test: RegExp; message: string }>> = {
+  email: { test: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: "メールアドレスの形式が正しくありません。" },
+  "phone.full": { test: /^[0-9-]{8,15}$/, message: "電話番号は数字とハイフンで入力してください。" },
+  "postal.full": { test: /^\d{3}-?\d{4}$/, message: "郵便番号は7桁の数字（ハイフンは任意）で入力してください。" },
+  "card.number": { test: /^\d{12,19}$/, message: "カード番号は12〜19桁の数字で入力してください。" },
+  "card.exp.month": { test: /^(0?[1-9]|1[0-2])$/, message: "カード有効期限（月）は1〜12で入力してください。" },
+  "card.exp.year": { test: /^\d{4}$/, message: "カード有効期限（年）は4桁の西暦で入力してください。" },
+  "card.cvv": { test: /^\d{3,4}$/, message: "セキュリティコードは3〜4桁の数字で入力してください。" },
+};
+
+/**
+ * Validate a profile field's format before saving. Returns a Japanese error
+ * message when `value` is non-empty but does not match the expected format,
+ * or `undefined` when the value is valid (empty values are always valid;
+ * presence is enforced separately).
+ */
+export function validateProfileValue(key: ProfileKey, value: string): string | undefined {
+  if (!value) return undefined;
+  const rule = PROFILE_VALUE_VALIDATORS[key as KnownProfileKey];
+  return rule && !rule.test.test(value) ? rule.message : undefined;
 }

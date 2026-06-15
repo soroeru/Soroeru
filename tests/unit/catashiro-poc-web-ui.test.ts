@@ -130,6 +130,95 @@ test("profile tab uses a whole-page edit form with one bottom save action", asyn
   });
 });
 
+test("profile edit form validates field formats with clear Japanese error messages", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+
+    const invalidEmail = await post(server, "/profile/save-all", {
+      csrf: token,
+      "profile.email": "not-an-email",
+    });
+    assert.equal(invalidEmail.status, 303);
+    assert.match(decodeURIComponent(invalidEmail.headers.get("location") ?? ""), /メールアドレスの形式が正しくありません/);
+    assert.equal(app.store.getValue("email"), undefined);
+
+    const invalidPostal = await post(server, "/profile/save-all", {
+      csrf: token,
+      "profile.postal.full": "abcde",
+    });
+    assert.match(decodeURIComponent(invalidPostal.headers.get("location") ?? ""), /郵便番号は7桁の数字/);
+
+    const invalidCvv = await post(server, "/profile/save-all", {
+      csrf: token,
+      "profile.card.cvv": "12",
+    });
+    assert.match(decodeURIComponent(invalidCvv.headers.get("location") ?? ""), /セキュリティコードは3〜4桁の数字/);
+
+    const valid = await post(server, "/profile/save-all", {
+      csrf: token,
+      "profile.email": "taro@example.test",
+      "profile.postal.full": "100-0001",
+    });
+    assert.equal(valid.status, 303);
+    assert.match(valid.headers.get("location") ?? "", /ok=/);
+    assert.equal(app.store.getValue("email"), "taro@example.test");
+    assert.equal(app.store.getValue("postal.full"), "100-0001");
+  });
+});
+
+test("profile edit form deletes known and custom fields via delete checkboxes", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    app.store.setProfileValue("card.number", "カード番号", "4242424242424242");
+    app.store.setProfileValue("custom.occupation", "職業", "会社員", ["職業", "ご職業"]);
+    await app.store.save();
+
+    const edit = await getHtml(server, "/?tab=profile&mode=edit");
+    assert.match(edit, /name="deleteKeys" value="card\.number"/);
+    assert.match(edit, /name="customDeleteKeys" value="custom\.occupation"/);
+
+    const saved = await post(server, "/profile/save-all", {
+      csrf: token,
+      deleteKeys: "card.number",
+      customExistingKey: "custom.occupation",
+      customExistingLabel: "職業",
+      customExistingValue: "会社員",
+      customExistingTerms: "職業, ご職業",
+      customDeleteKeys: "custom.occupation",
+    });
+    assert.equal(saved.status, 303);
+    assert.equal(app.store.getValue("card.number"), undefined);
+    assert.equal(app.store.getValue("custom.occupation"), undefined);
+  });
+});
+
+test("revealing the card security code shows an extra handling warning", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    app.store.setProfileValue("card.cvv", "セキュリティコード", "123");
+    app.store.setProfileValue("card.number", "カード番号", "4242424242424242");
+    await app.store.save();
+
+    const cvvReveal = await fetch(new URL("/profile/reveal", server.url), {
+      method: "POST",
+      body: new URLSearchParams({ csrf: token, key: "card.cvv", passphrase: PASSPHRASE }),
+    });
+    assert.equal(cvvReveal.status, 200);
+    const cvvHtml = await cvvReveal.text();
+    assert.match(cvvHtml, /123/);
+    assert.match(cvvHtml, /最も重要な情報です/);
+
+    const numberReveal = await fetch(new URL("/profile/reveal", server.url), {
+      method: "POST",
+      body: new URLSearchParams({ csrf: token, key: "card.number", passphrase: PASSPHRASE }),
+    });
+    assert.equal(numberReveal.status, 200);
+    const numberHtml = await numberReveal.text();
+    assert.match(numberHtml, /4242424242424242/);
+    assert.ok(!numberHtml.includes("最も重要な情報です"));
+  });
+});
+
 test("top navigation renders three tabs and the sites tab leads with new registration", async () => {
   await withWebUi(async (_app, server) => {
     await unlockThroughUi(server);

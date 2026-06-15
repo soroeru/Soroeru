@@ -10,9 +10,11 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { maskValue } from "../agent/gate.js";
 import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
+import { PROFILE_FIELD_INPUT, validateProfileValue } from "../profile.js";
 import {
   isSensitiveKey,
   KNOWN_PROFILE_KEYS,
+  MOST_SENSITIVE_KEY,
   PROFILE_FIELD_LABELS,
   type KnownProfileKey,
   type ProfileKey,
@@ -665,6 +667,15 @@ class WebUiServer {
     }
     form.stack, .stack { display: grid; gap: var(--space-4); align-content: start; }
     label { display: grid; gap: 5px; font-weight: 600; font-size: .9rem; }
+    .field { display: grid; gap: 5px; }
+    .field-delete {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 400;
+      color: var(--text-muted);
+    }
+    input[type="checkbox"] { width: auto; height: auto; }
     input, select, textarea {
       width: 100%;
       border: 1px solid var(--border-strong);
@@ -917,11 +928,21 @@ class WebUiServer {
       const entry = byKey.get(key);
       const sensitive = isSensitiveKey(key);
       const value = !sensitive && entry ? entry.value : "";
-      const placeholder = sensitive && entry ? "設定済み。変更する場合だけ入力" : "";
+      const input = PROFILE_FIELD_INPUT[key];
+      const placeholder = sensitive && entry ? `設定済み。変更する場合だけ入力${input?.hint ? `（${input.hint}）` : ""}` : input?.hint ?? "";
+      const typeAttr = input?.type ? ` type="${escapeHtml(input.type)}"` : "";
+      const inputModeAttr = input?.inputmode ? ` inputmode="${escapeHtml(input.inputmode)}"` : "";
+      const patternAttr = input?.pattern ? ` pattern="${escapeHtml(input.pattern)}"` : "";
+      const deleteCheckbox = entry
+        ? `<label class="field-delete small"><input type="checkbox" name="deleteKeys" value="${escapeHtml(key)}"> この項目を削除</label>`
+        : "";
       return `
-        <label>${escapeHtml(PROFILE_FIELD_LABELS[key])}
-          <input name="profile.${escapeHtml(key)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off">
-        </label>
+        <div class="field">
+          <label>${escapeHtml(PROFILE_FIELD_LABELS[key])}
+            <input name="profile.${escapeHtml(key)}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}"${typeAttr}${inputModeAttr}${patternAttr} autocomplete="off">
+          </label>
+          ${deleteCheckbox}
+        </div>
       `;
     }).join("");
     const customEntries = entries.filter((entry) => entry.key.startsWith("custom."));
@@ -952,6 +973,7 @@ class WebUiServer {
                       <label>マッチング用語
                         <input name="customExistingTerms" value="${escapeHtml(entry.matchTerms?.join(", ") ?? "")}">
                       </label>
+                      <label class="field-delete small"><input type="checkbox" name="customDeleteKeys" value="${escapeHtml(entry.key)}"> この項目を削除</label>
                     </div>
                   `,
                 )
@@ -1195,6 +1217,11 @@ class WebUiServer {
       this.redirect(res, "error", "値を入力してください。");
       return;
     }
+    const formatError = validateProfileValue(key, value);
+    if (formatError) {
+      this.redirect(res, "error", formatError);
+      return;
+    }
 
     store.setProfileValue(key, label, value, matchTerms);
     await store.save();
@@ -1203,7 +1230,23 @@ class WebUiServer {
 
   private async saveAllProfile(form: URLSearchParams, res: ServerResponse): Promise<void> {
     const store = this.app.store;
+    const deleteKeys = new Set(form.getAll("deleteKeys"));
+    const customDeleteKeys = new Set(form.getAll("customDeleteKeys"));
+
     for (const key of KNOWN_PROFILE_KEYS) {
+      if (deleteKeys.has(key)) continue;
+      const formatError = validateProfileValue(key, formValue(form, `profile.${key}`));
+      if (formatError) {
+        this.redirect(res, "error", `${PROFILE_FIELD_LABELS[key]}: ${formatError}`, "profile", "edit");
+        return;
+      }
+    }
+
+    for (const key of KNOWN_PROFILE_KEYS) {
+      if (deleteKeys.has(key)) {
+        store.deleteProfileValue(key);
+        continue;
+      }
       const value = formValue(form, `profile.${key}`);
       const existing = store.profile.get(key);
       if (value) {
@@ -1220,6 +1263,10 @@ class WebUiServer {
     for (const [index, rawKey] of customKeys.entries()) {
       const key = asProfileKey(rawKey);
       if (!key || !key.startsWith("custom.")) continue;
+      if (customDeleteKeys.has(key)) {
+        store.deleteProfileValue(key);
+        continue;
+      }
       const label = customLabels[index] || store.profile.get(key)?.label || key;
       const value = customValues[index] ?? "";
       if (value) {
@@ -1278,7 +1325,11 @@ class WebUiServer {
         return;
       }
     }
-    this.sendHtml(res, 200, this.renderHome(undefined, { label: `${entry.label} [${entry.key}]`, value: entry.value }, { tab: "profile", profileMode: "view" }));
+    const reveal: Reveal = { label: `${entry.label} [${entry.key}]`, value: entry.value };
+    if (key === MOST_SENSITIVE_KEY) {
+      reveal.warning = "セキュリティコードは最も重要な情報です。画面の外にメモしたり、他のサービスに貼り付けたりしないでください。";
+    }
+    this.sendHtml(res, 200, this.renderHome(undefined, reveal, { tab: "profile", profileMode: "view" }));
   }
 
   private async saveProviderSettings(form: URLSearchParams, res: ServerResponse): Promise<void> {
