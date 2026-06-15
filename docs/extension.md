@@ -423,10 +423,18 @@ Current web UI foundation:
   encrypted store, reveal API key only after passphrase re-entry, generate / verify /
   remove recovery keys, and shows the local vault file path for reference.
 
-Bulk-update execution is designed in
-[`issue-66-local-web-app-ui.md`](issue-66-local-web-app-ui.md) and remains future work
-(#88); `POST /bulk/start` is still a placeholder. The legacy developer CLI menu remains
-available as:
+Bulk-update execution (#88) uses the same `AppRunner.update()` automation boundary as
+the CLI fallback. The Web UI renders stale site/field candidates from
+`staleFilledFields()`, posts the selected fields to `POST /bulk/start`, and tracks an
+in-memory `BulkUpdateSession` while each site runs independently. The session exposes
+per-site running, confirmation-gate, wall-handoff, done, and error states through:
+
+- `POST /bulk/gate-decision` — approves or declines the current site's update gate;
+- `POST /bulk/handoff-resolve` — resumes or aborts the current site after the user
+  resolves CAPTCHA / MFA / verification in the same browser session;
+- `POST /bulk/dismiss` — closes a completed bulk-update browser and clears the session.
+
+The legacy developer CLI menu remains available as:
 
 ```bash
 npm run poc -- ui:cli [deterministic|ai]
@@ -435,5 +443,5 @@ npm run poc -- ui:cli [deterministic|ai]
 `src/app/ui.ts` (`AppUI`) is that fallback CLI menu over
 `CatashiroApp` + `AppRunner`. Its injectable `UiIo` remains covered by
 `tests/unit/catashiro-poc-ui.test.ts`; the browser UI routes (including the
-`RegistrationSession` state machine and the new-registration routes) are covered by
+`RegistrationSession` / `BulkUpdateSession` state machines and run routes) are covered by
 `tests/unit/catashiro-poc-web-ui.test.ts` and `tests/unit/catashiro-poc-registration.test.ts`.

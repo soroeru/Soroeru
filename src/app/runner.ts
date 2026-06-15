@@ -8,7 +8,7 @@
 // touches `AgentDeps` or the store directly.
 
 import type { Page } from "playwright";
-import { runRegistration, runUpdate, type AgentDeps, type RegistrationResult, type UpdateResult } from "../agent/agent.js";
+import { runRegistration, runUpdate, type AgentDeps, type RegistrationResult, type UpdateOptions, type UpdateResult } from "../agent/agent.js";
 import type { Gate } from "../agent/gate.js";
 import { runExistingAccountImport, type ImportResult } from "../agent/importer.js";
 import type { Mapper } from "../agent/mapper.js";
@@ -38,9 +38,9 @@ export class AppRunner {
   }
 
   /** Run a single-site update as part of the bulk-update flow (RFC-001 v3 §5/§7). */
-  update(page: Page, siteTopUrl: string, siteId: string, hooks: AppRunnerHooks): Promise<UpdateResult> {
+  update(page: Page, siteTopUrl: string, siteId: string, hooks: AppRunnerHooks, options: UpdateOptions = {}): Promise<UpdateResult> {
     this.app.touch();
-    return runUpdate(page, siteTopUrl, siteId, this.deps(hooks));
+    return runUpdate(page, siteTopUrl, siteId, this.deps(hooks), options);
   }
 
   /** Read import candidates from an existing account/profile page (#84). */

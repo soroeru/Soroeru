@@ -294,9 +294,13 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
       re-entering the master passphrase
 - [ ] Web UI settings can generate a recovery key (shown once), then lock and
       unlock using the recovery key instead of the passphrase
-- [ ] Legacy `ui:cli` still supports bulk update until the Web UI run pages are
-      wired (#88): "3. 一括更新" lists stale sites, runs the gate + three guards
-      + wall handoff per site, and writes a new mandate per updated site
+- [ ] Web UI `一括更新` shows stale site/field checkboxes, requires at least one
+      selected field, runs selected sites independently through the review gate,
+      surfaces per-site success/failure/wall states, and writes a new mandate per
+      updated site
+- [ ] Legacy `ui:cli` still supports bulk update as a developer fallback:
+      "3. 一括更新" lists stale sites, runs the gate + three guards + wall handoff
+      per site, and writes a new mandate per updated site
 
 ### 4a. Web UI New-Registration Run (#81)
 
