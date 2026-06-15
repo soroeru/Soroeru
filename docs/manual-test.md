@@ -128,6 +128,19 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
       `一括更新` action appears below it only when stale update candidates
       exist, otherwise "差分のあるサイトはありません" is shown
 - [ ] Edit stored fields (e.g. phone number and address) together from the Web UI
+- [ ] In edit mode, entering an invalid format (e.g. email without `@`, a
+      postal code that is not 7 digits, a CVV that is not 3-4 digits) and
+      saving shows a clear Japanese error naming the field and does not save
+      any field; correcting the value and saving succeeds
+- [ ] In edit mode, each field that already has a value shows a `この項目を削除`
+      checkbox; checking it (including for a sensitive field such as
+      `card.number`) and saving removes that field, and it no longer appears
+      in the personal-data list
+- [ ] In edit mode, a custom field's `この項目を削除` checkbox removes that custom
+      field on save
+- [ ] Revealing `card.cvv`（セキュリティコード） shows the value plus an extra
+      warning not to copy it elsewhere; revealing other sensitive fields
+      (e.g. `card.number`) does not show that extra warning
 - [ ] After at least one registration (§2/§3), the Web UI registered-site list shows the
       site's status, filled-field count, mandate count, and stale-field warning
 - [ ] Web UI settings can save provider/model/API key; API key display requires
