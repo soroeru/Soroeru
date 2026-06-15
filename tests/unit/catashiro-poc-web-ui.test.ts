@@ -320,7 +320,7 @@ test("revealing the card security code shows an extra handling warning", async (
   });
 });
 
-test("top navigation renders three tabs and the sites tab leads with new registration", async () => {
+test("top navigation renders three tabs and the sites tab leads with guided site add", async () => {
   await withWebUi(async (_app, server) => {
     await unlockThroughUi(server);
     const html = await getHtml(server, "/?tab=sites");
@@ -330,9 +330,52 @@ test("top navigation renders three tabs and the sites tab leads with new registr
     assert.match(html, /<a href="\/\?tab=settings"/);
     assert.match(html, /<h2>登録済みサイト<\/h2>/);
 
-    assert.ok(html.indexOf("<h3>新規登録</h3>") >= 0);
+    assert.ok(html.indexOf("<h3>サイトを追加</h3>") >= 0);
+    assert.match(html, /name="accountStatus" value="notRegistered"/);
+    assert.match(html, /name="accountStatus" value="registered"/);
+    assert.match(html, /name="accountStatus" value="uncertain"/);
     assert.ok(!html.includes("<h3>一括更新</h3>"));
     assert.match(html, /差分のあるサイトはありません/);
+  });
+});
+
+test("site add flow imports an existing account into the account-state inventory", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+
+    const res = await post(server, "/site/add", {
+      csrf: token,
+      url: "https://accounts.example.test/login",
+      accountStatus: "registered",
+    });
+    assert.equal(res.status, 303);
+    assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /既存アカウントとしてサイト一覧に取り込みました/);
+
+    const record = app.store.listSiteRecords().find((site) => site.siteId === "accounts.example.test");
+    assert.ok(record);
+    assert.equal(record.origin, "https://accounts.example.test");
+    assert.equal(record.serviceName, "accounts.example.test");
+    assert.equal(record.accountState, "imported");
+    assert.equal(record.nextAction, "reviewInventory");
+    assert.equal(record.filledFields.length, 0);
+
+    const html = await getHtml(server, "/?tab=sites");
+    assert.match(html, /accounts\.example\.test/);
+  });
+});
+
+test("site add flow asks the user to choose when account existence is uncertain", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+
+    const res = await post(server, "/site/add", {
+      csrf: token,
+      url: "example.test/register",
+      accountStatus: "uncertain",
+    });
+    assert.equal(res.status, 303);
+    assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /既存アカウントの有無を選んでから続行してください/);
+    assert.equal(app.store.listSiteRecords().length, 0);
   });
 });
 
@@ -429,7 +472,7 @@ test("dashboard shows site inventory and stale bulk-update candidates without ra
     assert.ok(!html.includes("new@example.test"));
     assert.ok(!html.includes("old@example.test"));
 
-    const registrationIndex = html.indexOf("<h3>新規登録</h3>");
+    const registrationIndex = html.indexOf("<h3>サイトを追加</h3>");
     const bulkIndex = html.indexOf("<h3>一括更新</h3>");
     assert.ok(registrationIndex >= 0);
     assert.ok(bulkIndex > registrationIndex);

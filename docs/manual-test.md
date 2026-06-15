@@ -140,9 +140,10 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] The personal-data page has a visible top-right `編集` button; edit mode
       shows all profile fields in one form and has a single `保存` button at the
       bottom
-- [ ] The `登録済みサイト` page always shows a `新規登録` action near the top; a
-      `一括更新` action appears below it only when stale update candidates
-      exist, otherwise "差分のあるサイトはありません" is shown
+- [ ] The `登録済みサイト` page always shows a `サイトを追加` guided action near the
+      top with choices for new registration, existing-account import, and uncertain
+      account status; a `一括更新` action appears below it only when stale update
+      candidates exist, otherwise "差分のあるサイトはありません" is shown
 - [ ] Edit stored fields (e.g. phone number and address) together from the Web UI
 - [ ] In edit mode, entering an invalid format (e.g. email without `@`, a
       postal code that is not 7 digits, a CVV that is not 3-4 digits) and
@@ -173,8 +174,12 @@ With the local test sites running (`npm run poc:serve`) and the Web UI open
 (`npm run poc -- ui`):
 
 - [ ] On `登録済みサイト`, entering a site URL (e.g. the `01-basic` test site)
-      under `新規登録` and submitting opens a headed browser and shows a
-      progress state that auto-refreshes every few seconds
+      under `サイトを追加`, choosing "まだ持っていない", and submitting opens a
+      headed browser and shows a progress state that auto-refreshes every few
+      seconds
+- [ ] Choosing "すでに持っている" imports the URL as an existing-account site record
+      with `accountState=imported`; choosing "わからない" asks the user to choose
+      before continuing and does not create a record
 - [ ] For `05-choices`, the run pauses with an "追加情報の入力" prompt for
       「ご職業」; submitting a value resumes the run and the value is saved for
       reuse (REQ-005)
@@ -199,7 +204,7 @@ With the local test sites running (`npm run poc:serve`) and the Web UI open
       site prohibits automated account creation; approving fills the form but
       ends the run as "入力のみ完了しました" (`assistedFill`), not `registered`
 - [ ] Dismissing a finished run (`閉じる`) closes the browser/page and restores
-      the `新規登録` form
+      the `サイトを追加` form
 - [ ] Starting a second registration while one is in progress shows
       "別の登録処理が進行中です" and does not start a second browser session
 - [ ] Legacy `ui:cli` still supports encrypted export, then import into a fresh
