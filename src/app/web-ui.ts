@@ -9,7 +9,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Browser } from "playwright";
-import { maskValue, renderGate } from "../agent/gate.js";
+import { maskValue } from "../agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../agent/mapper.js";
 import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
 import { PROFILE_FIELD_INPUT, validateProfileValue } from "../profile.js";
@@ -21,6 +21,7 @@ import {
   PROFILE_FIELD_LABELS,
   type GateRequest,
   type KnownProfileKey,
+  type PaymentClassification,
   type ProfileKey,
   type RegistrationStatus,
   type SiteRecord,
@@ -601,10 +602,13 @@ class WebUiServer {
       font-size: 14px;
     }
     a { color: var(--text-link); }
-    h1, h2, h3 { margin: 0; line-height: 1.2; font-weight: 600; }
+    h1, h2, h3, h4 { margin: 0; line-height: 1.2; font-weight: 600; }
     h1 { font-size: 1.6rem; }
     h2 { font-size: 1.15rem; }
     h3 { font-size: 1rem; }
+    h4 { font-size: .9rem; }
+    ul { margin: var(--space-2) 0 0; padding-left: 1.4em; }
+    li + li { margin-top: 4px; }
     /* Window shell */
     .win { min-height: 100vh; display: flex; flex-direction: column; }
     .win__bar {
@@ -742,7 +746,8 @@ class WebUiServer {
       margin-bottom: var(--space-5);
     }
     .callout--risk { background: var(--status-risk-bg); border-color: var(--status-risk-border); }
-    .callout--risk h3, .callout--risk p { color: var(--status-risk-fg); }
+    .callout--risk h3, .callout--risk h4, .callout--risk p { color: var(--status-risk-fg); }
+    .callout .callout--risk { margin-bottom: 0; }
     .action-panel {
       background: var(--surface-sunken);
       border: 1px solid var(--border-subtle);
@@ -856,18 +861,6 @@ class WebUiServer {
       padding: var(--space-4);
       border-radius: var(--radius-sm);
       margin-top: var(--space-3);
-    }
-    .codeblock {
-      display: block;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      background: var(--surface-sunken);
-      color: var(--text-primary);
-      font-family: var(--font-mono);
-      font-size: .85rem;
-      padding: var(--space-4);
-      border-radius: var(--radius-sm);
-      margin: 0;
     }
     details { border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }
     summary { cursor: pointer; font-weight: 600; }
@@ -1226,39 +1219,127 @@ class WebUiServer {
   }
 
   private renderRegistrationGate(request: GateRequest): string {
-    const attestations = request.attestations
+    const fields = request.fields
       .map(
-        (a) => `
-          <label class="field-delete">
-            <input type="checkbox" name="attest_${escapeHtml(a.fieldId)}" value="1">
-            ${escapeHtml(a.label)}
-          </label>
+        (f) => `
+          <div class="profile-row">
+            <div class="profile-label">${escapeHtml(f.label)}</div>
+            <div><span class="badge mask">${escapeHtml(f.maskedValue)}</span></div>
+          </div>
         `,
       )
       .join("");
-    const cardApproval =
-      request.analysis.payment === "trial-subscription"
+
+    const termsLinks =
+      request.termsLinks.length > 0
         ? `
-          <label class="field-delete">
-            <input type="checkbox" name="cardApproved" value="1">
-            無料トライアル終了後の課金を承認し、保存済みのカード情報を自動入力する
-          </label>
+          <div>
+            <h4>規約・ポリシー</h4>
+            <ul>
+              ${request.termsLinks
+                .map(
+                  (link) =>
+                    `<li><a href="${escapeHtml(link.href)}" target="_blank" rel="noreferrer">${escapeHtml(link.text || link.href)}</a></li>`,
+                )
+                .join("")}
+            </ul>
+          </div>
         `
         : "";
+
+    const highRisk =
+      request.analysis.highRiskFlags.length > 0
+        ? `
+          <div class="callout callout--risk">
+            <h4>⚠ 自動承認を停止した項目</h4>
+            <p class="small">以下の内容はCatashiroが自動で同意・実行しません。内容を確認したうえで、登録を続けるかどうかご判断ください。</p>
+            <ul>
+              ${request.analysis.highRiskFlags
+                .map((flag) => {
+                  const evidence = request.analysis.evidence[flag];
+                  return `<li><strong>${escapeHtml(highRiskFlagLabel(flag))}</strong>${
+                    evidence ? `<div class="small muted">「${escapeHtml(evidence)}」</div>` : ""
+                  }</li>`;
+                })
+                .join("")}
+            </ul>
+          </div>
+        `
+        : "";
+
+    const autoCreationNotice = request.analysis.prohibitsAutoCreation
+      ? `
+        <div class="callout callout--risk">
+          <h4>自動アカウント作成について</h4>
+          <p class="small">このサイトの規約は、自動化された手段によるアカウント作成を禁止しています。Catashiroはフォームの入力のみを行い、最後の登録ボタンはご自身で押してください。</p>
+        </div>
+      `
+      : "";
+
+    const attestations =
+      request.attestations.length > 0
+        ? `
+          <div>
+            <h4>ご自身でご確認のうえチェックしてください</h4>
+            <p class="small muted">以下の項目はCatashiroが自動でチェックすることはありません。当てはまる場合のみチェックしてください。</p>
+            ${request.attestations
+              .map(
+                (a) => `
+                  <label class="field-delete">
+                    <input type="checkbox" name="attest_${escapeHtml(a.fieldId)}" value="1">
+                    ${escapeHtml(a.label)}
+                  </label>
+                `,
+              )
+              .join("")}
+          </div>
+        `
+        : "";
+
     return `
-      <section class="callout callout--risk stack">
+      <section class="callout stack">
         <h3>新規登録: 確認ゲート</h3>
-        <pre class="codeblock">${escapeHtml(renderGate(request))}</pre>
+        <p class="muted">「${escapeHtml(request.serviceName)}」(${escapeHtml(request.origin)}) に、以下の内容で登録します。内容を確認のうえ、よろしければ「この内容で登録する」を押してください。</p>
         <form class="stack" method="post" action="/registration/gate-decision">
           ${this.csrfInput()}
+          <div>
+            <h4>送信する項目</h4>
+            <div class="profile-list">${fields}</div>
+          </div>
+          ${termsLinks}
+          ${highRisk}
+          ${this.renderGatePayment(request.analysis.payment)}
+          ${autoCreationNotice}
           ${attestations}
-          ${cardApproval}
           <div class="actions">
             <button type="submit" name="decision" value="approve">この内容で登録する</button>
             <button type="submit" name="decision" value="decline" class="secondary">中止する</button>
           </div>
         </form>
       </section>
+    `;
+  }
+
+  private renderGatePayment(payment: PaymentClassification | undefined): string {
+    if (!payment) return "";
+    if (payment === "trial-subscription") {
+      return `
+        <div class="callout callout--risk">
+          <h4>お支払いについて</h4>
+          <p class="small">無料トライアル終了後、登録済みのお支払い方法へ自動的に課金が始まります。承認した場合のみ、保存済みのカード情報を自動入力します。承認しない場合、カード情報は入力されず、登録は中止されます。</p>
+          <label class="field-delete">
+            <input type="checkbox" name="cardApproved" value="1">
+            無料トライアル終了後の課金を承認し、保存済みのカード情報を自動入力する
+          </label>
+        </div>
+      `;
+    }
+    const reason = payment === "immediate-payment" ? "即時の決済が必要です" : "支払い内容を自動で判別できませんでした";
+    return `
+      <div class="callout callout--risk">
+        <h4>お支払いについて</h4>
+        <p class="small">このサイトは${escapeHtml(reason)}。Catashiroは入力・送信を行わずここで停止します。続きはご自身でブラウザ上で操作してください。</p>
+      </div>
     `;
   }
 

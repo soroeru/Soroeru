@@ -178,20 +178,26 @@ With the local test sites running (`npm run poc:serve`) and the Web UI open
 - [ ] For `05-choices`, the run pauses with an "追加情報の入力" prompt for
       「ご職業」; submitting a value resumes the run and the value is saved for
       reuse (REQ-005)
-- [ ] The run pauses at "確認ゲート" showing the service name/origin, every
-      field to be submitted (sensitive fields masked), terms links, and any
-      high-risk clauses (guard 1) or attestation checkboxes (guard 3)
+- [ ] The run pauses at "確認ゲート" showing, in plain language: an intro line
+      with the service name and origin, a "送信する項目" list of every field to
+      be submitted with masked values, and a "規約・ポリシー" list of clickable
+      terms/policy links (#82)
 - [ ] Declining the gate ends the run as "ユーザーの判断で中止しました" without
       submitting anything
 - [ ] Approving the gate for `01-basic` ends the run as "登録が完了しました" and
       adds/updates the site's entry in `登録済みサイト`
-- [ ] For `09-trial-card`, the gate shows the `cardApproved` checkbox and
-      "無料トライアル終了後の課金を承認"; approving the gate without checking it
+- [ ] For `08-terms`, the gate shows a "⚠ 自動承認を停止した項目" section listing
+      the auto-renewal and third-party-sharing clauses with quoted evidence
+      (guard 1), and a "ご自身でご確認のうえチェックしてください" section with the
+      `adult`/「私は18歳以上です」checkbox left unchecked by default (guard 3)
+- [ ] For `09-trial-card`, the gate's "お支払いについて" section explains the
+      trial→subscription conversion and shows the `cardApproved` checkbox
+      ("無料トライアル終了後の課金を承認"); approving the gate without checking it
       ends the run as "ユーザーの判断で中止しました" and no card data is filled
       (guard 2)
-- [ ] For `10-no-auto`, the gate explains the site prohibits automated account
-      creation; approving fills the form but ends the run as
-      "入力のみ完了しました" (`assistedFill`), not `registered`
+- [ ] For `10-no-auto`, the gate's "自動アカウント作成について" section explains the
+      site prohibits automated account creation; approving fills the form but
+      ends the run as "入力のみ完了しました" (`assistedFill`), not `registered`
 - [ ] Dismissing a finished run (`閉じる`) closes the browser/page and restores
       the `新規登録` form
 - [ ] Starting a second registration while one is in progress shows

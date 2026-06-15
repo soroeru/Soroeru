@@ -388,8 +388,14 @@ Current web UI foundation:
   - `POST /registration/provide-data` — answers a missing-data prompt (or skips it),
     saving the value as a new custom field for reuse;
   - `POST /registration/gate-decision` — approves or declines the review-and-confirm
-    gate, rendered via `renderGate()`, including per-attestation checkboxes (guard 3) and
-    the trial-card `cardApproved` checkbox (guard 2 exception);
+    gate. The web UI renders the gate as plain-language sections (#82): "送信する項目"
+    (masked submission fields), "規約・ポリシー" (clickable terms/policy links), "⚠
+    自動承認を停止した項目" (guard 1 high-risk clauses with quoted evidence), "お支払いに
+    ついて" (guard 2 payment classification, including the trial-card `cardApproved`
+    checkbox), "自動アカウント作成について" (the auto-creation-prohibited notice), and "ご
+    自身でご確認のうえチェックしてください" (guard 3 per-attestation checkboxes, unchecked
+    by default). `renderGate()` (`src/agent/gate.ts`) remains the CLI-only text renderer
+    used by `ui:cli` / `CliGate`;
   - `POST /registration/handoff-resolve` — resumes or aborts after the user clears a
     detected CAPTCHA / MFA / verification wall in the same browser session;
   - `POST /registration/dismiss` — closes a finished (`done` / `error`) run, closing the

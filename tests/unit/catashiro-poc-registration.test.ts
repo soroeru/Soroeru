@@ -185,6 +185,26 @@ test("registration with card fields: approving without the card checkbox stops b
   });
 });
 
+test("registration with high-risk terms: 08-terms surfaces auto-renewal/third-party clauses and the adult attestation (guards 1 & 3)", async () => {
+  await withRegistrationWebUi(async ({ server, token, site }) => {
+    await post(server, "/registration/start", { csrf: token, url: site.siteUrl("08-terms") });
+
+    const gateHtml = await pollSites(server, (html) => html.includes("確認ゲート"));
+    assert.match(gateHtml, /テスト商事/);
+    // Guard 1: high-risk clauses are surfaced with their human-readable labels and quoted evidence.
+    assert.match(gateHtml, /自動更新・自動課金/);
+    assert.match(gateHtml, /第三者提供・販売/);
+    // Guard 3: the eligibility attestation is presented as an unchecked, user-decided checkbox.
+    assert.match(gateHtml, /name="attest_[^"]+"/);
+    assert.match(gateHtml, /私は18歳以上です/);
+
+    await post(server, "/registration/gate-decision", { csrf: token, decision: "decline" });
+
+    const doneHtml = await pollSites(server, (html) => html.includes("ユーザーの判断で中止しました"));
+    assert.ok(doneHtml);
+  });
+});
+
 test("starting a new registration while one is in progress shows a warning", async () => {
   await withRegistrationWebUi(async ({ server, token, site }) => {
     await post(server, "/registration/start", { csrf: token, url: site.siteUrl("01-basic") });
