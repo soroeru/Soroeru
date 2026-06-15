@@ -64,7 +64,7 @@ Stored locally, **encrypted** (RFC §3):
 - **per-site login ID and password**;
 - the AI provider API key;
 - user-defined custom fields;
-- per-site records (references + hashes, not duplicated raw values) and mandates.
+- per-site records (references + hashes, not duplicated raw values) and mandates;
 - local candidate definitions, because they reveal user activity and account-management
   intent even when they do not contain raw personal values.
 

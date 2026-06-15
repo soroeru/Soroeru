@@ -122,8 +122,8 @@ Planned capabilities:
   irreversible final actions behind explicit user confirmation.
 - Settings, including the user's own AI provider API key.
 - Shared site/form/field/withdrawal/wall definitions for deterministic and AI modes.
-- Local candidate definitions stored encrypted; they may be shared only after explicit
-  opt-in sanitization/review.
+- Local candidate definitions are stored encrypted; they may be shared only after
+  explicit opt-in sanitization/review.
 - Detect CAPTCHA / MFA / verification walls and hand off / resume seamlessly.
 
 ## Explicitly Out of Scope

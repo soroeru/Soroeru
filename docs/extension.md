@@ -164,9 +164,9 @@ This avoids duplicate deterministic-vs-AI definition stores. AI Mode gets the
 ## 4. Store Layer (encrypted)
 
 - All personal data, card data (incl. CVV), per-site credentials, the API key, per-site
-  records, mandates, and local candidate definitions are encrypted at rest. Encryption is canonical in
-  [`security.md`](security.md) §4 (Argon2id / PBKDF2-SHA-512 + AES-256-GCM, key in memory
-  only).
+  records, mandates, and local candidate definitions are encrypted at rest. Encryption is
+  canonical in [`security.md`](security.md) §4 (Argon2id / PBKDF2-SHA-512 + AES-256-GCM,
+  key in memory only).
 - Per-site records hold **references + hashes**, not duplicated raw values, so bulk-update
   diffing works without multiplying sensitive data.
 - Local candidate definitions do not contain raw profile values, but they reveal site

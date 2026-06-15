@@ -194,7 +194,7 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
 ### ローカルアプリUI（UI-001 / #17, UI-002 / #66）
 
 `npm run poc -- ui [deterministic|ai] [port]` で `src/app/web-ui.ts` のローカルWebアプリが起動する
-（詳細は `docs/extension.md` §11、設計計画は `docs/issue-66-local-web-app-ui.md`）。
+（詳細は `docs/extension.md` §13、設計計画は `docs/issue-66-local-web-app-ui.md`）。
 既定では `127.0.0.1` にだけbindし、POSTはCSRF tokenを必須にする。フロントエンド依存は追加せず、
 Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する。
 
