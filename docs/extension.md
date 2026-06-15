@@ -373,8 +373,15 @@ Current web UI foundation:
   values requires passphrase re-entry via `PocStore.verifyPassphrase()`.
 - **登録済みサイト** — shows per-site records, status, mandate count, filled-field count,
   and stale-field candidates from `staleFilledFields()`. The page always shows a
-  `新規登録` action near the top; a `一括更新` action appears below it only when stale
-  update candidates exist, otherwise "差分のあるサイトはありません" is shown.
+  `サイトを追加` guided action near the top; it asks whether the user already has an
+  account, routes unregistered users into autonomous registration, and records existing
+  accounts as `accountState=imported`. A `一括更新` action appears below it only when
+  stale update candidates exist, otherwise "差分のあるサイトはありません" is shown.
+- **サイト追加 (#83)** — `POST /site/add` is the entry point for the guided flow. When
+  the user chooses "まだ持っていない", it delegates to the new-registration session below.
+  When the user chooses "すでに持っている", it stores an imported site inventory record
+  without guessing credentials or attempting login. "わからない" is treated
+  conservatively: the UI asks the user to choose before any workflow starts.
 - **新規登録 (#81)** — `POST /registration/start` launches a headed Playwright browser
   (`CatashiroApp.launchBrowser("chromium")`), opens a new page, and runs
   `AppRunner.register()` in the background via `RegistrationSession`

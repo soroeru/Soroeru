@@ -119,7 +119,7 @@ test("registration happy path: 01-basic fills the form, shows the gate, and regi
 
     await post(server, "/registration/dismiss", { csrf: token });
     const afterHtml = await getHtml(server, "/?tab=sites");
-    assert.match(afterHtml, /<h3>新規登録<\/h3>/);
+    assert.match(afterHtml, /<h3>サイトを追加<\/h3>/);
   });
 });
 

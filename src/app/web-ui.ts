@@ -119,6 +119,15 @@ function normalizeSiteUrl(value: string): string {
   return /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//.test(value) ? value : `https://${value}`;
 }
 
+function siteIdFromInputUrl(url: string): string {
+  const parsed = new URL(normalizeSiteUrl(url));
+  return parsed.host;
+}
+
+function serviceNameFromUrl(url: string): string {
+  return new URL(normalizeSiteUrl(url)).host.replace(/^www\./, "");
+}
+
 function highRiskFlagLabel(flag: string): string {
   return (HIGH_RISK_FLAG_DESCRIPTIONS as Record<string, string>)[flag] ?? flag;
 }
@@ -288,6 +297,9 @@ class WebUiServer {
         return;
       case "/registration/start":
         await this.startRegistration(form, res);
+        return;
+      case "/site/add":
+        await this.addSite(form, res);
         return;
       case "/registration/provide-data":
         await this.provideRegistrationData(form, res);
@@ -1141,7 +1153,7 @@ class WebUiServer {
         <div class="section-header">
           <div>
             <h2>登録済みサイト</h2>
-            <p class="muted">新規登録と一括更新は、このページ上部から開始できます。</p>
+            <p class="muted">サイト追加、一括更新、既存アカウントの取り込みをここから開始できます。</p>
           </div>
         </div>
         <div class="site-action-grid">
@@ -1177,14 +1189,29 @@ class WebUiServer {
 
   private renderRegistrationForm(): string {
     return `
-      <form class="reghero stack" method="post" action="/registration/start">
+      <form class="reghero stack" method="post" action="/site/add">
         ${this.csrfInput()}
-        <h3>新規登録</h3>
-        <p class="muted">登録したいサイトのURLを入力します。</p>
+        <h3>サイトを追加</h3>
+        <p class="muted">URLを入力し、アカウントの有無を選ぶと適切なワークフローに進みます。</p>
         <label>サイトURL
           <input name="url" type="url" placeholder="example.com/register">
         </label>
-        <button type="submit">新規登録を開始</button>
+        <fieldset class="stack">
+          <legend>このサイトのアカウント</legend>
+          <label class="field-delete">
+            <input type="radio" name="accountStatus" value="notRegistered" checked>
+            まだ持っていない（新規登録する）
+          </label>
+          <label class="field-delete">
+            <input type="radio" name="accountStatus" value="registered">
+            すでに持っている（既存アカウントとして取り込む）
+          </label>
+          <label class="field-delete">
+            <input type="radio" name="accountStatus" value="uncertain">
+            わからない（選択を確認する）
+          </label>
+        </fieldset>
+        <button type="submit">サイト追加を続ける</button>
       </form>
     `;
   }
@@ -1812,6 +1839,43 @@ class WebUiServer {
     this.registration = { session, browser };
     session.start();
     this.redirect(res, "ok", "新規登録を開始しました。進行状況はこのページに表示されます。", "sites");
+  }
+
+  private async addSite(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const url = formValue(form, "url");
+    if (!url) {
+      this.redirect(res, "warn", "サイトのURLを入力してください。", "sites");
+      return;
+    }
+    const accountStatus = formValue(form, "accountStatus");
+    if (accountStatus === "uncertain") {
+      this.redirect(res, "warn", "既存アカウントの有無を選んでから続行してください。", "sites");
+      return;
+    }
+    if (accountStatus === "registered") {
+      const normalized = normalizeSiteUrl(url);
+      const parsed = new URL(normalized);
+      const now = Date.now();
+      this.app.store.upsertSiteRecord({
+        origin: parsed.origin,
+        siteId: siteIdFromInputUrl(url),
+        serviceName: serviceNameFromUrl(url),
+        registeredAt: now,
+        filledFields: [],
+        accountState: "imported",
+        status: "registered",
+        lastCheckedAt: now,
+        nextAction: "reviewInventory",
+      });
+      await this.app.store.save();
+      this.redirect(res, "ok", "既存アカウントとしてサイト一覧に取り込みました。", "sites");
+      return;
+    }
+    if (accountStatus !== "notRegistered") {
+      this.redirect(res, "warn", "アカウントの有無を選択してください。", "sites");
+      return;
+    }
+    await this.startRegistration(form, res);
   }
 
   private async provideRegistrationData(form: URLSearchParams, res: ServerResponse): Promise<void> {
