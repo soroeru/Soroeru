@@ -10,6 +10,7 @@
 import type { Page } from "playwright";
 import { runRegistration, runUpdate, type AgentDeps, type RegistrationResult, type UpdateResult } from "../agent/agent.js";
 import type { Gate } from "../agent/gate.js";
+import { runExistingAccountImport, type ImportResult } from "../agent/importer.js";
 import type { Mapper } from "../agent/mapper.js";
 import type { HumanHandoff } from "../agent/walls.js";
 import type { CatashiroApp } from "./app.js";
@@ -40,6 +41,12 @@ export class AppRunner {
   update(page: Page, siteTopUrl: string, siteId: string, hooks: AppRunnerHooks): Promise<UpdateResult> {
     this.app.touch();
     return runUpdate(page, siteTopUrl, siteId, this.deps(hooks));
+  }
+
+  /** Read import candidates from an existing account/profile page (#84). */
+  importExistingAccount(page: Page, profileUrl: string): Promise<ImportResult> {
+    this.app.touch();
+    return runExistingAccountImport(page, profileUrl, this.mapper, this.app.store);
   }
 
   private deps(hooks: AppRunnerHooks): AgentDeps {
