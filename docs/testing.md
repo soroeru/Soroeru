@@ -116,6 +116,12 @@ Use [`manual-test.md`](manual-test.md) for browser-based checklists. Per AGENTS.
 detection, filling, submission, the review-and-confirm gate, the three guards, wall
 hand-off, or storage/encryption behavior.
 
+For Mac private beta releases, [`manual-test.md`](manual-test.md) §0 is the owning
+release QA checklist. It combines automated gates with manual install / uninstall, first
+run, vault recovery, Add Site branching, registration, existing-account import, bulk
+update, wall hand-off / resume, support-bundle review, and release-note limitation checks.
+Run it against the packaged `.app` artifact before sharing a build with beta users.
+
 ## 7. CI
 
 `.github/workflows/ci.yml` (TEST-001 / #45) runs on every pull request and on

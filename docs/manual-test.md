@@ -20,6 +20,136 @@ Out of scope here: the overall test strategy and test-type matrix (see
 Run this checklist on an Apple Silicon Mac with macOS 14 Sonoma or macOS 15 Sequoia before
 inviting or expanding the first private beta group.
 
+### 0.1 Release Candidate And Artifact Steps
+
+Use this sequence for each private beta build. The build may be distributed as a GitHub
+Release, direct file share, or landing-page download link, but the exact channel must be
+recorded in the beta release notes before users receive it.
+
+- [ ] Start from an up-to-date `main` branch with no local source, doc, generated, or
+      state-file changes (`git status -sb`)
+- [ ] Create a short-lived release branch named
+      `codex/beta-YYYY-MM-DD-<short-slug>` or `release/beta-YYYY-MM-DD-<short-slug>`
+- [ ] Review the merged PR list since the previous beta and write the user-visible
+      release-note bullets, including fixed issues, new limitations, and upgrade notes
+- [ ] Run the required local checks in §0.2 and confirm the GitHub checks for the
+      release branch or release PR are green
+- [ ] Build the Mac artifact with `npm run package:mac`
+- [ ] Confirm `release/Catashiro.app` and `release/Catashiro-mac-beta.zip` were created
+      and that `release/` remains untracked / ignored by Git
+- [ ] Launch the generated `.app`, complete the install / first-run checks in §0.3, then
+      close the app and confirm no Playwright browser sessions remain open
+- [ ] Tag the tested commit as `beta-YYYY-MM-DD` or record the tested commit SHA in the
+      release notes if a tag is not being used yet
+- [ ] State signing / notarization status plainly in the release notes; for the current
+      unsigned beta, include the expected macOS Gatekeeper friction and how the user can
+      remove the app
+
+### 0.2 Required Local And GitHub Checks
+
+Run these checks before a beta build is shared. Use fake data only, and do not attach
+vault files, screenshots with secrets, support bundles, or `state/` output to public
+issues or PRs.
+
+- [ ] `npm ci`
+- [ ] `npx playwright install chromium`
+- [ ] `npm run typecheck`
+- [ ] `npm test`
+- [ ] `npm run poc -- check-egress`
+- [ ] `npm run poc -- check-persistence`
+- [ ] `npm run poc -- check-bypass`
+- [ ] `npm run poc:matrix -- deterministic chromium`
+- [ ] `npm run package:mac`
+- [ ] GitHub `ci / unit`, `ci / e2e-deterministic`, and `shellcheck` are green on the
+      release PR / branch
+- [ ] If AI Provider mode changed, run one local AI-mode smoke with a user-owned test key
+      and record only pass/fail plus provider/model name, never prompts, keys, or raw
+      values
+
+### 0.3 Install, First Run, Recovery, And Uninstall
+
+Run these checks against the packaged `.app`, not only `npm run poc -- ui`.
+
+- [ ] Install by unzipping `Catashiro-mac-beta.zip` and moving `Catashiro.app` to the
+      beta install location documented for users
+- [ ] If the build is unsigned, macOS presents the expected warning and the beta notes
+      already explain it
+- [ ] First launch opens the local web UI at `127.0.0.1` and does not require a hosted
+      account, cloud vault, telemetry opt-in, or browser extension install
+- [ ] Onboarding creates an encrypted local vault under
+      `~/Library/Application Support/Catashiro` by default, or under the documented
+      `CATASHIRO_STATE_ROOT` override when set
+- [ ] Lock / unlock works with the master passphrase
+- [ ] Recovery-key generation shows the key once, then recovery-key unlock works after
+      locking or restarting the app
+- [ ] A fresh install with an existing fake-data vault can be unlocked from the documented
+      local vault location, or the limitation is listed in §0.6 release notes
+- [ ] Uninstall instructions remove the `.app` and explain that the local vault remains
+      unless the user explicitly deletes the application-support folder
+- [ ] Removing only the `.app` does not delete the local vault; deleting the vault folder
+      makes the next launch behave as a fresh first run
+
+### 0.4 Core Beta Manual QA Scenarios
+
+Run the detailed checklists below for the affected areas, then confirm this short beta
+scenario set before sharing a build with the first 10 users.
+
+- [ ] Add Site: choose "まだ持っていない" and complete `01-basic` registration through
+      the review-and-confirm gate
+- [ ] Add Site: choose "すでに持っている" on an existing-account profile page and import
+      approved fake profile values into the encrypted vault
+- [ ] Add Site: choose "わからない" and confirm no site record is created until the user
+      chooses a branch
+- [ ] Registration gate: decline once and confirm nothing is submitted; approve once and
+      confirm the site inventory updates
+- [ ] Three guards: run `08-terms`, `09-trial-card`, and `10-no-auto` and confirm
+      high-risk clauses, card approval, no auto-attestation, and fill-only behavior
+- [ ] Wall hand-off: run CAPTCHA-like, OTP-like, email-verification, and ambiguous
+      security-check fixtures; the user resolves the wall in the same headed browser
+      session, then the agent re-observes and resumes
+- [ ] Bulk update: change fake phone/address values, run the current bulk-update path,
+      and confirm only stale fields are proposed and a new mandate is recorded
+- [ ] Support bundle / diagnostics: generate or inspect the current diagnostic output, if
+      available, and confirm it contains no raw personal values, API keys, vault bytes,
+      cookies, screenshots with secrets, or Playwright traces from real sites
+
+### 0.5 Beta Release Notes Template
+
+Each beta build should include a short note with:
+
+- tested commit SHA or tag
+- artifact name and distribution channel
+- supported platform: Apple Silicon Mac, macOS 14 Sonoma / macOS 15 Sequoia
+- signing / notarization status
+- setup prerequisites, including Node.js 22+ if the build does not bundle Node
+- what changed since the previous beta
+- required fake-data test coverage and checks that passed
+- known limitations from §0.6
+- support instructions and what users must not send (vault files, real personal data,
+  API keys, screenshots containing secrets)
+
+### 0.6 Known Limitations To Review Before Each Beta
+
+Copy the current limitations into the beta release notes and remove only when the
+implementation and checks prove otherwise.
+
+- [ ] Mac-only beta; Windows, Linux, mobile apps, Android Autofill Service, iOS app, and
+      browser-extension distribution are unsupported
+- [ ] Build is unsigned / not notarized unless a signing issue has explicitly changed
+      this
+- [ ] Node.js 22+ is required unless the artifact bundles a Node runtime
+- [ ] No auto-update channel; users install each beta manually
+- [ ] No hosted vault, backend sync, telemetry, analytics, or crash reporting
+- [ ] The encrypted vault is local by default; cloud-storage sync is unsupported unless a
+      later encrypted-sync issue defines it
+- [ ] CAPTCHA, MFA, identity verification, email/SMS verification, bot detection, rate
+      limits, paywalls, and access controls are hand-off points and are never bypassed
+- [ ] Checkout / purchase flows are unsupported; free-trial-to-paid-subscription card
+      fill requires explicit approval
+- [ ] PoC form detection remains Japanese-only
+- [ ] AI Provider mode is optional, uses the user's configured key, and receives form
+      structure / terms text only, never raw personal values
+
 - [ ] The app is distributed as a Mac desktop build or clearly identified development
       build; install instructions do not claim Windows, Linux, mobile, or browser
       extension support
