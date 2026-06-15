@@ -7,7 +7,7 @@ section with Claude Code-specific guidance. When the shared sections in
 `AGENTS.md` change, update this file to match.
 
 > **Direction change (2026-06-12).** The project has pivoted from a Chrome-extension,
-> human-in-the-loop form *assistant* to **`autofill`**: a local-first, **autonomous
+> human-in-the-loop form *assistant* to **`Catashiro`**: a local-first, **autonomous
 > AI agent** that stores the user's full personal data and registers / updates the
 > user's accounts on their behalf. The canonical design is
 > [`docs/rfc/rfc-001-chrome-autofill-pivot.md`](docs/rfc/rfc-001-chrome-autofill-pivot.md)
@@ -21,7 +21,7 @@ section with Claude Code-specific guidance. When the shared sections in
 
 ## Project Overview
 
-`autofill` is a **local-first, autonomous personal-data ledger and account-state
+`Catashiro` is a **local-first, autonomous personal-data ledger and account-state
 agent** for personal use.
 
 The user stores their personal data locally (encrypted). When the user gives a URL,
@@ -39,7 +39,7 @@ WebKit).
 
 - Build a small, working autonomous agent the user can run locally.
 - Keep the user's personal data **local and encrypted**; the user owns and manages it.
-- Provide `autofill` as OSS so the code managing the user's personal-data single source
+- Provide `Catashiro` as OSS so the code managing the user's personal-data single source
   of truth is inspectable, self-buildable, and portable.
 - Do not operate a hosted vault. The encrypted vault lives on local disk by default and
   may later sync through user-owned cloud storage as encrypted bytes only.
@@ -130,14 +130,14 @@ Do not implement these unless the user explicitly changes the scope:
 - checkout / purchase / payment (except the free-trial→subscription card case above)
 - **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls
 - multi-locale form detection in the PoC (PoC is Japanese-only; multi-locale is later)
-- `autofill`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
+- `Catashiro`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
   reporting
 - app-embedded terminals, CLI Provider integration, or using Claude Code / Codex CLI as
   the primary AI integration path
 - MCP server support in the MVP; a strictly permissioned local MCP server may be added
   later for advanced users, but it must not expose raw personal values or bypass
-  `autofill`'s approval gates
-- mobile apps, iOS app autofill, Android Autofill Service
+  `Catashiro`'s approval gates
+- mobile apps, iOS app Catashiro, Android Autofill Service
 - using any AI provider other than the user's configured one
 
 ## Tech Stack
@@ -159,7 +159,7 @@ reason and update the relevant docs.
 ## Expected Architecture
 
 Canonical architecture lives in [`docs/extension.md`](docs/extension.md) and the RFC.
-In short, `autofill` is a **local Playwright-based application** with four layers:
+In short, `Catashiro` is a **local Playwright-based application** with four layers:
 
 - **store layer**: encrypted personal data, per-site records, mandates, and local
   candidate definitions;

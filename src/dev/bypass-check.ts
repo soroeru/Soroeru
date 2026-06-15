@@ -1,6 +1,6 @@
 // SEC-002 (#23): static check that no dependency provides CAPTCHA-solving,
 // anti-bot / browser-fingerprint-evasion, or similar bypass-oriented tooling
-// (docs/security.md §7). `autofill` DETECTS CAPTCHA / MFA / bot-detection
+// (docs/security.md §7). `Catashiro` DETECTS CAPTCHA / MFA / bot-detection
 // walls and hands off to the user in the same session — it must never solve,
 // bypass, hide, or outsource them (RFC-001 v3 §10b).
 //

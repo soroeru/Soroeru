@@ -1,6 +1,6 @@
 # Application Architecture
 
-This document owns **`autofill` application architecture and design decisions**: the
+This document owns **`Catashiro` application architecture and design decisions**: the
 layer boundaries, the Playwright automation runtime, the encrypted store, the AI agent
 boundary, and the registration / hand-off control flow.
 
@@ -10,7 +10,7 @@ see §7). Out of scope here: product requirements (see [`requirements.md`](requi
 setup and repository layout (see [`development.md`](development.md)), and security
 rationale (see [`security.md`](security.md)).
 
-> **Direction change (2026-06-12).** `autofill` is no longer a Chrome Extension
+> **Direction change (2026-06-12).** `Catashiro` is no longer a Chrome Extension
 > (Manifest V3). It is a **local Playwright-based application**. The previous MV3 design
 > (content script / background service worker / options page) is historical and lives in
 > git. Component and file layout were finalized during the PoC (#33, closed); this
@@ -18,10 +18,10 @@ rationale (see [`security.md`](security.md)).
 
 ## 1. Architecture Overview
 
-`autofill` is a local application with four layers:
+`Catashiro` is a local application with four layers:
 
 ```text
-autofill (local app)
+Catashiro (local app)
 ├── store layer
 │   ├── personal data (name, address, phone, email, card incl. CVV, per-site credentials)
 │   ├── per-site records (references + hashes, not duplicated raw values)
@@ -82,7 +82,7 @@ Two seams keep the deterministic and AI variants interchangeable and testable:
 only `PageSnapshot` structure (labels / `name` / `id` / type / options / nearby text) and
 terms text. Raw profile values are resolved from the decrypted store and injected by the
 automation layer at fill time — they never enter a mapper input or an AI prompt. This
-invariant is asserted in `tests/unit/autofill-poc-contracts.test.ts`.
+invariant is asserted in `tests/unit/catashiro-poc-contracts.test.ts`.
 
 ## 2. Automation Layer (Playwright)
 
@@ -110,12 +110,12 @@ invariant is asserted in `tests/unit/autofill-poc-contracts.test.ts`.
   unsupported, or the user explicitly asks for AI assistance. This keeps the default path
   predictable and limits the user's AI cost.
 - App-embedded terminals and CLI Provider integrations (for example driving Claude Code or
-  Codex CLI from inside `autofill`) are intentionally out of scope. API Providers are the
+  Codex CLI from inside `Catashiro`) are intentionally out of scope. API Providers are the
   supported AI integration path.
 
 ### 3.1 Mode Model (design direction, not yet implemented)
 
-`autofill` exposes two product modes over the same execution and definition contracts:
+`Catashiro` exposes two product modes over the same execution and definition contracts:
 
 - **Deterministic Mode** (default): uses official site definitions, local candidate
   definitions, form fingerprints, and rule-based classifiers. No AI API key or chat
@@ -222,8 +222,8 @@ ambiguous or unsupported.
 ## 9. Advanced Local MCP Server (future)
 
 A local MCP server is a future advanced-user extension, not part of the MVP. If added, it
-must expose only narrow, permissioned tools from `autofill` to an external AI agent. It is
-not an AI Provider and must not let an external CLI or agent bypass `autofill`'s own UI,
+must expose only narrow, permissioned tools from `Catashiro` to an external AI agent. It is
+not an AI Provider and must not let an external CLI or agent bypass `Catashiro`'s own UI,
 store boundary, or approval gates.
 
 Initial MCP capability should be read-only or planning-oriented, such as:
@@ -232,7 +232,7 @@ Initial MCP capability should be read-only or planning-oriented, such as:
 - stale-site and withdrawal-target discovery;
 - current-page structure inspection;
 - candidate mapping / withdrawal-flow proposals;
-- task creation inside `autofill` for later user review.
+- task creation inside `Catashiro` for later user review.
 
 MCP must not expose raw profile values, credentials, card numbers, CVV, decrypted vault
 exports, direct browser control, or submit/withdraw actions that skip the
@@ -258,16 +258,16 @@ wiring the local web UI (§13) to `AppRunner`.
 `src/app/` is the local app shell that the UI layer and the automation
 layer both go through, rather than opening the store or launching browsers directly:
 
-- **`app.ts` — `AutofillApp`**: owns the encrypted store's unlock/lock lifecycle (incl.
+- **`app.ts` — `CatashiroApp`**: owns the encrypted store's unlock/lock lifecycle (incl.
   idle auto-lock, default 10 minutes, 0 disables) and tracks Playwright `Browser`
   instances so `shutdown()` can close them all and lock the store in one step. A wrong
-  passphrase fails GCM authentication; `unlock()` fails closed with `AutofillAppError`
+  passphrase fails GCM authentication; `unlock()` fails closed with `CatashiroAppError`
   rather than falling back to an unauthenticated read. `touch()` resets the idle timer on
   user/agent activity. Browser launching and the idle timers are injectable
   (`launchBrowserFn`, `setTimeoutFn` / `clearTimeoutFn`) so the lifecycle is unit-testable
-  without a real browser or real delays (`tests/unit/autofill-poc-app.test.ts`).
+  without a real browser or real delays (`tests/unit/catashiro-poc-app.test.ts`).
 - **`runner.ts` — `AppRunner`**: the UI <-> automation boundary. It owns the chosen
-  `Mapper` and reads the store + browser lifecycle from `AutofillApp`; the UI supplies
+  `Mapper` and reads the store + browser lifecycle from `CatashiroApp`; the UI supplies
   `AppRunnerHooks` (the review-and-confirm `Gate`, the missing-data prompt, the optional
   wall `HumanHandoff`, and the optional `humanFinalSubmit` surrogate for
   auto-creation-prohibited sites). `register()` / `update()` call `app.touch()` and then
@@ -275,13 +275,13 @@ layer both go through, rather than opening the store or launching browsers direc
   never constructs an `AgentDeps` or touches the store directly.
 
 Local state (the encrypted store file, matrix output, etc.) lives under
-`state/autofill-poc/` (gitignored). AI provider/model selection is part of the encrypted
+`state/catashiro-poc/` (gitignored). AI provider/model selection is part of the encrypted
 store's `ProviderSettings` (set via `PocStore.setProviderSettings`); the env-var based
 `aiProviderFromEnv()` (`OPENAI_API_KEY` preferred, `ANTHROPIC_API_KEY` fallback) remains
 for the PoC CLI and measurement runner, which run outside the UI flow.
 
 The CLI's `app` subcommand (`npm run poc -- app`) is a lifecycle smoke test: unlock the
-store (reporting `AutofillAppError` on a bad passphrase), launch a headed Chromium
+store (reporting `CatashiroAppError` on a bad passphrase), launch a headed Chromium
 browser, navigate to `about:blank`, then `shutdown()` (close the browser and lock the
 store).
 
@@ -290,10 +290,10 @@ store).
 The pre-pivot Chrome Extension (Manifest V3) files that previously lived under `src/` —
 `src/manifest.json`, `src/options/*`, `src/content/scanner.ts`,
 `src/storage/profile-store.ts`, and `src/shared/*` — predated the RFC-001 v3 pivot to a
-local Playwright application and were not part of the `autofill` runtime. They have been
+local Playwright application and were not part of the `Catashiro` runtime. They have been
 removed (#68); their history remains in git. The form scanner and rule-based classifier
 they contained informed the deterministic mapper now at `src/agent/scan.ts` and
-`src/agent/classifier.ts`. `src/` is now used exclusively for the `autofill` agent
+`src/agent/classifier.ts`. `src/` is now used exclusively for the `Catashiro` agent
 described in this document.
 
 ## 13. Local App UI (UI-001 / #17, UI-002 / #66)
@@ -308,7 +308,7 @@ npm run poc -- ui [deterministic|ai] [port]
 `src/app/web-ui.ts` starts a server-rendered local web app over
 Node's built-in HTTP server. It binds to `127.0.0.1` by default, uses no frontend
 framework, sets a restrictive content security policy, requires an in-memory CSRF token
-on every POST, and reads/writes data only through `AutofillApp.store`. The server is a
+on every POST, and reads/writes data only through `CatashiroApp.store`. The server is a
 local UI facade, not a hosted backend or cloud service.
 
 Current web UI foundation:
@@ -338,6 +338,6 @@ npm run poc -- ui:cli [deterministic|ai]
 ```
 
 `src/app/ui.ts` (`AppUI`) is that fallback CLI menu over
-`AutofillApp` + `AppRunner`. Its injectable `UiIo` remains covered by
-`tests/unit/autofill-poc-ui.test.ts`; the browser UI routes are covered by
-`tests/unit/autofill-poc-web-ui.test.ts`.
+`CatashiroApp` + `AppRunner`. Its injectable `UiIo` remains covered by
+`tests/unit/catashiro-poc-ui.test.ts`; the browser UI routes are covered by
+`tests/unit/catashiro-poc-web-ui.test.ts`.

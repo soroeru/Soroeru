@@ -1,6 +1,6 @@
 # Requirements
 
-This document owns the **product requirements** for `autofill`: scope, non-scope,
+This document owns the **product requirements** for `Catashiro`: scope, non-scope,
 the autonomy / hand-off model, use cases, and non-functional requirements.
 
 Canonical product direction is
@@ -9,7 +9,7 @@ Out of scope here: application architecture (see [`extension.md`](extension.md))
 security rationale (see [`security.md`](security.md)), and agent operating rules (see
 `../AGENTS.md` and `../CLAUDE.md`).
 
-> **Direction change (2026-06-12).** `autofill` is no longer a human-in-the-loop Chrome
+> **Direction change (2026-06-12).** `Catashiro` is no longer a human-in-the-loop Chrome
 > extension. It is a local-first, autonomous agent that stores the user's full personal
 > data (encrypted) and registers / updates the user's accounts on their behalf via
 > Playwright. This document reflects that direction.
@@ -19,7 +19,7 @@ security rationale (see [`security.md`](security.md)), and agent operating rules
 People register the same personal information across many sites and must keep it current
 when it changes (moving, new phone number, new card). Doing this by hand is repetitive.
 
-`autofill` keeps the user's personal data **locally and encrypted** and uses Playwright
+`Catashiro` keeps the user's personal data **locally and encrypted** and uses Playwright
 browser automation to register on new sites, update existing accounts, and help the user
 withdraw from services they no longer use. Keeping the data local means the user owns and
 manages their own information rather than handing it to a third-party service.
@@ -31,14 +31,14 @@ an important automation capability, but it is a means to keep that ledger curren
 than the product's only purpose.
 
 Browser automation uses Playwright so the agent works across browser engines (Chromium /
-Firefox / WebKit) rather than depending on one browser's autofill.
+Firefox / WebKit) rather than depending on one browser's built-in autofill.
 
 ## 2. Product Principles
 
 - The user's personal data stays local and encrypted; the user owns it.
-- `autofill` should be provided as OSS so the code managing the user's personal-data
+- `Catashiro` should be provided as OSS so the code managing the user's personal-data
   single source of truth is inspectable, self-buildable, and portable.
-- The app should be a local-first desktop application; `autofill` must not operate a
+- The app should be a local-first desktop application; `Catashiro` must not operate a
   hosted vault that stores users' personal data.
 - The user should be able to choose where the encrypted vault lives: local disk by
   default, and later a user-owned cloud-storage folder/provider for encrypted sync.
@@ -105,14 +105,14 @@ Registration flow:
 - auto-submitting on sites whose terms prohibit automated account creation (fill only);
 - auto-attesting eligibility / identity statements;
 - multi-locale form detection in the PoC (PoC is Japanese-only);
-- `autofill`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
+- `Catashiro`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
   reporting;
 - app-embedded terminals, CLI Provider integration, or using Claude Code / Codex CLI as
   the primary AI integration path;
 - MCP server support in the MVP; a strictly permissioned local MCP server may be added
   later for advanced users, but it must not expose raw personal values or bypass
-  `autofill`'s approval gates;
-- mobile apps, iOS app autofill, Android Autofill Service;
+  `Catashiro`'s approval gates;
+- mobile apps, iOS app Catashiro, Android Autofill Service;
 - using any AI provider other than the user's configured one.
 
 ## 6. Functional Requirements
@@ -135,7 +135,7 @@ Registration flow:
 | REQ-014 | Use AI mode only as an optional enhancement for ambiguous or unsupported cases, via API Provider integration. | Should | Planned |
 | REQ-015 | Store AI-generated candidate definitions locally and encrypted; never treat them as official until reviewed/promoted. | Should | Planned |
 | REQ-016 | Support withdrawal management so the user can identify and leave services they no longer use. | Should | Planned |
-| REQ-017 | Allow the user to place the encrypted vault in a user-owned storage location, including future cloud-storage sync, without giving `autofill` a hosted copy. | Could | Planned |
+| REQ-017 | Allow the user to place the encrypted vault in a user-owned storage location, including future cloud-storage sync, without giving `Catashiro` a hosted copy. | Could | Planned |
 
 ## 7. Non-Functional Requirements
 
@@ -192,7 +192,7 @@ and credentials) and set the AI provider API key.
 ### UC-007: Track and Withdraw from Unused Services
 
 The user reviews their per-site inventory, identifies services they no longer use, and
-asks `autofill` to help find the withdrawal flow. The app prepares a withdrawal task and
+asks `Catashiro` to help find the withdrawal flow. The app prepares a withdrawal task and
 hands off at walls; irreversible account deletion or final withdrawal confirmation must
 remain gated by the user.
 
@@ -207,7 +207,7 @@ provider, then validates the returned candidate before reuse.
 
 The user chooses a local folder or supported cloud-storage folder for the encrypted vault.
 The storage provider receives only encrypted vault bytes and never receives the passphrase,
-derived key, decrypted records, or raw personal values from `autofill`.
+derived key, decrypted records, or raw personal values from `Catashiro`.
 
 ## 9. Field Detection Requirements
 

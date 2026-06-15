@@ -1,15 +1,15 @@
 # Manual Test
 
-This document owns the **browser-based manual test checklist** for `autofill`.
+This document owns the **browser-based manual test checklist** for `Catashiro`.
 
-> **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
+> **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
 > autonomous agent (see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
 > The previous MV3-extension checklist (build, load, options page, content-script
 > scanning) described code that has since been removed (#68) and has been deleted from
 > this document along with that code (history remains in git). The checklist below
 > (registration, the review-and-confirm gate, the three guards, wall hand-off / resume,
 > bulk update, and the encrypted store / local web UI) is the current manual checklist
-> for `autofill`. The fake-data-only rule still applies.
+> for `Catashiro`. The fake-data-only rule still applies.
 
 Out of scope here: the overall test strategy and test-type matrix (see
 [`testing.md`](testing.md)), and the canonical command list (see
@@ -17,7 +17,7 @@ Out of scope here: the overall test strategy and test-type matrix (see
 
 ## 1. CAPTCHA / MFA / Verification Wall Handoff (SEC-002)
 
-This section checks the `autofill` agent's wall detection and handoff/resume
+This section checks the `Catashiro` agent's wall detection and handoff/resume
 behavior end to end against the local test sites (`npm run poc:serve`, then
 `npm run poc -- demo` or `npm run poc -- register <siteId>`).
 
@@ -122,6 +122,6 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
 - [ ] Legacy `ui:cli` still supports encrypted export, then import into a fresh
       store path and confirm the same data is available after unlocking with
       the same passphrase
-- [ ] Open the exported file under `state/autofill-poc/` in a text editor and
+- [ ] Open the exported file under `state/catashiro-poc/` in a text editor and
       confirm it contains only encrypted JSON (`version` / `kdf` / `records`),
       no plaintext personal data

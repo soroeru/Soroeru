@@ -3,7 +3,7 @@
 // This is intentionally server-rendered over Node's built-in HTTP server for
 // the first implementation slice: no new frontend framework, no telemetry, and
 // no remote backend. The server binds to 127.0.0.1 by default and all writes go
-// through AutofillApp/PocStore so encrypted-at-rest behavior stays unchanged.
+// through CatashiroApp/PocStore so encrypted-at-rest behavior stays unchanged.
 
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -19,7 +19,7 @@ import {
   type SiteRecord,
 } from "../types.js";
 import type { ProfileEntry, ProviderSettings } from "../store/store.js";
-import { AutofillApp, AutofillAppError } from "./app.js";
+import { CatashiroApp, CatashiroAppError } from "./app.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4127;
@@ -57,7 +57,7 @@ class HttpError extends Error {
 }
 
 export interface WebUiServerOptions {
-  app: AutofillApp;
+  app: CatashiroApp;
   host?: string;
   port?: number;
   log?: (message: string) => void;
@@ -139,7 +139,7 @@ const BRAND_MARK =
   '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="#1f5f8b"></rect><path d="M12 6v8m0 0-3.5-3.5M12 14l3.5-3.5" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7 18h10" stroke="#ffffff" stroke-width="2" stroke-linecap="round"></path></svg>';
 
 class WebUiServer {
-  private readonly app: AutofillApp;
+  private readonly app: CatashiroApp;
   private readonly host: string;
   private readonly port: number;
   private readonly log: (message: string) => void;
@@ -303,12 +303,12 @@ class WebUiServer {
 
   private renderLocked(flash?: Flash): string {
     return this.renderLayout(
-      "autofill",
+      "Catashiro",
       `
         <section class="hero-band">
           <div>
-            <p class="eyebrow">Local-first autofill</p>
-            <h1>autofill を開く</h1>
+            <p class="eyebrow">Local-first Catashiro</p>
+            <h1>Catashiro を開く</h1>
             <p>この画面はあなたのPC上だけで動きます。個人情報は暗号化して保存し、クラウド同期やテレメトリは使いません。</p>
           </div>
         </section>
@@ -346,12 +346,12 @@ class WebUiServer {
       .filter((candidate) => candidate.stale.length > 0);
     const settings = store.getSettings();
     return this.renderLayout(
-      "autofill dashboard",
+      "Catashiro dashboard",
       `
         <header class="app-header">
           <div>
             <p class="eyebrow">Local web app</p>
-            <h1>autofill</h1>
+            <h1>Catashiro</h1>
           </div>
           <form method="post" action="/lock">
             ${this.csrfInput()}
@@ -758,7 +758,7 @@ class WebUiServer {
   <div class="win">
     <div class="win__bar">
       ${ICON_LOCK}
-      <span>autofill — ローカルアプリ</span>
+      <span>Catashiro — ローカルアプリ</span>
     </div>
     <div class="win__body">
       ${this.app.isUnlocked ? this.renderChatRail() : ""}
@@ -779,7 +779,7 @@ class WebUiServer {
         <div class="rail__brand">
           ${BRAND_MARK}
           <div>
-            <strong>autofill</strong>
+            <strong>Catashiro</strong>
             <div class="rail__status"><span class="dot dot--safe"></span>ローカルで実行中</div>
           </div>
         </div>
@@ -1129,7 +1129,7 @@ class WebUiServer {
       await this.app.unlock(passphrase);
       this.redirect(res, "ok", "暗号化ストアを開きました。", "profile");
     } catch (err) {
-      const message = err instanceof AutofillAppError ? err.message : "ストアを開けませんでした。";
+      const message = err instanceof CatashiroAppError ? err.message : "ストアを開けませんでした。";
       this.redirect(res, "error", message, "profile");
     }
   }
@@ -1144,7 +1144,7 @@ class WebUiServer {
       await this.app.unlockWithRecoveryKey(recoveryKey);
       this.redirect(res, "ok", "リカバリーキーで開きました。", "profile");
     } catch (err) {
-      const message = err instanceof AutofillAppError ? err.message : "リカバリーキーで開けませんでした。";
+      const message = err instanceof CatashiroAppError ? err.message : "リカバリーキーで開けませんでした。";
       this.redirect(res, "error", message, "profile");
     }
   }

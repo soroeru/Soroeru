@@ -1,6 +1,6 @@
 # Security
 
-This document owns **security and privacy decisions** for `autofill`: principles, threat
+This document owns **security and privacy decisions** for `Catashiro`: principles, threat
 model, sensitive data handling, encryption, AI-disclosure policy, wall safety boundaries,
 DOM input safety, and dependency policy.
 
@@ -9,7 +9,7 @@ Canonical product direction is
 see §6 / §9 / §10 / §10b). Requirement-level statements live in
 [`requirements.md`](requirements.md) §7.
 
-> **Direction change (2026-06-12).** `autofill` now stores the user's **full** personal
+> **Direction change (2026-06-12).** `Catashiro` now stores the user's **full** personal
 > data — including credit card data (with CVV) and per-site credentials — locally and
 > **encrypted**, and registers / updates accounts on the user's behalf. The previous
 > "do not store passwords or cards" and "never auto-submit" rules are replaced. The
@@ -93,7 +93,7 @@ a profile value can reach a display or a file:
   re-entering the master passphrase for `isSensitiveKey` fields before
   showing the raw value (Claude Review follow-up on #17).
 - `maskForArtifact(key, value)` — for **persisted artifacts**
-  (`state/autofill-poc/matrix-*.json`, written by `npm run poc -- matrix`):
+  (`state/catashiro-poc/matrix-*.json`, written by `npm run poc -- matrix`):
   card / CVV / expiry / holder / password use the same strong mask; every
   other field is reduced to its length (e.g. `(17文字)`) or `(空)` — no raw
   value of any kind is written to disk outside the encrypted store. This is
@@ -102,7 +102,7 @@ a profile value can reach a display or a file:
 
 **Local persistence (PRIV-002 / #21)**: `npm run poc -- check-persistence`
 (`src/dev/privacy-check.ts`, tested by
-`tests/unit/autofill-poc-privacy.test.ts`) scans
+`tests/unit/catashiro-poc-privacy.test.ts`) scans
 `{src,run}/**/*.ts` for local-filesystem writes and fails
 unless each one carries a `// persist: encrypted-store`,
 `// persist: encrypted-export`, or `// persist: measurement-output`
@@ -114,10 +114,10 @@ annotated.
 
 **`state/ai-reviews/`** (the local cross-AI review hook,
 [`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
-source code, not on `state/autofill-poc/` (the encrypted profile store); since
+source code, not on `state/catashiro-poc/` (the encrypted profile store); since
 profile values are encrypted at rest and never appear in source, review
 artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
-`state/autofill-poc/` are Git-ignored.
+`state/catashiro-poc/` are Git-ignored.
 
 ## 4. Encryption (canonical)
 
@@ -167,7 +167,7 @@ all data unless the user set up a recovery key beforehand.
   optional `recovery` field in the store file. A single SHA-256 is sufficient here
   (unlike the passphrase KDF) because the recovery key already carries 256 bits of
   entropy.
-- **Recovery unlock**: `PocStore.openWithRecoveryKey()` / `AutofillApp.unlockWithRecoveryKey()`
+- **Recovery unlock**: `PocStore.openWithRecoveryKey()` / `CatashiroApp.unlockWithRecoveryKey()`
   unwrap the master key with the recovery key instead of deriving it from a passphrase,
   then decrypt the store as usual. A wrong recovery key fails AES-GCM authentication and
   is rejected (fail-closed), matching the wrong-passphrase behavior in §4.7.
@@ -218,7 +218,7 @@ shadow state.
 
 **Static enforcement (PRIV-001 / #20)**: `npm run poc -- check-egress`
 (`src/dev/egress-check.ts`, tested by
-`tests/unit/autofill-poc-egress.test.ts`) scans
+`tests/unit/catashiro-poc-egress.test.ts`) scans
 `{src,run}/**/*.ts` for network-call sites and fails unless each one
 carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
 `package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
@@ -244,16 +244,16 @@ and the agent resumes from where it paused.
 
 **Static enforcement (SEC-002 / #23)**: `npm run poc -- check-bypass`
 (`src/dev/bypass-check.ts`, tested by
-`tests/unit/autofill-poc-bypass.test.ts`) scans `package.json` `dependencies` /
+`tests/unit/catashiro-poc-bypass.test.ts`) scans `package.json` `dependencies` /
 `devDependencies` for package names matching a CAPTCHA-solving or anti-bot /
 browser-fingerprint-evasion denylist (e.g. `2captcha`, `anticaptcha`,
 `capsolver`, `*-stealth`, `rebrowser`, `fingerprint-injector`,
 `fingerprint-suite`). A dependency matching this denylist fails the check and
-must be reviewed against this section before it is added — `autofill` detects
+must be reviewed against this section before it is added — `Catashiro` detects
 walls and hands off; it never solves, bypasses, hides, or outsources them.
 
 **Detect-only invariant (SEC-002 / #23)**:
-`tests/unit/autofill-poc-walls.test.ts` fixes two invariants that hold
+`tests/unit/catashiro-poc-walls.test.ts` fixes two invariants that hold
 regardless of which wall kind `detectWall` reports:
 
 - `handoffInstruction` copy never suggests solving, automating, bypassing, or
@@ -299,10 +299,10 @@ A local MCP server is a future advanced-user extension and must be disabled by d
 If added, it must be local-only, session-authorized, permission-scoped, and auditable.
 
 MCP tools may expose summaries, planning helpers, sanitized current-page structure,
-candidate-definition proposals, and `autofill` task creation for later review. MCP tools
+candidate-definition proposals, and `Catashiro` task creation for later review. MCP tools
 must not expose raw personal values, credentials, card numbers, CVV, API keys, decrypted
 vault exports, direct browser control, or submit/withdraw operations that skip
-`autofill`'s own review-and-confirm gates.
+`Catashiro`'s own review-and-confirm gates.
 
 All MCP calls should be logged in the encrypted vault with the tool name, time, requested
 scope, and sanitized result summary. Logs must not include decrypted values.

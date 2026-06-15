@@ -21,7 +21,7 @@ const SCAN_DIRS = ["src", "run"];
 const ALLOWED_CATEGORIES = new Set([
   "encrypted-store", // src/store/store.ts: AES-256-GCM encrypted store + recovery rekey (docs/security.md §4)
   "encrypted-export", // recovery export/import: same encrypted JSON shape as the on-disk store (§4)
-  "measurement-output", // state/autofill-poc/matrix-*.json, masked via maskForArtifact (§3)
+  "measurement-output", // state/catashiro-poc/matrix-*.json, masked via maskForArtifact (§3)
 ]);
 
 /** Patterns that indicate a line writes to the local filesystem. */
