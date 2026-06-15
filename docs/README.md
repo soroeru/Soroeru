@@ -1,13 +1,13 @@
 # Documentation Guide
 
-This directory contains development-facing documentation for `autofill` (formerly
+This directory contains development-facing documentation for `Catashiro` (formerly
 `formfill-assistant`).
 
 Keep this file as a short index. Put detailed decisions in the document that
 owns the relevant topic.
 
 > **Direction change (2026-06-12).** The project pivoted from a human-in-the-loop Chrome
-> extension to **`autofill`**, a local-first autonomous agent (Playwright-based). The
+> extension to **`Catashiro`**, a local-first autonomous agent (Playwright-based). The
 > canonical direction is [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)
 > (RFC-001 v3). Docs below reflect that direction.
 
@@ -15,7 +15,7 @@ owns the relevant topic.
 
 | Document | Responsibility |
 | --- | --- |
-| [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) | **Canonical product direction (RFC-001 v3): autonomous autofill agent.** |
+| [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) | **Canonical product direction (RFC-001 v3): autonomous Catashiro agent.** |
 | [`requirements.md`](requirements.md) | Product requirements, scope, non-scope, autonomy / hand-off model, use cases, and non-functional requirements. |
 | [`extension.md`](extension.md) | Application architecture: Playwright automation runtime, encrypted store, AI agent boundary, registration / hand-off flow. |
 | [`security.md`](security.md) | Security and privacy review notes, threat model, encryption, AI-disclosure policy, and wall safety boundaries. |

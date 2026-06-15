@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright";
-import { AutofillApp, AutofillAppError } from "../../src/app/app.js";
+import { CatashiroApp, CatashiroAppError } from "../../src/app/app.js";
 import { AppRunner, type AppRunnerHooks } from "../../src/app/runner.js";
 import type { Mapper } from "../../src/agent/mapper.js";
 
@@ -23,19 +23,19 @@ async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
   }
 }
 
-test("unlock() opens the encrypted store; a wrong passphrase fails closed with AutofillAppError", async () => {
+test("unlock() opens the encrypted store; a wrong passphrase fails closed with CatashiroAppError", async () => {
   await withTempDir(async (dir) => {
-    const app = new AutofillApp({ stateDir: dir, idleLockMs: 0 });
+    const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
     const store = await app.unlock(PASSPHRASE);
     assert.equal(app.isUnlocked, true);
     store.setProfileValue("email", "メールアドレス", "user@example.test");
     await store.save();
     app.lock();
     assert.equal(app.isUnlocked, false);
-    assert.throws(() => app.store, AutofillAppError);
+    assert.throws(() => app.store, CatashiroAppError);
 
-    const app2 = new AutofillApp({ stateDir: dir, idleLockMs: 0 });
-    await assert.rejects(() => app2.unlock("wrong-passphrase"), AutofillAppError);
+    const app2 = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+    await assert.rejects(() => app2.unlock("wrong-passphrase"), CatashiroAppError);
     assert.equal(app2.isUnlocked, false);
   });
 });
@@ -44,7 +44,7 @@ test("idle auto-lock locks the store once the injected timer fires", async () =>
   await withTempDir(async (dir) => {
     const timers = new Map<number, () => void>();
     let nextHandle = 0;
-    const app = new AutofillApp({
+    const app = new CatashiroApp({
       stateDir: dir,
       idleLockMs: 1000,
       setTimeoutFn: (fn) => {
@@ -70,7 +70,7 @@ test("touch() resets the idle auto-lock timer", async () => {
   await withTempDir(async (dir) => {
     const timers = new Map<number, () => void>();
     let nextHandle = 0;
-    const app = new AutofillApp({
+    const app = new CatashiroApp({
       stateDir: dir,
       idleLockMs: 1000,
       setTimeoutFn: (fn) => {
@@ -101,7 +101,7 @@ test("launchBrowser tracks browsers; shutdown closes them all and locks the stor
     let closeCount = 0;
     const launchBrowserFn = async (): Promise<Browser> => ({ close: async () => { closeCount++; } }) as unknown as Browser;
 
-    const app = new AutofillApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn });
+    const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn });
     await app.unlock(PASSPHRASE);
 
     await app.launchBrowser("chromium");
@@ -118,7 +118,7 @@ test("closeBrowser closes and stops tracking a single browser", async () => {
     let closeCount = 0;
     const launchBrowserFn = async (): Promise<Browser> => ({ close: async () => { closeCount++; } }) as unknown as Browser;
 
-    const app = new AutofillApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn });
+    const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn });
     await app.unlock(PASSPHRASE);
 
     const browser = await app.launchBrowser("chromium");
@@ -132,7 +132,7 @@ test("closeBrowser closes and stops tracking a single browser", async () => {
 
 test("AppRunner.register/update require an unlocked store", async () => {
   await withTempDir(async (dir) => {
-    const app = new AutofillApp({ stateDir: dir, idleLockMs: 0 });
+    const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
     const runner = new AppRunner(app, {} as unknown as Mapper);
     const hooks: AppRunnerHooks = {
       gate: { decide: async () => ({ approved: false, attestationApprovals: {}, cardApproved: false }) },
@@ -142,10 +142,10 @@ test("AppRunner.register/update require an unlocked store", async () => {
 
     await assert.rejects(async () => {
       await runner.register({} as unknown as Page, "http://127.0.0.1/site", hooks);
-    }, AutofillAppError);
+    }, CatashiroAppError);
 
     await assert.rejects(async () => {
       await runner.update({} as unknown as Page, "http://127.0.0.1/site", "site-id", hooks);
-    }, AutofillAppError);
+    }, CatashiroAppError);
   });
 });

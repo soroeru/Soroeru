@@ -236,7 +236,7 @@ async function runSiteRegistration(
 }
 
 /**
- * PRIV-002 (#21): mismatch notes are written to `state/autofill-poc/matrix-*.json`,
+ * PRIV-002 (#21): mismatch notes are written to `state/catashiro-poc/matrix-*.json`,
  * so no field's raw value goes in — see `maskForArtifact`.
  */
 function maskNote(gt: GtField, value: string): string {

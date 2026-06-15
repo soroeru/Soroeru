@@ -1,6 +1,6 @@
 # Requirements
 
-This document owns the **product requirements** for `autofill`: scope, non-scope,
+This document owns the **product requirements** for `Catashiro`: scope, non-scope,
 the autonomy / hand-off model, use cases, and non-functional requirements.
 
 Canonical product direction is
@@ -9,7 +9,7 @@ Out of scope here: application architecture (see [`extension.md`](extension.md))
 security rationale (see [`security.md`](security.md)), and agent operating rules (see
 `../AGENTS.md` and `../CLAUDE.md`).
 
-> **Direction change (2026-06-12).** `autofill` is no longer a human-in-the-loop Chrome
+> **Direction change (2026-06-12).** `Catashiro` is no longer a human-in-the-loop Chrome
 > extension. It is a local-first, autonomous agent that stores the user's full personal
 > data (encrypted) and registers / updates the user's accounts on their behalf via
 > Playwright. This document reflects that direction.
@@ -19,14 +19,14 @@ security rationale (see [`security.md`](security.md)), and agent operating rules
 People register the same personal information across many sites and must keep it current
 when it changes (moving, new phone number, new card). Doing this by hand is repetitive.
 
-`autofill` keeps the user's personal data **locally and encrypted** and uses an AI agent
+`Catashiro` keeps the user's personal data **locally and encrypted** and uses an AI agent
 plus Playwright browser automation to register on new sites and update existing accounts
 on the user's behalf, with a single review-and-confirm step per registration. Keeping the
 data local means the user owns and manages their own information rather than handing it to
 a third-party service.
 
 Browser automation uses Playwright so the agent works across browser engines (Chromium /
-Firefox / WebKit) rather than depending on one browser's autofill.
+Firefox / WebKit) rather than depending on one browser's Catashiro.
 
 ## 2. Product Principles
 
@@ -82,7 +82,7 @@ Registration flow:
 - auto-attesting eligibility / identity statements;
 - multi-locale form detection in the PoC (PoC is Japanese-only);
 - cloud sync, backend API servers, telemetry;
-- mobile apps, iOS app autofill, Android Autofill Service;
+- mobile apps, iOS app Catashiro, Android Catashiro Service;
 - using any AI provider other than the user's configured one.
 
 ## 6. Functional Requirements

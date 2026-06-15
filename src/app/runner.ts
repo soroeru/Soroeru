@@ -2,7 +2,7 @@
 //
 // `AppRunner` is the only thing a UI needs to drive registration / bulk
 // update: it owns the mapper choice and reads the store + browser lifecycle
-// from `AutofillApp`. The UI supplies `AppRunnerHooks` — the review-and-
+// from `CatashiroApp`. The UI supplies `AppRunnerHooks` — the review-and-
 // confirm gate, the missing-data prompt, wall hand-off, and (on
 // auto-creation-prohibited sites) the final-submit hand-off — and never
 // touches `AgentDeps` or the store directly.
@@ -12,7 +12,7 @@ import { runRegistration, runUpdate, type AgentDeps, type RegistrationResult, ty
 import type { Gate } from "../agent/gate.js";
 import type { Mapper } from "../agent/mapper.js";
 import type { HumanHandoff } from "../agent/walls.js";
-import type { AutofillApp } from "./app.js";
+import type { CatashiroApp } from "./app.js";
 
 /** UI-provided callbacks. Mirrors `AgentDeps` minus the store and mapper, which `AppRunner` owns. */
 export interface AppRunnerHooks {
@@ -26,7 +26,7 @@ export interface AppRunnerHooks {
 /** Thin orchestration seam between the UI and the agent/automation layers. */
 export class AppRunner {
   constructor(
-    private readonly app: AutofillApp,
+    private readonly app: CatashiroApp,
     private readonly mapper: Mapper,
   ) {}
 
@@ -43,7 +43,7 @@ export class AppRunner {
   }
 
   private deps(hooks: AppRunnerHooks): AgentDeps {
-    // `this.app.store` throws AutofillAppError if the shell is not unlocked,
+    // `this.app.store` throws CatashiroAppError if the shell is not unlocked,
     // enforcing the boundary before any browser side effects happen.
     const deps: AgentDeps = {
       store: this.app.store,

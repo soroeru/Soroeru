@@ -19,7 +19,7 @@ and detect-only wall hand-off.
   AI-provider settings.
 - Keep sensitive values masked by default. Revealing card/CVV/password/API-key
   values requires master-passphrase re-entry.
-- Reuse the existing `AutofillApp`, `PocStore`, `AppRunner`, `Gate`, and
+- Reuse the existing `CatashiroApp`, `PocStore`, `AppRunner`, `Gate`, and
   `AppRunnerHooks` seams rather than changing agent or automation behavior.
 
 ## Non-Goals
@@ -46,7 +46,7 @@ and detect-only wall hand-off.
 3. The app binds to `127.0.0.1` only and rejects unsafe methods/routes. POST
    routes require an in-memory CSRF token embedded in server-rendered forms.
 4. The web UI reads and writes personal data only through the unlocked
-   `AutofillApp.store`. Raw values are never logged or persisted outside the
+   `CatashiroApp.store`. Raw values are never logged or persisted outside the
    encrypted store. Display masking uses the existing `maskValue` policy.
 5. Registration, bulk update, gate, missing-data prompt, and wall hand-off will
    be wired as background runs with in-memory pending steps. The browser UI
@@ -59,7 +59,7 @@ and detect-only wall hand-off.
 npm run poc -- ui
   -> run/cli.ts
   -> startWebUiServer()
-  -> AutofillApp (unlock/lock/store/browser lifecycle)
+  -> CatashiroApp (unlock/lock/store/browser lifecycle)
   -> AppRunner (registration/update automation boundary)
   -> existing agent/gate/guards/walls/store modules
 ```
@@ -140,7 +140,7 @@ Next workflow routes:
    - add in-memory run state and progress pages;
    - implement web `Gate`, missing-data prompt, wall hand-off, and final-submit
      hand-off resolvers;
-   - launch headed Playwright sessions through `AutofillApp.launchBrowser`;
+   - launch headed Playwright sessions through `CatashiroApp.launchBrowser`;
    - show phase-progress notes from PERF-001 in the run page.
 3. **Bulk-update execution**:
    - turn stale-field candidates into selected background update runs;

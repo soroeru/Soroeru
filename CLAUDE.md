@@ -7,7 +7,7 @@ section with Claude Code-specific guidance. When the shared sections in
 `AGENTS.md` change, update this file to match.
 
 > **Direction change (2026-06-12).** The project has pivoted from a Chrome-extension,
-> human-in-the-loop form *assistant* to **`autofill`**: a local-first, **autonomous
+> human-in-the-loop form *assistant* to **`Catashiro`**: a local-first, **autonomous
 > AI agent** that stores the user's full personal data and registers / updates the
 > user's accounts on their behalf. The canonical design is
 > [`docs/rfc/rfc-001-chrome-autofill-pivot.md`](docs/rfc/rfc-001-chrome-autofill-pivot.md)
@@ -21,7 +21,7 @@ section with Claude Code-specific guidance. When the shared sections in
 
 ## Project Overview
 
-`autofill` is a **local-first, autonomous form-filling agent** for personal use.
+`Catashiro` is a **local-first, autonomous form-filling agent** for personal use.
 
 The user stores their personal data locally (encrypted). When the user gives a URL,
 the agent finds the registration page on that site, fills the form, and completes the
@@ -118,7 +118,7 @@ Do not implement these unless the user explicitly changes the scope:
 - **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls
 - multi-locale form detection in the PoC (PoC is Japanese-only; multi-locale is later)
 - cloud sync, backend API servers, telemetry
-- mobile apps, iOS app autofill, Android Autofill Service
+- mobile apps, iOS app Catashiro, Android Catashiro Service
 - using any AI provider other than the user's configured one
 
 ## Tech Stack
@@ -140,7 +140,7 @@ reason and update the relevant docs.
 ## Expected Architecture
 
 Canonical architecture lives in [`docs/extension.md`](docs/extension.md) and the RFC.
-In short, `autofill` is a **local Playwright-based application** with four layers:
+In short, `Catashiro` is a **local Playwright-based application** with four layers:
 
 - **store layer**: encrypted personal data, per-site records, mandates;
 - **agent layer**: the user's AI (form discovery, field mapping, high-risk clause

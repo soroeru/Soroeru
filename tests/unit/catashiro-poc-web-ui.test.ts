@@ -6,15 +6,15 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AutofillApp } from "../../src/app/app.js";
+import { CatashiroApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import { sha256Hex } from "../../src/store/store.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
-async function withWebUi(fn: (app: AutofillApp, server: WebUiServerHandle) => Promise<void>): Promise<void> {
+async function withWebUi(fn: (app: CatashiroApp, server: WebUiServerHandle) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-web-ui-"));
-  const app = new AutofillApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await fn(app, server);
@@ -55,7 +55,7 @@ async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
 test("locked screen renders onboarding and rejects POSTs without the CSRF token", async () => {
   await withWebUi(async (_app, server) => {
     const html = await getHtml(server);
-    assert.match(html, /autofill を開く/);
+    assert.match(html, /Catashiro を開く/);
     assert.match(html, /クラウド同期やテレメトリは使いません/);
 
     const res = await post(server, "/unlock", { passphrase: PASSPHRASE });

@@ -1,13 +1,13 @@
 # Development
 
 This document owns **local development workflow, repository layout,
-implementation conventions, and the canonical quality gate list** for `autofill`.
+implementation conventions, and the canonical quality gate list** for `Catashiro`.
 
-> **Direction change (2026-06-12).** The project pivoted to `autofill`, a local-first
+> **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
 > autonomous agent (Playwright-based; see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
 > The MV3-extension build / layout / command details that used to live below have been
 > removed along with that code (#68; history remains in git). This document now
-> describes the `autofill` agent's setup, layout, and commands.
+> describes the `Catashiro` agent's setup, layout, and commands.
 
 Out of scope here: application architecture (see [`extension.md`](extension.md)),
 product requirements (see [`requirements.md`](requirements.md)), test strategy
@@ -35,7 +35,7 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 
 ## 2. Environment Setup
 
-Required tools for `autofill` development:
+Required tools for `Catashiro` development:
 
 - `git`
 - `bash`
@@ -75,7 +75,7 @@ npm run poc -- check-bypass        # SEC-002 static CAPTCHA/anti-bot-evasion dep
 ```
 
 Each `npm run poc ...` invocation runs `npm run build` first. State (the
-encrypted store, measurement JSON) is written under `state/autofill-poc/` and
+encrypted store, measurement JSON) is written under `state/catashiro-poc/` and
 must not be committed. See [`verification-results.md`](verification-results.md)
 for full command reference and verification results.
 
@@ -96,7 +96,7 @@ Current repository shape:
 ├── src/
 │   ├── agent/         # scanner, deterministic classifier, guards, gate, walls, filler, orchestration
 │   │   └── ai/        # AI mapper + provider abstraction
-│   ├── app/           # AutofillApp / AppRunner / startWebUiServer / AppUI
+│   ├── app/           # CatashiroApp / AppRunner / startWebUiServer / AppUI
 │   ├── dev/           # PRIV-001/002, SEC-002 static checks
 │   ├── store/         # encrypted store (crypto, recovery, store)
 │   ├── profile.ts

@@ -17,13 +17,13 @@ src/
 ├── store/            # 暗号化ストア最小実装（Argon2id + AES-256-GCM、PBKDF2-SHA-512 フォールバック）
 ├── agent/            # スキャナ / 決定的分類器 / ガード / 確認ゲート / 壁検知 / 充填 / オーケストレーション
 │   └── ai/           # AI 版（プロバイダ抽象化＋AIマッパー。実値はモデルに渡さない）
-├── app/              # AutofillApp / AppRunner / startWebUiServer / AppUI（ローカルWebアプリ＋旧CLI）
+├── app/              # CatashiroApp / AppRunner / startWebUiServer / AppUI（ローカルWebアプリ＋旧CLI）
 └── types.ts          # 共有型
 run/                  # 計測ランナーと CLI
 ```
 
 層構成は RFC-001 v3 §7（ストア / エージェント / Playwright 自動操作 / UI）に対応する。
-UI 層は `src/app/`（`AutofillApp` / `AppRunner` / `startWebUiServer` / `AppUI`、§9・§11）が提供する。
+UI 層は `src/app/`（`CatashiroApp` / `AppRunner` / `startWebUiServer` / `AppUI`、§9・§11）が提供する。
 `npm run poc -- ui` はローカルWebアプリを起動し、旧対話CLIは開発者向けに
 `npm run poc -- ui:cli` として残す。
 
@@ -64,7 +64,7 @@ npm run poc -- check-persistence
 ```
 
 - マスターパスフレーズは `AF_POC_PASSPHRASE`（未指定時は PoC 用の固定値）。ストアは
-  `state/autofill-poc/` に暗号化保存される（`state/` はコミット対象外）。
+  `state/catashiro-poc/` に暗号化保存される（`state/` はコミット対象外）。
 - AI 版はユーザー契約のAPIキーを使う。既定はOpenAI（`OPENAI_API_KEY`、モデルは
   `AF_POC_OPENAI_MODEL` で変更可・既定 `gpt-5.4`）。`OPENAI_API_KEY` が未設定で
   `ANTHROPIC_API_KEY` がある場合はAnthropicにフォールバックする（モデルは
@@ -117,14 +117,14 @@ npm run poc -- check-persistence
   フォーマットの難度がこの10パターンでは両アプローチの差を出すほど高くなかった、とも読める。
   差を見極めるには、より曖昧・変則的なフォーマット（実フォーム由来）の追加が要る（Q2a の続き）。
 - AI 版はマッピング精度の測定が目的なので chromium のみで実行（エンジン横断は決定的版が担当）。
-  測定値は `state/autofill-poc/matrix-*.json` にも出力される。
+  測定値は `state/catashiro-poc/matrix-*.json` にも出力される。
 
 ### フェーズ別タイミング計測（PERF-001 / #18）
 
 `src/agent/perf.ts` が定義する8フェーズ（discover / scan / map / terms / gate /
 fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要時間（ms）を
 `AgentDeps.onPhase` で報告する。`npm run poc:matrix` はこれを各サイトごとに集計し、
-結果表とフェーズ名＋ms数のみを `state/autofill-poc/matrix-*.json` に出力する
+結果表とフェーズ名＋ms数のみを `state/catashiro-poc/matrix-*.json` に出力する
 （実値・ページ内容・AIリクエスト本文・APIキーは一切含まない。詳細は `docs/testing.md` §9）。
 
 代表3サイト（通常フォーム / ウィザード / 動的フォーム）の baseline
@@ -145,7 +145,7 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
   ユーザー向けに表示されることを確認した（`slowPhaseNote`）。
 - `fill` フェーズは新規登録で最も時間を占める（フォーム入力＋確認画面への遷移を含む）。
 - 全10サイトの値は `npm run poc:matrix` 実行時の `phase timings (ms)` 表と
-  `state/autofill-poc/matrix-*.json` の `phaseTimingsMs` で確認できる。AI 版
+  `state/catashiro-poc/matrix-*.json` の `phaseTimingsMs` で確認できる。AI 版
   （`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 設定時）では `map` / `terms` フェーズに
   プロバイダ呼び出しの時間が加わる。
 
@@ -165,7 +165,7 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
 
 - Argon2id（64MiB, t=3）→ AES-256-GCM、レコード毎ランダム IV。PBKDF2-HMAC-SHA-512（60万回）
   フォールバックあり。誤パスフレーズ・改ざんは GCM 認証で失敗することをユニットテストで確認。
-- ディスク上に平文が現れないこと、CVV を含む全値が暗号化されることを確認（テスト `tests/unit/autofill-poc-crypto.test.ts`）。
+- ディスク上に平文が現れないこと、CVV を含む全値が暗号化されることを確認（テスト `tests/unit/catashiro-poc-crypto.test.ts`）。
 
 ### Recovery key / encrypted export・import（SEC-003 / #44）
 
@@ -178,7 +178,7 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
   表示されない**。画面・ログ・スクリーンショット・AI への送信に絶対に含めないこと
   （ユーザー向け警告として、表示時に「安全な場所に書き留めたら閉じる」旨を案内する）。
 - `PocStore.openWithRecoveryKey(filePath, recoveryKey)` /
-  `AutofillApp.unlockWithRecoveryKey(recoveryKey)`: passphrase の代わりに recovery key で
+  `CatashiroApp.unlockWithRecoveryKey(recoveryKey)`: passphrase の代わりに recovery key で
   解錠する。誤った recovery key は GCM 認証エラーでフェイルクローズする。
 - `store.rekey(newPassphrase)`: passphrase を変更する。**既存の recovery key は無効化**
   される（古い master key を wrap しているため）。変更後に recovery key を再発行する
@@ -187,7 +187,7 @@ fill / submit / record）ごとに、`runRegistration` / `runUpdate` の所要�
   ディスク上と同じ暗号化 JSON（`version` / `kdf` / `records` / `recovery`）をそのまま
   バックアップ・復元する。**平文 export は提供しない**。import はバージョン不一致を
   fail-closed で拒否し、既存ファイルは `overwrite: true` を渡さない限り上書きしない。
-- ユニットテスト `tests/unit/autofill-poc-recovery.test.ts`: roundtrip・誤 recovery key・
+- ユニットテスト `tests/unit/catashiro-poc-recovery.test.ts`: roundtrip・誤 recovery key・
   `verifyRecoveryKey`・`rekey` による無効化・export/import roundtrip（平文非混入を確認）・
   上書き拒否・バージョン不一致拒否をカバー。
 
@@ -214,9 +214,9 @@ Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する�
 一括更新実行は次の #66 実装スライスで `AppRunner` に接続する。そこまでの開発者向けfallbackとして、
 旧ターミナルメニューは `npm run poc -- ui:cli [deterministic|ai]` で利用できる。
 
-- ユニットテスト `tests/unit/autofill-poc-web-ui.test.ts`: ローカルWeb UIのroute、CSRF、マスク表示、
+- ユニットテスト `tests/unit/catashiro-poc-web-ui.test.ts`: ローカルWeb UIのroute、CSRF、マスク表示、
   再認証、settings、recovery key、一括更新候補表示をlocalhost上で検証。
-- ユニットテスト `tests/unit/autofill-poc-ui.test.ts`: 旧CLIメニューを注入可能な `UiIo`
+- ユニットテスト `tests/unit/catashiro-poc-ui.test.ts`: 旧CLIメニューを注入可能な `UiIo`
   フェイクで駆動（実ブラウザは起動しない）。
 
 ### ネットワークegress（PRIV-001 / #20）
@@ -234,10 +234,10 @@ Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する�
   対象外（外部送信ではない）。
 - AI プロバイダ（`src/agent/ai/provider.ts`）はステートレス呼び出しのみ
   （`store` / `previous_response_id` / `metadata` / プロンプトキャッシュ不使用）。
-  ユニットテスト `tests/unit/autofill-poc-provider.test.ts` で OpenAI 経路のリクエスト
-  本文を検証し、`tests/unit/autofill-poc-contracts.test.ts` で `mapFields` に渡る
+  ユニットテスト `tests/unit/catashiro-poc-provider.test.ts` で OpenAI 経路のリクエスト
+  本文を検証し、`tests/unit/catashiro-poc-contracts.test.ts` で `mapFields` に渡る
   ペイロードがフォーム構造のみ（実値を含まない）であることを検証する。
-- ユニットテスト `tests/unit/autofill-poc-egress.test.ts`: 上記チェックが現状の
+- ユニットテスト `tests/unit/catashiro-poc-egress.test.ts`: 上記チェックが現状の
   リポジトリで違反なしであること、未注釈の通信・許可外の注釈・telemetry系依存・
   `sites/` 配下が対象外であることをそれぞれ確認する。
 
@@ -251,19 +251,19 @@ Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する�
   `du***@example.com` / `090-****-5678` の部分マスク。氏名・住所・会社名・ログインIDは
   ゲートでの確認に必要なため全表示する。
 - `maskForArtifact(key, value)`: `npm run poc:matrix` が書き出す
-  `state/autofill-poc/matrix-*.json` の不一致ノート用。カード/CVV/パスワード等は同じ
+  `state/catashiro-poc/matrix-*.json` の不一致ノート用。カード/CVV/パスワード等は同じ
   強マスク、それ以外は値そのものを書かず文字数（例: `(17文字)`）または `(空)` のみ書く。
 - `npm run poc -- check-persistence`（`src/dev/privacy-check.ts`）が `src/`・`run/`
   配下のローカル書き込み箇所を静的に検査する。各箇所には `// persist: encrypted-store`
   （暗号化ストア本体）・`// persist: encrypted-export`（暗号化エクスポート/インポート）・
   `// persist: measurement-output`（上記のマスク済み計測結果）のいずれかの注釈が必須で、
   未注釈の新しいローカル書き込みはこのチェックで失敗する。`sites/` は対象外。
-- ユニットテスト: `tests/unit/autofill-poc-gate.test.ts`（`maskValue` / `maskForArtifact`
-  のマスク内容）、`tests/unit/autofill-poc-privacy.test.ts`（上記チェックが現状の
+- ユニットテスト: `tests/unit/catashiro-poc-gate.test.ts`（`maskValue` / `maskForArtifact`
+  のマスク内容）、`tests/unit/catashiro-poc-privacy.test.ts`（上記チェックが現状の
   リポジトリで違反なしであること、未注釈の書き込み・許可外の注釈・`sites/` 配下が対象外
   であることをそれぞれ確認）。
 - `state/ai-reviews/`（ローカル cross-AI レビューhook）はソースコードの `git diff` のみを
-  扱い、暗号化ストア（`state/autofill-poc/`）には触れない。両方とも Git 管理対象外。
+  扱い、暗号化ストア（`state/catashiro-poc/`）には触れない。両方とも Git 管理対象外。
 
 ## 所見・既知の制限
 
