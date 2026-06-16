@@ -119,6 +119,97 @@ test("declining the import review leaves the vault and inventory unchanged", asy
   }
 });
 
+test("review-before-save: accepting with edits updates the store and returns a site record", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-import-review-"));
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  try {
+    await app.unlock(PASSPHRASE);
+    const importResult = {
+      origin: "https://review.example.test",
+      siteId: "review.example.test",
+      serviceName: "Review テストサービス",
+      candidates: [
+        { fieldId: "c-1", label: "氏名", profileKey: "name.full" as const, value: "レビュー 太郎", maskedValue: "レビュー ***" },
+        { fieldId: "c-2", label: "メールアドレス", profileKey: "email" as const, value: "review@example.test", maskedValue: "re***@example.test" },
+        { fieldId: "c-3", label: "電話番号", profileKey: "phone.full" as const, value: "090-0000-0001", maskedValue: "090-****-0001" },
+      ],
+    };
+
+    // User edits the phone number before saving
+    const record = await saveImportedProfileValues(app.store, importResult, {
+      approved: true,
+      edits: { "c-3": "090-9999-9999" },
+    });
+
+    assert.ok(record, "record must be created on approval");
+    assert.equal(app.store.getValue("name.full"), "レビュー 太郎");
+    assert.equal(app.store.getValue("email"), "review@example.test");
+    assert.equal(app.store.getValue("phone.full"), "090-9999-9999", "edited value must override imported value");
+    assert.equal(record.accountState, "imported");
+    assert.equal(record.filledFields.length, 3);
+    // Site record must not store raw values
+    assert.ok(!JSON.stringify(app.store.listSiteRecords()).includes("review@example.test"));
+  } finally {
+    await app.shutdown();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("review-before-save: accepting without edits stores all candidates as-is", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-import-noedits-"));
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  try {
+    await app.unlock(PASSPHRASE);
+    const importResult = {
+      origin: "https://noedits.example.test",
+      siteId: "noedits.example.test",
+      serviceName: "NoEdits テストサービス",
+      candidates: [
+        { fieldId: "n-1", label: "メールアドレス", profileKey: "email" as const, value: "noedits@example.test", maskedValue: "no***@example.test" },
+      ],
+    };
+
+    const record = await saveImportedProfileValues(app.store, importResult, { approved: true });
+    assert.ok(record);
+    assert.equal(app.store.getValue("email"), "noedits@example.test");
+    assert.equal(record.filledFields.length, 1);
+  } finally {
+    await app.shutdown();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("import from account settings page: readonly inputs are excluded by the scanner and yield no candidates", async () => {
+  // The scanner (scan.ts) intentionally skips readonly inputs so the agent
+  // never tries to fill them. The /account fixture renders pre-populated
+  // readonly inputs, so collectImportCandidates returns an empty list.
+  // Users who want to import should navigate to the /edit page instead.
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-import-account-"));
+  const site = await startPocServer();
+  const browser = await chromium.launch({ headless: true });
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  try {
+    await app.unlock(PASSPHRASE);
+    await seedRegisteredAccount(site.siteUrl("01-basic"));
+    const browserPage = await browser.newPage();
+    const mapper = new SpyMapper();
+    const runner = new AppRunner(app, mapper);
+
+    const result = await runner.importExistingAccount(browserPage, `${site.siteUrl("01-basic")}account`);
+    assert.equal(result.siteId, new URL(site.url).host);
+    // Readonly inputs are not editable, so the scanner skips them → no candidates
+    assert.equal(result.candidates.length, 0, "readonly inputs must not produce import candidates");
+    // The mapper must still have seen the structural snapshot (not the raw values)
+    assert.equal(mapper.snapshots.length, 1);
+    assert.ok(!JSON.stringify(mapper.snapshots[0]).includes("existing@example.test"));
+  } finally {
+    await browser.close();
+    await app.shutdown();
+    await site.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 async function seedRegisteredAccount(siteUrl: string): Promise<void> {
   const res = await fetch(new URL("register", siteUrl), {
     method: "POST",

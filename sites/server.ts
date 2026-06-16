@@ -108,6 +108,12 @@ async function handle(
     return;
   }
 
+  if (path.startsWith("/login-wall/") || path === "/login-wall") {
+    const form = req.method === "POST" ? await readForm(req) : {};
+    send(loginWallFixture(path, req.method ?? "GET", form));
+    return;
+  }
+
   const m = /^\/site\/([^/]+)(\/.*)?$/.exec(path);
   if (!m) {
     send(page("Not Found", "<h1>404 Not Found</h1>"), 404);
@@ -151,6 +157,79 @@ function navLinks(site: SiteDef): { href: string; label: string }[] {
   // Registered-info page, used by the bulk-update scenario (§5).
   links.push({ href: "/edit", label: "登録情報の変更" });
   return links;
+}
+
+/**
+ * Login page for a site. Shows a simple email+password form.
+ * POST: if the site has a registered account, redirects to /account (settings page).
+ * Otherwise returns a "not found" error (simulates wrong credentials).
+ */
+function loginPage(site: SiteDef, base: string, state: SiteState, method: string, form: Record<string, string>): string {
+  const links = navLinks(site);
+  if (method === "POST") {
+    if (state.registered && form["email"] === state.registered["email"]) {
+      // Simulate successful login → redirect to account page via meta-refresh
+      return page(
+        `${site.serviceName} - ログイン成功`,
+        `${nav(base, links)}<h1>ログインしました</h1>
+<p>アカウント情報ページへ移動します。</p>
+<meta http-equiv="refresh" content="0;url=${base}/account">`,
+      );
+    }
+    return page(
+      `${site.serviceName} - ログイン`,
+      `${nav(base, links)}
+<h1>ログイン</h1>
+<p style="color:red">メールアドレスまたはパスワードが正しくありません。</p>
+<form method="post" action="${base}/login">
+<div class="row"><label for="login_email">メールアドレス</label><input id="login_email" name="email" type="email" autocomplete="email" required value="${esc(form["email"] ?? "")}"></div>
+<div class="row"><label for="login_password">パスワード</label><input id="login_password" name="password" type="password" autocomplete="current-password" required></div>
+<div class="row"><button type="submit">ログイン</button></div>
+</form>`,
+    );
+  }
+  return page(
+    `${site.serviceName} - ログイン`,
+    `${nav(base, links)}
+<h1>ログイン</h1>
+<form method="post" action="${base}/login">
+<div class="row"><label for="login_email">メールアドレス</label><input id="login_email" name="email" type="email" autocomplete="email" required></div>
+<div class="row"><label for="login_password">パスワード</label><input id="login_password" name="password" type="password" autocomplete="current-password" required></div>
+<div class="row"><button type="submit">ログイン</button></div>
+</form>`,
+  );
+}
+
+/**
+ * Account settings page (read-only profile view) for a site.
+ * Displays registered values in readonly input fields so the import scanner
+ * can extract them without the user entering data. This simulates a typical
+ * account-profile page where values are pre-populated but not editable inline.
+ */
+function accountPage(site: SiteDef, base: string, state: SiteState): string {
+  const links = navLinks(site);
+  if (!state.registered) {
+    return page(
+      `${site.serviceName} - アカウント`,
+      `${nav(base, links)}<h1>アカウント情報</h1><p>ログインが必要です。<a href="${base}/login">ログインする</a></p>`,
+    );
+  }
+  const specs = editSpecs(site);
+  const rows = specs
+    .map((f) => {
+      const val = state.registered![f.name] ?? "";
+      return `<div class="row"><label for="acc_${esc(f.name)}">${esc(f.label)}</label><input id="acc_${esc(f.name)}" name="${esc(f.name)}" value="${esc(val)}" readonly></div>`;
+    })
+    .join("\n");
+  return page(
+    `${site.serviceName} - アカウント情報`,
+    `${nav(base, links)}
+<h1>アカウント情報</h1>
+<form>
+${rows}
+</form>
+<p><a href="${base}/edit">登録情報を変更する</a></p>`,
+  );
 }
 
 function termsSection(site: SiteDef): string {
@@ -204,6 +283,10 @@ ${site.intro ? `<p>${esc(site.intro)}</p>` : ""}
       `${nav(base, links)}<h1>利用規約</h1>${site.termsText.split("\n").map((l) => `<p>${esc(l)}</p>`).join("")}`,
     );
   }
+
+  // Login and account pages take priority over decoy-link fallback.
+  if (sub === "/login") return loginPage(site, base, state, method, form);
+  if (sub === "/account") return accountPage(site, base, state);
 
   // Decoy pages
   if (site.decoyLinks.some((d) => d.href === sub) && method === "GET") {
@@ -340,6 +423,7 @@ ${hidden(form)}
     recordSubmission(state, "update", form);
     return successPage(site, base, "変更を保存しました");
   }
+
   return page("Not Found", "<h1>404 Not Found</h1>");
 }
 
@@ -423,6 +507,54 @@ function wallFixture(kind: string): string {
     default:
       return page("Not Found", "<h1>404</h1>");
   }
+}
+
+/**
+ * Login-then-MFA fixture: simulates a site where logging in triggers a
+ * one-time-code wall. Used to test wall hand-off/resume from the import flow.
+ */
+function loginWallFixture(path: string, method: string, form: Record<string, string>): string {
+  const base = "/login-wall";
+  if ((path === "/login-wall" || path === "/login-wall/") && method === "GET") {
+    return page(
+      "ログイン壁テスト",
+      `<h1>ログイン壁テスト</h1>
+<p><a href="${base}/login">ログイン</a></p>`,
+    );
+  }
+  if (path === "/login-wall/login" && method === "GET") {
+    return page(
+      "ログイン壁テスト - ログイン",
+      `<h1>ログイン</h1>
+<form method="post" action="${base}/login">
+  <div class="row"><label for="lw_email">メールアドレス</label><input id="lw_email" name="email" type="email" autocomplete="email" required></div>
+  <div class="row"><label for="lw_password">パスワード</label><input id="lw_password" name="password" type="password" autocomplete="current-password" required></div>
+  <div class="row"><button type="submit">ログイン</button></div>
+</form>`,
+    );
+  }
+  if (path === "/login-wall/login" && method === "POST") {
+    return page(
+      "2段階認証",
+      `<h1>2段階認証</h1>
+<p>ご登録の電話番号に送信された認証コードを入力してください。</p>
+<form method="post" action="${base}/verify">
+  <input type="hidden" name="email" value="${esc(form["email"] ?? "")}">
+  <div class="row"><label for="lw_otp">認証コード（6桁）</label><input id="lw_otp" name="otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6" required></div>
+  <div class="row"><button type="submit">認証する</button></div>
+</form>`,
+    );
+  }
+  if (path === "/login-wall/verify" && method === "POST") {
+    return page(
+      "ログイン壁テスト - アカウント",
+      `<h1>アカウント情報</h1>
+<dl>
+  <div class="row"><dt>メールアドレス</dt><dd>${esc(form["email"] ?? "")}</dd></div>
+</dl>`,
+    );
+  }
+  return page("Not Found", "<h1>404</h1>");
 }
 
 /** Registration flow fixture where a wall appears after final submit. */
