@@ -25,6 +25,7 @@ owns the relevant topic.
 | [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, and the local web UI (Issue #33). |
 | [`issue-66-local-web-app-ui.md`](issue-66-local-web-app-ui.md) | Plan for replacing the terminal PoC UI with a local browser web app for Issue #66. |
 | [`user-manual.md`](user-manual.md) | **User-facing manual for Mac private beta users**: install, vault setup, personal-data entry, Add Site flow, confirm gate, wall hand-off, bulk update, support bundle, uninstall. |
+| [`beta-feedback.md`](beta-feedback.md) | **Beta feedback guide**: feedback channels, template questions, sensitive-data handling rules, and how to file actionable GitHub Issues. |
 | [`github-operations.md`](github-operations.md) | Issue, branch, commit, pull request, review, and merge workflow rules. |
 | [`local-ai-review.md`](local-ai-review.md) | Local cross-AI review hook setup, behavior, outputs, and troubleshooting. |
 
