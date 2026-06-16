@@ -329,6 +329,9 @@ class WebUiServer {
       case "/registration/dismiss":
         await this.dismissRegistration(res);
         return;
+      case "/registration/cancel":
+        await this.cancelRegistration(res);
+        return;
       case "/bulk/start":
         await this.startBulkUpdate(form, res);
         return;
@@ -340,6 +343,9 @@ class WebUiServer {
         return;
       case "/bulk/dismiss":
         await this.dismissBulkUpdate(res);
+        return;
+      case "/bulk/cancel":
+        await this.cancelBulkUpdate(res);
         return;
       case "/chat/send":
         this.redirect(res, "warn", "チャットでの操作は今後実装予定です。");
@@ -497,9 +503,11 @@ class WebUiServer {
       .map((record) => ({ record, stale: staleFilledFields(store, record) }))
       .filter((candidate) => candidate.stale.length > 0);
     const settings = store.getSettings();
-    // While a registration is running (no user action pending), poll so the
-    // sites tab picks up the next pause point or the final result (#81).
-    const autoRefreshSeconds = this.registration?.session.getState().kind === "running" ? 2 : undefined;
+    // Poll while any automation is in `running` state so the UI picks up the
+    // next pause point or the final result (#81, #94).
+    const regRunning = this.registration?.session.getState().kind === "running";
+    const bulkRunning = this.bulkUpdate?.getState().kind === "running";
+    const autoRefreshSeconds = (regRunning || bulkRunning) ? 2 : undefined;
     return this.renderLayout(
       "Catashiro dashboard",
       `
@@ -1209,7 +1217,7 @@ class WebUiServer {
     const state = this.registration.session.getState();
     switch (state.kind) {
       case "running":
-        return this.renderRegistrationRunning();
+        return this.renderRegistrationRunning(state.currentNote);
       case "awaiting-data":
         return this.renderRegistrationDataPrompt(state.label);
       case "awaiting-gate":
@@ -1218,6 +1226,8 @@ class WebUiServer {
         return this.renderRegistrationHandoff(state.wall, state.instruction);
       case "done":
         return `${this.renderRegistrationResult(state.result)}${this.renderRegistrationForm()}`;
+      case "cancelled":
+        return `${this.renderRegistrationCancelled()}${this.renderRegistrationForm()}`;
       case "error":
         return `${this.renderRegistrationError(state.message)}${this.renderRegistrationForm()}`;
     }
@@ -1252,11 +1262,33 @@ class WebUiServer {
     `;
   }
 
-  private renderRegistrationRunning(): string {
+  private renderRegistrationRunning(currentNote?: string): string {
+    const notes = this.registration?.session.notes ?? [];
+    const recentNotes = notes.slice(-5);
+    const notesList = recentNotes.length > 0
+      ? `<ul class="progress-notes">${recentNotes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
+      : "";
+    const currentNoteHtml = currentNote
+      ? `<p class="progress-current muted">▶ ${escapeHtml(currentNote)}</p>`
+      : `<p class="muted">サイトを解析し、フォームの入力を進めています。しばらくお待ちください。このページは自動的に更新されます。</p>`;
     return `
       <section class="reghero stack">
         <h3>新規登録: 実行中</h3>
-        <p class="muted">サイトを解析し、フォームの入力を進めています。しばらくお待ちください。このページは自動的に更新されます。</p>
+        ${currentNoteHtml}
+        ${notesList}
+        <form method="post" action="/registration/cancel">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">キャンセル</button>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderRegistrationCancelled(): string {
+    return `
+      <section class="callout callout--warn stack">
+        <h3>新規登録: キャンセルしました</h3>
+        <p>登録処理をキャンセルしました。フォームへの入力や送信は行われていません。</p>
       </section>
     `;
   }
@@ -1496,19 +1528,30 @@ class WebUiServer {
 
   private renderBulkUpdateState(state: BulkUpdateSessionState): string {
     switch (state.kind) {
-      case "running":
+      case "running": {
+        const siteLabel = state.currentSiteId ? `${escapeHtml(state.currentSiteId)} を更新しています。` : "選択したサイトを順番に更新しています。";
+        const noteHtml = state.currentNote ? `<p class="progress-current muted">▶ ${escapeHtml(state.currentNote)}</p>` : "";
         return `
           <section class="callout stack">
             <h3>一括更新: 実行中</h3>
-            <p class="muted">${state.currentSiteId ? `${escapeHtml(state.currentSiteId)} を更新しています。` : "選択したサイトを順番に更新しています。"}このページは自動的に更新されます。</p>
+            <p class="muted">${siteLabel}このページは自動的に更新されます。</p>
+            ${noteHtml}
+            <form method="post" action="/bulk/cancel">
+              ${this.csrfInput()}
+              <button type="submit" class="secondary">キャンセル</button>
+            </form>
           </section>
         `;
+      }
       case "awaiting-gate":
         return this.renderBulkGate(state.siteId, state.request);
       case "awaiting-handoff":
         return this.renderBulkHandoff(state.siteId, state.wall, state.instruction);
       case "done":
         return this.renderBulkResults("一括更新: 完了", state.results);
+      case "cancelled":
+        return `${this.renderBulkResults("一括更新: キャンセルしました", state.results)}
+          <section class="callout callout--warn"><p>一括更新をキャンセルしました。キャンセル前に完了したサイトの結果は上に表示されます。</p></section>`;
       case "error":
         return `${this.renderBulkResults("一括更新: エラー", state.results)}<section class="callout callout--risk"><p>${escapeHtml(state.message)}</p></section>`;
     }
@@ -2199,7 +2242,7 @@ class WebUiServer {
 
   private async dismissBulkUpdate(res: ServerResponse): Promise<void> {
     const state = this.bulkUpdate?.getState();
-    if (!state || (state.kind !== "done" && state.kind !== "error")) {
+    if (!state || (state.kind !== "done" && state.kind !== "error" && state.kind !== "cancelled")) {
       this.redirect(res, "warn", "完了していない一括更新は閉じられません。", "sites");
       return;
     }
@@ -2340,7 +2383,7 @@ class WebUiServer {
 
   private async dismissRegistration(res: ServerResponse): Promise<void> {
     const state = this.registration?.session.getState();
-    if (!state || (state.kind !== "done" && state.kind !== "error")) {
+    if (!state || (state.kind !== "done" && state.kind !== "error" && state.kind !== "cancelled")) {
       this.redirect(res, "warn", "完了していない登録処理は閉じられません。", "sites");
       return;
     }
@@ -2348,12 +2391,58 @@ class WebUiServer {
     this.redirect(res, "ok", "登録処理を閉じました。", "sites");
   }
 
+  /** Cancel the in-flight registration (user-initiated during `running` state). */
+  private async cancelRegistration(res: ServerResponse): Promise<void> {
+    const session = this.registration?.session;
+    if (!session) {
+      this.redirect(res, "warn", "実行中の登録処理はありません。", "sites");
+      return;
+    }
+    const state = session.getState();
+    if (state.kind === "done" || state.kind === "error" || state.kind === "cancelled") {
+      this.redirect(res, "warn", "登録処理はすでに終了しています。", "sites");
+      return;
+    }
+    session.cancel();
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "warn",
+      message: "registration cancelled by user",
+      metadata: { flow: "registration" },
+    });
+    await this.closeRegistration();
+    this.redirect(res, "warn", "登録処理をキャンセルしました。", "sites");
+  }
+
+  /** Cancel the in-flight bulk update (user-initiated during `running` state). */
+  private async cancelBulkUpdate(res: ServerResponse): Promise<void> {
+    const session = this.bulkUpdate;
+    if (!session) {
+      this.redirect(res, "warn", "実行中の一括更新はありません。", "sites");
+      return;
+    }
+    const state = session.getState();
+    if (state.kind === "done" || state.kind === "error" || state.kind === "cancelled") {
+      this.redirect(res, "warn", "一括更新はすでに終了しています。", "sites");
+      return;
+    }
+    session.cancel();
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "warn",
+      message: "bulk update cancelled by user",
+      metadata: { flow: "bulk-update" },
+    });
+    await this.closeBulkUpdate();
+    this.redirect(res, "warn", "一括更新をキャンセルしました。", "sites");
+  }
+
   /** Close the in-flight registration's page/browser and drop the session. */
   private async closeRegistration(): Promise<void> {
     if (!this.registration) return;
     const { session, browser } = this.registration;
     this.registration = undefined;
-    await session.page.close();
+    await session.page.close().catch(() => {});
     await this.app.closeBrowser(browser);
   }
 }
