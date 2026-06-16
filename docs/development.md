@@ -144,6 +144,7 @@ Current repository shape:
 ├── scripts/
 │   ├── package-mac.sh
 │   └── setup-hooks.sh
+├── website/           # static landing page for Mac beta download (website/index.html)
 ├── sites/             # local 10-pattern test sites (defs.ts + server.ts)
 ├── src/
 │   ├── agent/         # scanner, deterministic classifier, guards, gate, walls, filler, orchestration

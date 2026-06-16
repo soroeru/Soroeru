@@ -78,6 +78,11 @@ C にしたことで連想される **cat（猫）** の可愛らしさを重ね
 多数のサイトに登録があり、新規登録や、引っ越し・連絡先変更に伴う更新を、自分の手で繰り返したくない人。
 自分の個人情報を第三者のサービスに預けず、自分のパソコンの中で管理したい人。
 
+## ダウンロード
+
+Mac プライベートベータの最新ビルドは **[GitHub Releases](https://github.com/ShinHaya/Catashiro/releases/latest)** から入手できます。
+インストール手順・動作環境・セキュリティ説明は **[ランディングページ（website/index.html）](website/index.html)** にまとめています。
+
 ## ユーザーマニュアル
 
 詳しい使い方は **[ユーザーマニュアル（docs/user-manual.md）](docs/user-manual.md)** を参照してください。
