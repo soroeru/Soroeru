@@ -53,7 +53,9 @@ isolation. Current coverage:
 | Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `catashiro-poc-contracts.test.ts` |
 | Automation (DOM scan) | `agent/scan.ts` | exercised via the E2E matrix (§8, `catashiro-poc-measure.test.ts`) |
 | UI — local web app | `app/web-ui.ts` | `catashiro-poc-web-ui.test.ts` |
+| UI — Add Site branch selection | `app/web-ui.ts` (`addSite`) | `catashiro-poc-add-site.test.ts` |
 | UI — legacy terminal fallback | `app/ui.ts` | `catashiro-poc-ui.test.ts` |
+| Agent — existing-account import | `agent/importer.ts` | `catashiro-poc-importer.test.ts` |
 | Measurement / CI gate | `run/measure.ts` | `catashiro-poc-measure.test.ts` |
 | Dev checks (PRIV-001/002, SEC-002) | `src/dev/{egress,privacy,bypass}-check.ts` | `catashiro-poc-{egress,privacy,bypass}.test.ts` |
 
@@ -175,6 +177,11 @@ scenario to the requirements it exercises (see [`requirements.md`](requirements.
 | Trial-card decline path (future charge not approved) | `09-trial-card` decline | REQ-007 guard 2 negative path |
 | CAPTCHA / OTP / email-verification fixtures | `/wall-fixture/*` | REQ-009, SEC-002 |
 | Wall appears mid-flow → handoff → resume → success | `/wall-flow/` | REQ-009, SEC-002 |
+| Login page fixture (per-site `/login` route) | all 10 sites | REQ-009 (login-wall hand-off) |
+| Login + MFA wall fixture | `/login-wall/` | REQ-009, SEC-002 |
+| Account settings extraction (per-site `/account` route) | all 10 sites | REQ-011 (import from read-only page) |
+| Add Site branch selection: notRegistered / registered / uncertain | `catashiro-poc-add-site.test.ts` | REQ-003, REQ-011 |
+| Import review-before-save: approve with edits, decline, account page | `catashiro-poc-importer.test.ts` | REQ-011, SEC-003 |
 | Deterministic vs. AI mapping-plan comparison | all 10 sites, `deterministic` vs `ai` variant | REQ-004, REQ-012 |
 | AI mapper schema, key/transform validation, terms analysis (stub provider) | `catashiro-poc-ai-mapper.test.ts` | REQ-004, REQ-012, SEC-003 |
 | Encrypted store, recovery key, encrypted export/import | `catashiro-poc-{crypto,recovery}.test.ts` | SEC-001, SEC-003 (recovery) |

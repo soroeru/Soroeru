@@ -331,6 +331,20 @@ With the local test sites running (`npm run poc:serve`) and the Web UI open
       for review, saves only approved/edited values into the encrypted vault, and
       records imported-field hashes in the site inventory. CAPTCHA/MFA/login walls
       must be resolved by the user in the headed browser session.
+- [ ] Login page fixture (`/site/01-basic/login`): the page renders a login form
+      with email and password fields. A POST with the registered email succeeds and
+      redirects to the account settings page (`/site/01-basic/account`).
+- [ ] Account settings fixture (`/site/01-basic/account`): after registering the
+      `01-basic` site, this page shows the registered values in pre-populated
+      readonly inputs and links to `/edit`. The scanner skips readonly inputs,
+      so the user must navigate to `/edit` for import extraction.
+- [ ] Login-wall fixture (`/login-wall/login`): after POST, the page shows a
+      2段階認証 / `one-time-code` OTP field. Catashiro detects the wall and
+      hands off to the user; after the user fills the OTP and resumes, the agent
+      continues from the account page.
+- [ ] Review-before-save: when importing from a profile page, the candidate list
+      is shown with masked values. The user can edit any value before confirming.
+      Editing a field and confirming saves the edited value, not the original.
 - [ ] For `05-choices`, the run pauses with an "追加情報の入力" prompt for
       「ご職業」; submitting a value resumes the run and the value is saved for
       reuse (REQ-005)
