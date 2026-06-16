@@ -14,11 +14,12 @@ import type { GateDecision, GateRequest, WallDetection } from "../types.js";
 import type { AppRunner, AppRunnerHooks } from "./runner.js";
 
 export type RegistrationSessionState =
-  | { kind: "running" }
+  | { kind: "running"; currentNote?: string }
   | { kind: "awaiting-data"; label: string }
   | { kind: "awaiting-gate"; request: GateRequest }
   | { kind: "awaiting-handoff"; wall: WallDetection; instruction: string }
   | { kind: "done"; result: RegistrationResult }
+  | { kind: "cancelled" }
   | { kind: "error"; message: string };
 
 /** One in-flight `AppRunner.register()` run, paused/resumed across HTTP requests. */
@@ -27,6 +28,7 @@ export class RegistrationSession {
   private pendingData: ((value: string | undefined) => void) | undefined;
   private pendingGate: ((decision: GateDecision) => void) | undefined;
   private pendingHandoff: ((result: "resolved" | "abort") => void) | undefined;
+  private cancelRequested = false;
   readonly notes: string[] = [];
 
   constructor(
@@ -59,14 +61,20 @@ export class RegistrationSession {
           this.state = { kind: "awaiting-handoff", wall, instruction };
           this.pendingHandoff = resolve;
         }),
-      log: (message) => this.notes.push(message),
+      log: (message) => {
+        this.notes.push(message);
+        if (this.state.kind === "running") {
+          this.state = { kind: "running", currentNote: message };
+        }
+      },
     };
     this.runner
       .register(this.page, this.url, hooks)
       .then((result) => {
-        this.state = { kind: "done", result };
+        if (!this.cancelRequested) this.state = { kind: "done", result };
       })
       .catch((err: unknown) => {
+        if (this.cancelRequested) return;
         this.state = { kind: "error", message: err instanceof Error ? err.message : String(err) };
       });
   }
@@ -99,5 +107,23 @@ export class RegistrationSession {
     this.state = { kind: "running" };
     resolve(result);
     return true;
+  }
+
+  /**
+   * Request cancellation of the in-flight run. Immediately sets state to
+   * `cancelled` and resolves any pending prompt so the running task can exit.
+   * The caller is responsible for closing the page/browser afterwards.
+   */
+  cancel(): void {
+    if (this.state.kind === "done" || this.state.kind === "error" || this.state.kind === "cancelled") return;
+    this.cancelRequested = true;
+    this.state = { kind: "cancelled" };
+    // Unblock any pending hook so the background promise can reject/resolve and exit.
+    this.pendingData?.("");
+    this.pendingData = undefined;
+    this.pendingGate?.({ approved: false, attestationApprovals: {}, cardApproved: false });
+    this.pendingGate = undefined;
+    this.pendingHandoff?.("abort");
+    this.pendingHandoff = undefined;
   }
 }

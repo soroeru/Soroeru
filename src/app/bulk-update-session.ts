@@ -17,16 +17,18 @@ export interface BulkUpdateTarget {
 }
 
 export type BulkUpdateSessionState =
-  | { kind: "running"; currentSiteId?: string }
+  | { kind: "running"; currentSiteId?: string; currentNote?: string }
   | { kind: "awaiting-gate"; siteId: string; request: GateRequest }
   | { kind: "awaiting-handoff"; siteId: string; wall: WallDetection; instruction: string }
   | { kind: "done"; results: UpdateResult[] }
+  | { kind: "cancelled"; results: UpdateResult[] }
   | { kind: "error"; message: string; results: UpdateResult[] };
 
 export class BulkUpdateSession {
   private state: BulkUpdateSessionState = { kind: "running" };
   private pendingGate: ((decision: GateDecision) => void) | undefined;
   private pendingHandoff: ((result: "resolved" | "abort") => void) | undefined;
+  private cancelRequested = false;
   private readonly results: UpdateResult[] = [];
   readonly notes: string[] = [];
 
@@ -64,8 +66,20 @@ export class BulkUpdateSession {
     return true;
   }
 
+  /** Request cancellation. Sets state to `cancelled` and unblocks pending hooks. */
+  cancel(): void {
+    if (this.state.kind === "done" || this.state.kind === "error" || this.state.kind === "cancelled") return;
+    this.cancelRequested = true;
+    this.state = { kind: "cancelled", results: [...this.results] };
+    this.pendingGate?.({ approved: false, attestationApprovals: {}, cardApproved: false });
+    this.pendingGate = undefined;
+    this.pendingHandoff?.("abort");
+    this.pendingHandoff = undefined;
+  }
+
   private async run(): Promise<void> {
     for (const target of this.targets) {
+      if (this.cancelRequested) break;
       this.state = { kind: "running", currentSiteId: target.siteId };
       let page: Page | undefined;
       try {
@@ -74,6 +88,7 @@ export class BulkUpdateSession {
         const result = await this.runner.update(page, target.siteTopUrl, target.siteId, hooks, { profileKeys: target.profileKeys });
         this.results.push(result);
       } catch (err: unknown) {
+        if (this.cancelRequested) break;
         this.results.push({
           siteId: target.siteId,
           status: "failed",
@@ -85,7 +100,9 @@ export class BulkUpdateSession {
         await page?.close().catch(() => {});
       }
     }
-    this.state = { kind: "done", results: [...this.results] };
+    if (!this.cancelRequested) {
+      this.state = { kind: "done", results: [...this.results] };
+    }
   }
 
   private hooksFor(siteId: string): AppRunnerHooks {
@@ -103,7 +120,13 @@ export class BulkUpdateSession {
           this.state = { kind: "awaiting-handoff", siteId, wall, instruction };
           this.pendingHandoff = resolve;
         }),
-      log: (message) => this.notes.push(message),
+      log: (message) => {
+        this.notes.push(message);
+        if (this.state.kind === "running") {
+          const currentSiteId = this.state.currentSiteId;
+          this.state = { kind: "running", currentNote: message, ...(currentSiteId !== undefined ? { currentSiteId } : {}) };
+        }
+      },
     };
   }
 }
