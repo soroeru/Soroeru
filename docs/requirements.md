@@ -309,7 +309,42 @@ When a form needs a field not in the store, the agent prompts the user and adds 
 new reusable field. Keep field definitions typed and behind a small abstraction; do not
 build a heavy schema engine early.
 
-## 12. Glossary
+## 12. Mac Private Beta Scope Completion (#97)
+
+All implementation issues for the first private beta have been completed as of 2026-06-16.
+The table below records each issue and its outcome.
+
+| Issue | Title | Status |
+| ----- | ----- | ------ |
+| #74 | Mac-only MVP scope and beta success criteria | ✅ Done |
+| #75 | Package Catashiro as a downloadable Mac desktop app | ✅ Done |
+| #76 | Per-site inventory and account-state model | ✅ Done |
+| #77 | Encrypted vault storage, migrations, export, and import | ✅ Done |
+| #78 | Personal data management UI | ✅ Done |
+| #79 | First-run onboarding, vault setup, and recovery | ✅ Done |
+| #80 | Shared site definitions and encrypted local candidate definitions | ✅ Done |
+| #81 | Autonomous new-registration flow in the Mac app UI | ✅ Done |
+| #82 | Review-and-confirm gate with the three guards | ✅ Done |
+| #83 | Add Site branching: new registration vs existing-account import | ✅ Done |
+| #84 | Existing-account personal-data import | ✅ Done |
+| #85 | Wall hand-off and resume UX | ✅ Done |
+| #86 | Optional AI Provider mode | ✅ Done |
+| #87 | Release checklist and manual QA | ✅ Done |
+| #88 | Bulk update flow | ✅ Done |
+| #89 | Privacy and security hardening gates | ✅ Done |
+| #90 | Local-only diagnostics and support bundle | ✅ Done |
+| #91 | Withdrawal task support | ✅ Done |
+| #92 | User manual for initial Mac beta users | ✅ Done |
+| #93 | Local test sites and E2E coverage | ✅ Done |
+| #94 | Task progress UI for long-running automation flows | ✅ Done |
+| #95 | Landing page for Mac app download | ✅ Done |
+| #96 | Private beta feedback workflow for about 10 initial users | ✅ Done |
+
+**Nothing was deferred from the first beta scope.** The next phase is to invite the initial
+10 users and collect feedback through the workflow described in
+[`beta-feedback.md`](beta-feedback.md).
+
+## 13. Glossary
 
 | Term | Definition |
 | --- | --- |
