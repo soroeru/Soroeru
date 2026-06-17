@@ -3,8 +3,7 @@
 This document owns the **product requirements** for `Catashiro`: scope, non-scope,
 the autonomy / hand-off model, use cases, and non-functional requirements.
 
-Canonical product direction is
-[`rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) (RFC-001 v3).
+This document is the **canonical product direction** for `Catashiro`.
 Out of scope here: application architecture (see [`extension.md`](extension.md)),
 security rationale (see [`security.md`](security.md)), and agent operating rules (see
 `../AGENTS.md` and `../CLAUDE.md`).
@@ -143,6 +142,11 @@ Registration flow:
   after explicit opt-in sanitization/review, proposed for shared official definitions.
 - Mac desktop private beta distribution, docs, manual QA, and support workflow for the
   first invited users.
+- **Chrome Password Manager CSV import** at first onboarding: the user exports their
+  Chrome password list to a CSV file and imports it into `Catashiro` to bootstrap the
+  initial site inventory; the import creates inventory entries for recognized sites and
+  handles imported credential data as sensitive (encrypted, never re-exported in plaintext,
+  and discarded from memory after import processing).
 
 ## 5. Non-Scope
 
@@ -183,6 +187,7 @@ Registration flow:
 | REQ-015 | Store AI-generated candidate definitions locally and encrypted; never treat them as official until reviewed/promoted. | Should | Planned |
 | REQ-016 | Support withdrawal management so the user can identify and leave services they no longer use. | Should | Planned |
 | REQ-017 | Allow the user to place the encrypted vault in a user-owned storage location, including future cloud-storage sync, without giving `Catashiro` a hosted copy. | Could | Planned |
+| REQ-018 | Import a Chrome Password Manager CSV file at first onboarding to auto-generate the initial site inventory. Handle the imported credential data as sensitive: encrypt any values taken into the vault, discard the raw CSV from memory after processing, and never re-export those values in plaintext. | Should | Planned |
 
 ### 6.1 Per-Site Account-State Model
 
@@ -343,6 +348,57 @@ The table below records each issue and its outcome.
 **Nothing was deferred from the first beta scope.** The next phase is to invite the initial
 10 users and collect feedback through the workflow described in
 [`beta-feedback.md`](beta-feedback.md).
+
+## 14. Future Directions
+
+These items are not committed for the MVP but are planned future extensions. They require
+separate design/implementation issues before work begins.
+
+### 14.1 Enterprise Version
+
+A separate enterprise tier may add:
+
+- Admin dashboard for organization administrators.
+- Department and organization unit management.
+- Audit logs for account actions (encrypted in vault; never exported in plaintext).
+- Enterprise storage options for the encrypted vault: NAS, on-premises storage, AWS S3,
+  Azure Blob Storage, Google Cloud Storage.
+
+Key constraint: the encrypted-bytes-only and no-raw-values-outside-vault principles from
+the personal edition apply equally to the enterprise edition.
+
+### 14.2 Enterprise SaaS Admin + Customer-Owned Storage
+
+A potential future delivery model:
+
+- SaaS-hosted management dashboard only — no hosted vault on `Catashiro` servers.
+- Customer-owned storage: customers choose and control where encrypted vault bytes live.
+- Customer-managed encryption keys, or enterprise KMS integration (AWS KMS, Azure Key
+  Vault) as an alternative to administrator-held passphrases.
+
+### 14.3 GDPR and Privacy Compliance
+
+Items to investigate before targeting GDPR-regulated markets or enterprise users:
+
+- Right to be Forgotten: provide a mechanism to completely export and delete all local
+  vault data without residual traces.
+- Data Controller responsibility: clarify scope and boundaries when `Catashiro` acts on
+  behalf of an organization's employees.
+- Enterprise usage responsibility: document who is responsible for compliance when an
+  enterprise deploys `Catashiro` to staff accounts.
+
+### 14.4 Per-Site Terms-of-Service Category Risk
+
+For certain site categories, automated registration or account updates may be restricted
+or require extra care:
+
+- **Financial services**: banks, brokerages, insurance, tax authorities.
+- **Government portals**: national/local government, social services, immigration.
+- **Medical services**: clinics, pharmacies, health-record portals.
+
+The app's existing fill-only/user-submit policy and ToS detection (`REQ-008`) handle
+known prohibitions, but these categories warrant additional investigation before broader
+use. Specific Japanese services to review: 楽天, Amazon Japan, Yahoo! Japan, Google.
 
 ## 13. Glossary
 

@@ -4,7 +4,7 @@ This document owns **local development workflow, repository layout,
 implementation conventions, and the canonical quality gate list** for `Catashiro`.
 
 > **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
-> autonomous agent (Playwright-based; see [`rfc/rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md)).
+> autonomous agent (Playwright-based; see [`requirements.md`](requirements.md)).
 > The MV3-extension build / layout / command details that used to live below have been
 > removed along with that code (#68; history remains in git). This document now
 > describes the `Catashiro` agent's setup, layout, and commands.
@@ -22,9 +22,9 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 - Keep product requirements, application architecture, test strategy, and
   security assumptions in the owning docs rather than repeating them in `README.md`.
 - Playwright browser automation and the user's configured AI provider are the
-  scope decision of RFC-001 v3; do not introduce *other* frameworks, dependencies,
-  backend services, cloud sync, telemetry, or AI providers without an explicit
-  scope decision.
+  scope decision of the product direction (see [`requirements.md`](requirements.md));
+  do not introduce *other* frameworks, dependencies, backend services, cloud sync,
+  telemetry, or AI providers without an explicit scope decision.
 - Keep field detection, field classification, wall detection (CAPTCHA / MFA),
   the encrypted store, and UI concerns separated so they can be tested independently.
 - Automatic submission and acceptance of ordinary terms are allowed **only** after

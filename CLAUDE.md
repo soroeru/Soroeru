@@ -9,11 +9,11 @@ section with Claude Code-specific guidance. When the shared sections in
 > **Direction change (2026-06-12).** The project has pivoted from a Chrome-extension,
 > human-in-the-loop form *assistant* to **`Catashiro`**: a local-first, **autonomous
 > AI agent** that stores the user's full personal data and registers / updates the
-> user's accounts on their behalf. The canonical design is
-> [`docs/rfc/rfc-001-chrome-autofill-pivot.md`](docs/rfc/rfc-001-chrome-autofill-pivot.md)
-> (RFC-001 v3). This file reflects that direction. Sections that previously described
-> an MV3 extension, human-in-the-loop filling, or "do not store passwords / cards"
-> have been intentionally replaced; their history is in git.
+> user's accounts on their behalf. The canonical product direction is
+> [`docs/requirements.md`](docs/requirements.md). This file reflects that direction.
+> Sections that previously described an MV3 extension, human-in-the-loop filling, or
+> "do not store passwords / cards" have been intentionally replaced; their history is
+> in git.
 
 ---
 
@@ -233,8 +233,7 @@ Use these documents when present:
 
 - `README.md`: user-facing product overview, usage, limitations, and security notes
 - `docs/README.md`: documentation index and ownership guide
-- `docs/rfc/rfc-001-chrome-autofill-pivot.md`: **canonical product direction (RFC-001 v3)**
-- `docs/requirements.md`: product requirements
+- `docs/requirements.md`: **canonical product direction** and product requirements
 - `docs/extension.md`: application architecture and design notes
 - `docs/development.md`: setup, commands, and workflow
 - `docs/testing.md`: testing strategy
