@@ -8,9 +8,11 @@ state/
 
 # Common caches
 .DS_Store
+.playwright-mcp/
 .pytest_cache/
 .mypy_cache/
 __pycache__/
+.venv/
 node_modules/
 dist/
 build/

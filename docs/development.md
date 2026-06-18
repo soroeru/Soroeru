@@ -261,7 +261,9 @@ use this loop for each Issue unless the user explicitly changes the workflow:
 3. Implement the Issue.
 4. After committing, wait for local AI review and fix findings until the review
    status is `NIT_ONLY` or `PASS`; repeat at most three times.
-5. Push the finished local branch to GitHub and create a PR.
+5. Push the finished local branch to GitHub and create a PR. Include
+   `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
+   when the PR is merged.
 6. If PR CI fails, fetch the error logs, fix the failure, push again, and repeat
    until CI succeeds.
 7. After CI succeeds, complete the PR according to the requested workflow and
