@@ -1,8 +1,13 @@
 // Chrome Password Manager CSV importer (REQ-018).
 //
 // Parses the CSV exported from Chrome's built-in password manager and bulk-imports
-// each entry into the encrypted store as an `imported` site record. Credentials
-// (loginId / password) are saved as profile values in the encrypted store.
+// each entry into the encrypted store as an `imported` site record.
+//
+// Credentials (username / password) are intentionally NOT written to the global
+// profile keys here: Chrome exports per-site credentials, but `account.id` and
+// `account.password` are single global fields — saving N rows would silently
+// discard all but the last. Per-site credential storage is out of scope for this
+// import; the site records themselves (accountState: "imported") are the value.
 //
 // The CSV itself is never written to disk; the caller must call store.save() after
 // this function returns to persist the changes.
@@ -50,8 +55,8 @@ export function importChromeCsv(
   const seenOrigins = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i]?.trim();
-    if (!line) continue;
+    const line = lines[i];
+    if (line === undefined || line === "") continue;
 
     const cols = parseRow(line);
     if (cols.length < 4) {
@@ -84,6 +89,14 @@ export function importChromeCsv(
     seenOrigins.add(origin);
 
     const siteId = parsedUrl.host;
+
+    // Skip if a record already exists — do not overwrite accountState,
+    // filledFields, or mandates that the user built via normal registration.
+    if (store.getSiteRecord(siteId)) {
+      skipped++;
+      continue;
+    }
+
     const serviceName = name || parsedUrl.host.replace(/^www\./, "");
 
     store.upsertSiteRecord({
@@ -98,12 +111,7 @@ export function importChromeCsv(
       nextAction: nextActionForAccountState("imported"),
     });
 
-    if (username) {
-      store.setProfileValue("account.id", "ログインID", username);
-    }
-    if (password) {
-      store.setProfileValue("account.password", "パスワード", password);
-    }
+    // Credentials are intentionally not saved — see module-level comment.
 
     imported++;
   }

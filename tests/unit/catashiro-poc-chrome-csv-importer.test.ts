@@ -93,15 +93,48 @@ test("importChromeCsv: 不正ヘッダーは例外をスロー", async () => {
   });
 });
 
-test("importChromeCsv: ログインIDとパスワードが暗号化ストアに保存される", async () => {
+test("importChromeCsv: 認証情報はグローバルプロファイルに保存されない（per-siteストアが未実装のため）", async () => {
   await withStore(async (app) => {
     const csv = [
       "name,url,username,password",
       "Example,https://example.com,myuser,mypass",
     ].join("\n");
     importChromeCsv(csv, app.store);
-    assert.equal(app.store.getValue("account.id"), "myuser");
-    assert.equal(app.store.getValue("account.password"), "mypass");
+    // Credentials are intentionally not written to account.id / account.password:
+    // Chrome exports per-site credentials; saving multiple rows to a single global
+    // key would silently discard all but the last.
+    assert.equal(app.store.getValue("account.id"), undefined);
+    assert.equal(app.store.getValue("account.password"), undefined);
+    // The site record itself is still imported.
+    assert.equal(app.store.siteRecords.size, 1);
+  });
+});
+
+test("importChromeCsv: 既存サイトレコードは上書きされずスキップ", async () => {
+  await withStore(async (app) => {
+    // Pre-populate a record for example.com
+    app.store.upsertSiteRecord({
+      origin: "https://example.com",
+      siteId: "example.com",
+      serviceName: "Existing",
+      registeredAt: 1000,
+      filledFields: [{ profileKey: "email", filledValueHash: "abc", fieldName: "email", filledAt: 1000 }],
+      accountState: "registered",
+      status: "registered",
+    });
+    const csv = [
+      "name,url,username,password",
+      "Example,https://example.com,u,p",
+      "Other,https://other.example,u2,p2",
+    ].join("\n");
+    const result = importChromeCsv(csv, app.store);
+    assert.equal(result.imported, 1);
+    assert.equal(result.skipped, 1);
+    // The existing record must not be overwritten
+    const rec = app.store.getSiteRecord("example.com")!;
+    assert.equal(rec.accountState, "registered");
+    assert.equal(rec.filledFields.length, 1);
+    assert.equal(rec.serviceName, "Existing");
   });
 });
 
