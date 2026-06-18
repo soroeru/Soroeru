@@ -4,9 +4,8 @@ This document owns **`Catashiro` application architecture and design decisions**
 layer boundaries, the Playwright automation runtime, the encrypted store, the AI agent
 boundary, and the registration / hand-off control flow.
 
-Canonical product direction is
-[`rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) (RFC-001 v3,
-see §7). Out of scope here: product requirements (see [`requirements.md`](requirements.md)),
+Canonical product direction is [`requirements.md`](requirements.md).
+Out of scope here: product requirements (see [`requirements.md`](requirements.md)),
 setup and repository layout (see [`development.md`](development.md)), and security
 rationale (see [`security.md`](security.md)).
 

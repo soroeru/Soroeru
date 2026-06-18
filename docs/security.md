@@ -4,10 +4,8 @@ This document owns **security and privacy decisions** for `Catashiro`: principle
 model, sensitive data handling, encryption, AI-disclosure policy, wall safety boundaries,
 DOM input safety, and dependency policy.
 
-Canonical product direction is
-[`rfc-001-chrome-autofill-pivot.md`](rfc/rfc-001-chrome-autofill-pivot.md) (RFC-001 v3,
-see §6 / §9 / §10 / §10b). Requirement-level statements live in
-[`requirements.md`](requirements.md) §7.
+Canonical product direction is [`requirements.md`](requirements.md).
+Requirement-level statements live in [`requirements.md`](requirements.md) §7.
 
 > **Direction change (2026-06-12).** `Catashiro` now stores the user's **full** personal
 > data — including credit card data (with CVV) and per-site credentials — locally and
@@ -282,6 +280,34 @@ regardless of which wall kind `detectWall` reports:
 - Withdrawal and account-deletion flows require the same gate discipline. Irreversible
   withdrawal confirmation, eligibility/identity attestation, and any final action blocked
   by site terms must remain under the user's explicit control.
+
+### 8.1 Sensitive Site Category Risk
+
+Certain site categories carry higher ToS or regulatory risk for automated registration
+or update:
+
+- **Financial services**: banks, brokerages, insurance, tax authorities.
+- **Government portals**: national/local government, social services, immigration.
+- **Medical services**: clinics, pharmacies, health-record portals.
+
+The app's fill-only/user-submit policy (`REQ-008`) and ToS detection handle known
+prohibitions, but these categories warrant additional investigation before broader use.
+For Japan specifically, the terms of 楽天, Amazon Japan, Yahoo! Japan, and Google
+regarding automated read and update should be reviewed (see [`requirements.md`](requirements.md) §14.4).
+
+### 8.2 GDPR and Privacy Compliance Notes
+
+`Catashiro`'s local-first, no-hosted-vault, no-telemetry design aligns with core GDPR
+principles: data minimization, user ownership, and no third-party processing. However,
+formal GDPR compliance requires additional investigation:
+
+- **Right to be Forgotten**: the local vault can be deleted, but a mechanism to confirm
+  complete deletion (including backups and any exported data) should be documented.
+- **Data Controller responsibility**: when `Catashiro` is used by organizations, the
+  responsibility boundaries for automated account actions need to be clarified.
+- Legal applicability varies by jurisdiction; the investigation items are tracked in
+  [`requirements.md`](requirements.md) §14.3 and require separate implementation issues
+  before work begins.
 
 ## 9. Candidate Definition Privacy
 
