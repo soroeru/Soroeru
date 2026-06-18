@@ -197,7 +197,7 @@ function aiMapperForUi(app: CatashiroApp): Mapper {
       "AI版を使うには「5. 設定」でAIプロバイダを登録するか、OPENAI_API_KEY / ANTHROPIC_API_KEY を設定してください",
     );
   }
-  return new AiMapper(provider);
+  return new AiMapper(provider, app.store);
 }
 
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */

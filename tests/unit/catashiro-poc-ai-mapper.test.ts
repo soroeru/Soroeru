@@ -23,6 +23,33 @@ class StubProvider implements AiProvider {
   }
 }
 
+class StubCandidateSink {
+  candidates: LocalCandidateDefinition[] = [];
+  saveCalls = 0;
+
+  upsertLocalCandidate(candidate: LocalCandidateDefinition): void {
+    this.candidates.push(candidate);
+  }
+
+  async save(): Promise<void> {
+    this.saveCalls += 1;
+  }
+}
+
+class ThrowingCandidateSink {
+  upsertCalls = 0;
+  saveCalls = 0;
+
+  upsertLocalCandidate(): void {
+    this.upsertCalls += 1;
+    throw new Error("store rejected candidate");
+  }
+
+  async save(): Promise<void> {
+    this.saveCalls += 1;
+  }
+}
+
 interface MutableAnthropicProvider {
   client: { messages: { create: () => Promise<unknown> } };
 }
@@ -246,6 +273,94 @@ test("AI mapping can become a sanitized local candidate definition", () => {
   assert.deepEqual(candidate.match.domains, ["127.0.0.1"]);
   assert.equal(candidate.fieldRules?.length, 2);
   assert.ok(!JSON.stringify(candidate).includes("dummy@example.com"));
+});
+
+test("AI candidate ids distinguish different forms on the same host", () => {
+  const plan = {
+    entries: [{ fieldId: "email", profileKey: "email" as const }],
+    checkboxes: [],
+    unmappedRequired: [],
+  };
+  const registration = candidateFromAiMapping(
+    { ...snapshot([field({ fieldId: "email", name: "mail", labels: ["メールアドレス"] })]), url: "http://127.0.0.1/site/test/register" },
+    plan,
+    { now: 1 },
+  );
+  const update = candidateFromAiMapping(
+    { ...snapshot([field({ fieldId: "email", name: "mail", labels: ["メールアドレス"] })]), url: "http://127.0.0.1/site/test/profile/edit" },
+    plan,
+    { now: 1 },
+  );
+
+  assert.notEqual(registration.id, update.id);
+  assert.match(registration.id, /^ai-127-0-0-1-site-test-register-[a-f0-9]{12}$/);
+  assert.match(update.id, /^ai-127-0-0-1-site-test-profile-edit-[a-f0-9]{12}$/);
+});
+
+test("AI mapper persists a sanitized local candidate after provider mapping succeeds", async () => {
+  const provider = new StubProvider([
+    {
+      entries: [
+        { fieldId: "email", profileKey: "email" },
+        { fieldId: "name", profileKey: "name.full" },
+      ],
+      checkboxes: [],
+      unmappedRequired: [],
+    },
+  ]);
+  const sink = new StubCandidateSink();
+  const mapper = new AiMapper(provider, sink);
+  await mapper.mapFields(
+    snapshot([
+      field({ fieldId: "email", name: "mail", labels: ["メールアドレス"] }),
+      field({ fieldId: "name", name: "full_name", labels: ["氏名"] }),
+    ]),
+    [],
+  );
+
+  assert.equal(sink.candidates.length, 1);
+  assert.equal(sink.candidates[0]!.source, "ai");
+  assert.equal(sink.candidates[0]!.status, "candidate");
+  assert.equal(sink.candidates[0]!.fieldRules?.length, 2);
+  assert.equal(sink.saveCalls, 1);
+});
+
+test("AI mapper ignores candidate persistence failures without failing the mapping", async () => {
+  const provider = new StubProvider([
+    {
+      entries: [{ fieldId: "email", profileKey: "email" }],
+      checkboxes: [],
+      unmappedRequired: [],
+    },
+  ]);
+  const sink = new ThrowingCandidateSink();
+  const mapper = new AiMapper(provider, sink);
+  const plan = await mapper.mapFields(snapshot([field({ fieldId: "email", labels: ["メールアドレス"] })]), []);
+
+  assert.deepEqual(plan.entries, [{ fieldId: "email", profileKey: "email" }]);
+  assert.equal(sink.upsertCalls, 1);
+  assert.equal(sink.saveCalls, 0);
+});
+
+test("AI mapper reuses a stored local candidate on the next run and skips the provider", async () => {
+  const provider = new StubProvider([
+    {
+      entries: [{ fieldId: "email", profileKey: "email" }],
+      checkboxes: [],
+      unmappedRequired: [],
+    },
+    new Error("provider should not be called after candidate reuse"),
+  ]);
+  const sink = new StubCandidateSink();
+  const mapper = new AiMapper(provider, sink);
+  const snap = snapshot([field({ fieldId: "email", name: "mail", labels: ["メールアドレス"] })]);
+
+  const first = await mapper.mapFields(snap, []);
+  const second = await mapper.mapFields(snap, [], { localCandidates: sink.candidates });
+
+  assert.deepEqual(first.entries, [{ fieldId: "email", profileKey: "email" }]);
+  assert.deepEqual(second.entries, [{ fieldId: "email", profileKey: "email" }]);
+  assert.equal(provider.calls.length, 1);
 });
 
 test("Anthropic provider maps refusal and invalid JSON to explicit provider errors", async () => {
