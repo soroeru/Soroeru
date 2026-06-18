@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RegistrationSession } from "../../src/app/registration-session.js";
 import { BulkUpdateSession } from "../../src/app/bulk-update-session.js";
-import { CatashiroApp } from "../../src/app/app.js";
+import { CatashiroApp, type BrowserLauncher, type CatashiroAppOptions } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import type { AppRunner } from "../../src/app/runner.js";
 import type { Page, Browser } from "playwright";
@@ -186,9 +186,12 @@ test("BulkUpdateSession cancel is no-op when already done", async () => {
 // Web UI cancel route tests
 // ---------------------------------------------------------------------------
 
-async function withWebUi(fn: (app: CatashiroApp, server: WebUiServerHandle) => Promise<void>): Promise<void> {
+async function withWebUi(
+  fn: (app: CatashiroApp, server: WebUiServerHandle) => Promise<void>,
+  appOptions?: Partial<Omit<CatashiroAppOptions, "stateDir">>,
+): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-task-progress-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, ...appOptions });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await fn(app, server);
@@ -245,6 +248,22 @@ test("POST /bulk/cancel warns when no bulk update is running", async () => {
 });
 
 test("running state UI shows a cancel button", async () => {
+  // Use a stub launcher so the session stays in `running` state without launching
+  // a real browser (which would require a display in CI).
+  const stubLauncher: BrowserLauncher = async () => {
+    const neverPage = {
+      close: async () => {},
+      goto: () => new Promise<null>(() => {}), // never resolves → runner stays running
+      waitForLoadState: async () => {},
+      evaluate: async () => ({}),
+      title: async () => "stub",
+      url: () => "http://stub.test/",
+    } as unknown as Page;
+    return {
+      close: async () => {},
+      newPage: async () => neverPage,
+    } as unknown as Browser;
+  };
   await withWebUi(async (_app, server) => {
     const token = await unlockThroughUi(server);
     // Start a registration against a non-existent URL so it enters running state
@@ -258,5 +277,5 @@ test("running state UI shows a cancel button", async () => {
     assert.match(html, /キャンセル|cancel/i);
     // Cleanup: cancel the registration
     await post(server, "/registration/cancel", { csrf: token });
-  });
+  }, { launchBrowserFn: stubLauncher });
 });
