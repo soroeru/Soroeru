@@ -11,6 +11,7 @@ import type { AddressInfo } from "node:net";
 import type { Browser } from "playwright";
 import { AiMapper } from "../agent/ai/ai-mapper.js";
 import { createProvider } from "../agent/ai/provider.js";
+import { importChromeCsv } from "../agent/chrome-csv-importer.js";
 import { maskValue } from "../agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../agent/mapper.js";
 import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
@@ -286,6 +287,9 @@ class WebUiServer {
         return;
       case "/profile/reveal":
         await this.revealProfile(form, res);
+        return;
+      case "/import/chrome-csv":
+        await this.handleChromeCsvImport(form, res);
         return;
       case "/settings/provider":
         await this.saveProviderSettings(form, res);
@@ -1741,6 +1745,15 @@ class WebUiServer {
             <button type="submit">保存</button>
           </form>
           <div class="stack">
+            <form class="panel stack" method="post" action="/import/chrome-csv">
+              ${this.csrfInput()}
+              <h3>Chrome パスワードCSV インポート</h3>
+              <p class="muted">Chrome Password Manager からエクスポートした CSV を貼り付けると、登録済みサイトとして一括取り込みます。ログインIDとパスワードは暗号化ストアにのみ保存され、CSV自体はディスクに書き込みません。</p>
+              <label>CSV テキスト
+                <textarea name="csvText" rows="6" placeholder="name,url,username,password&#10;Example Site,example.com,user@example.com,p@ssw0rd"></textarea>
+              </label>
+              <button type="submit">CSVをインポート</button>
+            </form>
             <form class="panel stack" method="post" action="/settings/reveal-api-key">
               ${this.csrfInput()}
               <h3>APIキー表示</h3>
@@ -2008,6 +2021,31 @@ class WebUiServer {
       reveal.warning = "セキュリティコードは最も重要な情報です。画面の外にメモしたり、他のサービスに貼り付けたりしないでください。";
     }
     this.sendHtml(res, 200, this.renderHome(undefined, reveal, { tab: "profile", profileMode: "view" }));
+  }
+
+  private async handleChromeCsvImport(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    this.assertCsrf(form);
+    const csvText = form.get("csvText") ?? "";
+    if (!csvText.trim()) {
+      this.redirect(res, "warn", "CSVテキストを入力してください。", "settings");
+      return;
+    }
+    let result: { imported: number; skipped: number };
+    try {
+      result = importChromeCsv(csvText, this.app.store);
+    } catch (err) {
+      this.redirect(res, "error", err instanceof Error ? err.message : "CSVの解析に失敗しました。", "settings");
+      return;
+    }
+    // persist: encrypted-store — Chrome CSV credentials saved to AES-256-GCM store
+    await this.app.store.save();
+    const { imported, skipped } = result;
+    this.redirect(
+      res,
+      "ok",
+      `${imported}件のサイトをインポートしました${skipped > 0 ? `（${skipped}件スキップ）` : ""}。`,
+      "sites",
+    );
   }
 
   private async saveProviderSettings(form: URLSearchParams, res: ServerResponse): Promise<void> {
