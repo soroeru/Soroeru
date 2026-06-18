@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue Implementation Loop"
+  short_description: "Repeat GitHub Issue work with review and CI"
+  default_prompt: "Use $issue-implementation-loop to implement the requested GitHub Issues in order."
