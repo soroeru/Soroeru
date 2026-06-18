@@ -17,6 +17,7 @@ import { AppRunner, type AppRunnerHooks } from "../../src/app/runner.js";
 import { RegistrationSession } from "../../src/app/registration-session.js";
 import { DUMMY_PROFILE_SEED } from "../../src/profile.js";
 import type { RegistrationResult } from "../../src/agent/agent.js";
+import type { LocalCandidateDefinition } from "../../src/types.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
@@ -139,6 +140,37 @@ test("registration with a missing field: 05-choices prompts for 「ご職業」,
 
     const doneHtml = await pollSites(server, (html) => html.includes("登録が完了しました"));
     assert.ok(doneHtml);
+  });
+});
+
+test("registration prompts when a local candidate custom field has no stored value yet", async () => {
+  await withRegistrationWebUi(async ({ app, server, token, site }) => {
+    const now = Date.now();
+    const candidate: LocalCandidateDefinition = {
+      id: "candidate-choices-job",
+      serviceName: "チョイス会員サービス",
+      match: { urlPatterns: ["/site/05-choices/"] },
+      fieldRules: [{ id: "job", profileKey: "custom.job", labelPattern: "ご職業" }],
+      source: "observation",
+      status: "candidate",
+      createdAt: now,
+      updatedAt: now,
+    };
+    app.store.upsertLocalCandidate(candidate);
+    await app.store.save();
+
+    await post(server, "/registration/start", { csrf: token, url: site.siteUrl("05-choices") });
+
+    const promptHtml = await pollSites(server, (html) => html.includes("追加情報の入力"));
+    assert.match(promptHtml, /ご職業/);
+
+    await post(server, "/registration/provide-data", { csrf: token, value: "会社員" });
+    await pollSites(server, (html) => html.includes("確認ゲート"));
+
+    assert.equal(app.store.getValue("custom.job"), "会社員");
+
+    await post(server, "/registration/gate-decision", { csrf: token, decision: "decline" });
+    await pollSites(server, (html) => html.includes("ユーザーの判断で中止しました"));
   });
 });
 

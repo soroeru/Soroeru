@@ -5,7 +5,7 @@
 
 import type { Page } from "playwright";
 import { PROFILE_FIELD_LABELS } from "../types.js";
-import type { ProfileKey, SiteRecord } from "../types.js";
+import type { LocalCandidateDefinition, ProfileKey, SiteRecord } from "../types.js";
 import { sha256Hex, type PocStore } from "../store/store.js";
 import { maskValue } from "./gate.js";
 import type { Mapper } from "./mapper.js";
@@ -39,9 +39,34 @@ export function profileImportCustoms(store: PocStore): CustomFieldDef[] {
     .map((entry) => ({ key: entry.key, matchTerms: entry.matchTerms ?? [entry.label] }));
 }
 
-export async function collectImportCandidates(page: Page, mapper: Mapper, customs: CustomFieldDef[] = []): Promise<ImportCandidate[]> {
+function candidateImportCustoms(candidates: LocalCandidateDefinition[]): CustomFieldDef[] {
+  return candidates
+    .filter((candidate) => candidate.status !== "rejected")
+    .flatMap((candidate) =>
+      (candidate.fieldRules ?? [])
+        .filter((rule) => rule.profileKey.startsWith("custom."))
+        .map((rule) => ({ key: rule.profileKey, matchTerms: [rule.labelPattern ?? rule.attrPattern ?? rule.id] })),
+    );
+}
+
+function mergeCustoms(...groups: CustomFieldDef[][]): CustomFieldDef[] {
+  const byKey = new Map<string, CustomFieldDef>();
+  for (const custom of groups.flat()) {
+    const existing = byKey.get(custom.key);
+    byKey.set(custom.key, existing ? { key: custom.key, matchTerms: [...new Set([...existing.matchTerms, ...custom.matchTerms])] } : custom);
+  }
+  return [...byKey.values()];
+}
+
+export async function collectImportCandidates(
+  page: Page,
+  mapper: Mapper,
+  customs: CustomFieldDef[] = [],
+  localCandidates: LocalCandidateDefinition[] = [],
+): Promise<ImportCandidate[]> {
   const snapshot = await waitForFields(page);
-  const plan = await mapper.mapFields(snapshot, customs);
+  const mergedCustoms = mergeCustoms(customs, candidateImportCustoms(localCandidates));
+  const plan = await mapper.mapFields(snapshot, mergedCustoms, { localCandidates });
   const valuesByFieldId = await readFieldValues(page);
   const labelsByFieldId = new Map(
     snapshot.fields.map((field) => [
@@ -78,7 +103,7 @@ export async function runExistingAccountImport(
 ): Promise<ImportResult> {
   await page.goto(profileUrl);
   await page.waitForLoadState();
-  const candidates = await collectImportCandidates(page, mapper, profileImportCustoms(store));
+  const candidates = await collectImportCandidates(page, mapper, profileImportCustoms(store), store.listLocalCandidates());
   const snapshot = await snapshotPage(page);
   return {
     origin: new URL(snapshot.url).origin,

@@ -12,6 +12,7 @@ import type {
   FormField,
   GateRequest,
   HighRiskFlag,
+  LocalCandidateDefinition,
   MappingEntry,
   PageLink,
   PageSnapshot,
@@ -87,6 +88,25 @@ function customsOf(store: PocStore): CustomFieldDef[] {
     .map((e) => ({ key: e.key, matchTerms: e.matchTerms ?? [e.label] }));
 }
 
+function candidateCustomsOf(candidates: LocalCandidateDefinition[]): CustomFieldDef[] {
+  return candidates
+    .filter((candidate) => candidate.status !== "rejected")
+    .flatMap((candidate) =>
+      (candidate.fieldRules ?? [])
+        .filter((rule) => rule.profileKey.startsWith("custom."))
+        .map((rule) => ({ key: rule.profileKey, matchTerms: [rule.labelPattern ?? rule.attrPattern ?? rule.id] })),
+    );
+}
+
+function mergeCustoms(...groups: CustomFieldDef[][]): CustomFieldDef[] {
+  const byKey = new Map<string, CustomFieldDef>();
+  for (const custom of groups.flat()) {
+    const existing = byKey.get(custom.key);
+    byKey.set(custom.key, existing ? { key: custom.key, matchTerms: [...new Set([...existing.matchTerms, ...custom.matchTerms])] } : custom);
+  }
+  return [...byKey.values()];
+}
+
 function hasCardFields(fields: FormField[]): boolean {
   return fields.some(
     (f) =>
@@ -144,10 +164,23 @@ interface StepState {
 
 async function mapCurrentPage(snapshot: PageSnapshot, deps: AgentDeps): Promise<StepState> {
   const fieldsById = new Map(snapshot.fields.map((f) => [f.fieldId, f]));
-  const customs = customsOf(deps.store);
+  const localCandidates = deps.store.listLocalCandidates();
+  const customs = mergeCustoms(customsOf(deps.store), candidateCustomsOf(localCandidates));
   // Mapper implementations may self-normalize for direct tests/metrics, but
   // this seam is the authoritative guard before any browser side effects.
-  const plan = normalizeMappingPlan(await deps.mapper.mapFields(snapshot, customs), snapshot.fields, customs);
+  const plan = normalizeMappingPlan(
+    await deps.mapper.mapFields(snapshot, customs, { localCandidates }),
+    snapshot.fields,
+    customs,
+  );
+  const missingCustomKeyByFieldId = new Map<string, ProfileKey>();
+  plan.entries = plan.entries.filter((entry) => {
+    const field = fieldsById.get(entry.fieldId);
+    if (!entry.profileKey.startsWith("custom.") || deps.store.getValue(entry.profileKey) !== undefined || !field?.required) return true;
+    missingCustomKeyByFieldId.set(entry.fieldId, entry.profileKey);
+    return false;
+  });
+  plan.unmappedRequired = [...new Set([...plan.unmappedRequired, ...missingCustomKeyByFieldId.keys()])];
 
   // Missing data (§4 step 3): ask the user, store as a reusable custom field.
   for (const fieldId of plan.unmappedRequired) {
@@ -156,7 +189,7 @@ async function mapCurrentPage(snapshot: PageSnapshot, deps: AgentDeps): Promise<
     const label = labelOf(field);
     const value = await deps.promptUser(label);
     if (value === undefined) continue;
-    const key: ProfileKey = `custom.${label}`;
+    const key: ProfileKey = missingCustomKeyByFieldId.get(fieldId) ?? `custom.${label}`;
     deps.store.setProfileValue(key, label, value, [label]);
     plan.entries.push({ fieldId, profileKey: key });
     deps.log(`未保存の項目「${label}」を入力してもらい、新項目 ${key} として保存しました`);
