@@ -141,6 +141,7 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
+├── skills/            # repo-local Codex skills for project workflows
 ├── scripts/
 │   ├── package-mac.sh
 │   └── setup-hooks.sh
@@ -246,7 +247,11 @@ Setup, behavior, and troubleshooting for the local AI review hook live in
 [`local-ai-review.md`](local-ai-review.md). The setup command is repeated
 once in §2 above as part of environment setup; do not duplicate it elsewhere.
 
-## 9.1 Issue Implementation Loop
+### 9.1 Issue Implementation Loop
+
+This section defines the repository-local Issue implementation loop. The
+matching Codex Skill lives in
+[`skills/issue-implementation-loop/SKILL.md`](../skills/issue-implementation-loop/SKILL.md).
 
 When the user asks an agent to implement one or more GitHub Issues in order,
 use this loop for each Issue unless the user explicitly changes the workflow:
@@ -255,7 +260,7 @@ use this loop for each Issue unless the user explicitly changes the workflow:
 2. Create a new branch named for the Issue content.
 3. Implement the Issue.
 4. After committing, wait for local AI review and fix findings until the review
-   status is `nit` / `NIT_ONLY` or `pass` / `PASS`; repeat at most three times.
+   status is `NIT_ONLY` or `PASS`; repeat at most three times.
 5. Push the finished local branch to GitHub and create a PR.
 6. If PR CI fails, fetch the error logs, fix the failure, push again, and repeat
    until CI succeeds.
@@ -265,6 +270,12 @@ use this loop for each Issue unless the user explicitly changes the workflow:
 8. Repeat steps 1-7 for the next requested Issue without asking whether to
    start the next Issue, while still respecting sandbox, destructive-action,
    merge, and other approval requirements.
+
+This loop intentionally closes PRs instead of merging them. Use it only when
+the requested Issues can be implemented independently from the latest `main`;
+if later Issues depend on earlier changes, merge or otherwise integrate those
+changes before starting the dependent Issue. Step 6 has no fixed retry count,
+but the session-limit check and normal blocker handling still apply.
 
 ## 10. Operational Notes
 
