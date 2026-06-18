@@ -2073,7 +2073,7 @@ class WebUiServer {
 
   private defaultMapper(): Mapper {
     const settings = this.app.store.getSettings();
-    if (settings?.mode === "ai") return new AiMapper(createProvider(settings));
+    if (settings?.mode === "ai") return new AiMapper(createProvider(settings), this.app.store);
     return new DeterministicMapper();
   }
 

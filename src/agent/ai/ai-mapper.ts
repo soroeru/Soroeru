@@ -3,6 +3,7 @@
 // text, and returns a mapping PLAN. Actual values are resolved and filled locally
 // by the Playwright layer; no profile value ever enters a prompt.
 
+import { createHash } from "node:crypto";
 import {
   KNOWN_PROFILE_KEYS,
   CHECKBOX_ROLES,
@@ -78,7 +79,7 @@ export function candidateFromAiMapping(
   const now = options.now ?? Date.now();
   const fieldsById = new Map(snapshot.fields.map((field) => [field.fieldId, field]));
   const candidate: LocalCandidateDefinition = {
-    id: options.id ?? `ai-${url.host}`,
+    id: options.id ?? candidateIdForUrl(url),
     serviceName: snapshot.title.split(" - ")[0] || url.host,
     match: { domains: [url.host] },
     registrationSignature: {
@@ -104,6 +105,13 @@ export function candidateFromAiMapping(
   const validation = validateCandidateDefinition(candidate);
   if (!validation.ok) throw new Error(`invalid AI candidate definition: ${validation.errors.join("; ")}`);
   return candidate;
+}
+
+function candidateIdForUrl(url: URL): string {
+  const identity = `${url.host}${url.pathname}`.toLowerCase();
+  const slug = identity.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || url.host;
+  const hash = createHash("sha256").update(identity).digest("hex").slice(0, 12);
+  return `ai-${slug}-${hash}`;
 }
 
 function escapeRegex(value: string): string {
@@ -149,7 +157,10 @@ function mapFieldsSchema(): Record<string, unknown> {
 
 export class AiMapper implements Mapper {
   readonly name = "ai";
-  constructor(private readonly provider: AiProvider) {}
+  constructor(
+    private readonly provider: AiProvider,
+    private readonly candidateSink?: { upsertLocalCandidate(candidate: LocalCandidateDefinition): void; save?: () => Promise<void> },
+  ) {}
 
   async discoverRegistrationLink(links: PageLink[]): Promise<PageLink | undefined> {
     const schema = {
@@ -169,7 +180,27 @@ export class AiMapper implements Mapper {
   }
 
   async mapFields(snapshot: PageSnapshot, customs: CustomFieldDef[], context?: MapperContext): Promise<MappingPlan> {
-    return mapWithDefinitionRules(snapshot, context, (remaining) => this.mapFieldsWithProvider(remaining, customs));
+    let providerCalled = false;
+    const plan = await mapWithDefinitionRules(snapshot, context, async (remaining) => {
+      providerCalled = true;
+      return await this.mapFieldsWithProvider(remaining, customs);
+    });
+    if (providerCalled) await this.storeCandidate(snapshot, plan);
+    return plan;
+  }
+
+  private async storeCandidate(snapshot: PageSnapshot, plan: MappingPlan): Promise<void> {
+    if (!this.candidateSink || plan.entries.length === 0) return;
+    try {
+      const candidate = candidateFromAiMapping(snapshot, plan);
+      const validation = validateCandidateDefinition(candidate);
+      if (!validation.ok) return;
+      this.candidateSink.upsertLocalCandidate(candidate);
+      await this.candidateSink.save?.();
+    } catch {
+      // Candidate reuse is an optimization. Invalid/sensitive candidates are ignored
+      // so the mapping result can still proceed without persisting unsafe data.
+    }
   }
 
   private async mapFieldsWithProvider(snapshot: PageSnapshot, customs: CustomFieldDef[]): Promise<MappingPlan> {
