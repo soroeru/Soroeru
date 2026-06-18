@@ -1,29 +1,53 @@
 ---
 name: issue-implementation-loop
-description: Repeat GitHub Issue implementation work in order with a fixed loop for refreshing main, creating issue-named branches, implementing, committing, waiting for local AI review until NIT_ONLY or PASS with at most three repair cycles, pushing PRs, fixing CI until green, closing PRs, checking remaining session limit, and continuing to the next Issue without extra developer approval when under the limit. Use when the user asks Codex to implement one or more GitHub Issues or to follow the repository Issue Implementation Loop.
+description: Repeat GitHub Issue implementation work in order from explicit Issue number inputs such as "#139", "139", or "139 140". Use when the user asks Codex to implement one or more GitHub Issues, passes GitHub Issue numbers as arguments, or asks to follow the repository Issue Implementation Loop. The workflow refreshes main, creates issue-named branches, implements, commits, waits for local AI review until NIT_ONLY or PASS with at most three repair cycles, pushes PRs, fixes CI until green, completes or closes PRs according to the requested workflow, checks remaining session limit, and continues to the next Issue without asking to start it when under the limit.
 ---
 
 # Issue Implementation Loop
 
-Use this skill when implementing one or more GitHub Issues in sequence.
+Use this skill when implementing one or more GitHub Issues in sequence from
+explicit Issue number inputs.
+
+## Inputs
+
+Accept Issue numbers from the user request as the skill arguments. Supported
+forms include:
+
+- `#139`
+- `139`
+- `139 140 141`
+- `issues #139, #140`
+
+Before starting, normalize the inputs into an ordered list of unique Issue
+numbers. Preserve the user's order. If the user asks for this loop but gives no
+Issue number, ask for the Issue number list before doing repository-changing
+work. If an input could refer to something other than a GitHub Issue number,
+confirm the intended Issue before starting.
+
+For each Issue number, fetch the Issue body and comments first, then derive the
+branch name and implementation scope from that Issue content.
 
 ## Workflow
 
-For each Issue, follow this loop:
+For each normalized Issue number, follow this loop:
 
-1. 最新版の`main`ブランチを取得する。
-2. Issueに書かれた内容に合った名前で新しいブランチを作成する。
-3. Issueの実装を開始する。
-4. commitしたらレビューを待って修正する。レビューのstatusが`NIT_ONLY`や
-   `PASS`になるまで修正を繰り返す。ただし、修正とレビューの繰り返しの
-   最大回数は3回までとする。
-5. ローカルでの開発が終わったらGitHubにpushしてPRを作成する。
-6. PRで起動されたCIが失敗したらエラーログを取得して修正してまたpushする。
-   CIが成功するまで修正を繰り返す。
-7. CIが成功したらPRをクローズにする。
-8. セッションリミットの使用率を確認して95%以上であれば作業を停止する。
-9. セッションリミットの使用率が95%未満であれば、1~8までを開発者の承認を
-   得ずに繰り返す。
+1. Fetch the latest `main` branch.
+2. Create a new branch named from the Issue content.
+3. Implement the Issue.
+4. After committing, wait for local AI review and fix findings until the review
+   status is `NIT_ONLY` or `PASS`. Repeat the fix-and-review cycle at most
+   three times.
+5. When local development is complete, push the branch to GitHub and create a
+   PR. Include `Closes #<issue>` in the PR body so GitHub closes the Issue
+   automatically when the PR is merged.
+6. If PR CI fails, fetch the error logs, fix the failure, and push again.
+   Repeat until CI succeeds.
+7. After CI succeeds, complete the PR according to the user's requested
+   workflow and the repository merge policy. Close the PR instead of merging
+   only when the requested workflow explicitly says to close it.
+8. Check session-limit usage and stop if it is 95% or higher.
+9. If session-limit usage is below 95%, repeat steps 1-8 for the next Issue
+   without asking for approval to start that next Issue.
 
 ## Boundaries
 
@@ -33,12 +57,10 @@ For each Issue, follow this loop:
   allow it.
 - Do not count a review cycle as successful unless the saved review status is
   `NIT_ONLY` or `PASS`.
-- Treat PR close as distinct from merge. This workflow intentionally closes the
-  PR after CI succeeds unless the user explicitly changes the workflow.
-- Because PRs are closed rather than merged, use this loop as-is only when the
-  requested Issues are independent from the latest `main`. If later Issues
-  depend on earlier changes, merge or otherwise integrate those changes before
-  starting the dependent Issue.
+- Treat PR close as distinct from merge. Close a PR only when the user or the
+  repository workflow explicitly asks to close it instead of merging it.
+- If later Issues depend on earlier changes, merge or otherwise integrate those
+  changes before starting the dependent Issue.
 - Step 6 has no fixed CI retry count. Continue while there is meaningful
   progress and session-limit usage stays below 95%; stop on external blockers
   or when the session-limit rule requires stopping.
