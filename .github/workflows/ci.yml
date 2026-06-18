@@ -15,6 +15,13 @@ jobs:
         with:
           node-version: 25
           cache: npm
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run typecheck
@@ -34,6 +41,13 @@ jobs:
         with:
           node-version: 25
           cache: npm
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - name: Deterministic-mapper matrix against local test sites (chromium)
