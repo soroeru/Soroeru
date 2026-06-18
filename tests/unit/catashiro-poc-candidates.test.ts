@@ -102,3 +102,18 @@ test("exportEncrypted/importEncrypted roundtrip restores local candidates", asyn
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("submitted local candidate status persists through the encrypted store", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-candidates-"));
+  const file = join(dir, "store.json");
+  try {
+    const store = await PocStore.open(file, PASSPHRASE, "pbkdf2-sha512");
+    store.upsertLocalCandidate(candidate("submitted", { status: "submitted" }));
+    await store.save();
+
+    const reopened = await PocStore.open(file, PASSPHRASE);
+    assert.equal(reopened.getLocalCandidate("submitted")?.status, "submitted");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

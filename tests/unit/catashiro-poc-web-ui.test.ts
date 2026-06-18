@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { CatashiroApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import { sha256Hex } from "../../src/store/store.js";
+import type { LocalCandidateDefinition } from "../../src/types.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
@@ -50,6 +51,19 @@ async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
   const res = await post(server, "/unlock", { csrf: token, passphrase: PASSPHRASE });
   assert.equal(res.status, 303);
   return token;
+}
+
+function localCandidate(id: string): LocalCandidateDefinition {
+  return {
+    id,
+    serviceName: "候補サイト",
+    match: { urlPatterns: ["/site/candidate/"] },
+    fieldRules: [{ id: "email", profileKey: "email", labelPattern: "メール" }],
+    source: "ai",
+    status: "candidate",
+    createdAt: 1000,
+    updatedAt: 1000,
+  };
 }
 
 test("locked screen renders onboarding and rejects POSTs without the CSRF token", async () => {
@@ -414,6 +428,37 @@ test("custom profile fields and provider settings persist through the encrypted 
     });
     assert.equal(reveal.status, 200);
     assert.match(await reveal.text(), /sk-test/);
+  });
+});
+
+test("candidate definitions can be previewed and marked submitted from the local UI", async () => {
+  await withWebUi(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    app.store.upsertLocalCandidate(localCandidate("candidate-alpha"));
+    await app.store.save();
+
+    const html = await getHtml(server, "/?tab=candidates");
+    assert.match(html, /候補定義/);
+    assert.match(html, /候補サイト/);
+    assert.match(html, /candidate-alpha/);
+    assert.match(html, /提出JSONをダウンロード/);
+    assert.match(html, /&quot;profileKey&quot;: &quot;email&quot;/);
+
+    const res = await fetch(new URL("/candidates/candidate-alpha/submit", server.url), {
+      method: "POST",
+      body: new URLSearchParams({ csrf: token }),
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") ?? "", /application\/json/);
+    assert.match(res.headers.get("content-disposition") ?? "", /catashiro-candidate-candidate-alpha\.json/);
+    const draft = (await res.json()) as { title: string; candidate: LocalCandidateDefinition };
+    assert.equal(draft.title, "Local candidate definition: 候補サイト");
+    assert.equal(draft.candidate.status, "submitted");
+    assert.equal(app.store.getLocalCandidate("candidate-alpha")?.status, "submitted");
+
+    const after = await getHtml(server, "/?tab=candidates");
+    assert.match(after, /candidate-alpha \/ ai \/ submitted/);
+    assert.match(after, /disabled>提出JSONをダウンロード/);
   });
 });
 
