@@ -110,7 +110,7 @@ export/import (SEC-003 / #44), and the masked measurement output above are the
 write fails this check and must be reviewed against this section before it is
 annotated.
 
-**`state/ai-reviews/`** (the local cross-AI review hook,
+**`state/ai-reviews/`** (the local AI review hook,
 [`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
 source code, not on `state/catashiro-poc/` (the encrypted profile store); since
 profile values are encrypted at rest and never appear in source, review

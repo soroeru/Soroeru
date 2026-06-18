@@ -262,7 +262,7 @@ Node標準HTTPサーバーのserver-rendered HTML/CSSで初期UIを構成する�
   のマスク内容）、`tests/unit/catashiro-poc-privacy.test.ts`（上記チェックが現状の
   リポジトリで違反なしであること、未注釈の書き込み・許可外の注釈・`sites/` 配下が対象外
   であることをそれぞれ確認）。
-- `state/ai-reviews/`（ローカル cross-AI レビューhook）はソースコードの `git diff` のみを
+- `state/ai-reviews/`（ローカル AI レビューhook）はソースコードの `git diff` のみを
   扱い、暗号化ストア（`state/catashiro-poc/`）には触れない。両方とも Git 管理対象外。
 
 ## 所見・既知の制限
