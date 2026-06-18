@@ -7,7 +7,7 @@ import {
   type AiProvider,
   type CompleteJsonOptions,
 } from "../../src/agent/ai/provider.js";
-import { HIGH_RISK_FLAGS, TRANSFORMS, type FormField, type PageSnapshot } from "../../src/types.js";
+import { HIGH_RISK_FLAGS, TRANSFORMS, type FormField, type LocalCandidateDefinition, type PageSnapshot } from "../../src/types.js";
 
 class StubProvider implements AiProvider {
   readonly id = "stub";
@@ -85,7 +85,7 @@ function highRiskEnumFrom(schema: Record<string, unknown>): unknown {
 test("AI mapper field schema uses transform enum from the shared type contract", async () => {
   const provider = new StubProvider([{ entries: [], checkboxes: [], unmappedRequired: [] }]);
   const mapper = new AiMapper(provider);
-  await mapper.mapFields(snapshot([]), []);
+  await mapper.mapFields(snapshot([field({ fieldId: "email", labels: ["メール"] })]), []);
 
   assert.deepEqual(transformEnumFrom(provider.calls[0]!.schema), [...TRANSFORMS]);
 });
@@ -156,7 +156,71 @@ test("AI mapper keeps provider failures explicit instead of silently falling bac
   const provider = new StubProvider([new Error("network down")]);
   const mapper = new AiMapper(provider);
 
-  await assert.rejects(() => mapper.mapFields(snapshot([]), []), /network down/);
+  await assert.rejects(() => mapper.mapFields(snapshot([field({ fieldId: "email", labels: ["メール"] })]), []), /network down/);
+});
+
+test("AI mapper skips provider calls for definition-covered fields", async () => {
+  const now = Date.now();
+  const candidate: LocalCandidateDefinition = {
+    id: "candidate-custom",
+    serviceName: "候補サイト",
+    match: { urlPatterns: ["/site/test/"] },
+    fieldRules: [{ id: "member-id", profileKey: "account.id", labelPattern: "会員番号" }],
+    source: "observation",
+    status: "candidate",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const provider = new StubProvider([{ entries: [{ fieldId: "email", profileKey: "email" }], checkboxes: [], unmappedRequired: [] }]);
+  const mapper = new AiMapper(provider);
+  const plan = await mapper.mapFields(
+    snapshot([
+      field({ fieldId: "member", labels: ["会員番号"] }),
+      field({ fieldId: "email", autocomplete: "email", labels: ["メール"] }),
+    ]),
+    [],
+    { localCandidates: [candidate] },
+  );
+
+  assert.deepEqual(plan.entries, [
+    { fieldId: "member", profileKey: "account.id" },
+    { fieldId: "email", profileKey: "email" },
+  ]);
+  const payload = JSON.parse(provider.calls[0]!.user) as { fieldId: string }[];
+  assert.deepEqual(payload.map((item) => item.fieldId), ["email"]);
+});
+
+test("AI mapper does not call the provider when definition rules cover every field", async () => {
+  const now = Date.now();
+  const candidate: LocalCandidateDefinition = {
+    id: "candidate-custom",
+    serviceName: "候補サイト",
+    match: { urlPatterns: ["/site/test/"] },
+    fieldRules: [
+      { id: "member-id", profileKey: "account.id", labelPattern: "会員番号" },
+      { id: "email", profileKey: "email", labelPattern: "メール" },
+    ],
+    source: "observation",
+    status: "candidate",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const provider = new StubProvider([new Error("provider should not be called")]);
+  const mapper = new AiMapper(provider);
+  const plan = await mapper.mapFields(
+    snapshot([
+      field({ fieldId: "member", labels: ["会員番号"] }),
+      field({ fieldId: "email", labels: ["メール"] }),
+    ]),
+    [],
+    { localCandidates: [candidate] },
+  );
+
+  assert.deepEqual(plan.entries, [
+    { fieldId: "member", profileKey: "account.id" },
+    { fieldId: "email", profileKey: "email" },
+  ]);
+  assert.equal(provider.calls.length, 0);
 });
 
 test("AI mapping can become a sanitized local candidate definition", () => {

@@ -25,7 +25,7 @@ import {
 } from "../../types.js";
 import type { CustomFieldDef } from "../classifier.js";
 import { validateCandidateDefinition } from "../definitions.js";
-import type { Mapper } from "../mapper.js";
+import { mapWithDefinitionRules, type Mapper, type MapperContext } from "../mapper.js";
 import { normalizeMappingPlan, normalizeTermsAnalysis } from "../normalization.js";
 import type { AiProvider } from "./provider.js";
 
@@ -168,7 +168,11 @@ export class AiMapper implements Mapper {
     return links.find((l) => l.href === result.href);
   }
 
-  async mapFields(snapshot: PageSnapshot, customs: CustomFieldDef[]): Promise<MappingPlan> {
+  async mapFields(snapshot: PageSnapshot, customs: CustomFieldDef[], context?: MapperContext): Promise<MappingPlan> {
+    return mapWithDefinitionRules(snapshot, context, (remaining) => this.mapFieldsWithProvider(remaining, customs));
+  }
+
+  private async mapFieldsWithProvider(snapshot: PageSnapshot, customs: CustomFieldDef[]): Promise<MappingPlan> {
     const structure = snapshot.fields.map((f) => ({
       fieldId: f.fieldId,
       tag: f.tag,

@@ -5,7 +5,8 @@ import {
   classifyFields,
   classifyFieldsWithEvidence,
 } from "../../src/agent/classifier.js";
-import type { FormField } from "../../src/types.js";
+import { DeterministicMapper } from "../../src/agent/mapper.js";
+import type { FormField, LocalCandidateDefinition, PageSnapshot } from "../../src/types.js";
 
 function field(partial: Partial<FormField> & { fieldId: string }): FormField {
   return {
@@ -163,4 +164,78 @@ test("custom-field matches record the matched term in evidence", () => {
   assert.equal(ev?.source, "custom");
   assert.equal(ev?.ruleId, "custom:custom.ご職業");
   assert.equal(ev?.matchedText, "ご職業");
+});
+
+function pageSnapshot(fields: FormField[]): PageSnapshot {
+  return {
+    url: "http://127.0.0.1/site/custom/register",
+    title: "候補サイト",
+    fields,
+    buttons: [],
+    links: [],
+    visibleText: "候補サイト 新規登録",
+    iframeSrcs: [],
+    wallMarkers: [],
+  };
+}
+
+test("deterministic mapper applies local candidate definition rules before classifier fallback", async () => {
+  const now = Date.now();
+  const candidate: LocalCandidateDefinition = {
+    id: "candidate-custom",
+    serviceName: "候補サイト",
+    match: { urlPatterns: ["/site/custom/"] },
+    fieldRules: [{ id: "member-id", profileKey: "account.id", labelPattern: "会員番号" }],
+    source: "observation",
+    status: "candidate",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const mapper = new DeterministicMapper();
+  const plan = await mapper.mapFields(
+    pageSnapshot([
+      field({ fieldId: "member", labels: ["会員番号"] }),
+      field({ fieldId: "email", autocomplete: "email", labels: ["メール"] }),
+    ]),
+    [],
+    { localCandidates: [candidate] },
+  );
+
+  assert.deepEqual(plan.entries, [
+    { fieldId: "member", profileKey: "account.id" },
+    { fieldId: "email", profileKey: "email" },
+  ]);
+});
+
+test("deterministic mapper layers multiple matching definition rule sets", async () => {
+  const now = Date.now();
+  const first: LocalCandidateDefinition = {
+    id: "candidate-first",
+    serviceName: "候補サイト",
+    match: { urlPatterns: ["/site/custom/"] },
+    fieldRules: [{ id: "member-id", profileKey: "account.id", labelPattern: "会員番号" }],
+    source: "observation",
+    status: "candidate",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const second: LocalCandidateDefinition = {
+    ...first,
+    id: "candidate-second",
+    fieldRules: [{ id: "customer-code", profileKey: "custom.顧客コード", labelPattern: "顧客コード" }],
+  };
+  const mapper = new DeterministicMapper();
+  const plan = await mapper.mapFields(
+    pageSnapshot([
+      field({ fieldId: "member", labels: ["会員番号"] }),
+      field({ fieldId: "code", labels: ["顧客コード"] }),
+    ]),
+    [],
+    { officialDefinitions: [], localCandidates: [first, second] },
+  );
+
+  assert.deepEqual(plan.entries, [
+    { fieldId: "member", profileKey: "account.id" },
+    { fieldId: "code", profileKey: "custom.顧客コード" },
+  ]);
 });
