@@ -5,8 +5,8 @@ naming, Issue workflow, commit conventions, PR descriptions, review
 expectations, and merge policy.
 
 Out of scope here: local setup and quality gate commands (see
-[`development.md`](development.md)) and local cross-AI review hook details
-(see [`local-ai-review.md`](local-ai-review.md)).
+[`development.md`](development.md)) and local AI review hook details (see
+[`local-ai-review.md`](local-ai-review.md)).
 
 ## 1. Development Model
 
@@ -115,19 +115,19 @@ PR descriptions should include:
 - how it was verified
 - remaining risks or skipped checks
 
-See §8 for the cross-AI review convention.
+See §8 for the local AI review convention.
 
 ## 8. Local AI Review
 
 Setup, branch rules, skip conditions, follow-up policy, cleanup policy, output,
-and troubleshooting live in [`local-ai-review.md`](local-ai-review.md). PRs
-authored by Codex are reviewed by Claude when possible, and PRs authored by
-Claude are reviewed by Codex when possible. Local AI review output under
+and troubleshooting live in [`local-ai-review.md`](local-ai-review.md). By
+default, `codex/*` branches run Codex review and `claude/*` branches run Claude
+review when the matching CLI is available. Local AI review output under
 `state/ai-reviews/` is fast feedback, not a replacement for final judgment.
 
-GitHub Actions based cross-AI review is not enabled by default. If a project
-adds it as fallback automation, keep PAT / secret requirements in that
-fallback documentation rather than mixing them into the core workflow.
+GitHub Actions based AI review is not enabled by default. If a project adds it
+as fallback automation, keep PAT / secret requirements in that fallback
+documentation rather than mixing them into the core workflow.
 
 ## 9. Merge Policy
 

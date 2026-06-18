@@ -224,6 +224,8 @@ For code changes, run the available gates:
 
 - `npm run typecheck`
 - `npm test`
+- `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review
+  branch mapping changes
 - focused manual tests for affected browser behavior
 - for changes touching network calls, AI provider config, or `package.json`
   dependencies: `npm run poc -- check-egress` (PRIV-001, see
@@ -241,8 +243,8 @@ executed. If a command is not available yet, state that plainly in the PR.
 
 ## 9. Local AI Review
 
-Setup, behavior, and troubleshooting for the local cross-AI review hook live
-in [`local-ai-review.md`](local-ai-review.md). The setup command is repeated
+Setup, behavior, and troubleshooting for the local AI review hook live in
+[`local-ai-review.md`](local-ai-review.md). The setup command is repeated
 once in §2 above as part of environment setup; do not duplicate it elsewhere.
 
 ### 9.1 Issue Implementation Loop
@@ -251,22 +253,23 @@ This section defines the repository-local Issue implementation loop. The
 matching Codex Skill lives in
 [`skills/issue-implementation-loop/SKILL.md`](../skills/issue-implementation-loop/SKILL.md).
 
-ユーザーが1つ以上のGitHub Issueを順番に実装するよう依頼した場合、
-ユーザーが明示的に別の手順を指定しない限り、各Issueでこのループを使う:
+When the user asks an agent to implement one or more GitHub Issues in order,
+use this loop for each Issue unless the user explicitly changes the workflow:
 
-1. 最新版の`main`ブランチを取得する。
-2. Issueに書かれた内容に合った名前で新しいブランチを作成する。
-3. Issueの実装を開始する。
-4. commitしたらレビューを待って修正する。レビューのstatusが`NIT_ONLY`や
-   `PASS`になるまで修正を繰り返す。ただし、修正とレビューの繰り返しの
-   最大回数は3回までとする。
-5. ローカルでの開発が終わったらGitHubにpushしてPRを作成する。
-6. PRで起動されたCIが失敗したらエラーログを取得して修正してまたpushする。
-   CIが成功するまで修正を繰り返す。
-7. CIが成功したらPRをクローズにする。
-8. セッションリミットの使用率を確認して95%以上であれば作業を停止する。
-9. セッションリミットの使用率が95%未満であれば、1~8までを開発者の承認を
-   得ずに繰り返す。
+1. Fetch the latest `main` branch.
+2. Create a new branch named for the Issue content.
+3. Implement the Issue.
+4. After committing, wait for local AI review and fix findings until the review
+   status is `NIT_ONLY` or `PASS`; repeat at most three times.
+5. Push the finished local branch to GitHub and create a PR.
+6. If PR CI fails, fetch the error logs, fix the failure, push again, and repeat
+   until CI succeeds.
+7. After CI succeeds, complete the PR according to the requested workflow and
+   merge policy; if the requested workflow says to close the PR, close it
+   instead of merging.
+8. Repeat steps 1-7 for the next requested Issue without asking whether to
+   start the next Issue, while still respecting sandbox, destructive-action,
+   merge, and other approval requirements.
 
 This loop intentionally closes PRs instead of merging them. Use it only when
 the requested Issues can be implemented independently from the latest `main`;

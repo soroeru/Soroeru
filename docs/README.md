@@ -25,7 +25,7 @@ owns the relevant topic.
 | [`user-manual.md`](user-manual.md) | **User-facing manual for Mac private beta users**: install, vault setup, personal-data entry, Add Site flow, confirm gate, wall hand-off, bulk update, support bundle, uninstall. |
 | [`beta-feedback.md`](beta-feedback.md) | **Beta feedback guide**: feedback channels, template questions, sensitive-data handling rules, and how to file actionable GitHub Issues. |
 | [`github-operations.md`](github-operations.md) | Issue, branch, commit, pull request, review, and merge workflow rules. |
-| [`local-ai-review.md`](local-ai-review.md) | Local cross-AI review hook setup, behavior, outputs, and troubleshooting. |
+| [`local-ai-review.md`](local-ai-review.md) | Local AI review hook setup, behavior, outputs, and troubleshooting. |
 
 ## Primary Sources
 

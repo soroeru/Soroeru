@@ -24,9 +24,11 @@ REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 
 # shellcheck source=/dev/null
 . "$GITHOOKS_DIR/config"
+# shellcheck source=/dev/null
+. "$GITHOOKS_DIR/lib/reviewer-selection.sh"
 
-# --- TEMPORARY: local cross-AI review disabled ------------------
-# Codex is rate-limited, so the cross-AI local review is paused to
+# --- TEMPORARY: local AI review disabled ------------------------
+# Codex is rate-limited, so the local AI review is paused to
 # avoid failed/queued reviews on every commit. Flip the flag in
 # .githooks/config back to 0 (or remove it) to restore normal
 # behavior once the reviewer CLIs are available again.
@@ -64,13 +66,10 @@ case "$HEAD_MSG" in
   *'[skip-review]'*) exit 0 ;;
 esac
 
-# Detect reviewer from branch prefix
+# Detect reviewer from branch prefix. The branch's agent prefix maps
+# to the same reviewer CLI.
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-case "$BRANCH" in
-  ${LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE}*) REVIEWER="codex" ;;
-  ${LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX}*)  REVIEWER="claude" ;;
-  *) exit 0 ;;
-esac
+REVIEWER=$(local_ai_review_select_reviewer "$BRANCH") || exit 0
 
 # Pin the commit that triggered this hook so the background review
 # always covers the same diff, even if HEAD moves before the

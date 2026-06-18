@@ -1,6 +1,6 @@
 # Local AI Review
 
-This document owns the **local Git hook for cross-AI review**: purpose, setup,
+This document owns the **local Git hook for AI review**: purpose, setup,
 configuration, branch rules, review target, skip conditions, follow-up policy,
 cleanup policy, output, and troubleshooting.
 
@@ -10,7 +10,7 @@ Out of scope here: GitHub PR workflow expectations (see
 
 ## 1. Purpose
 
-The local AI review hook provides fast cross-AI feedback near the point where
+The local AI review hook provides fast reviewer feedback near the point where
 work is committed. It is intended to catch documentation, workflow, and code
 review issues before or alongside PR review without depending on GitHub Actions.
 
@@ -85,12 +85,13 @@ scripts.
 
 Default reviewer mapping:
 
-- `codex/*` branches trigger Claude review
-- `claude/*` branches trigger Codex review
+- `codex/*` branches trigger Codex review
+- `claude/*` branches trigger Claude review
 - other branches are skipped
 
-This mapping is for cross-AI review: the tool that authored the branch should
-normally be reviewed by the other tool when available.
+This mapping keeps the branch agent prefix and reviewer CLI aligned. Prompt
+files remain reviewer-specific: `local-review-codex.md` is used for Codex
+review and `local-review-claude.md` is used for Claude review.
 
 ## 5. Review Target
 
@@ -190,11 +191,19 @@ Review artifacts are local state and should not be committed.
 | Hook blocks unexpectedly | `last-run.log`, lock file age, reviewer timeout |
 | Shellcheck fails | Bash 3.2 compatibility and quoted path handling |
 
+For branch-mapping changes, run:
+
+```bash
+bash scripts/smoke-local-ai-review-branch-mapping.sh
+```
+
+This checks the shared reviewer-selection helper without launching reviewer
+CLIs.
+
 ## 11. Optional GitHub Actions Fallback
 
-GitHub Actions based cross-AI review is intentionally outside the default
-template. If a project adds it, keep these details in a separate optional
-document:
+GitHub Actions based AI review is intentionally outside the default template.
+If a project adds it, keep these details in a separate optional document:
 
 - required API keys
 - PAT or GitHub App requirements

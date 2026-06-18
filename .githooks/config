@@ -7,14 +7,14 @@
 # per project. Prefer editing this file over changing the lib scripts.
 
 # --- TEMPORARY kill switch --------------------------------------
-# Set to 1 to skip the local cross-AI review entirely (post-commit
+# Set to 1 to skip the local AI review entirely (post-commit
 # exits early). Set to 0 (default) to run the review.
 LOCAL_AI_REVIEW_DISABLED=0
 
 # --- Branch prefix mapping --------------------------------------
 # When the current branch starts with one of these prefixes, the
-# reviewer is the OTHER AI. Branches that match neither prefix are
-# skipped entirely.
+# reviewer is the AI named by the prefix. Branches that match
+# neither prefix are skipped entirely.
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE="claude/"
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX="codex/"
 

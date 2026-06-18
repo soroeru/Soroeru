@@ -240,7 +240,7 @@ Use these documents when present:
 - `docs/security.md`: security review notes
 - `docs/manual-test.md`: manual test checklist
 - `docs/github-operations.md`: GitHub workflow rules
-- `docs/local-ai-review.md`: local cross-AI review hook documentation
+- `docs/local-ai-review.md`: local AI review hook documentation
 - `.github/ISSUE_TEMPLATE/implementation-plan.md`: GitHub Issue implementation plan template
 
 Update docs when behavior, setup, commands, architecture, or security assumptions change.
@@ -259,7 +259,7 @@ Quick reminders for agent sessions:
 
 ## Local AI Review
 
-This repository may use a local Git `post-commit` hook for cross-AI review. Setup,
+This repository may use a local Git `post-commit` hook for AI review. Setup,
 branch rules, skip conditions, and cleanup live in
 [`docs/local-ai-review.md`](docs/local-ai-review.md).
 
