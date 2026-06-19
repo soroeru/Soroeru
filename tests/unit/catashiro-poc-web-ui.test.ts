@@ -610,9 +610,15 @@ test("withdrawal task flow requires explicit final-action confirmation", async (
     const candidate = await getHtml(server, "/?tab=sites");
     assert.match(candidate, /退会タスク/);
     assert.match(candidate, /最終ボタンは自動で押しません/);
+    assert.match(candidate, /action="\/withdrawal\/start"/);
 
     const missingConfirm = await post(server, "/withdrawal/prepare", { csrf: token, siteId: "example" });
     assert.equal(missingConfirm.status, 303);
+    assert.equal(app.store.getSiteRecord("example")?.withdrawalPreparedAt, undefined);
+
+    const missingRunConfirm = await post(server, "/withdrawal/start", { csrf: token, siteId: "example" });
+    assert.equal(missingRunConfirm.status, 303);
+    assert.match(decodeURIComponent(missingRunConfirm.headers.get("location") ?? ""), /最終操作を自動化しない確認が必要です/);
     assert.equal(app.store.getSiteRecord("example")?.withdrawalPreparedAt, undefined);
 
     const prepared = await post(server, "/withdrawal/prepare", {

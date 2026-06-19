@@ -21,9 +21,11 @@ import type {
   Transform,
 } from "../types.js";
 import type { CustomFieldDef } from "./classifier.js";
+import { resolveDefinitions } from "./definitions.js";
 import { findEditLink } from "./discovery.js";
 import { evaluateGuards, paymentAudit, shouldCheckAttestation } from "./guards.js";
 import { fillEntries, setCheckbox, type FillOutcome } from "./filler.js";
+import { OFFICIAL_DEFINITIONS } from "./official-definitions.js";
 import { accountStateFromRegistrationStatus, applyAccountState, buildMandate, staleFilledFields, toFilledFieldRecords } from "./records.js";
 import { maskValue, renderGate, type Gate } from "./gate.js";
 import type { Mapper } from "./mapper.js";
@@ -34,6 +36,7 @@ import { clearWalls, type HumanHandoff } from "./walls.js";
 
 const NEXT_BUTTON_RE = /次へ|確認画面へ|^確認する?$/;
 const FINAL_BUTTON_RE = /登録|送信|作成|開始|申し?込|保存/;
+const WITHDRAWAL_FINAL_RE = /退会|解約|削除|アカウント削除|停止|withdraw|delete|cancel/i;
 const TERMS_LINK_RE = /規約|ポリシー/;
 const CARD_FIELD_RE = /カード|クレジット|cvv|cvc|セキュリティコード/i;
 const SUCCESS_TEXT = "登録が完了しました";
@@ -488,6 +491,116 @@ export interface UpdateResult {
 export interface UpdateOptions {
   /** Optional profile keys selected by the UI. Omitted means all stale fields. */
   profileKeys?: readonly ProfileKey[];
+}
+
+export interface WithdrawalResult {
+  siteId: string;
+  status: "prepared" | "skipped" | "failed" | "manualHandoff";
+  steps: string[];
+  finalActionManual: true;
+  notes: string[];
+}
+
+function safeStepRegex(pattern: string): RegExp | undefined {
+  try {
+    return new RegExp(pattern, "i");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Withdrawal preparation flow (§8): follow checked-in/local withdrawal steps,
+ * pause at walls, and stop before any irreversible final action. This prepares
+ * the headed browser for the user; it never clicks the final withdrawal/delete
+ * confirmation button.
+ */
+export async function runWithdrawal(page: Page, siteTopUrl: string, siteId: string, deps: AgentDeps): Promise<WithdrawalResult> {
+  const notes: string[] = [];
+  const steps: string[] = [];
+  const result = (status: WithdrawalResult["status"]): WithdrawalResult => ({
+    siteId,
+    status,
+    steps,
+    finalActionManual: true,
+    notes,
+  });
+
+  const record = deps.store.siteRecords.get(siteId);
+  if (!record) return { ...result("skipped"), notes: ["登録記録がありません"] };
+  if (record.accountState !== "withdrawalCandidate") {
+    return { ...result("skipped"), notes: ["退会候補ではありません"] };
+  }
+
+  const discoverStart = performance.now();
+  await page.goto(siteTopUrl);
+  let snapshot = await snapshotPage(page);
+  {
+    const observed = await clearWallsFor(snapshot, deps, () => snapshotPage(page));
+    if (observed.status === "abort") {
+      recordPhase(deps, "discover", discoverStart);
+      return result("manualHandoff");
+    }
+    snapshot = observed.snapshot;
+  }
+
+  const definitions = resolveDefinitions(snapshot, OFFICIAL_DEFINITIONS, deps.store.listLocalCandidates());
+  const definition = definitions.find((match) => (match.definition.withdrawalSteps?.length ?? 0) > 0)?.definition;
+  const withdrawalSteps = definition?.withdrawalSteps ?? [];
+  if (withdrawalSteps.length === 0) {
+    notes.push("退会フロー定義が見つかりません");
+    recordPhase(deps, "discover", discoverStart);
+    return result("failed");
+  }
+  deps.log(`退会フロー定義を使用: ${definition?.serviceName ?? siteId}`);
+
+  for (const step of withdrawalSteps) {
+    steps.push(step.description);
+    deps.log(`退会準備: ${step.description}`);
+    if (!step.linkPattern) continue;
+    const re = safeStepRegex(step.linkPattern);
+    if (!re) {
+      notes.push(`退会ステップのリンクパターンが不正です: ${step.linkPattern}`);
+      recordPhase(deps, "discover", discoverStart);
+      return result("failed");
+    }
+    const link = snapshot.links.find((candidate) => re.test(candidate.text));
+    if (!link) {
+      notes.push(`退会ステップのリンクが見つかりません: ${step.description}`);
+      recordPhase(deps, "discover", discoverStart);
+      return result("failed");
+    }
+    await page.goto(link.href);
+    snapshot = await snapshotPage(page);
+    const observed = await clearWallsFor(snapshot, deps, () => snapshotPage(page));
+    if (observed.status === "abort") {
+      recordPhase(deps, "discover", discoverStart);
+      return result("manualHandoff");
+    }
+    snapshot = observed.snapshot;
+  }
+  recordPhase(deps, "discover", discoverStart);
+
+  const scanStart = performance.now();
+  snapshot = await snapshotPage(page);
+  const finalButton = snapshot.buttons.find((button) => WITHDRAWAL_FINAL_RE.test(button.text));
+  if (finalButton) {
+    notes.push(`最終操作候補「${finalButton.text}」を検出しました。自動クリックせず、ユーザー確認に委ねます`);
+  } else {
+    notes.push("退会ページを準備しました。不可逆な最終操作はユーザー確認に委ねます");
+  }
+  recordPhase(deps, "scan", scanStart);
+
+  const recordStart = performance.now();
+  const now = Date.now();
+  record.withdrawalPreparedAt = now;
+  record.withdrawalFinalConfirmationRequired = true;
+  record.lastCheckedAt = now;
+  record.nextAction = "prepareWithdrawal";
+  deps.store.upsertSiteRecord(record);
+  await deps.store.save();
+  recordPhase(deps, "record", recordStart);
+  return result("prepared");
 }
 
 /** Bulk-update flow (§5): hash-diff against the latest master values, then fix only the stale fields. */

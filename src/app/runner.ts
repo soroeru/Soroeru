@@ -8,7 +8,16 @@
 // touches `AgentDeps` or the store directly.
 
 import type { Page } from "playwright";
-import { runRegistration, runUpdate, type AgentDeps, type RegistrationResult, type UpdateOptions, type UpdateResult } from "../agent/agent.js";
+import {
+  runRegistration,
+  runUpdate,
+  runWithdrawal,
+  type AgentDeps,
+  type RegistrationResult,
+  type UpdateOptions,
+  type UpdateResult,
+  type WithdrawalResult,
+} from "../agent/agent.js";
 import type { Gate } from "../agent/gate.js";
 import { runExistingAccountImport, type ImportResult } from "../agent/importer.js";
 import type { Mapper } from "../agent/mapper.js";
@@ -41,6 +50,12 @@ export class AppRunner {
   update(page: Page, siteTopUrl: string, siteId: string, hooks: AppRunnerHooks, options: UpdateOptions = {}): Promise<UpdateResult> {
     this.app.touch();
     return runUpdate(page, siteTopUrl, siteId, this.deps(hooks), options);
+  }
+
+  /** Prepare a withdrawal flow while leaving the irreversible final action to the user (#129). */
+  withdraw(page: Page, siteTopUrl: string, siteId: string, hooks: AppRunnerHooks): Promise<WithdrawalResult> {
+    this.app.touch();
+    return runWithdrawal(page, siteTopUrl, siteId, this.deps(hooks));
   }
 
   /** Read import candidates from an existing account/profile page (#84). */

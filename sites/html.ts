@@ -127,6 +127,7 @@ export function formPage(opts: {
   specs: FieldSpec[];
   submitLabel: string;
   beforeForm?: string;
+  afterForm?: string;
   values?: Record<string, string>;
 }): string {
   return page(
@@ -137,6 +138,7 @@ ${opts.beforeForm ?? ""}
 <form method="post" action="${esc(opts.action)}">
 ${renderFields(opts.specs, opts.layout, opts.values)}
 <div class="row"><button type="submit">${esc(opts.submitLabel)}</button></div>
-</form>`,
+</form>
+${opts.afterForm ?? ""}`,
   );
 }
