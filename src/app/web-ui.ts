@@ -6,7 +6,6 @@
 // through CatashiroApp/PocStore so encrypted-at-rest behavior stays unchanged.
 
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Browser } from "playwright";
@@ -45,6 +44,7 @@ import { WithdrawalSession, type WithdrawalSessionState } from "./withdrawal-ses
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4127;
 const FORM_LIMIT_BYTES = 128 * 1024;
+const CSV_UPLOAD_LIMIT_BYTES = 5 * 1024 * 1024;
 const URL_BASE = "http" + "://127.0.0.1";
 /** Minimum master-passphrase length enforced on first-run vault setup (#79). */
 const MIN_PASSPHRASE_LENGTH = 8;
@@ -69,7 +69,7 @@ interface PageState {
   profileMode: ProfileMode;
 }
 
-interface AiChromeImportSelection {
+interface ChromeImportSelection {
   importedAt: number;
   siteIds: string[];
 }
@@ -206,15 +206,54 @@ function profileMode(params: URLSearchParams): ProfileMode {
 }
 
 async function readForm(req: IncomingMessage): Promise<URLSearchParams> {
+  const contentType = req.headers["content-type"] ?? "";
+  const limit = contentType.startsWith("multipart/form-data") ? CSV_UPLOAD_LIMIT_BYTES : FORM_LIMIT_BYTES;
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buffer.length;
-    if (total > FORM_LIMIT_BYTES) throw new HttpError(413, "送信内容が大きすぎます");
+    if (total > limit) throw new HttpError(413, "送信内容が大きすぎます");
     chunks.push(buffer);
   }
-  return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+  const body = Buffer.concat(chunks);
+  if (contentType.startsWith("multipart/form-data")) return readMultipartForm(contentType, body);
+  return new URLSearchParams(body.toString("utf8"));
+}
+
+function readMultipartForm(contentType: string, body: Buffer): URLSearchParams {
+  const boundaryMatch = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType);
+  const boundary = boundaryMatch?.[1] ?? boundaryMatch?.[2];
+  if (!boundary) throw new HttpError(400, "multipart boundary が見つかりません");
+  const delimiter = Buffer.from(`--${boundary}`);
+  const params = new URLSearchParams();
+  let start = findMultipartDelimiter(body, delimiter, 0);
+  while (start !== -1) {
+    const next = findMultipartDelimiter(body, delimiter, start + delimiter.length);
+    if (next === -1) break;
+    let part = body.subarray(start + delimiter.length, next);
+    if (part.subarray(0, 2).toString("latin1") === "--") break;
+    if (part.subarray(0, 2).toString("latin1") === "\r\n") part = part.subarray(2);
+    if (part.subarray(part.length - 2).toString("latin1") === "\r\n") part = part.subarray(0, part.length - 2);
+    const headerEnd = part.indexOf(Buffer.from("\r\n\r\n"));
+    if (headerEnd !== -1) {
+      const headers = part.subarray(0, headerEnd).toString("latin1");
+      const content = part.subarray(headerEnd + 4);
+      const name = /content-disposition:[^\r\n]*\bname="([^"]+)"/i.exec(headers)?.[1];
+      if (name) params.append(name, content.toString("utf8"));
+    }
+    start = next;
+  }
+  return params;
+}
+
+function findMultipartDelimiter(body: Buffer, delimiter: Buffer, from: number): number {
+  let index = body.indexOf(delimiter, from);
+  while (index !== -1) {
+    if (index === 0 || body.subarray(index - 2, index).toString("latin1") === "\r\n") return index;
+    index = body.indexOf(delimiter, index + delimiter.length);
+  }
+  return -1;
 }
 
 function statusText(status: number): string {
@@ -244,7 +283,7 @@ class WebUiServer {
   private bulkUpdate: BulkUpdateSession | undefined;
   /** At most one in-flight withdrawal preparation run (#129). */
   private withdrawal: { session: WithdrawalSession; browser?: Browser } | undefined;
-  private aiChromeImportSelection: AiChromeImportSelection | undefined;
+  private chromeImportSelection: ChromeImportSelection | undefined;
 
   constructor(options: WebUiServerOptions) {
     this.app = options.app;
@@ -328,14 +367,11 @@ class WebUiServer {
       case "/import/chrome-csv":
         await this.handleChromeCsvImport(form, res);
         return;
-      case "/import/chrome-csv-ai":
-        await this.handleAiChromeCsvImport(form, res);
+      case "/import/chrome-csv/bulk-start":
+        await this.startChromeImportBulk(form, res);
         return;
-      case "/import/chrome-csv-ai/bulk-start":
-        await this.startAiChromeImportBulk(form, res);
-        return;
-      case "/import/chrome-csv-ai/dismiss":
-        await this.dismissAiChromeImport(res);
+      case "/import/chrome-csv/dismiss":
+        await this.dismissChromeImport(form, res);
         return;
       case "/settings/provider":
         await this.saveProviderSettings(form, res);
@@ -911,6 +947,15 @@ class WebUiServer {
     }
     form.stack, .stack { display: grid; gap: var(--space-4); align-content: start; }
     label { display: grid; gap: 5px; font-weight: 600; font-size: .9rem; }
+    .drop-zone {
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius-md);
+      background: var(--surface-sunken);
+      padding: var(--space-5);
+      min-height: 112px;
+      align-content: center;
+    }
+    .drop-zone input { background: var(--surface-card); }
     .field { display: grid; gap: 5px; }
     .field-delete {
       display: flex;
@@ -1928,11 +1973,10 @@ class WebUiServer {
   }
 
   private renderSettingsSection(settings: ProviderSettings | undefined): string {
-    const mode = settings?.mode ?? "deterministic";
     return `
       <section id="settings" class="panel">
         <h2>設定</h2>
-        ${this.renderAiChromeImportSelection()}
+        ${this.renderChromeImportSelection()}
         <div class="grid two">
           <form class="stack" method="post" action="/settings/provider">
             ${this.csrfInput()}
@@ -1940,8 +1984,8 @@ class WebUiServer {
             <p class="muted">APIキーは暗号化ストアに保存します。AIにはフォーム構造と規約テキストだけを送り、個人情報の値は送りません。AI mode はAPI利用料金が発生する場合があります。</p>
             <label>動作モード
               <select name="mode">
-                <option value="deterministic" ${mode === "deterministic" ? "selected" : ""}>Deterministic（既定・AIを使わない）</option>
-                <option value="ai" ${mode === "ai" ? "selected" : ""}>AI Provider（曖昧・未対応ケース向け）</option>
+                <option value="deterministic" ${(settings?.mode ?? "deterministic") === "deterministic" ? "selected" : ""}>Deterministic（既定・AIを使わない）</option>
+                <option value="ai" ${settings?.mode === "ai" ? "selected" : ""}>AI Provider（曖昧・未対応ケース向け）</option>
               </select>
             </label>
             <label>プロバイダー
@@ -1960,35 +2004,23 @@ class WebUiServer {
             <button type="submit">保存</button>
           </form>
           <div class="stack">
-            <form class="panel stack" method="post" action="/import/chrome-csv">
+            <form class="panel stack" method="post" action="/import/chrome-csv" enctype="multipart/form-data">
               ${this.csrfInput()}
-              <h3>Chrome パスワードCSV インポート</h3>
-              <p class="muted">Chrome Password Manager からエクスポートした CSV を貼り付けると、登録済みサイトとして一括取り込みます。ログインIDとパスワードは暗号化ストアにのみ保存され、CSV自体はディスクに書き込みません。</p>
-              <label>CSV テキスト
-                <textarea name="csvText" rows="6" placeholder="name,url,username,password&#10;Example Site,example.com,user@example.com,p@ssw0rd"></textarea>
-              </label>
-              <button type="submit">CSVをインポート</button>
-            </form>
-            <form class="panel stack" method="post" action="/import/chrome-csv-ai">
-              ${this.csrfInput()}
-              <h3>AI mode: Chrome Password Manager から取り込み</h3>
-              <p class="muted">AI mode が有効なときだけ使えます。Googleログイン、保存先フォルダ選択、CSV保存は開いたブラウザでユーザーが行い、Catashiroは保存済みCSVをローカルで読み込んで暗号化ストアへ取り込みます。</p>
+              <h3>Google Passwords.csv インポート</h3>
+              <p class="muted">Google Password Manager からエクスポートした CSV をドラッグ&ドロップで取り込み、登録済みサイトとして一括登録します。CSV自体と平文パスワードは保存・再表示しません。</p>
               ${
                 // egress: target-site — user-initiated handoff to Google Password Manager export
                 `<p><a href="https://passwords.google.com/options" target="_blank" rel="noreferrer">Chrome Password Manager のエクスポート画面を開く</a></p>`
               }
-              <label>CSV保存先フォルダ
-                <input name="downloadDir" value="${escapeHtml(settings?.chromePasswordCsvDir ?? "")}" placeholder="/Users/you/Downloads">
+              <label class="drop-zone">Google Passwords.csv
+                <input name="csvFile" type="file" accept=".csv,text/csv" required>
               </label>
-              <label>保存済みCSVファイルのパス
-                <input name="csvPath" placeholder="/Users/you/Downloads/Chrome Passwords.csv">
-              </label>
-              <button type="submit" ${mode === "ai" ? "" : "disabled"}>保存済みCSVを取り込む</button>
+              <button type="submit">CSVをインポート</button>
             </form>
             <form class="panel stack" method="post" action="/settings/reveal-api-key">
               ${this.csrfInput()}
               <h3>APIキー表示</h3>
-              <p class="muted">${settings ? `${escapeHtml(settings.provider)} / ${escapeHtml(settings.model)} が設定済みです。mode=${escapeHtml(mode)}` : "AIプロバイダーは未設定です。"}</p>
+              <p class="muted">${settings ? `${escapeHtml(settings.provider)} / ${escapeHtml(settings.model)} が設定済みです。mode=${escapeHtml(settings.mode ?? "deterministic")}` : "AIプロバイダーは未設定です。"}</p>
               <label>マスターパスフレーズ
                 <input name="passphrase" type="password" autocomplete="current-password" required>
               </label>
@@ -2011,8 +2043,8 @@ class WebUiServer {
     `;
   }
 
-  private renderAiChromeImportSelection(): string {
-    const selection = this.aiChromeImportSelection;
+  private renderChromeImportSelection(): string {
+    const selection = this.chromeImportSelection;
     if (!selection || selection.siteIds.length === 0) return "";
     const rows = selection.siteIds
       .map((siteId) => {
@@ -2030,7 +2062,7 @@ class WebUiServer {
       <section class="callout stack">
         <h3>新規取り込みサイト</h3>
         <p class="muted">Chrome Password Manager CSV から ${escapeHtml(selection.siteIds.length)} 件を新規取り込みしました。個人情報取得を開始する対象を選んでください。</p>
-        <form class="stack" method="post" action="/import/chrome-csv-ai/bulk-start">
+        <form class="stack" method="post" action="/import/chrome-csv/bulk-start">
           ${this.csrfInput()}
           <div class="item-list">${rows}</div>
           <div class="actions">
@@ -2038,7 +2070,7 @@ class WebUiServer {
             <button type="submit" name="select" value="checked">取り込む</button>
           </div>
         </form>
-        <form method="post" action="/import/chrome-csv-ai/dismiss">
+        <form method="post" action="/import/chrome-csv/dismiss">
           ${this.csrfInput()}
           <button type="submit" class="secondary">今は取り込まない</button>
         </form>
@@ -2291,47 +2323,9 @@ class WebUiServer {
 
   private async handleChromeCsvImport(form: URLSearchParams, res: ServerResponse): Promise<void> {
     this.assertCsrf(form);
-    const csvText = form.get("csvText") ?? "";
+    let csvText = form.get("csvFile") ?? "";
     if (!csvText.trim()) {
-      this.redirect(res, "warn", "CSVテキストを入力してください。", "settings");
-      return;
-    }
-    let result: { imported: number; skipped: number };
-    try {
-      result = importChromeCsv(csvText, this.app.store);
-    } catch (err) {
-      this.redirect(res, "error", err instanceof Error ? err.message : "CSVの解析に失敗しました。", "settings");
-      return;
-    }
-    // persist: encrypted-store — Chrome CSV credentials saved to AES-256-GCM store
-    await this.app.store.save();
-    const { imported, skipped } = result;
-    this.redirect(
-      res,
-      "ok",
-      `${imported}件のサイトをインポートしました${skipped > 0 ? `（${skipped}件スキップ）` : ""}。`,
-      "sites",
-    );
-  }
-
-  private async handleAiChromeCsvImport(form: URLSearchParams, res: ServerResponse): Promise<void> {
-    const settings = this.app.store.getSettings();
-    if (settings?.mode !== "ai") {
-      this.redirect(res, "warn", "AI mode を有効にしてから Chrome Password Manager 取り込みを使ってください。", "settings");
-      return;
-    }
-    const csvPath = formValue(form, "csvPath");
-    if (!csvPath) {
-      this.redirect(res, "warn", "保存済みCSVファイルのパスを入力してください。", "settings");
-      return;
-    }
-    const downloadDir = formValue(form, "downloadDir");
-    let csvText: string;
-    try {
-      // persist: encrypted-store — reads a user-saved local CSV and persists only imported site records
-      csvText = await readFile(csvPath, "utf8");
-    } catch {
-      this.redirect(res, "error", "CSVファイルを読み込めませんでした。保存先とファイルパスを確認してください。", "settings");
+      this.redirect(res, "warn", "Google Passwords.csv を選択してください。", "settings");
       return;
     }
     let result: { imported: number; skipped: number; siteIds: string[] };
@@ -2343,25 +2337,27 @@ class WebUiServer {
     } finally {
       csvText = "";
     }
-    this.aiChromeImportSelection = result.siteIds.length > 0 ? { importedAt: Date.now(), siteIds: result.siteIds } : undefined;
-    this.app.store.setProviderSettings({ ...settings, ...(downloadDir ? { chromePasswordCsvDir: downloadDir } : {}) });
+    this.chromeImportSelection = result.siteIds.length > 0 ? { importedAt: Date.now(), siteIds: result.siteIds } : undefined;
     this.app.store.addDiagnosticEvent({
       type: "flow",
       severity: "info",
-      message: "ai mode chrome password csv imported",
+      message: "google passwords csv imported",
       metadata: { imported: result.imported, skipped: result.skipped },
     });
+    // persist: encrypted-store — imported site records are saved to AES-256-GCM store; raw CSV is not persisted
     await this.app.store.save();
+    const { imported, skipped } = result;
     this.redirect(
       res,
       "ok",
-      `${result.imported}件のサイトをインポートしました${result.skipped > 0 ? `（${result.skipped}件スキップ）` : ""}。`,
+      `${imported}件のサイトをインポートしました${skipped > 0 ? `（${skipped}件スキップ）` : ""}。`,
       "settings",
     );
   }
 
-  private async startAiChromeImportBulk(form: URLSearchParams, res: ServerResponse): Promise<void> {
-    const selection = this.aiChromeImportSelection;
+  private async startChromeImportBulk(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    this.assertCsrf(form);
+    const selection = this.chromeImportSelection;
     if (!selection) {
       this.redirect(res, "warn", "個人情報取得対象の新規取り込みサイトはありません。", "settings");
       return;
@@ -2374,19 +2370,20 @@ class WebUiServer {
       this.redirect(res, "warn", "個人情報取得対象のサイトを選択してください。", "settings");
       return;
     }
-    this.aiChromeImportSelection = undefined;
+    this.chromeImportSelection = undefined;
     this.app.store.addDiagnosticEvent({
       type: "flow",
       severity: "info",
-      message: "ai mode chrome import profile retrieval requested",
+      message: "google passwords csv profile retrieval requested",
       metadata: { siteCount: selected.length },
     });
     await this.app.store.save();
     this.redirect(res, "ok", `${selected.length}件の個人情報取得を開始候補にしました。サイト一覧から確認してください。`, "sites");
   }
 
-  private async dismissAiChromeImport(res: ServerResponse): Promise<void> {
-    this.aiChromeImportSelection = undefined;
+  private async dismissChromeImport(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    this.assertCsrf(form);
+    this.chromeImportSelection = undefined;
     this.redirect(res, "ok", "Chrome Password Manager 取り込み後の一括取得をキャンセルしました。", "settings");
   }
 
@@ -2413,7 +2410,6 @@ class WebUiServer {
       model,
       apiKey,
       mode,
-      ...(existing?.chromePasswordCsvDir ? { chromePasswordCsvDir: existing.chromePasswordCsvDir } : {}),
     });
     await this.app.store.save();
     this.redirect(res, "ok", "AIプロバイダー設定を保存しました。", "settings");

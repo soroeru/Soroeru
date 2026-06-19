@@ -434,7 +434,7 @@ security section with an explicit reviewed exception before sharing the build.
 - [ ] The derived key lives in memory only; decrypted values are never logged
 - [ ] Raw personal values are not sent to the AI model; no provider stateful features used
 - [ ] No network egress except to the target sites the user acts on, the configured AI provider, and explicitly designed user-owned encrypted vault storage; no telemetry; decrypted data store never uploaded (`npm run poc -- check-egress`)
-- [ ] Chrome Password Manager imports read only a user-saved local CSV path, remember only the local folder preference in encrypted settings, and never persist or re-display the raw CSV or plaintext passwords
+- [ ] Google Passwords.csv imports read only the user-selected upload body, never remember a local folder/path, and never persist or re-display the raw CSV or plaintext passwords
 - [ ] Display/log/measurement-output masking follows the unified `maskValue` / `maskForArtifact` policy; local writes stay inside the encrypted store / encrypted export / masked measurement output (`npm run poc -- check-persistence`)
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
 - [ ] Withdrawal/account-deletion flows preserve explicit user confirmation for irreversible actions
