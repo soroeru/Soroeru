@@ -6,6 +6,9 @@ state/
 .env.local
 *.session
 
+# Claude Code local-only settings (permissions, personal overrides)
+.claude/settings.local.json
+
 # Common caches
 .DS_Store
 .playwright-mcp/
