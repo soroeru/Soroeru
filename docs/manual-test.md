@@ -300,6 +300,10 @@ with the interactive CLI gate (`CliGate` / `renderGate`).
       shows the site's status, filled-field count, mandate count, and stale-field warning
 - [ ] Web UI settings can save provider/model/API key; API key display requires
       re-entering the master passphrase
+- [ ] In AI mode, Web UI settings show the Chrome Password Manager export hand-off;
+      importing a fake user-saved CSV from a local path remembers the selected folder,
+      creates imported site records, and shows a selectable new-site list with
+      `全てにチェックを入れる`, `取り込む`, and `今は取り込まない`
 - [ ] Web UI settings can generate a recovery key (shown once), then lock and
       unlock using the recovery key instead of the passphrase
 - [ ] Web UI `一括更新` shows stale site/field checkboxes, requires at least one

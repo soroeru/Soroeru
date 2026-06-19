@@ -18,6 +18,7 @@ import { nextActionForAccountState } from "./records.js";
 export interface ChromeCsvImportResult {
   imported: number;
   skipped: number;
+  siteIds: string[];
 }
 
 /**
@@ -40,7 +41,7 @@ export function importChromeCsv(
 ): ChromeCsvImportResult {
   const ts = now ?? Date.now();
   const lines = csvText.split(/\r?\n/);
-  if (lines.length === 0) return { imported: 0, skipped: 0 };
+  if (lines.length === 0) return { imported: 0, skipped: 0, siteIds: [] };
 
   const headerLine = lines[0]?.trim() ?? "";
   const headers = parseRow(headerLine);
@@ -52,6 +53,7 @@ export function importChromeCsv(
 
   let imported = 0;
   let skipped = 0;
+  const siteIds: string[] = [];
   const seenOrigins = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
@@ -114,9 +116,10 @@ export function importChromeCsv(
     // Credentials are intentionally not saved — see module-level comment.
 
     imported++;
+    siteIds.push(siteId);
   }
 
-  return { imported, skipped };
+  return { imported, skipped, siteIds };
 }
 
 /** Split a single CSV row, handling double-quoted fields with internal commas/quotes. */

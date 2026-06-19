@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { importChromeCsv } from "../../src/agent/chrome-csv-importer.js";
@@ -39,6 +39,7 @@ test("importChromeCsv: 3行CSV → imported: 3, accountState: imported", async (
     const result = importChromeCsv(SAMPLE_CSV, app.store);
     assert.equal(result.imported, 3);
     assert.equal(result.skipped, 0);
+    assert.deepEqual(result.siteIds, ["example.com", "another.test", "third.example.org"]);
     const records = [...app.store.siteRecords.values()];
     assert.equal(records.length, 3);
     for (const rec of records) {
@@ -168,6 +169,19 @@ async function withWebUi(fn: (server: WebUiServerHandle) => Promise<void>): Prom
   }
 }
 
+async function withWebUiApp(fn: (app: CatashiroApp, server: WebUiServerHandle, dir: string) => Promise<void>): Promise<void> {
+  const dir = await mkdtemp(join(tmpdir(), "af-csv-webui-app-"));
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const server = await startWebUiServer({ app, port: 0 });
+  try {
+    await fn(app, server, dir);
+  } finally {
+    await server.close();
+    await app.shutdown();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function getHtml(server: WebUiServerHandle, path = "/"): Promise<string> {
   const res = await fetch(new URL(path, server.url));
   assert.equal(res.status, 200);
@@ -239,5 +253,38 @@ test("設定ページに Chrome CSV インポートフォームが表示され�
     const html = await getHtml(server, "/?tab=settings");
     assert.match(html, /Chrome パスワードCSV/);
     assert.match(html, /action="\/import\/chrome-csv"/);
+    assert.match(html, /AI mode: Chrome Password Manager から取り込み/);
+  });
+});
+
+test("AI mode Chrome Password Manager import reads a user-saved local CSV and shows retrieval choices", async () => {
+  await withWebUiApp(async (app, server, dir) => {
+    const token = await unlockThroughUi(server);
+    app.store.setProviderSettings({ provider: "openai", model: "gpt-test", apiKey: "sk-test", mode: "ai" });
+    await app.store.save();
+    const csvPath = join(dir, "chrome-passwords.csv");
+    await writeFile(csvPath, SAMPLE_CSV, "utf8");
+
+    const res = await post(server, "/import/chrome-csv-ai", {
+      csrf: token,
+      csvPath,
+      downloadDir: dir,
+    });
+    assert.equal(res.status, 303);
+    assert.equal(app.store.getSettings()?.chromePasswordCsvDir, dir);
+    assert.equal(app.store.listSiteRecords().length, 3);
+
+    const html = await getHtml(server, "/?tab=settings");
+    assert.match(html, /新規取り込みサイト/);
+    assert.match(html, /Example Site/);
+    assert.match(html, /全てにチェックを入れる/);
+
+    const bulk = await post(server, "/import/chrome-csv-ai/bulk-start", {
+      csrf: token,
+      select: "checked",
+      siteId: "example.com",
+    });
+    assert.equal(bulk.status, 303);
+    assert.match(decodeURIComponent(bulk.headers.get("location") ?? ""), /1件の個人情報取得/);
   });
 });
