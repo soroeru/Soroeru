@@ -152,7 +152,8 @@ test("exportEncrypted/importEncrypted roundtrip restores profile, site records, 
 
     const exported = await store.exportEncrypted();
     assert.ok(!exported.includes("dummy@example.com"), "export must not contain plaintext profile values");
-    assert.ok(!exported.includes("123"), "export must not contain the plaintext CVV");
+    // '"' is not a base64 character, so '"value":"123"' cannot appear in encrypted output
+    assert.ok(!exported.includes('"value":"123"'), "export must not contain plaintext CVV");
 
     const parsed = JSON.parse(exported) as { version: number; kdf: unknown; recovery?: unknown };
     assert.ok(parsed.version >= 1);
