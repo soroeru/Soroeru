@@ -1,6 +1,6 @@
 ---
 name: issue-implementation-loop
-description: Repeat GitHub Issue implementation work in order from explicit Issue number inputs such as "#139", "139", or "139 140". Use when the user asks Codex to implement one or more GitHub Issues, passes GitHub Issue numbers as arguments, or asks to follow the repository Issue Implementation Loop. The workflow refreshes main, creates issue-named branches, implements, commits, waits for local AI review until NIT_ONLY or PASS with at most three repair cycles, pushes PRs, fixes CI until green, completes or closes PRs according to the requested workflow, checks remaining session limit, and continues to the next Issue without asking to start it when under the limit.
+description: Repeat GitHub Issue implementation work in order from explicit Issue number inputs such as "#139", "139", or "139 140". Use when the user asks to implement one or more GitHub Issues, passes GitHub Issue numbers as arguments, or asks to follow the repository Issue Implementation Loop. The workflow refreshes main, creates issue-named branches, implements, commits, waits for local AI review until NIT_ONLY or PASS with at most three repair cycles, pushes PRs, fixes CI until green, completes or closes PRs according to the requested workflow, checks remaining session limit, and continues to the next Issue without asking to start it when under the limit.
 ---
 
 # Issue Implementation Loop
