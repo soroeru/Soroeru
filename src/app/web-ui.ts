@@ -6,6 +6,7 @@
 // through CatashiroApp/PocStore so encrypted-at-rest behavior stays unchanged.
 
 import { randomBytes } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Browser } from "playwright";
@@ -66,6 +67,11 @@ interface Reveal {
 interface PageState {
   tab: AppTab;
   profileMode: ProfileMode;
+}
+
+interface AiChromeImportSelection {
+  importedAt: number;
+  siteIds: string[];
 }
 
 class HttpError extends Error {
@@ -238,6 +244,7 @@ class WebUiServer {
   private bulkUpdate: BulkUpdateSession | undefined;
   /** At most one in-flight withdrawal preparation run (#129). */
   private withdrawal: { session: WithdrawalSession; browser?: Browser } | undefined;
+  private aiChromeImportSelection: AiChromeImportSelection | undefined;
 
   constructor(options: WebUiServerOptions) {
     this.app = options.app;
@@ -320,6 +327,15 @@ class WebUiServer {
         return;
       case "/import/chrome-csv":
         await this.handleChromeCsvImport(form, res);
+        return;
+      case "/import/chrome-csv-ai":
+        await this.handleAiChromeCsvImport(form, res);
+        return;
+      case "/import/chrome-csv-ai/bulk-start":
+        await this.startAiChromeImportBulk(form, res);
+        return;
+      case "/import/chrome-csv-ai/dismiss":
+        await this.dismissAiChromeImport(res);
         return;
       case "/settings/provider":
         await this.saveProviderSettings(form, res);
@@ -1916,6 +1932,7 @@ class WebUiServer {
     return `
       <section id="settings" class="panel">
         <h2>設定</h2>
+        ${this.renderAiChromeImportSelection()}
         <div class="grid two">
           <form class="stack" method="post" action="/settings/provider">
             ${this.csrfInput()}
@@ -1952,6 +1969,22 @@ class WebUiServer {
               </label>
               <button type="submit">CSVをインポート</button>
             </form>
+            <form class="panel stack" method="post" action="/import/chrome-csv-ai">
+              ${this.csrfInput()}
+              <h3>AI mode: Chrome Password Manager から取り込み</h3>
+              <p class="muted">AI mode が有効なときだけ使えます。Googleログイン、保存先フォルダ選択、CSV保存は開いたブラウザでユーザーが行い、Catashiroは保存済みCSVをローカルで読み込んで暗号化ストアへ取り込みます。</p>
+              ${
+                // egress: target-site — user-initiated handoff to Google Password Manager export
+                `<p><a href="https://passwords.google.com/options" target="_blank" rel="noreferrer">Chrome Password Manager のエクスポート画面を開く</a></p>`
+              }
+              <label>CSV保存先フォルダ
+                <input name="downloadDir" value="${escapeHtml(settings?.chromePasswordCsvDir ?? "")}" placeholder="/Users/you/Downloads">
+              </label>
+              <label>保存済みCSVファイルのパス
+                <input name="csvPath" placeholder="/Users/you/Downloads/Chrome Passwords.csv">
+              </label>
+              <button type="submit" ${mode === "ai" ? "" : "disabled"}>保存済みCSVを取り込む</button>
+            </form>
             <form class="panel stack" method="post" action="/settings/reveal-api-key">
               ${this.csrfInput()}
               <h3>APIキー表示</h3>
@@ -1974,6 +2007,41 @@ class WebUiServer {
             ${this.renderRecoveryControls()}
           </div>
         </div>
+      </section>
+    `;
+  }
+
+  private renderAiChromeImportSelection(): string {
+    const selection = this.aiChromeImportSelection;
+    if (!selection || selection.siteIds.length === 0) return "";
+    const rows = selection.siteIds
+      .map((siteId) => {
+        const record = this.app.store.getSiteRecord(siteId);
+        const label = record ? `${record.serviceName} (${record.origin})` : siteId;
+        return `
+          <label class="field-delete">
+            <input type="checkbox" name="siteId" value="${escapeHtml(siteId)}" checked>
+            ${escapeHtml(label)}
+          </label>
+        `;
+      })
+      .join("");
+    return `
+      <section class="callout stack">
+        <h3>新規取り込みサイト</h3>
+        <p class="muted">Chrome Password Manager CSV から ${escapeHtml(selection.siteIds.length)} 件を新規取り込みしました。個人情報取得を開始する対象を選んでください。</p>
+        <form class="stack" method="post" action="/import/chrome-csv-ai/bulk-start">
+          ${this.csrfInput()}
+          <div class="item-list">${rows}</div>
+          <div class="actions">
+            <button type="submit" name="select" value="all" class="secondary">全てにチェックを入れる</button>
+            <button type="submit" name="select" value="checked">取り込む</button>
+          </div>
+        </form>
+        <form method="post" action="/import/chrome-csv-ai/dismiss">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">今は取り込まない</button>
+        </form>
       </section>
     `;
   }
@@ -2246,6 +2314,82 @@ class WebUiServer {
     );
   }
 
+  private async handleAiChromeCsvImport(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const settings = this.app.store.getSettings();
+    if (settings?.mode !== "ai") {
+      this.redirect(res, "warn", "AI mode を有効にしてから Chrome Password Manager 取り込みを使ってください。", "settings");
+      return;
+    }
+    const csvPath = formValue(form, "csvPath");
+    if (!csvPath) {
+      this.redirect(res, "warn", "保存済みCSVファイルのパスを入力してください。", "settings");
+      return;
+    }
+    const downloadDir = formValue(form, "downloadDir");
+    let csvText: string;
+    try {
+      // persist: encrypted-store — reads a user-saved local CSV and persists only imported site records
+      csvText = await readFile(csvPath, "utf8");
+    } catch {
+      this.redirect(res, "error", "CSVファイルを読み込めませんでした。保存先とファイルパスを確認してください。", "settings");
+      return;
+    }
+    let result: { imported: number; skipped: number; siteIds: string[] };
+    try {
+      result = importChromeCsv(csvText, this.app.store);
+    } catch (err) {
+      this.redirect(res, "error", err instanceof Error ? err.message : "CSVの解析に失敗しました。", "settings");
+      return;
+    } finally {
+      csvText = "";
+    }
+    this.aiChromeImportSelection = result.siteIds.length > 0 ? { importedAt: Date.now(), siteIds: result.siteIds } : undefined;
+    this.app.store.setProviderSettings({ ...settings, ...(downloadDir ? { chromePasswordCsvDir: downloadDir } : {}) });
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "info",
+      message: "ai mode chrome password csv imported",
+      metadata: { imported: result.imported, skipped: result.skipped },
+    });
+    await this.app.store.save();
+    this.redirect(
+      res,
+      "ok",
+      `${result.imported}件のサイトをインポートしました${result.skipped > 0 ? `（${result.skipped}件スキップ）` : ""}。`,
+      "settings",
+    );
+  }
+
+  private async startAiChromeImportBulk(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const selection = this.aiChromeImportSelection;
+    if (!selection) {
+      this.redirect(res, "warn", "個人情報取得対象の新規取り込みサイトはありません。", "settings");
+      return;
+    }
+    const selected =
+      form.get("select") === "all"
+        ? selection.siteIds
+        : form.getAll("siteId").map(String).filter((siteId) => selection.siteIds.includes(siteId));
+    if (selected.length === 0) {
+      this.redirect(res, "warn", "個人情報取得対象のサイトを選択してください。", "settings");
+      return;
+    }
+    this.aiChromeImportSelection = undefined;
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "info",
+      message: "ai mode chrome import profile retrieval requested",
+      metadata: { siteCount: selected.length },
+    });
+    await this.app.store.save();
+    this.redirect(res, "ok", `${selected.length}件の個人情報取得を開始候補にしました。サイト一覧から確認してください。`, "sites");
+  }
+
+  private async dismissAiChromeImport(res: ServerResponse): Promise<void> {
+    this.aiChromeImportSelection = undefined;
+    this.redirect(res, "ok", "Chrome Password Manager 取り込み後の一括取得をキャンセルしました。", "settings");
+  }
+
   private async saveProviderSettings(form: URLSearchParams, res: ServerResponse): Promise<void> {
     const provider = formValue(form, "provider");
     if (provider !== "openai" && provider !== "anthropic") {
@@ -2264,7 +2408,13 @@ class WebUiServer {
       return;
     }
     const mode = formValue(form, "mode") === "ai" ? "ai" : "deterministic";
-    this.app.store.setProviderSettings({ provider, model, apiKey, mode });
+    this.app.store.setProviderSettings({
+      provider,
+      model,
+      apiKey,
+      mode,
+      ...(existing?.chromePasswordCsvDir ? { chromePasswordCsvDir: existing.chromePasswordCsvDir } : {}),
+    });
     await this.app.store.save();
     this.redirect(res, "ok", "AIプロバイダー設定を保存しました。", "settings");
   }

@@ -146,7 +146,10 @@ Registration flow:
   Chrome password list to a CSV file and imports it into `Catashiro` to bootstrap the
   initial site inventory; the import creates inventory entries for recognized sites and
   handles imported credential data as sensitive (encrypted, never re-exported in plaintext,
-  and discarded from memory after import processing).
+  and discarded from memory after import processing). In AI mode, the UI provides a
+  Google Password Manager export hand-off, remembers the user-selected local save folder
+  in encrypted settings, imports the user-saved CSV from a local path, and then offers a
+  selectable list of newly imported sites for follow-up personal-information retrieval.
 
 ## 5. Non-Scope
 
