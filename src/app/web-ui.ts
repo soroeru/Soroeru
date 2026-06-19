@@ -517,8 +517,8 @@ class WebUiServer {
         `<section class="panel"><h1>Catashiro を停止しています</h1><p>アプリを安全に終了しています。このタブは閉じてください。</p></section>`,
       ),
     );
-    // Yield so the response is flushed before the process exits.
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    // Wait for the OS networking stack to accept all bytes before exiting.
+    await new Promise<void>((resolve) => res.once("finish", resolve));
     this.onShutdownRequest?.();
   }
 

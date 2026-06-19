@@ -32,7 +32,7 @@ import { DUMMY_PROFILE_SEED } from "../src/profile.js";
 import { CatashiroApp, CatashiroAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
 import { askSecret, AppUI } from "../src/app/ui.js";
-import { startWebUiServer } from "../src/app/web-ui.js";
+import { startWebUiServer, type WebUiServerHandle } from "../src/app/web-ui.js";
 import { defaultVaultStateDir } from "../src/store/vault.js";
 import { checkBypassDenylist } from "../src/dev/bypass-check.js";
 import { checkNetworkEgress } from "../src/dev/egress-check.js";
@@ -273,11 +273,12 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
   const app = new CatashiroApp({ stateDir: join(STATE_ROOT, "manual") });
 
   let shuttingDown = false;
+  let serverHandle: WebUiServerHandle | undefined;
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     await app.shutdown();
-    await server.close();
+    await serverHandle?.close();
     process.exit(0);
   };
 
@@ -290,6 +291,7 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
     mapperFactory: variantArg === "ai" ? () => aiMapperForUi(app) : () => new DeterministicMapper(),
     onShutdownRequest: () => { void shutdown(); },
   });
+  serverHandle = server;
   console.log(`Catashiro local web app: ${server.url}`);
   console.log(`mapper variant: ${variantArg}`);
   console.log("Press Ctrl+C to stop.");
