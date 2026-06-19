@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { importChromeCsv } from "../../src/agent/chrome-csv-importer.js";
@@ -28,10 +28,10 @@ async function withStore(fn: (app: CatashiroApp) => Promise<void>): Promise<void
 }
 
 const SAMPLE_CSV = [
-  "name,url,username,password",
-  "Example Site,https://example.com,user@example.com,s3cret",
-  "Another Site,https://another.test,alice,hunter2",
-  "Third Site,https://third.example.org,bob,pass123",
+  "name,url,username,password,note",
+  "Example Site,https://example.com,user@example.com,s3cret,",
+  "Another Site,https://another.test,alice,hunter2,",
+  "Third Site,https://third.example.org,bob,pass123,",
 ].join("\n");
 
 test("importChromeCsv: 3行CSV → imported: 3, accountState: imported", async () => {
@@ -53,10 +53,10 @@ test("importChromeCsv: 3行CSV → imported: 3, accountState: imported", async (
 test("importChromeCsv: 不正URLはスキップされ skipped カウントに加算", async () => {
   await withStore(async (app) => {
     const csv = [
-      "name,url,username,password",
-      "Good,https://good.example,u,p",
-      "Bad,not-a-url,u,p",
-      "Empty URL,,u,p",
+      "name,url,username,password,note",
+      "Good,https://good.example,u,p,",
+      "Bad,not-a-url,u,p,",
+      "Empty URL,,u,p,",
     ].join("\n");
     const result = importChromeCsv(csv, app.store);
     assert.equal(result.imported, 1);
@@ -67,9 +67,9 @@ test("importChromeCsv: 不正URLはスキップされ skipped カウントに加
 test("importChromeCsv: 重複 origin は最初の1件のみインポート", async () => {
   await withStore(async (app) => {
     const csv = [
-      "name,url,username,password",
-      "Site A,https://dup.example/page1,u1,p1",
-      "Site A2,https://dup.example/page2,u2,p2",
+      "name,url,username,password,note",
+      "Site A,https://dup.example/page1,u1,p1,",
+      "Site A2,https://dup.example/page2,u2,p2,",
     ].join("\n");
     const result = importChromeCsv(csv, app.store);
     assert.equal(result.imported, 1);
@@ -80,7 +80,7 @@ test("importChromeCsv: 重複 origin は最初の1件のみインポート", asy
 
 test("importChromeCsv: ヘッダー行のみ → imported: 0, skipped: 0", async () => {
   await withStore(async (app) => {
-    const csv = "name,url,username,password";
+    const csv = "name,url,username,password,note";
     const result = importChromeCsv(csv, app.store);
     assert.equal(result.imported, 0);
     assert.equal(result.skipped, 0);
@@ -89,7 +89,7 @@ test("importChromeCsv: ヘッダー行のみ → imported: 0, skipped: 0", async
 
 test("importChromeCsv: 不正ヘッダーは例外をスロー", async () => {
   await withStore(async (app) => {
-    const csv = "Name,URL,Username,Password\nSite,https://example.com,u,p";
+    const csv = "name,url,username,password\nSite,https://example.com,u,p";
     assert.throws(() => importChromeCsv(csv, app.store), /ヘッダーが不正/);
   });
 });
@@ -97,8 +97,8 @@ test("importChromeCsv: 不正ヘッダーは例外をスロー", async () => {
 test("importChromeCsv: 認証情報はグローバルプロファイルに保存されない（per-siteストアが未実装のため）", async () => {
   await withStore(async (app) => {
     const csv = [
-      "name,url,username,password",
-      "Example,https://example.com,myuser,mypass",
+      "name,url,username,password,note",
+      "Example,https://example.com,myuser,mypass,",
     ].join("\n");
     importChromeCsv(csv, app.store);
     // Credentials are intentionally not written to account.id / account.password:
@@ -124,9 +124,9 @@ test("importChromeCsv: 既存サイトレコードは上書きされずスキッ
       status: "registered",
     });
     const csv = [
-      "name,url,username,password",
-      "Example,https://example.com,u,p",
-      "Other,https://other.example,u2,p2",
+      "name,url,username,password,note",
+      "Example,https://example.com,u,p,",
+      "Other,https://other.example,u2,p2,",
     ].join("\n");
     const result = importChromeCsv(csv, app.store);
     assert.equal(result.imported, 1);
@@ -142,13 +142,28 @@ test("importChromeCsv: 既存サイトレコードは上書きされずスキッ
 test("importChromeCsv: quoted フィールド（カンマを含む値）を正しく解析", async () => {
   await withStore(async (app) => {
     const csv = [
-      "name,url,username,password",
-      '"My Site, Inc.",https://mysite.example,u,"p,w"',
+      "name,url,username,password,note",
+      '"My Site, Inc.",https://mysite.example,u,"p,w",note',
     ].join("\n");
     const result = importChromeCsv(csv, app.store);
     assert.equal(result.imported, 1);
     const rec = [...app.store.siteRecords.values()][0]!;
     assert.equal(rec.serviceName, "My Site, Inc.");
+  });
+});
+
+test("importChromeCsv: quoted note フィールド内の改行を1レコードとして解析", async () => {
+  await withStore(async (app) => {
+    const csv = [
+      "name,url,username,password,note",
+      'Multiline Note,https://notes.example,u,p,"line 1',
+      'line 2"',
+      "Second,https://second.example,u2,p2,",
+    ].join("\n");
+    const result = importChromeCsv(csv, app.store);
+    assert.equal(result.imported, 2);
+    assert.equal(result.skipped, 0);
+    assert.deepEqual(result.siteIds, ["notes.example", "second.example"]);
   });
 });
 
@@ -202,6 +217,14 @@ async function post(server: WebUiServerHandle, path: string, body: Record<string
   });
 }
 
+async function postFormData(server: WebUiServerHandle, path: string, body: FormData): Promise<Response> {
+  return fetch(new URL(path, server.url), {
+    method: "POST",
+    body,
+    redirect: "manual",
+  });
+}
+
 async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
   const token = csrf(await getHtml(server));
   const res = await post(server, "/unlock", { csrf: token, passphrase: PASSPHRASE });
@@ -209,27 +232,33 @@ async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
   return token;
 }
 
-test("POST /import/chrome-csv: 有効なCSVを送信すると sites タブにリダイレクト", async () => {
-  await withWebUi(async (server) => {
+test("POST /import/chrome-csv: Google Passwords.csv をアップロードすると選択UIにリダイレクト", async () => {
+  await withWebUiApp(async (app, server) => {
     const token = await unlockThroughUi(server);
-    const res = await post(server, "/import/chrome-csv", {
-      csrf: token,
-      csvText: SAMPLE_CSV,
-    });
+    const form = new FormData();
+    form.set("csrf", token);
+    form.set("csvFile", new Blob([SAMPLE_CSV], { type: "text/csv" }), "Google Passwords.csv");
+    const res = await postFormData(server, "/import/chrome-csv", form);
     assert.equal(res.status, 303);
     const location = decodeURIComponent(res.headers.get("location") ?? "");
-    assert.match(location, /tab=sites/);
+    assert.match(location, /tab=settings/);
     assert.match(location, /インポート/);
+    assert.equal(app.store.listSiteRecords().length, 3);
+
+    const html = await getHtml(server, "/?tab=settings");
+    assert.match(html, /新規取り込みサイト/);
+    assert.match(html, /Example Site/);
+    assert.match(html, /全てにチェックを入れる/);
   });
 });
 
-test("POST /import/chrome-csv: 空のCSVは warn リダイレクト", async () => {
+test("POST /import/chrome-csv: ファイル未選択は warn リダイレクト", async () => {
   await withWebUi(async (server) => {
     const token = await unlockThroughUi(server);
-    const res = await post(server, "/import/chrome-csv", {
-      csrf: token,
-      csvText: "",
-    });
+    const form = new FormData();
+    form.set("csrf", token);
+    form.set("csvFile", new Blob([""], { type: "text/csv" }), "Google Passwords.csv");
+    const res = await postFormData(server, "/import/chrome-csv", form);
     assert.equal(res.status, 303);
     assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /warn=/);
   });
@@ -238,12 +267,25 @@ test("POST /import/chrome-csv: 空のCSVは warn リダイレクト", async () =
 test("POST /import/chrome-csv: 不正ヘッダーは error リダイレクト", async () => {
   await withWebUi(async (server) => {
     const token = await unlockThroughUi(server);
-    const res = await post(server, "/import/chrome-csv", {
-      csrf: token,
-      csvText: "Name,URL,Username,Password\nFoo,https://foo.test,u,p",
-    });
+    const form = new FormData();
+    form.set("csrf", token);
+    form.set("csvFile", new Blob(["Name,URL,Username,Password\nFoo,https://foo.test,u,p"], { type: "text/csv" }), "Google Passwords.csv");
+    const res = await postFormData(server, "/import/chrome-csv", form);
     assert.equal(res.status, 303);
     assert.match(decodeURIComponent(res.headers.get("location") ?? ""), /error=/);
+  });
+});
+
+test("POST /import/chrome-csv: multipart upload rejects an invalid CSRF token", async () => {
+  await withWebUiApp(async (app, server) => {
+    await unlockThroughUi(server);
+    const form = new FormData();
+    form.set("csrf", "bad-token");
+    form.set("csvFile", new Blob([SAMPLE_CSV], { type: "text/csv" }), "Google Passwords.csv");
+
+    const res = await postFormData(server, "/import/chrome-csv", form);
+    assert.equal(res.status, 403);
+    assert.equal(app.store.listSiteRecords().length, 0);
   });
 });
 
@@ -251,27 +293,24 @@ test("設定ページに Chrome CSV インポートフォームが表示され�
   await withWebUi(async (server) => {
     await unlockThroughUi(server);
     const html = await getHtml(server, "/?tab=settings");
-    assert.match(html, /Chrome パスワードCSV/);
+    assert.match(html, /Google Passwords.csv/);
     assert.match(html, /action="\/import\/chrome-csv"/);
-    assert.match(html, /AI mode: Chrome Password Manager から取り込み/);
+    assert.match(html, /type="file"/);
+    assert.match(html, /Chrome Password Manager のエクスポート画面を開く/);
+    assert.doesNotMatch(html, /CSV テキスト/);
+    assert.doesNotMatch(html, /保存済みCSVファイルのパス/);
   });
 });
 
-test("AI mode Chrome Password Manager import reads a user-saved local CSV and shows retrieval choices", async () => {
-  await withWebUiApp(async (app, server, dir) => {
+test("Chrome Password Manager import selection can request profile retrieval candidates", async () => {
+  await withWebUiApp(async (app, server) => {
     const token = await unlockThroughUi(server);
-    app.store.setProviderSettings({ provider: "openai", model: "gpt-test", apiKey: "sk-test", mode: "ai" });
-    await app.store.save();
-    const csvPath = join(dir, "chrome-passwords.csv");
-    await writeFile(csvPath, SAMPLE_CSV, "utf8");
-
-    const res = await post(server, "/import/chrome-csv-ai", {
-      csrf: token,
-      csvPath,
-      downloadDir: dir,
-    });
+    app.store.setProviderSettings({ provider: "openai", model: "gpt-test", apiKey: "sk-test", mode: "deterministic" });
+    const form = new FormData();
+    form.set("csrf", token);
+    form.set("csvFile", new Blob([SAMPLE_CSV], { type: "text/csv" }), "Google Passwords.csv");
+    const res = await postFormData(server, "/import/chrome-csv", form);
     assert.equal(res.status, 303);
-    assert.equal(app.store.getSettings()?.chromePasswordCsvDir, dir);
     assert.equal(app.store.listSiteRecords().length, 3);
 
     const html = await getHtml(server, "/?tab=settings");
@@ -279,12 +318,39 @@ test("AI mode Chrome Password Manager import reads a user-saved local CSV and sh
     assert.match(html, /Example Site/);
     assert.match(html, /全てにチェックを入れる/);
 
-    const bulk = await post(server, "/import/chrome-csv-ai/bulk-start", {
+    const bulk = await post(server, "/import/chrome-csv/bulk-start", {
       csrf: token,
       select: "checked",
       siteId: "example.com",
     });
     assert.equal(bulk.status, 303);
     assert.match(decodeURIComponent(bulk.headers.get("location") ?? ""), /1件の個人情報取得/);
+  });
+});
+
+test("Chrome Password Manager import selection actions reject invalid CSRF tokens", async () => {
+  await withWebUiApp(async (app, server) => {
+    const token = await unlockThroughUi(server);
+    const form = new FormData();
+    form.set("csrf", token);
+    form.set("csvFile", new Blob([SAMPLE_CSV], { type: "text/csv" }), "Google Passwords.csv");
+    const res = await postFormData(server, "/import/chrome-csv", form);
+    assert.equal(res.status, 303);
+    assert.equal(app.store.listSiteRecords().length, 3);
+
+    const bulk = await post(server, "/import/chrome-csv/bulk-start", {
+      csrf: "bad-token",
+      select: "checked",
+      siteId: "example.com",
+    });
+    assert.equal(bulk.status, 403);
+
+    const dismiss = await post(server, "/import/chrome-csv/dismiss", {
+      csrf: "bad-token",
+    });
+    assert.equal(dismiss.status, 403);
+
+    const html = await getHtml(server, "/?tab=settings");
+    assert.match(html, /新規取り込みサイト/);
   });
 });

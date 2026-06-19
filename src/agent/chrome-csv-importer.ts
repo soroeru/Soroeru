@@ -1,10 +1,10 @@
-// Chrome Password Manager CSV importer (REQ-018).
+// Google Password Manager CSV importer (REQ-018).
 //
-// Parses the CSV exported from Chrome's built-in password manager and bulk-imports
+// Parses the CSV exported from Google Password Manager and bulk-imports
 // each entry into the encrypted store as an `imported` site record.
 //
 // Credentials (username / password) are intentionally NOT written to the global
-// profile keys here: Chrome exports per-site credentials, but `account.id` and
+// profile keys here: Google exports per-site credentials, but `account.id` and
 // `account.password` are single global fields — saving N rows would silently
 // discard all but the last. Per-site credential storage is out of scope for this
 // import; the site records themselves (accountState: "imported") are the value.
@@ -22,13 +22,13 @@ export interface ChromeCsvImportResult {
 }
 
 /**
- * Expected header row for Chrome Password Manager exports.
+ * Expected header row for Google Password Manager exports.
  * The order is fixed; any other format is rejected.
  */
-const EXPECTED_HEADERS = ["name", "url", "username", "password"];
+const EXPECTED_HEADERS = ["name", "url", "username", "password", "note"];
 
 /**
- * Parse and import a Chrome Password Manager CSV export into the encrypted store.
+ * Parse and import a Google Password Manager CSV export into the encrypted store.
  *
  * - Entries with unparseable URLs are skipped.
  * - Duplicate origins keep only the first entry encountered.
@@ -40,14 +40,14 @@ export function importChromeCsv(
   now?: number,
 ): ChromeCsvImportResult {
   const ts = now ?? Date.now();
-  const lines = csvText.split(/\r?\n/);
-  if (lines.length === 0) return { imported: 0, skipped: 0, siteIds: [] };
+  const rows = parseCsv(csvText);
+  if (rows.length === 0) return { imported: 0, skipped: 0, siteIds: [] };
 
-  const headerLine = lines[0]?.trim() ?? "";
-  const headers = parseRow(headerLine);
+  const headers = rows[0] ?? [];
+  if (headers[0]?.startsWith("\ufeff")) headers[0] = headers[0].slice(1);
   if (headers.join(",") !== EXPECTED_HEADERS.join(",")) {
     throw new Error(
-      `ChromeCSV ヘッダーが不正です。"name,url,username,password" の形式でエクスポートしてください。`
+      `Google Passwords.csv ヘッダーが不正です。"name,url,username,password,note" の形式でエクスポートしてください。`
     );
   }
 
@@ -56,17 +56,15 @@ export function importChromeCsv(
   const siteIds: string[] = [];
   const seenOrigins = new Set<string>();
 
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line === undefined || line === "") continue;
-
-    const cols = parseRow(line);
-    if (cols.length < 4) {
+  for (let i = 1; i < rows.length; i++) {
+    const cols = rows[i] ?? [];
+    if (cols.length === 1 && cols[0] === "") continue;
+    if (cols.length < 5) {
       skipped++;
       continue;
     }
 
-    const [name, rawUrl, username, password] = cols as [string, string, string, string];
+    const [name, rawUrl] = cols as [string, string, string, string, string];
 
     let parsedUrl: URL;
     try {
@@ -77,7 +75,7 @@ export function importChromeCsv(
       skipped++;
       continue;
     }
-    // Reject bare-word hostnames with no dot — Chrome always exports real domain names.
+    // Reject bare-word hostnames with no dot — Google Password Manager exports real domain names.
     if (!parsedUrl.hostname.includes(".")) {
       skipped++;
       continue;
@@ -122,17 +120,28 @@ export function importChromeCsv(
   return { imported, skipped, siteIds };
 }
 
-/** Split a single CSV row, handling double-quoted fields with internal commas/quotes. */
-function parseRow(line: string): string[] {
-  const fields: string[] = [];
+/** Parse CSV rows, handling quoted commas, quotes, CRLFs, and newlines inside quoted fields. */
+function parseCsv(csvText: string): string[][] {
+  const rows: string[][] = [];
+  let fields: string[] = [];
   let current = "";
   let inQuotes = false;
 
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i]!;
+  const finishField = (): void => {
+    fields.push(current);
+    current = "";
+  };
+  const finishRow = (): void => {
+    finishField();
+    rows.push(fields);
+    fields = [];
+  };
+
+  for (let i = 0; i < csvText.length; i++) {
+    const ch = csvText[i]!;
     if (inQuotes) {
       if (ch === '"') {
-        if (line[i + 1] === '"') {
+        if (csvText[i + 1] === '"') {
           current += '"';
           i++;
         } else {
@@ -144,12 +153,16 @@ function parseRow(line: string): string[] {
     } else if (ch === '"') {
       inQuotes = true;
     } else if (ch === ",") {
-      fields.push(current);
-      current = "";
+      finishField();
+    } else if (ch === "\n") {
+      finishRow();
+    } else if (ch === "\r") {
+      if (csvText[i + 1] === "\n") i++;
+      finishRow();
     } else {
       current += ch;
     }
   }
-  fields.push(current);
-  return fields;
+  if (current !== "" || fields.length > 0 || csvText.length === 0) finishRow();
+  return rows;
 }

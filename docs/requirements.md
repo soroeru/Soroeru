@@ -142,13 +142,13 @@ Registration flow:
   after explicit opt-in sanitization/review, proposed for shared official definitions.
 - Mac desktop private beta distribution, docs, manual QA, and support workflow for the
   first invited users.
-- **Chrome Password Manager CSV import** at first onboarding: the user exports their
-  Chrome password list to a CSV file and imports it into `Catashiro` to bootstrap the
+- **Google Passwords.csv import** at first onboarding: the user exports their
+  Google Password Manager password list to a CSV file and imports it into `Catashiro` to bootstrap the
   initial site inventory; the import creates inventory entries for recognized sites and
   handles imported credential data as sensitive (encrypted, never re-exported in plaintext,
-  and discarded from memory after import processing). In AI mode, the UI provides a
-  Google Password Manager export hand-off, remembers the user-selected local save folder
-  in encrypted settings, imports the user-saved CSV from a local path, and then offers a
+  and discarded from memory after import processing). The UI keeps a Google Password
+  Manager export hand-off link, accepts the exported `Google Passwords.csv` by
+  drag-and-drop/file selection in either deterministic or AI mode, and then offers a
   selectable list of newly imported sites for follow-up personal-information retrieval.
 
 ## 5. Non-Scope

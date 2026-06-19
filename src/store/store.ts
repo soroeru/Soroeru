@@ -54,8 +54,6 @@ export interface ProviderSettings {
   apiKey: string;
   /** Deterministic remains the default; AI is used only when the user enables it. */
   mode?: "deterministic" | "ai";
-  /** Remembered local folder for user-saved Chrome Password Manager CSV exports (#132). */
-  chromePasswordCsvDir?: string;
 }
 
 export interface DiagnosticEvent {
