@@ -632,3 +632,26 @@ test("withdrawal task flow requires explicit final-action confirmation", async (
     assert.equal(record.withdrawalFinalConfirmationRequired, true);
   });
 });
+
+test("POST /shutdown renders stopping page and invokes onShutdownRequest callback", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "af-poc-web-ui-shutdown-"));
+  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  let callbackInvoked = false;
+  const server = await startWebUiServer({
+    app,
+    port: 0,
+    onShutdownRequest: () => { callbackInvoked = true; },
+  });
+  try {
+    const token = csrf(await getHtml(server));
+    const res = await post(server, "/shutdown", { csrf: token });
+    assert.equal(res.status, 200);
+    const html = await res.text();
+    assert.match(html, /Catashiro を停止しています/);
+    assert.ok(callbackInvoked, "onShutdownRequest must be called after the response is sent");
+  } finally {
+    await server.close();
+    await app.shutdown();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
