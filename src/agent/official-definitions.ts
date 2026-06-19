@@ -34,7 +34,10 @@ export const OFFICIAL_DEFINITIONS: SiteDefinition[] = [
     },
     fieldRules: [{ id: "kana-full", profileKey: "name.kana.full", labelPattern: "フリガナ" }],
     notes: "利用規約に自動更新（第4条）と第三者提供（第6条）の条項があり、ゲートで高リスクとして提示される。",
-    withdrawalSteps: [{ description: "アカウント設定から退会手続きページへ移動する。" }],
+    withdrawalSteps: [
+      { description: "登録情報の変更ページへ移動する。", linkPattern: "登録情報の変更" },
+      { description: "退会手続きページへ移動する。", linkPattern: "退会手続き" },
+    ],
   },
   {
     id: "local-10-no-auto",

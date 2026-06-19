@@ -32,13 +32,14 @@ import {
   type SiteRecord,
   type WallDetection,
 } from "../types.js";
-import type { RegistrationResult, UpdateResult } from "../agent/agent.js";
+import type { RegistrationResult, UpdateResult, WithdrawalResult } from "../agent/agent.js";
 import type { PocStore, ProfileEntry, ProviderSettings } from "../store/store.js";
 import { CatashiroApp, CatashiroAppError } from "./app.js";
 import { BulkUpdateSession, type BulkUpdateSessionState, type BulkUpdateTarget } from "./bulk-update-session.js";
 import { exportSupportBundleJson } from "./diagnostics.js";
 import { AppRunner } from "./runner.js";
 import { RegistrationSession, type RegistrationSessionState } from "./registration-session.js";
+import { WithdrawalSession, type WithdrawalSessionState } from "./withdrawal-session.js";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4127;
@@ -235,6 +236,8 @@ class WebUiServer {
   private registration: { session: RegistrationSession; browser: Browser } | undefined;
   /** At most one in-flight bulk update run (#88); selected sites run independently. */
   private bulkUpdate: BulkUpdateSession | undefined;
+  /** At most one in-flight withdrawal preparation run (#129). */
+  private withdrawal: { session: WithdrawalSession; browser?: Browser } | undefined;
 
   constructor(options: WebUiServerOptions) {
     this.app = options.app;
@@ -267,6 +270,9 @@ class WebUiServer {
     return {
       url,
       close: async () => {
+        await this.closeRegistration();
+        await this.closeBulkUpdate();
+        await this.closeWithdrawal();
         await new Promise<void>((resolve, reject) => {
           this.server.close((err) => (err ? reject(err) : resolve()));
         });
@@ -346,6 +352,18 @@ class WebUiServer {
         return;
       case "/withdrawal/prepare":
         await this.prepareWithdrawalTask(form, res);
+        return;
+      case "/withdrawal/start":
+        await this.startWithdrawal(form, res);
+        return;
+      case "/withdrawal/handoff-resolve":
+        await this.resolveWithdrawalHandoff(form, res);
+        return;
+      case "/withdrawal/dismiss":
+        await this.dismissWithdrawal(res);
+        return;
+      case "/withdrawal/cancel":
+        await this.cancelWithdrawal(res);
         return;
       case "/registration/start":
         await this.startRegistration(form, res);
@@ -544,7 +562,8 @@ class WebUiServer {
     // next pause point or the final result (#81, #94).
     const regRunning = this.registration?.session.getState().kind === "running";
     const bulkRunning = this.bulkUpdate?.getState().kind === "running";
-    const autoRefreshSeconds = (regRunning || bulkRunning) ? 2 : undefined;
+    const withdrawalRunning = this.withdrawal?.session.getState().kind === "running";
+    const autoRefreshSeconds = (regRunning || bulkRunning || withdrawalRunning) ? 2 : undefined;
     return this.renderLayout(
       "Catashiro dashboard",
       `
@@ -1257,6 +1276,7 @@ class WebUiServer {
           ${this.renderRegistrationAction()}
         </div>
         ${this.renderBulkAction(candidates)}
+        ${this.renderWithdrawalSessionAction()}
         <div class="item-list">
           ${records.length === 0 ? `<div class="empty">登録済みサイトはまだありません。</div>` : records.map((record) => this.renderSiteRecord(record)).join("")}
         </div>
@@ -1735,6 +1755,89 @@ class WebUiServer {
     `;
   }
 
+  private renderWithdrawalSessionAction(): string {
+    const state = this.withdrawal?.session.getState();
+    if (!state) return "";
+    switch (state.kind) {
+      case "running":
+        return this.renderWithdrawalRunning(state.currentNote);
+      case "awaiting-handoff":
+        return this.renderWithdrawalHandoff(state.wall, state.instruction);
+      case "done":
+        return this.renderWithdrawalResult(state.result);
+      case "cancelled":
+        return `
+          <section class="callout callout--warn stack">
+            <h3>退会フロー: キャンセルしました</h3>
+            <form method="post" action="/withdrawal/dismiss">
+              ${this.csrfInput()}
+              <button type="submit" class="secondary">閉じる</button>
+            </form>
+          </section>
+        `;
+      case "error":
+        return `
+          <section class="callout callout--risk stack">
+            <h3>退会フロー: エラー</h3>
+            <p>${escapeHtml(state.message)}</p>
+            <form method="post" action="/withdrawal/dismiss">
+              ${this.csrfInput()}
+              <button type="submit" class="secondary">閉じる</button>
+            </form>
+          </section>
+        `;
+    }
+  }
+
+  private renderWithdrawalRunning(note: string | undefined): string {
+    return `
+      <section class="callout stack">
+        <h3>退会フロー: 実行中</h3>
+        <p class="muted">退会ページを準備しています。このページは自動的に更新されます。</p>
+        ${note ? `<p class="progress-current muted">▶ ${escapeHtml(note)}</p>` : ""}
+        <form method="post" action="/withdrawal/cancel">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">キャンセル</button>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderWithdrawalHandoff(wall: WallDetection, instruction: string): string {
+    return `
+      <section class="callout callout--risk stack">
+        <h3>退会フロー: ${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
+        <p>${escapeHtml(instruction)}</p>
+        <p class="small muted">開いているブラウザで対応し、完了後に再開してください。Catashiroは同じセッションを再観測します。</p>
+        <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
+        <form method="post" action="/withdrawal/handoff-resolve">
+          ${this.csrfInput()}
+          <div class="actions">
+            <button type="submit" name="resolution" value="resolved">対応が完了したので再開する</button>
+            <button type="submit" name="resolution" value="abort" class="secondary">退会フローを中止する</button>
+          </div>
+        </form>
+      </section>
+    `;
+  }
+
+  private renderWithdrawalResult(result: WithdrawalResult): string {
+    const notes = result.notes.length > 0 ? `<ul>${result.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : "";
+    const steps = result.steps.length > 0 ? `<p class="small muted">実行ステップ: ${escapeHtml(result.steps.join(" / "))}</p>` : "";
+    return `
+      <section class="callout stack">
+        <h3>退会フロー: ${escapeHtml(result.status)}</h3>
+        <p><span class="badge">${escapeHtml(result.siteId)}</span> 不可逆な最終操作はユーザー確認が必要です。</p>
+        ${steps}
+        ${notes}
+        <form method="post" action="/withdrawal/dismiss">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary">閉じる</button>
+        </form>
+      </section>
+    `;
+  }
+
   private renderSiteRecord(record: SiteRecord): string {
     const stale = staleFilledFields(this.app.store, record);
     const state = deriveAccountState(record, stale.length);
@@ -1783,6 +1886,15 @@ class WebUiServer {
               退会・アカウント削除の最終確認は自分で行い、Catashiroに自動実行させません
             </label>
             <button type="submit" class="secondary">退会タスクを準備</button>
+          </form>
+          <form class="stack" method="post" action="/withdrawal/start">
+            ${this.csrfInput()}
+            <input type="hidden" name="siteId" value="${escapeHtml(record.siteId)}">
+            <label class="field-delete">
+              <input type="checkbox" name="confirmFinalManual" value="1">
+              ブラウザで退会ページを準備しても、最終確認は自分で行います
+            </label>
+            <button type="submit">退会フローを開始</button>
           </form>
         </div>
       `;
@@ -2291,6 +2403,104 @@ class WebUiServer {
     this.redirect(res, "ok", "退会タスクを準備しました。不可逆な最終操作はブラウザ上でご自身が確認して実行してください。", "sites");
   }
 
+  private async startWithdrawal(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const siteId = formValue(form, "siteId");
+    const record = siteId ? this.app.store.getSiteRecord(siteId) : undefined;
+    if (!record || record.accountState !== "withdrawalCandidate") {
+      this.redirect(res, "warn", "退会候補のサイトを選んでください。", "sites");
+      return;
+    }
+    if (form.get("confirmFinalManual") !== "1") {
+      this.redirect(res, "warn", "不可逆な退会・削除の最終操作を自動化しない確認が必要です。", "sites");
+      return;
+    }
+    if (this.withdrawal) {
+      const state = this.withdrawal.session.getState();
+      if (state.kind !== "done" && state.kind !== "error" && state.kind !== "cancelled") {
+        this.redirect(res, "warn", "別の退会フローが進行中です。完了してから次の退会フローを開始してください。", "sites");
+        return;
+      }
+      await this.closeWithdrawal();
+    }
+    const registrationState = this.registration?.session.getState();
+    if (registrationState && registrationState.kind !== "done" && registrationState.kind !== "error" && registrationState.kind !== "cancelled") {
+      this.redirect(res, "warn", "別の登録処理が進行中です。完了してから退会フローを開始してください。", "sites");
+      return;
+    }
+    const bulkState = this.bulkUpdate?.getState();
+    if (bulkState && bulkState.kind !== "done" && bulkState.kind !== "error" && bulkState.kind !== "cancelled") {
+      this.redirect(res, "warn", "一括更新が進行中です。完了してから退会フローを開始してください。", "sites");
+      return;
+    }
+    const browser = await this.app.launchBrowser("chromium");
+    const page = await browser.newPage();
+    const runner = new AppRunner(this.app, this.mapperFactory());
+    const session = new WithdrawalSession(runner, page, record.origin, record.siteId);
+    this.withdrawal = { session, browser };
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "warn",
+      message: "withdrawal flow started with final manual confirmation required",
+      metadata: { flow: "withdrawal", siteId: record.siteId },
+    });
+    await this.app.store.save();
+    session.start();
+    this.redirect(res, "ok", "退会フローを開始しました。不可逆な最終操作はブラウザ上でご自身が確認して実行してください。", "sites");
+  }
+
+  private async resolveWithdrawalHandoff(form: URLSearchParams, res: ServerResponse): Promise<void> {
+    const session = this.withdrawal?.session;
+    if (!session || session.getState().kind !== "awaiting-handoff") {
+      this.redirect(res, "warn", "対応待ちの退会フローはありません。", "sites");
+      return;
+    }
+    const resolution = form.get("resolution") === "abort" ? "abort" : "resolved";
+    const state = session.getState();
+    if (state.kind === "awaiting-handoff") {
+      this.app.store.addDiagnosticEvent({
+        type: "wall",
+        severity: resolution === "abort" ? "warn" : "info",
+        message: "withdrawal wall handoff resolved",
+        metadata: { siteId: session.siteId, wallKind: state.wall.kind, resolution },
+      });
+      await this.app.store.save();
+    }
+    session.resolveHandoff(resolution);
+    this.redirect(res, "ok", resolution === "abort" ? "退会フローを中止しました。" : "退会フローを再開します。", "sites");
+  }
+
+  private async dismissWithdrawal(res: ServerResponse): Promise<void> {
+    const state = this.withdrawal?.session.getState();
+    if (!state || (state.kind !== "done" && state.kind !== "error" && state.kind !== "cancelled")) {
+      this.redirect(res, "warn", "完了していない退会フローは閉じられません。", "sites");
+      return;
+    }
+    await this.closeWithdrawal();
+    this.redirect(res, "ok", "退会フローを閉じました。", "sites");
+  }
+
+  private async cancelWithdrawal(res: ServerResponse): Promise<void> {
+    const session = this.withdrawal?.session;
+    if (!session) {
+      this.redirect(res, "warn", "実行中の退会フローはありません。", "sites");
+      return;
+    }
+    const state = session.getState();
+    if (state.kind === "done" || state.kind === "error" || state.kind === "cancelled") {
+      this.redirect(res, "warn", "退会フローはすでに終了しています。", "sites");
+      return;
+    }
+    session.cancel();
+    this.app.store.addDiagnosticEvent({
+      type: "flow",
+      severity: "warn",
+      message: "withdrawal flow cancelled by user",
+      metadata: { flow: "withdrawal", siteId: session.siteId },
+    });
+    await this.closeWithdrawalBrowser();
+    this.redirect(res, "warn", "退会フローをキャンセルしました。", "sites");
+  }
+
   // --- Bulk update (#88) -----------------------------------------------------
 
   private bulkTargetsFromForm(form: URLSearchParams): BulkUpdateTarget[] {
@@ -2398,6 +2608,22 @@ class WebUiServer {
     const session = this.bulkUpdate;
     this.bulkUpdate = undefined;
     await this.app.closeBrowser(session.browser);
+  }
+
+  private async closeWithdrawal(): Promise<void> {
+    if (!this.withdrawal) return;
+    const { session, browser } = this.withdrawal;
+    this.withdrawal = undefined;
+    await session.page.close().catch(() => {});
+    if (browser) await this.app.closeBrowser(browser).catch(() => {});
+  }
+
+  private async closeWithdrawalBrowser(): Promise<void> {
+    if (!this.withdrawal) return;
+    const browser = this.withdrawal.browser;
+    await this.withdrawal.session.page.close().catch(() => {});
+    if (browser) await this.app.closeBrowser(browser).catch(() => {});
+    delete this.withdrawal.browser;
   }
 
   // --- New registration (#81) -----------------------------------------------

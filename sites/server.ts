@@ -6,7 +6,7 @@ import { SITES, editSpecs, type SiteDef } from "./defs.js";
 import { esc, formPage, nav, page, renderFields } from "./html.js";
 
 export interface SiteEvent {
-  type: "register" | "update";
+  type: "register" | "update" | "withdraw";
   at: number;
   data: Record<string, string>;
 }
@@ -228,7 +228,8 @@ function accountPage(site: SiteDef, base: string, state: SiteState): string {
 <form>
 ${rows}
 </form>
-<p><a href="${base}/edit">登録情報を変更する</a></p>`,
+<p><a href="${base}/edit">登録情報を変更する</a></p>
+<p><a href="${base}/withdraw">退会手続き</a></p>`,
   );
 }
 
@@ -287,6 +288,23 @@ ${site.intro ? `<p>${esc(site.intro)}</p>` : ""}
   // Login and account pages take priority over decoy-link fallback.
   if (sub === "/login") return loginPage(site, base, state, method, form);
   if (sub === "/account") return accountPage(site, base, state);
+  if (sub === "/withdraw") {
+    if (!state.registered) return page(site.serviceName, `${nav(base, links)}<h1>登録がありません</h1>`);
+    if (method === "POST") {
+      state.events.push({ type: "withdraw", at: Date.now(), data: form });
+      delete state.registered;
+      return successPage(site, base, "退会が完了しました");
+    }
+    return page(
+      `${site.serviceName} - 退会手続き`,
+      `${nav(base, links)}
+<h1>退会手続き</h1>
+<p>退会するとアカウントは削除されます。この最終操作はユーザーが確認して実行してください。</p>
+<form method="post" action="${base}/withdraw">
+<div class="row"><button type="submit">退会する</button></div>
+</form>`,
+    );
+  }
 
   // Decoy pages
   if (site.decoyLinks.some((d) => d.href === sub) && method === "GET") {
@@ -342,6 +360,7 @@ ${site.intro ? `<p>${esc(site.intro)}</p>` : ""}
         specs: editSpecs(site),
         submitLabel: "変更を保存",
         values: state.registered,
+        afterForm: `<p><a href="${base}/withdraw">退会手続き</a></p>`,
       });
     }
     recordSubmission(state, "update", form);
