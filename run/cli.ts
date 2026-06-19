@@ -271,18 +271,6 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
     throw new Error("port must be an integer between 0 and 65535");
   }
   const app = new CatashiroApp({ stateDir: join(STATE_ROOT, "manual") });
-  const server = await startWebUiServer({
-    app,
-    ...(parsedPort !== undefined ? { port: parsedPort } : {}),
-    log: (message) => console.error(message),
-    // Lazy: called after the store is unlocked, so the "ai" variant can read
-    // the user's configured provider from `app.store.getSettings()`.
-    mapperFactory: variantArg === "ai" ? () => aiMapperForUi(app) : () => new DeterministicMapper(),
-  });
-  console.log(`Catashiro local web app: ${server.url}`);
-  console.log(`mapper variant: ${variantArg}`);
-  console.log("Press Ctrl+C to stop.");
-  if (process.env["CATASHIRO_OPEN_BROWSER"] === "1") openUrlInDefaultBrowser(server.url);
 
   let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
@@ -292,6 +280,21 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
     await server.close();
     process.exit(0);
   };
+
+  const server = await startWebUiServer({
+    app,
+    ...(parsedPort !== undefined ? { port: parsedPort } : {}),
+    log: (message) => console.error(message),
+    // Lazy: called after the store is unlocked, so the "ai" variant can read
+    // the user's configured provider from `app.store.getSettings()`.
+    mapperFactory: variantArg === "ai" ? () => aiMapperForUi(app) : () => new DeterministicMapper(),
+    onShutdownRequest: () => { void shutdown(); },
+  });
+  console.log(`Catashiro local web app: ${server.url}`);
+  console.log(`mapper variant: ${variantArg}`);
+  console.log("Press Ctrl+C to stop.");
+  if (process.env["CATASHIRO_OPEN_BROWSER"] === "1") openUrlInDefaultBrowser(server.url);
+
   process.once("SIGINT", () => {
     void shutdown();
   });

@@ -96,6 +96,8 @@ export interface WebUiServerOptions {
    * Defaults to `DeterministicMapper`.
    */
   mapperFactory?: () => Mapper;
+  /** Called when the user requests app shutdown via the UI stop button. */
+  onShutdownRequest?: () => void;
 }
 
 export interface WebUiServerHandle {
@@ -275,6 +277,7 @@ class WebUiServer {
   private readonly port: number;
   private readonly log: (message: string) => void;
   private readonly mapperFactory: () => Mapper;
+  private readonly onShutdownRequest: (() => void) | undefined;
   private readonly csrfToken = randomBytes(24).toString("base64url");
   private readonly server: Server;
   /** At most one in-flight registration run (#81); the UI is single-user/single-session. */
@@ -291,6 +294,7 @@ class WebUiServer {
     this.port = options.port ?? DEFAULT_PORT;
     this.log = options.log ?? (() => {});
     this.mapperFactory = options.mapperFactory ?? (() => this.defaultMapper());
+    this.onShutdownRequest = options.onShutdownRequest;
     this.server = createServer((req, res) => {
       void this.handle(req, res).catch((err: unknown) => this.handleError(err, res));
     });
@@ -351,6 +355,9 @@ class WebUiServer {
       case "/lock":
         this.app.lock();
         this.redirect(res, "ok", "ロックしました。復帰するにはパスフレーズを入力してください。");
+        return;
+      case "/shutdown":
+        await this.handleShutdown(res);
         return;
       case "/profile/save":
         await this.saveProfile(form, res);
@@ -501,6 +508,20 @@ class WebUiServer {
     res.end();
   }
 
+  private async handleShutdown(res: ServerResponse): Promise<void> {
+    this.sendHtml(
+      res,
+      200,
+      this.renderLayout(
+        "Catashiro — 停止中",
+        `<section class="panel"><h1>Catashiro を停止しています</h1><p>アプリを安全に終了しています。このタブは閉じてください。</p></section>`,
+      ),
+    );
+    // Yield so the response is flushed before the process exits.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    this.onShutdownRequest?.();
+  }
+
   private assertCsrf(form: URLSearchParams): void {
     if (form.get("csrf") !== this.csrfToken) throw new HttpError(403, "画面を再読み込みしてからもう一度操作してください");
   }
@@ -563,6 +584,10 @@ class WebUiServer {
           <p class="muted">パスフレーズを忘れると、リカバリーキー（保管庫を作成した後に設定画面で生成できます）がない限り、保存した個人情報は復元できません。リカバリーキーは外部に送信されず、このPC上にのみ表示されます。</p>
         </div>
       </section>
+      <form method="post" action="/shutdown" style="margin-top:var(--space-4)">
+        ${this.csrfInput()}
+        <button type="submit" class="secondary">アプリを停止</button>
+      </form>
     `;
   }
 
@@ -598,6 +623,10 @@ class WebUiServer {
         </form>
       </section>
       <p class="muted small">パスフレーズとリカバリーキーの両方が分からない場合、保存されている個人情報を復元する方法はありません。</p>
+      <form method="post" action="/shutdown" style="margin-top:var(--space-4)">
+        ${this.csrfInput()}
+        <button type="submit" class="secondary">アプリを停止</button>
+      </form>
     `;
   }
 
@@ -625,10 +654,16 @@ class WebUiServer {
             <h1>Catashiro</h1>
             ${this.renderIdleLockNote()}
           </div>
-          <form method="post" action="/lock">
-            ${this.csrfInput()}
-            <button type="submit" class="secondary">ロック</button>
-          </form>
+          <div style="display:flex;gap:var(--space-3)">
+            <form method="post" action="/lock">
+              ${this.csrfInput()}
+              <button type="submit" class="secondary">ロック</button>
+            </form>
+            <form method="post" action="/shutdown">
+              ${this.csrfInput()}
+              <button type="submit" class="secondary">アプリを停止</button>
+            </form>
+          </div>
         </header>
         ${this.renderFlash(flash)}
         ${this.renderReveal(reveal)}
