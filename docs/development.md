@@ -123,6 +123,15 @@ Runtime expectations for the first private beta:
   bundles.
 - This package is Mac-only; Windows/Linux/App Store/auto-update packaging is out of scope.
 
+**Release automation.** Pushing a `v*` tag (e.g. `git tag v0.2 && git push origin v0.2`)
+triggers the `release-mac` GitHub Actions workflow on `macos-latest`. It runs the full
+release gate, builds the Mac artifact, then uploads `Catashiro-mac-beta.zip` to the
+GitHub release for that tag. If you create the release on the GitHub UI first (to write
+release notes), the workflow adds the artifact without overwriting your title or notes.
+If you push the tag without a pre-created release, the workflow creates one with
+auto-generated notes and marks it as a pre-release. No repository secrets are required;
+the workflow uses the built-in `GITHUB_TOKEN`.
+
 Before sharing any private beta build, run the release-candidate checklist in
 [`manual-test.md`](manual-test.md) §0. It is the owning checklist for release
 branch/tag/artifact steps, required local and GitHub checks, install/uninstall, first
