@@ -12,6 +12,7 @@ import type { Browser } from "playwright";
 import { AiMapper } from "../agent/ai/ai-mapper.js";
 import { createProvider } from "../agent/ai/provider.js";
 import { importChromeCsv } from "../agent/chrome-csv-importer.js";
+import { validateCandidateDefinition } from "../agent/definitions.js";
 import { maskValue } from "../agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../agent/mapper.js";
 import { deriveAccountState, nextActionForAccountState, staleFilledFields } from "../agent/records.js";
@@ -24,6 +25,7 @@ import {
   PROFILE_FIELD_LABELS,
   type GateRequest,
   type KnownProfileKey,
+  type LocalCandidateDefinition,
   type PaymentClassification,
   type ProfileKey,
   type RegistrationStatus,
@@ -46,7 +48,7 @@ const URL_BASE = "http" + "://127.0.0.1";
 const MIN_PASSPHRASE_LENGTH = 8;
 
 type FlashKind = "ok" | "error" | "warn";
-type AppTab = "profile" | "sites" | "settings";
+type AppTab = "profile" | "sites" | "candidates" | "settings";
 type ProfileMode = "view" | "edit";
 
 interface Flash {
@@ -165,9 +167,31 @@ function formValue(form: URLSearchParams, name: string): string {
   return (form.get(name) ?? "").trim();
 }
 
+function candidateSubmissionDraft(candidate: LocalCandidateDefinition): { title: string; body: string; candidate: LocalCandidateDefinition } {
+  return {
+    title: `Local candidate definition: ${candidate.serviceName}`,
+    body: [
+      "## Candidate Definition Submission",
+      "",
+      `- serviceName: ${candidate.serviceName}`,
+      `- source: ${candidate.source}`,
+      `- candidateId: ${candidate.id}`,
+      "",
+      "~~~json",
+      JSON.stringify(candidate, null, 2),
+      "~~~",
+    ].join("\n"),
+    candidate,
+  };
+}
+
+function safeDownloadName(value: string): string {
+  return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 96) || "candidate";
+}
+
 function activeTab(params: URLSearchParams): AppTab {
   const tab = params.get("tab");
-  return tab === "sites" || tab === "settings" ? tab : "profile";
+  return tab === "sites" || tab === "candidates" || tab === "settings" ? tab : "profile";
 }
 
 function profileMode(params: URLSearchParams): ProfileMode {
@@ -309,6 +333,14 @@ class WebUiServer {
       case "/diagnostics/export":
         await this.exportDiagnostics(form, res);
         return;
+      default:
+        if (url.pathname.startsWith("/candidates/") && url.pathname.endsWith("/submit")) {
+          await this.submitCandidate(url.pathname, res);
+          return;
+        }
+        break;
+    }
+    switch (url.pathname) {
       case "/withdrawal/mark":
         await this.markWithdrawalCandidate(form, res);
         return;
@@ -503,6 +535,7 @@ class WebUiServer {
     const store = this.app.store;
     const profile = [...store.profile.values()].sort((a, b) => a.key.localeCompare(b.key));
     const sites = store.listSiteRecords().sort((a, b) => b.registeredAt - a.registeredAt);
+    const candidates = store.listLocalCandidates().sort((a, b) => b.updatedAt - a.updatedAt);
     const updateCandidates = sites
       .map((record) => ({ record, stale: staleFilledFields(store, record) }))
       .filter((candidate) => candidate.stale.length > 0);
@@ -534,9 +567,10 @@ class WebUiServer {
         <nav class="tabs" aria-label="主要画面">
           ${this.tabLink("profile", "個人情報", state.tab)}
           ${this.tabLink("sites", "登録済みサイト", state.tab)}
+          ${this.tabLink("candidates", "候補定義", state.tab)}
           ${this.tabLink("settings", "設定", state.tab)}
         </nav>
-        ${this.renderActiveTab(state, profile, sites, updateCandidates, settings)}
+        ${this.renderActiveTab(state, profile, sites, candidates, updateCandidates, settings)}
       `,
       autoRefreshSeconds,
     );
@@ -550,10 +584,12 @@ class WebUiServer {
     state: PageState,
     profile: ProfileEntry[],
     sites: SiteRecord[],
+    candidates: LocalCandidateDefinition[],
     updateCandidates: { record: SiteRecord; stale: ReturnType<typeof staleFilledFields> }[],
     settings: ProviderSettings | undefined,
   ): string {
     if (state.tab === "sites") return this.renderSitesSection(sites, updateCandidates);
+    if (state.tab === "candidates") return this.renderCandidatesSection(candidates);
     if (state.tab === "settings") return this.renderSettingsSection(settings);
     return this.renderProfileSection(profile, state.profileMode);
   }
@@ -922,6 +958,19 @@ class WebUiServer {
       border-radius: var(--radius-sm);
       margin-top: var(--space-3);
     }
+    .json-preview {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-height: 320px;
+      overflow: auto;
+      background: var(--surface-sunken);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      font-size: .82rem;
+      padding: var(--space-4);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
+    }
     details { border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }
     summary { cursor: pointer; font-weight: 600; }
     .empty { padding: var(--space-5); border: 1px dashed var(--border-strong); border-radius: var(--radius-md); color: var(--text-muted); }
@@ -1212,6 +1261,43 @@ class WebUiServer {
           ${records.length === 0 ? `<div class="empty">登録済みサイトはまだありません。</div>` : records.map((record) => this.renderSiteRecord(record)).join("")}
         </div>
       </section>
+    `;
+  }
+
+  private renderCandidatesSection(candidates: LocalCandidateDefinition[]): string {
+    return `
+      <section id="candidates" class="panel">
+        <h2>候補定義</h2>
+        ${
+          candidates.length === 0
+            ? `<p class="muted">ローカル候補定義はまだありません。</p>`
+            : `<div class="stack">
+                ${candidates.map((candidate) => this.renderCandidateCard(candidate)).join("")}
+              </div>`
+        }
+      </section>
+    `;
+  }
+
+  private renderCandidateCard(candidate: LocalCandidateDefinition): string {
+    const validation = validateCandidateDefinition(candidate);
+    const body = candidateSubmissionDraft(candidate);
+    return `
+      <article class="site-card">
+        <div class="site-card-header">
+          <div>
+            <h3>${escapeHtml(candidate.serviceName)}</h3>
+            <p class="muted small">${escapeHtml(candidate.id)} / ${escapeHtml(candidate.source)} / ${escapeHtml(candidate.status)}</p>
+          </div>
+          <span class="badge ${validation.ok ? "" : "warn"}">${validation.ok ? "validated" : "invalid"}</span>
+        </div>
+        ${validation.ok ? "" : `<p class="error">${escapeHtml(validation.errors.join(" / "))}</p>`}
+        <pre class="json-preview">${escapeHtml(JSON.stringify(body.candidate, null, 2))}</pre>
+        <form method="post" action="/candidates/${encodeURIComponent(candidate.id)}/submit">
+          ${this.csrfInput()}
+          <button type="submit" class="secondary" ${validation.ok && candidate.status !== "submitted" ? "" : "disabled"}>提出JSONをダウンロード</button>
+        </form>
+      </article>
     `;
   }
 
@@ -2139,6 +2225,25 @@ class WebUiServer {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Disposition", `attachment; filename="catashiro-support-${Date.now()}.json"`);
+    res.end(body);
+  }
+
+  private async submitCandidate(pathname: string, res: ServerResponse): Promise<void> {
+    const match = /^\/candidates\/([^/]+)\/submit$/.exec(pathname);
+    const id = match ? decodeURIComponent(match[1]!) : "";
+    const candidate = id ? this.app.store.getLocalCandidate(id) : undefined;
+    if (!candidate) throw new HttpError(404, "候補定義が見つかりません");
+    const validation = validateCandidateDefinition(candidate);
+    if (!validation.ok) throw new HttpError(400, `候補定義を提出できません: ${validation.errors.join(" / ")}`);
+    const submitted: LocalCandidateDefinition = { ...candidate, status: "submitted", updatedAt: Date.now() };
+    this.app.store.upsertLocalCandidate(submitted);
+    await this.app.store.save();
+    const body = JSON.stringify(candidateSubmissionDraft(submitted), null, 2);
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", `attachment; filename="catashiro-candidate-${safeDownloadName(submitted.id)}.json"`);
     res.end(body);
   }
 

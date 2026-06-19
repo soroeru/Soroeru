@@ -377,7 +377,7 @@ export interface SiteDefinition {
 export type CandidateSource = "ai" | "user" | "observation";
 
 /** Lifecycle status of a local candidate definition (extension.md §3.2). */
-export type CandidateStatus = "candidate" | "validated" | "rejected";
+export type CandidateStatus = "candidate" | "validated" | "rejected" | "submitted";
 
 /**
  * A local, unreviewed definition private to this vault (PRIV-003). Same shape
