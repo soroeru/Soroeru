@@ -6,17 +6,21 @@ This directory contains development-facing documentation for `Catashiro` (former
 Keep this file as a short index. Put detailed decisions in the document that
 owns the relevant topic.
 
-> **Direction change (2026-06-12).** The project pivoted from a human-in-the-loop Chrome
-> extension to **`Catashiro`**, a local-first autonomous agent (Playwright-based). The
-> canonical product direction is [`requirements.md`](requirements.md). Docs below reflect
-> that direction.
+> **Direction change (2026-06-25).** The product is re-founded from `Catashiro` to
+> **Soroeru（揃える）**, a local-first **agency engine** for personal-information,
+> account, and online-contract decisions. The canonical product direction is
+> [`requirements.md`](requirements.md), which fully supersedes the prior direction.
+> **Technology selection is deferred to a later ground-up RFC**; until then
+> [`extension.md`](extension.md) and [`development.md`](development.md) describe the
+> *previous* Catashiro architecture/workflow and are superseded / in flux. The
+> repository identifier stays `catashiro`; the product name is Soroeru.
 
 ## Document Responsibilities
 
 | Document | Responsibility |
 | --- | --- |
-| [`requirements.md`](requirements.md) | **Canonical product direction**: product requirements, scope, non-scope, autonomy / hand-off model, use cases, non-functional requirements, and future directions. |
-| [`extension.md`](extension.md) | Application architecture: Playwright automation runtime, encrypted store, AI agent boundary, registration / hand-off flow. |
+| [`requirements.md`](requirements.md) | **Canonical product direction (Soroeru)**: reason for being, success definition, domain ontology, delegation model, agency loop, scope, slice order, non-negotiable requirements. |
+| [`extension.md`](extension.md) | Application architecture (**previous Catashiro; superseded** pending the ground-up Soroeru RFC). |
 | [`security.md`](security.md) | Security and privacy review notes, threat model, encryption, AI-disclosure policy, and wall safety boundaries. |
 | [`development.md`](development.md) | Local setup, project structure, implementation conventions, and quality gates. |
 | [`testing.md`](testing.md) | Automated and manual testing strategy, test data policy, fixture location, commands, and CI expectations. |

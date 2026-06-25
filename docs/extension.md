@@ -1,5 +1,12 @@
 # Application Architecture
 
+> **⚠️ SUPERSEDED (2026-06-25).** This document describes the **previous Catashiro**
+> architecture. The product is re-founded as **Soroeru（揃える）** (canonical direction:
+> [`requirements.md`](requirements.md)), and **technology/architecture selection is being
+> redone ground-up, requirements-first, in a later RFC**. Do not treat the design below as
+> the target architecture. It is retained for reference until the Soroeru architecture RFC
+> lands; the existing implementation may be reused only where it fits the new requirements.
+
 This document owns **`Catashiro` application architecture and design decisions**: the
 layer boundaries, the Playwright automation runtime, the encrypted store, the AI agent
 boundary, and the registration / hand-off control flow.

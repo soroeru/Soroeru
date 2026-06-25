@@ -1,5 +1,13 @@
 # Development
 
+> **⚠️ IN FLUX / partially superseded (2026-06-25).** The product is re-founded as
+> **Soroeru（揃える）** (canonical direction: [`requirements.md`](requirements.md)), and
+> **technology selection is being redone ground-up in a later RFC**. The setup, layout,
+> commands, and packaging below describe the **previous Catashiro** codebase. They remain
+> usable for the existing code, but the target stack, build, and packaging are decided in
+> the Soroeru architecture RFC; do not assume they are final. The repository identifier
+> stays `catashiro`.
+
 This document owns **local development workflow, repository layout,
 implementation conventions, and the canonical quality gate list** for `Catashiro`.
 

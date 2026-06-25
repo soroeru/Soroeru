@@ -1,421 +1,306 @@
 # Requirements
 
-This document owns the **product requirements** for `Catashiro`: scope, non-scope,
-the autonomy / hand-off model, use cases, and non-functional requirements.
+This document owns the **product requirements** for **Soroeru**: the product's reason for
+being, success definition, domain ontology, delegation model, agency loop, scope, and
+non-negotiable requirements.
 
-This document is the **canonical product direction** for `Catashiro`.
-Out of scope here: application architecture (see [`extension.md`](extension.md)),
-security rationale (see [`security.md`](security.md)), and agent operating rules (see
-`../AGENTS.md` and `../CLAUDE.md`).
+This document is the **canonical product direction**.
+Out of scope here: application architecture and technology selection (a future,
+ground-up RFC), security rationale (see [`security.md`](security.md)), and agent
+operating rules (see `../AGENTS.md` and `../CLAUDE.md`).
 
-> **Direction change (2026-06-12).** `Catashiro` is no longer a human-in-the-loop Chrome
-> extension. It is a local-first, autonomous agent that stores the user's full personal
-> data (encrypted) and registers / updates the user's accounts on their behalf via
-> Playwright. This document reflects that direction.
+> **Direction change (2026-06-25).** The product is renamed and re-founded from
+> `Catashiro` to **Soroeru（揃える）**. It is no longer framed as an "autonomous form-filling
+> agent" or a "desktop-wrapped web app." Soroeru is a **local-first agency engine**: a tool
+> through which a user *acquires their own free will* (agency) in the domain of personal
+> information, online accounts, and online contractual relationships. This document fully
+> **supersedes** the previous Catashiro requirements; the prior direction lives in git.
+>
+> The **repository / codebase identifier remains `catashiro`** for now (code is not
+> renamed); **Soroeru** is the product name. Technology selection is deliberately **not**
+> fixed here — it is decided ground-up, requirements-first, in a later architecture RFC.
+> The existing Electron epic (#156–#162) and the control-plane RFC (#163) are revisited
+> after this document is confirmed (rebaseline / replace / close).
 
-## 1. Background
+## 1. Background & North Star
 
-People register the same personal information across many sites and must keep it current
-when it changes (moving, new phone number, new card). Doing this by hand is repetitive.
+### 1.1 The problem: formal vs. practical choosability
 
-`Catashiro` keeps the user's personal data **locally and encrypted** and uses Playwright
-browser automation to register on new sites, update existing accounts, and help the user
-withdraw from services they no longer use. Keeping the data local means the user owns and
-manages their own information rather than handing it to a third-party service.
+For most people today, the following are *formally* possible but *practically* impossible —
+too tedious, too complex, too time-consuming, impossible to remember:
 
-The core product is a **personal-data ledger and per-site account-state manager**: the
-user can see which sites hold which classes of personal information, what was approved,
-which records are stale, and which services are candidates for withdrawal. Form filling is
-an important automation capability, but it is a means to keep that ledger current rather
-than the product's only purpose.
+- knowing which services hold which pieces of their personal information;
+- reflecting an address / phone / card change across every service;
+- withdrawing from unused services and reducing dormant accounts;
+- comparing each site's terms / privacy policy to make a disclosure decision;
+- carrying out a consistent personal policy for "how I want my data treated."
 
-Browser automation uses Playwright so the agent works across browser engines (Chromium /
-Firefox / WebKit) rather than depending on one browser's built-in autofill.
+The choice exists on paper, but not in practice. Soroeru's job is to convert this
+**formal choosability into practical choosability**.
 
-## 1.1 MVP And Private Beta Target
+### 1.2 North Star
 
-The MVP target is a **Mac-only desktop private beta for about 10 known users**. This is a
-scope boundary for the first usable release, not a permanent product limitation.
+> Soroeru is a **local-first agency engine** for the domain of online personal information,
+> accounts, and contractual relationships — a domain too complex for a person to exercise
+> free will in alone. It helps the user turn formal choosability into practical
+> choosability and, through that, **acquire free will (agency) in this domain over time**.
 
-MVP platform and support boundaries:
+### 1.3 Three lenses
 
-- Supported OS: macOS 14 Sonoma and macOS 15 Sequoia on Apple Silicon Macs.
-- Distribution: a downloadable Mac desktop app for invited beta users.
-- Install path: the user installs the app in `/Applications`; development builds may run
-  from the checkout during testing.
-- Data location: the encrypted vault lives on local disk by default under the user's app
-  support directory; the user may choose another local folder. User-owned cloud storage is
-  post-MVP unless a later issue explicitly enables it as encrypted bytes only.
-- Browser engines: Playwright-driven Chromium, Firefox, and WebKit remain the automation
-  target. The beta app must at least verify the default packaged engine path, with the
-  cross-engine matrix kept as development coverage.
-- Support model: invited users report issues directly to the maintainer using fake data
-  screenshots where possible; support bundles must be local-only and must not include raw
-  personal values.
-- Signing/notarization: desirable before wider distribution, but not required to start the
-  first 10-user private beta if the install instructions clearly explain the limitation.
+- **capability-first**: make previously impossible actions possible;
+- **sovereignty-first**: let the user govern their own information and approvals;
+- **agency-acquisition-first (the center)**: through both of the above, let the user
+  *acquire the free will itself* in this domain.
 
-Minimum beta workflows:
+### 1.4 Name and metaphor
 
-1. First-run onboarding, vault setup, lock/unlock, and recovery key flow.
-2. Personal-data management for required fields, card fields, credentials, custom fields,
-   and AI provider settings.
-3. Add Site flow that can branch between new registration and existing-account import.
-4. Autonomous new registration with the review-and-confirm gate, three guards, wall
-   hand-off/resume, and per-site inventory recording.
-5. Existing-account import sufficient to seed the inventory for sites the user already
-   uses.
-6. Bulk update for stale personal data across selected sites.
-7. Withdrawal task preparation with irreversible final actions behind explicit user
-   confirmation.
-8. Local-only diagnostics and a user manual / landing page suitable for the invited beta.
+**Soroeru（揃える）** means "to bring into alignment / to arrange." The aspiration: as users
+worldwide use Soroeru, their scattered personal information becomes "揃う" (aligned). This is
+realized as **the sum of each user aligning their own scattered data locally** — there is no
+central aggregation (consistent with local-first / no hosted vault / no telemetry).
 
-Private beta success means at least 8 of the 10 invited users can complete onboarding,
-add or import at least one site, inspect what Catashiro recorded, and understand the
-safety boundaries without maintainer intervention. At least 3 users should complete a
-bulk-update or withdrawal-preparation flow using fake or low-risk test accounts before
-the beta expands.
+- Scope cue: **A Visibility = arrange / see; B Bulk Update = align (old → current)**.
+- Tagline: **「あなたの情報を、あなたの手に。」** ("Your information, in your hands.")
+- The *依代* (yorishiro — a vessel in which the user's will resides and acts on the world)
+  framing is kept as an **internal design philosophy only**; it is not surfaced to users.
+  The philosophy shows through the quality of the UX, not the copy.
 
 ## 2. Product Principles
 
-- The user's personal data stays local and encrypted; the user owns it.
-- `Catashiro` should be provided as OSS so the code managing the user's personal-data
-  single source of truth is inspectable, self-buildable, and portable.
-- The app should be a local-first desktop application; `Catashiro` must not operate a
-  hosted vault that stores users' personal data.
-- The user should be able to choose where the encrypted vault lives: local disk by
-  default, and later a user-owned cloud-storage folder/provider for encrypted sync.
-- The AI agent acts autonomously; required human intervention is minimized.
-- AI must be optional. The default experience must work in deterministic mode without an
-  AI API key; AI mode is an enhancement for ambiguous or unsupported cases.
-- Registration auto-submits only after the user approves a review-and-confirm gate.
-- Never bypass CAPTCHA, MFA, bot detection, or access controls — detect and hand off.
-- No checkout / payment, except a free-trial→subscription card case approved by the user.
-- Prefer deterministic, inspectable matching; also evaluate an AI-driven variant.
-- Network egress only to the target sites the user acts on, the user's configured AI
-  provider, and future user-owned encrypted vault storage (encrypted bytes only); no
-  telemetry; never upload the decrypted data store or raw personal values.
-- Treat all stored data (including card data and credentials) as sensitive.
+- **Never become a delegation of will.** The failure mode is "it did it for me"
+  (outsourcing the user's agency). The success mode is "I can do this." Soroeru is not a
+  tool that executes a finished will; it is an **environment in which the will is formed**.
+- **Separate toil from judgment.** *Toil* (filling forms, navigating sites, manually
+  propagating changes) may be fully automated. *Judgment* (what to disclose, to whom, under
+  what terms, when to revoke) stays with the user and is grown through repetition.
+- **Graduation / independence is success.** The goal is that, over time, the user can decide
+  *even when Soroeru's prompting is faint*. Dependence should go down, not up.
+- **Default → understanding → self-selection.** Settings start at safe defaults; through
+  concise, low-frequency, repeated suggestions the user comes to understand each option's
+  meaning naturally and chooses it deliberately.
+- **Local-first and user-owned.** Personal data is stored locally and encrypted; the user
+  owns it. No hosted vault, no telemetry.
 
-## 3. Autonomy and Human Hand-off Model
+## 3. Success Metrics
 
-The agent acts on the user's behalf. Human intervention is limited to:
+The primary metric is **not** "number of actions automated."
 
-1. **Missing data** — the agent prompts the user for a value not in the store and saves
-   it for reuse.
-2. **Unautomatable walls** — CAPTCHA, MFA / OTP, identity verification, email/SMS
-   verification. The agent detects (never bypasses) these and hands off in the same
-   headed browser session, then resumes from where it paused.
-
-Registration flow:
-
-1. the user gives a URL;
-2. the agent finds the registration page and analyzes the form;
-3. the agent prompts for any missing field and saves it;
-4. the agent shows a **review-and-confirm gate** (what will be submitted, terms links,
-   high-risk clauses);
-5. on the user's single approval, the agent fills, accepts ordinary terms, and submits,
-   applying the **three guards**;
-6. the agent records a per-site entry and an authorization record (mandate).
-
-## 4. Scope
-
-- Local, encrypted store of the user's personal data: name (incl. phonetic / romanized),
-  email, phone, postal code, addresses (home / work / shipping / billing), company,
-  department, **credit card (number, expiry, holder, CVV)**, **per-site login ID /
-  password**, and dynamically added fields.
-- Per-site account-state inventory: registration state, submitted-field references,
-  mandates, stale fields, update status, withdrawal status, and service-use status.
-- URL-driven autonomous registration with the review-and-confirm gate and three guards.
-- Per-site inventory of submitted fields (references + hashes, not duplicated raw values)
-  and authorization records.
-- Bulk update across selected sites by diffing against the latest stored values.
-- Withdrawal assistance for services the user no longer uses, subject to the same wall
-  hand-off and final-confirmation boundaries.
-- Settings, including the user's own AI provider API key when AI mode is enabled.
-- Optional user-owned encrypted cloud-storage sync for the vault, after a dedicated
-  design/implementation issue defines provider support and egress controls.
-- CAPTCHA / MFA / verification wall detection with seamless hand-off and resume.
-- Shared site/form/field/withdrawal/wall definitions used by deterministic mode and AI
-  mode.
-- Local AI-generated candidate definitions that can be reused by the same user and, only
-  after explicit opt-in sanitization/review, proposed for shared official definitions.
-- Mac desktop private beta distribution, docs, manual QA, and support workflow for the
-  first invited users.
-- **Google Passwords.csv import** at first onboarding: the user exports their
-  Google Password Manager password list to a CSV file and imports it into `Catashiro` to bootstrap the
-  initial site inventory; the import creates inventory entries for recognized sites and
-  handles imported credential data as sensitive (encrypted, never re-exported in plaintext,
-  and discarded from memory after import processing). The UI keeps a Google Password
-  Manager export hand-off link, accepts the exported `Google Passwords.csv` by
-  drag-and-drop/file selection in either deterministic or AI mode, and then offers a
-  selectable list of newly imported sites for follow-up personal-information retrieval.
-
-## 5. Non-Scope
-
-- Windows, Linux, mobile apps, and browser-extension distribution for the MVP;
-- checkout / purchase / payment (except the approved free-trial→subscription card case);
-- **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls;
-- auto-submitting on sites whose terms prohibit automated account creation (fill only);
-- auto-attesting eligibility / identity statements;
-- multi-locale form detection in the PoC (PoC is Japanese-only);
-- `Catashiro`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
-  reporting;
-- app-embedded terminals, CLI Provider integration, or using Claude Code / Codex CLI as
-  the primary AI integration path;
-- MCP server support in the MVP; a strictly permissioned local MCP server may be added
-  later for advanced users, but it must not expose raw personal values or bypass
-  `Catashiro`'s approval gates;
-- mobile apps, iOS app Catashiro, Android Autofill Service;
-- using any AI provider other than the user's configured one.
-
-## 6. Functional Requirements
-
-| ID | Requirement | Priority | Status |
-| --- | --- | --- | --- |
-| REQ-001 | Store and edit the user's personal data locally, **encrypted at rest**. | Must | Planned |
-| REQ-002 | Store credit card data (incl. CVV) and per-site credentials, encrypted, with CVV treated as most sensitive. | Must | Planned |
-| REQ-003 | Given a URL, find the registration page and analyze the form (Playwright). | Must | Planned |
-| REQ-004 | Map form fields to stored data (deterministic and AI-driven variants). | Must | Planned |
-| REQ-005 | Prompt for missing fields and save them as new reusable fields. | Must | Planned |
-| REQ-006 | Show a review-and-confirm gate before submitting; submit only on user approval. | Must | Planned |
-| REQ-007 | Apply the three guards (high-risk clause escalation, payment stop with free-trial exception, no auto-attestation). | Must | Planned |
-| REQ-008 | On auto-creation-prohibited sites, fill only and let the user submit. | Must | Planned |
-| REQ-009 | Detect CAPTCHA / MFA / verification walls; never bypass; hand off and resume in the same session. | Must | Planned |
-| REQ-010 | Keep a per-site inventory and an authorization record (mandate) per registration. | Must | Planned |
-| REQ-011 | Bulk-update selected sites by diffing against the latest stored values. | Must | Planned |
-| REQ-012 | Use the user's configured AI provider only; never send raw personal values to the model. | Must | Planned |
-| REQ-013 | Work without AI by default through deterministic definitions and classifiers. | Must | Planned |
-| REQ-014 | Use AI mode only as an optional enhancement for ambiguous or unsupported cases, via API Provider integration. | Should | Planned |
-| REQ-015 | Store AI-generated candidate definitions locally and encrypted; never treat them as official until reviewed/promoted. | Should | Planned |
-| REQ-016 | Support withdrawal management so the user can identify and leave services they no longer use. | Should | Planned |
-| REQ-017 | Allow the user to place the encrypted vault in a user-owned storage location, including future cloud-storage sync, without giving `Catashiro` a hosted copy. | Could | Planned |
-| REQ-018 | Import a Chrome Password Manager CSV file at first onboarding to auto-generate the initial site inventory. Handle the imported credential data as sensitive: encrypt any values taken into the vault, discard the raw CSV from memory after processing, and never re-export those values in plaintext. | Should | Planned |
-
-### 6.1 Per-Site Account-State Model
-
-Each site in the inventory has an `accountState` separate from the latest operation
-result. The state drives the next user-visible action:
-
-| State | Meaning | Next action |
+| Metric | What it measures | Direction |
 | --- | --- | --- |
-| `unknown` | Catashiro has seen the site but has no account evidence yet. | Start registration |
-| `notRegistered` | The user declined or confirmed there is no account. | Start registration |
-| `registrationPending` | The agent filled data or hit a wall, but account creation is not complete. | Resume registration |
-| `registered` | Catashiro registered the account and has submitted-field hashes. | Review inventory |
-| `imported` | Catashiro imported an existing account into the inventory. | Review inventory |
-| `updateNeeded` | Stored field hashes are stale against current profile values. | Run update |
-| `updateFailed` | The last update attempt failed or could not confirm completion. | Retry update |
-| `withdrawalCandidate` | The user or diagnostics marked the service as a withdrawal candidate. | Prepare withdrawal |
+| High-risk-clause self-discovery rate | At new registration, the share the user notices **before** Soroeru surfaces it (direct measure of internalization). | ↑ |
+| Default-escape rate | Share of Policy options left at default (↓) / share the user explicitly re-chose (↑). | ↑ |
+| Practical choosability rate | Share of intended decisions (withdraw / update / refuse) the user could actually carry out. | ↑ |
+| Disclosure visibility rate | Disclosures known to the user / disclosures that actually exist. | ↑ |
+| Subjective agency | Self-reported "I decided this / I'm in control," tracked over time. | ↑ |
+| (Counter) Blind-approval rate | Share of gates / suggestions clicked through without understanding. | ↓ |
 
-Inventory records store references and hashes for submitted/imported fields, never raw
-personal values. `lastCheckedAt`, `lastUpdatedAt`, mandates, stale-field labels, and the
-next action are safe inventory metadata and may be shown in the UI.
+Six-month target state: at new registration the user has internalized "what to watch for in
+terms," and can quickly find high-risk clauses and choose register/refuse **without**
+Soroeru's prompt; the user naturally understands each Policy option and selects it
+themselves.
 
-## 7. Non-Functional Requirements
+## 4. Domain Ontology
 
-Detailed security and privacy decisions live in [`security.md`](security.md). This
-section records requirement-level statements.
+| Concept | Tier | Role |
+| --- | --- | --- |
+| Personal Attribute | MVP-required | The user's **canonical value** (the single source of truth; one set). |
+| Site Account | MVP-required | The per-site login / ongoing-relationship anchor (seeded from the CSV: name/url/username/password/note). |
+| Disclosure | MVP-required, core | "Which attribute was disclosed to which site, and when" (an attribute×site edge + as-of). **Stale = Disclosure.value ≠ Personal Attribute.canonical.** |
+| Account Relationship | MVP-required | Ongoing relationship: newsletter-subscription state / recurring-billing state / last-used time. Powers the filtered lists. |
+| Constraint | MVP-required | Site / terms / technical walls (automation-prohibiting ToS, MFA wall hit, etc.). |
+| Reflection | MVP-required | The two layers (initial footprint + post-action change). |
+| Delegation Boundary | MVP-required | The L0/L1 and absolute-boundary state. |
+| Capability / Unlock state | MVP-required | Per-operation unlock tier (L0/L1) + internalization signals. |
+| Mandate | MVP-required (light) | A record of what the user authorized (collection counts as an authorized action). |
+| Evidence / Audit | MVP-required (light) | Audit log of what happened — references + hashes, not duplicated raw values. |
+| Policy | MVP (from defaults) | An articulated norm (want / refuse). Starts at safe defaults; reaches self-selection via repeated suggestions. |
+| Preference | MVP-light | A situational tendency (pre-norm). Material for suggestions; promotes to Policy through repetition. |
+| Option | Derived (non-persistent) | "A newly appeared choice" — e.g., the filtered lists; a computed presentation concept, not a stored entity. |
+| Change Set | Later (B slice) | The diff plan for bulk update. |
+| Workflow | Later / implementation | Multi-step orchestration; not fixed as a domain concept. |
 
-| ID | Category | Requirement | Target |
+### 4.1 Why Site Account and Disclosure are separate
+
+- **Storage / concept are separated**: Personal Attribute (canonical, one set) / Site Account
+  (login & relationship) / Disclosure (the value a given site currently holds + as-of).
+- **Presentation is composed**: opening a Site Account shows its child Disclosures inline,
+  e.g. "phone 🔴 stale / address 🟢 current / card 🔴 stale." The desired per-site view is a
+  projection over Disclosures.
+- Detecting "stale" *requires comparing two values* — the canonical Personal Attribute vs.
+  the value a site holds (the Disclosure). Embedding raw values directly in Site Account
+  cannot define "stale" on its own and fights the "hashes, not raw duplication" rule.
+- Payoffs: (1) sites collect different fields → `(account, attribute, value, as-of)` rows
+  stay flexible; (2) bulk update (B) becomes first-class via a cross-site query
+  "attribute = X and value ≠ canonical"; (3) hashing / Evidence concentrate on Disclosure.
+
+## 5. Delegation Boundary
+
+The failure modes are symmetric: too strong → the user depends on Soroeru; too weak → the
+user, as before, can do nothing. Soroeru must stand **between delegation, education, and
+governance.** Only *toil* (execution) is delegated; *judgment* is not.
+
+- **Delegation levels**:
+  - **L0 confirm-required** — each execution is shown at the gate for the user to approve
+    (default for new users / high-risk operations).
+  - **L1 in-policy automatic** — actions within the user's Policy run automatically;
+    deviations, unknowns, and high-risk items are confirmed (the MVP's main mode).
+  - **L2 fully automatic** — **out of scope for the MVP** (closest to delegation of will;
+    against the graduation principle).
+- **Default is L0.** L1 is opened **per operation type** (visibility / update / withdrawal /
+  registration), only for the range where the user has shown understanding.
+- **Asymmetry**: expansion (L0 → L1) is **user-initiated and gated by a light understanding
+  check**; reduction is **unconditional and immediate** (the right to disengage is always
+  guaranteed). No implicit expansion from "enough successful runs."
+- **Absolute boundaries (always confirmed, even at L1)**:
+  1. high-risk clauses (auto-renewing subscription, mandatory arbitration, third-party
+     data sharing/sale, content licenses, …);
+  2. payment (stop / hand off; the only exception is free-trial→subscription, card filled
+     only on explicit approval);
+  3. eligibility / identity attestation (never auto-checked);
+  4. **deletion of data stored inside Soroeru** (an irreversible destruction of the user's
+     own source of truth).
+- **Explicitly *not* absolute boundaries**: withdrawing from a site (may execute
+  immediately within the delegated range); a first-seen site (the three guards suffice; it
+  is an automation target).
+
+## 6. The Agency Loop
+
+- **Reflection (two layers)**:
+  1. *Initial footprint reflection* — the whole picture of "what was given, where, and
+     when," with initial excess / stale / risky / unused tags. This is the starting point of
+     agency.
+  2. *Post-action reflection* — after each B/C action, record "how the world changed (e.g.,
+     removed phone number from 3 sites) + what to notice next."
+- **Progressive disclosure**: ① see (read-only) → ② act on one thing (single site / single
+  field) → ③ act in bulk (B/C).
+- **Threshold ("suddenly I can")**:
+  - The first crossing is the **initial ledger completion** — seeing one's whole footprint
+    at a glance (the scattered self becomes "揃う").
+  - Plus **filtered lists**: "sites with an active newsletter subscription" and "sites with
+    active recurring billing." These make previously-too-tedious actions — stopping
+    unwanted newsletters, cancelling unused subscriptions — suddenly doable.
+- **Policy / Preference formation** (not desk-configured; raised from reactions to the
+  ledger):
+  - **Suggestion threshold**: the same Preference observed **3 times** consistently (a
+    contradicting action resets the count). **Frequency cap: at most one suggestion of the
+    same kind per session/day.**
+  - **Promotion to Policy**: **never automatic.** After a suggestion is shown and the user
+    accepts it, or repeats the same action once more after seeing it, Soroeru asks once,
+    "Make this a policy?" Demotion / editing is always available.
+  - These thresholds (3 times / once per day) are configurable defaults (the
+    default→self-selection principle applies to them too).
+
+## 7. Scope & Slice Order
+
+Implementation order: **A Visibility → B Bulk Update → C Withdrawal cleanup → D New
+registration (last).**
+
+### 7.1 First slice — A Visibility (building the ledger)
+
+- **Seed data**: the CSV exported from Google / Chrome Password Manager
+  (`name, url, username, password, note`).
+- **Flow**: import the CSV → **auto-log in** to each site → **collect** the registered
+  personal information → build the **Disclosure ledger**.
+- **Rationale**: most users already have accounts on many sites, and which sites they
+  registered on is knowable from the Password Manager. Visibility is the epistemic
+  precondition for agency, and the ledger has substance from the start (CSV + collection)
+  rather than being empty.
+- Auto-login is expected to hit MFA / CAPTCHA walls (detect → hand off; never bypass).
+
+### 7.2 Locale
+
+- Japanese-language sites only for now (multi-locale is later).
+
+### 7.3 Existing assets
+
+- Requirements are primary; technology follows requirements. Existing implementation assets
+  may be reused **if they fit** the new requirements. Where they do not, **discarding all
+  existing assets and re-selecting technology ground-up is permitted** (no asset lock-in).
+
+## 8. Non-Negotiable Requirements (Security / Privacy / Safety)
+
+- Local-first / locally encrypted, user-owned / no hosted vault / no telemetry.
+- AES-256-GCM with a memory-hard KDF (Argon2id; PBKDF2-HMAC-SHA-512 as a Web-Crypto-only
+  fallback). The derived key stays in memory only. CVV is the most sensitive field.
+- Never send raw personal values to the AI model — structure only. Only the user's
+  configured provider; no provider stateful features (PII prompt-caching, stored threads,
+  memory).
+- The review-and-confirm gate and the three guards (plus the fourth absolute boundary:
+  deleting data inside Soroeru is always confirmed).
+- No payment (free-trial→subscription exception only, on explicit approval).
+- The imported CSV (which contains plaintext passwords) is encrypted immediately, never
+  logged, and safely discarded after import. Collected PII is never egressed and is stored
+  locally encrypted only.
+- **Automated access / scraping** — to resolve the bootstrap problem (you must read terms to
+  know terms; manually vetting 300+ sites is infeasible), separate the activities:
+  - **Reading public terms pages automatically is allowed** (public content; the means by
+    which clauses are detected, which resolves the bootstrap).
+  - **Logging into the user's own My Page with the user's own credentials to read the
+    user's own data is treated as agent-assisted self-access** (distinct from third-party
+    scraping). No prior manual vetting of all sites is assumed.
+  - **Hard line**: access controls a site actively enforces (CAPTCHA / MFA / bot detection)
+    are **never bypassed** — detect and hand off.
+  - A **detected automation-prohibiting ToS clause** is **not silently hard-blocked**; it is
+    surfaced as a Constraint / high-risk item for **the user to decide** (the agency
+    principle: inform; the user decides; never bypass active enforcement).
+  - Bulk collection of *others'* data and circumventing access controls are out of scope.
+  - Legal nuances are reviewed separately in [`security.md`](security.md).
+
+## 9. Out of Scope
+
+- L2 full automation (MVP); multi-locale; checkout / purchase / payment (except the approved
+  free-trial→subscription card case); **bypassing** CAPTCHA / MFA / bot detection / rate
+  limits / paywalls / access controls; collecting other people's data; hosted vaults,
+  backend API servers, telemetry, analytics, crash reporting; mobile apps and non-macOS
+  platforms (for now).
+
+## 10. Functional Requirements
+
+Tier reflects the slice order (A first). Status is `Planned` pending the architecture RFC.
+
+| ID | Requirement | Slice | Priority |
 | --- | --- | --- | --- |
-| SEC-001 | Security | Personal data (incl. card data and credentials) is encrypted at rest with AES-256-GCM under a master-passphrase-derived key. | No plaintext at rest; derived key in memory only. |
-| SEC-002 | Security | Never bypass CAPTCHA, MFA, bot detection, or access controls. | Detect and hand off to the user. |
-| SEC-003 | Security | Raw personal values are not sent to the AI model; only form structure / terms text. | Structure to model, values local. |
-| PRIV-001 | Privacy | Network egress only to the target sites the user acts on, the user's configured AI provider, and future user-owned encrypted vault storage (encrypted bytes only); no telemetry; the decrypted data store is never uploaded. | Local-first. |
-| PRIV-002 | Privacy | No provider stateful features (prompt caching of PII, stored threads, memory). | Stateless requests; zero-retention where available. |
-| PRIV-003 | Privacy | Local candidate definitions and per-site activity metadata are treated as private, even when they do not contain raw profile values. | Encrypted with the vault. |
-| SAFE-001 | Safety | Registrations submit only after the user approves the review-and-confirm gate. | No blind auto-submit. |
-| PERF-001 | Performance | Form analysis and filling should complete without excessive delay on ordinary forms. | Usable per-site latency. |
-| MAINT-001 | Maintainability | Field classification, wall detection, and storage/encryption are isolated and testable. | No scattered DOM or crypto logic. |
-| PORT-001 | Portability | Automation works across Chromium / Firefox / WebKit via Playwright. | No single-engine dependency. |
+| REQ-001 | Store and edit Personal Attributes (canonical values) locally, encrypted at rest; CVV treated as most sensitive. | A | Must |
+| REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
+| REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. | A | Must |
+| REQ-004 | Collect registered personal information per site and build the Disclosure ledger (references + hashes, not duplicated raw values). | A | Must |
+| REQ-005 | Present the per-site view by composing Site Account + its Disclosures, flagging stale values (Disclosure ≠ canonical). | A | Must |
+| REQ-006 | Track Account Relationship (newsletter / recurring billing / last-used) and provide filtered lists for these. | A | Must |
+| REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
+| REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; four absolute boundaries). | A | Must |
+| REQ-009 | Form Policy/Preference from ledger reactions: suggest after 3 consistent observations (≤1/day), promote to Policy only on explicit user confirmation; thresholds are configurable defaults. | A | Must |
+| REQ-010 | Bulk-update selected sites by diffing Disclosures against canonical Personal Attributes (cross-site by attribute). | B | Must |
+| REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; site withdrawal may execute within the delegated range; deletion of Soroeru's own data is always confirmed. | C | Should |
+| REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
+| REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only, structure-only disclosure. | A–D | Must |
+| REQ-014 | Treat a detected automation-prohibiting ToS clause as a surfaced Constraint for the user to decide; never silently block, never bypass active controls. | A | Must |
 
-## 8. Use Cases
-
-### UC-001: Register on a New Site
-
-The user gives a URL. The agent finds the registration page, fills the form from the
-store, prompts for anything missing, shows the review-and-confirm gate, and on approval
-submits and records the result.
-
-### UC-002: High-Risk Terms Surfaced
-
-A registration's terms include an auto-renewing subscription. The agent surfaces it in
-the gate; the user decides. If approved (free-trial→subscription), the card is auto-filled.
-
-### UC-003: Site Prohibits Automated Account Creation
-
-The agent fills the data but does not submit; it explains the restriction and the user
-presses the final button.
-
-### UC-004: Hand-off at a Wall
-
-Registration reaches a CAPTCHA or MFA step. The agent pauses, the user resolves it in the
-same browser window, and the agent resumes automatically.
-
-### UC-005: Bulk Update After a Change
-
-The user updates their address in the store, selects affected sites, and runs the bulk
-update; the agent diffs and updates the changed field on each site, handing off at any
-walls.
-
-### UC-006: Manage Personal Data
-
-The user opens the data-management UI to add, edit, or delete fields (including card data
-and credentials) and set the AI provider API key.
-
-### UC-007: Track and Withdraw from Unused Services
-
-The user reviews their per-site inventory, identifies services they no longer use, and
-asks `Catashiro` to help find the withdrawal flow. The app prepares a withdrawal task and
-hands off at walls; irreversible account deletion or final withdrawal confirmation must
-remain gated by the user.
-
-### UC-008: Use AI Only When Needed
-
-The user normally runs deterministic mode. When a form or withdrawal flow is unsupported
-or ambiguous and the user has enabled AI mode with their own API key, the app sends only
-the sanitized form/flow structure and relevant candidate definitions to the configured AI
-provider, then validates the returned candidate before reuse.
-
-### UC-009: Sync an Encrypted Vault Through User-Owned Storage
-
-The user chooses a local folder or supported cloud-storage folder for the encrypted vault.
-The storage provider receives only encrypted vault bytes and never receives the passphrase,
-derived key, decrypted records, or raw personal values from `Catashiro`.
-
-## 9. Field Detection Requirements
-
-Two variants share the same site/form definition format and are compared (RFC §8):
-
-1. **Deterministic** — reuse the scanner and rule-based classifier, inspecting
-   `autocomplete`, `name`, `id`, `placeholder`, associated and wrapping `label` text, and
-   safely collectible nearby text. Examples: `autocomplete="email"` → email; `住所` →
-   address; `会社名` → company.
-2. **AI-driven** — the model receives form structure and returns a mapping plan; values
-   are filled locally. AI mode is used for unsupported or ambiguous cases, not as a
-   requirement for the standard experience.
-
-The PoC measures success and mis-mapping rates for both, Japanese-only. Ambiguous fields
-should be low-confidence, resolved by AI mode if configured, or deferred to the user, not
-guessed with false confidence.
-
-AI-generated local candidate definitions are private user state. They may improve that
-user's later runs immediately, but they become shared official definitions only after
-explicit user opt-in, sanitization, review, and tests.
-
-## 10. Wall Detection Requirements
-
-Wall detection is conservative and exists only to hand off, never to circumvent. It may
-recognize CAPTCHA widgets / text, OTP / MFA fields, and verification wording. It must not
-solve, bypass, obscure, or outsource any anti-abuse mechanism; when uncertain, it stops
-and asks the user.
-
-## 11. Dynamic Schema Direction
-
-When a form needs a field not in the store, the agent prompts the user and adds it as a
-new reusable field. Keep field definitions typed and behind a small abstraction; do not
-build a heavy schema engine early.
-
-## 12. Mac Private Beta Scope Completion (#97)
-
-All implementation issues for the first private beta have been completed as of 2026-06-16.
-The table below records each issue and its outcome.
-
-| Issue | Title | Status |
-| ----- | ----- | ------ |
-| #74 | Mac-only MVP scope and beta success criteria | ✅ Done |
-| #75 | Package Catashiro as a downloadable Mac desktop app | ✅ Done |
-| #76 | Per-site inventory and account-state model | ✅ Done |
-| #77 | Encrypted vault storage, migrations, export, and import | ✅ Done |
-| #78 | Personal data management UI | ✅ Done |
-| #79 | First-run onboarding, vault setup, and recovery | ✅ Done |
-| #80 | Shared site definitions and encrypted local candidate definitions | ✅ Done |
-| #81 | Autonomous new-registration flow in the Mac app UI | ✅ Done |
-| #82 | Review-and-confirm gate with the three guards | ✅ Done |
-| #83 | Add Site branching: new registration vs existing-account import | ✅ Done |
-| #84 | Existing-account personal-data import | ✅ Done |
-| #85 | Wall hand-off and resume UX | ✅ Done |
-| #86 | Optional AI Provider mode | ✅ Done |
-| #87 | Release checklist and manual QA | ✅ Done |
-| #88 | Bulk update flow | ✅ Done |
-| #89 | Privacy and security hardening gates | ✅ Done |
-| #90 | Local-only diagnostics and support bundle | ✅ Done |
-| #91 | Withdrawal task support | ✅ Done |
-| #92 | User manual for initial Mac beta users | ✅ Done |
-| #93 | Local test sites and E2E coverage | ✅ Done |
-| #94 | Task progress UI for long-running automation flows | ✅ Done |
-| #95 | Landing page for Mac app download | ✅ Done |
-| #96 | Private beta feedback workflow for about 10 initial users | ✅ Done |
-
-**Nothing was deferred from the first beta scope.** The next phase is to invite the initial
-10 users and collect feedback through the workflow described in
-[`beta-feedback.md`](beta-feedback.md).
-
-## 14. Future Directions
-
-These items are not committed for the MVP but are planned future extensions. They require
-separate design/implementation issues before work begins.
-
-### 14.1 Enterprise Version
-
-A separate enterprise tier may add:
-
-- Admin dashboard for organization administrators.
-- Department and organization unit management.
-- Audit logs for account actions (encrypted in vault; never exported in plaintext).
-- Enterprise storage options for the encrypted vault: NAS, on-premises storage, AWS S3,
-  Azure Blob Storage, Google Cloud Storage.
-
-Key constraint: the encrypted-bytes-only and no-raw-values-outside-vault principles from
-the personal edition apply equally to the enterprise edition.
-
-### 14.2 Enterprise SaaS Admin + Customer-Owned Storage
-
-A potential future delivery model:
-
-- SaaS-hosted management dashboard only — no hosted vault on `Catashiro` servers.
-- Customer-owned storage: customers choose and control where encrypted vault bytes live.
-- Customer-managed encryption keys, or enterprise KMS integration (AWS KMS, Azure Key
-  Vault) as an alternative to administrator-held passphrases.
-
-### 14.3 GDPR and Privacy Compliance
-
-Items to investigate before targeting GDPR-regulated markets or enterprise users:
-
-- Right to be Forgotten: provide a mechanism to completely export and delete all local
-  vault data without residual traces.
-- Data Controller responsibility: clarify scope and boundaries when `Catashiro` acts on
-  behalf of an organization's employees.
-- Enterprise usage responsibility: document who is responsible for compliance when an
-  enterprise deploys `Catashiro` to staff accounts.
-
-### 14.4 Per-Site Terms-of-Service Category Risk
-
-For certain site categories, automated registration or account updates may be restricted
-or require extra care:
-
-- **Financial services**: banks, brokerages, insurance, tax authorities.
-- **Government portals**: national/local government, social services, immigration.
-- **Medical services**: clinics, pharmacies, health-record portals.
-
-The app's existing fill-only/user-submit policy and ToS detection (`REQ-008`) handle
-known prohibitions, but these categories warrant additional investigation before broader
-use. Specific Japanese services to review: 楽天, Amazon Japan, Yahoo! Japan, Google.
-
-## 13. Glossary
+## 11. Glossary
 
 | Term | Definition |
 | --- | --- |
-| Personal data field | A locally stored, encrypted value (name, address, phone, email, card data, per-site credential, or a custom field). |
-| Field detection | Finding form controls and collecting metadata about them. |
-| Field classification | Mapping a detected control to a stored field type (deterministic or AI-driven). |
-| Deterministic Mode | The default mode that uses official definitions, local candidate definitions, and rule-based classifiers without an AI API key. |
-| AI Mode | Optional mode that uses the user's configured API Provider for ambiguous or unsupported form, terms, or withdrawal analysis. |
-| Candidate definition | A local, unreviewed site/form/field/withdrawal/wall definition generated by AI mode, user input, or observation; private until explicitly submitted. |
-| Review-and-confirm gate | The single post-analysis approval the user gives before the agent submits a registration. |
-| Three guards | High-risk clause escalation, payment stop (free-trial exception), and no auto-attestation. |
-| Wall | A step that cannot/should not be automated: CAPTCHA, MFA, identity / email / SMS verification. |
-| Mandate | A per-registration authorization record of what the user approved (references, hashes, terms URL). |
-| Per-site record | Local record of what was submitted to a site (references + hashes, not duplicated raw values). |
-| User-owned cloud storage | A storage location chosen and controlled by the user where only encrypted vault bytes may be synced. |
+| Agency / free will (domain-specific) | The acquired, trainable capability to make real choices in a domain — including choices that were previously impossible. Soroeru cultivates this for the personal-information domain. |
+| Toil vs. judgment | Toil = friction worth automating (form filling, navigation). Judgment = the domain skill worth keeping with and growing in the user (what/whom/terms/revocation). |
+| Personal Attribute | The user's canonical value for a piece of personal data (the single source of truth). |
+| Site Account | A per-site login / ongoing-relationship anchor. |
+| Disclosure | The value a given site currently holds for an attribute, with an as-of time; stale iff it differs from the canonical Personal Attribute. |
+| Account Relationship | An ongoing relationship facet: newsletter subscription, recurring billing, last-used time. |
+| Policy | An articulated norm the user wants/refuses; drives judgment and automation. |
+| Preference | A pre-norm situational tendency; material for suggestions; promotes to Policy through repetition. |
+| Delegation Boundary | The configuration of which judgments are delegated, to which understanding tier, and how far ahead (L0/L1; absolute boundaries). |
+| Reflection | The post-state record through which the user learns (initial footprint + per-action change). |
+| Constraint | A site / terms / technical limit recorded as it is discovered. |
+| Mandate | A record of what the user authorized (collection or action). |
+| Three guards | High-risk-clause escalation, payment stop (free-trial exception), no auto-attestation. |
+| Wall | A step that must not be automated: CAPTCHA, MFA, identity / email / SMS verification. |
+
+## 12. Relationship to prior Catashiro work
+
+- This document **fully supersedes** the previous `Catashiro` requirements; the old direction
+  remains in git history.
+- **Technology selection is deferred** to a later, ground-up architecture RFC (language,
+  shell, automation, storage). The existing Electron epic (#156–#162) and the
+  control-plane RFC (#163) are revisited there and **rebaselined, replaced, or closed**.
+- Items deferred to the architecture RFC include: the vault schema normalizing Personal
+  Attribute / Disclosure / Account Relationship, the auto-login + hand-off execution model,
+  and the safe CSV-import design.
