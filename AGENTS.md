@@ -124,9 +124,11 @@ Explicitly *not* absolute boundaries: **withdrawing from a site** (may execute w
 delegated range) and a **first-seen site** (the three guards suffice).
 
 **Sites whose terms prohibit automated account creation**: a detected automation-prohibiting
-clause is **surfaced as a Constraint for the user to decide** — not silently hard-blocked.
-Never bypass controls a site actively enforces. For registration specifically, fill the data
-only and let the user press the final button when a site prohibits automated creation.
+clause is **surfaced as a Constraint / high-risk item for the user to decide** — not silently
+hard-blocked and not unilaterally executed (the agency principle: inform; the user decides).
+The user may then choose to proceed (within the review-and-confirm gate and the three guards)
+or to stop. What is **never** done is bypassing controls a site **actively enforces** —
+CAPTCHA / MFA / bot detection — which are always detected and handed off.
 
 ## Initial Scope
 
@@ -239,7 +241,7 @@ behind a small abstraction; do not over-engineer a schema engine early.
 ## Security and Privacy Requirements
 
 Canonical security and privacy decisions live in [`docs/security.md`](docs/security.md).
-Requirement-level statements live in [`docs/requirements.md`](docs/requirements.md) §7.
+Requirement-level statements live in [`docs/requirements.md`](docs/requirements.md) §8.
 
 Non-negotiable rules for agent sessions:
 
@@ -254,7 +256,8 @@ Non-negotiable rules for agent sessions:
   security code (CVV) as the most sensitive field.
 - **Never bypass CAPTCHA, MFA, bot detection, or access controls.** Detect and hand off.
 - Only submit a registration after the user approves the review-and-confirm gate; apply
-  the three guards; do not auto-submit on auto-creation-prohibited sites.
+  the three guards; surface a detected automation-prohibiting ToS clause as a Constraint
+  for the user to decide (never silently block, never bypass actively-enforced controls).
 - Do not auto-attest eligibility/identity statements.
 - Do not commit secrets, local state, real personal data, or AI review artifacts.
 
@@ -378,7 +381,8 @@ Codex **must not** implement, even here:
 
 - bypassing or solving CAPTCHA, MFA, bot detection, rate limits, or access controls;
 - checkout / payment beyond the approved free-trial→subscription card case;
-- auto-submitting on sites whose terms prohibit automated account creation;
+- silently proceeding past a detected automation-prohibiting ToS clause instead of
+  surfacing it as a Constraint / high-risk item for the user to decide;
 - auto-attesting eligibility/identity statements;
 - sending raw personal values to the AI model or any non-provider service;
 - storing data unencrypted or logging decrypted values.

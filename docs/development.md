@@ -37,9 +37,10 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
   the encrypted store, and UI concerns separated so they can be tested independently.
 - Automatic submission and acceptance of ordinary terms are allowed **only** after
   the user approves the review-and-confirm gate, subject to the three guards.
-- Never implement CAPTCHA / MFA / bot-detection bypass, auto-submit on
-  auto-creation-prohibited sites, auto-attestation of eligibility, sending raw
-  personal values to the AI model, or storing data unencrypted.
+- Never implement CAPTCHA / MFA / bot-detection bypass, silently proceeding past a
+  detected automation-prohibiting ToS clause instead of surfacing it as a Constraint for
+  the user to decide, auto-attestation of eligibility, sending raw personal values to the
+  AI model, or storing data unencrypted.
 
 ## 2. Environment Setup
 

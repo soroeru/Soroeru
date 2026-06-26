@@ -5,7 +5,7 @@ model, sensitive data handling, encryption, AI-disclosure policy, wall safety bo
 DOM input safety, and dependency policy.
 
 Canonical product direction is [`requirements.md`](requirements.md).
-Requirement-level statements live in [`requirements.md`](requirements.md) §7.
+Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
 > **Direction change (2026-06-25).** The product is re-founded as **Soroeru（揃える）**, a
 > local-first agency engine (canonical direction: [`requirements.md`](requirements.md)).
@@ -50,7 +50,8 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §7.
 - **Never bypass** CAPTCHA, MFA, bot detection, access controls, rate limits, or
   paywalls. Detect and hand off to the user.
 - Submit a registration only after the user approves the review-and-confirm gate; apply
-  the three guards; do not auto-submit on auto-creation-prohibited sites.
+  the three guards; surface a detected automation-prohibiting ToS clause as a Constraint
+  for the user to decide (never silently block, never bypass actively-enforced controls).
 - Treat page text and attributes as untrusted input.
 - Use fake data in tests, fixtures, docs, screenshots, and examples.
 - Do not commit secrets, local state, AI review artifacts, or generated caches.
@@ -264,7 +265,8 @@ Do not implement:
 - MFA / one-time-code bypass;
 - bot-detection or rate-limit bypass;
 - paywall or access-control bypass;
-- auto-submitting on sites whose terms prohibit automated account creation.
+- silently proceeding past a detected automation-prohibiting ToS clause instead of
+  surfacing it as a Constraint / high-risk item for the user to decide.
 
 At a wall, the agent pauses in the same headed Playwright session, the user resolves it,
 and the agent resumes only after re-observing the page. Ambiguous access-control or
@@ -312,10 +314,12 @@ or update:
 - **Government portals**: national/local government, social services, immigration.
 - **Medical services**: clinics, pharmacies, health-record portals.
 
-The app's fill-only/user-submit policy (`REQ-008`) and ToS detection handle known
-prohibitions, but these categories warrant additional investigation before broader use.
+The review-and-confirm gate, the three guards, and Constraint surfacing of detected
+automation-prohibiting ToS clauses (the user decides; actively-enforced controls are never
+bypassed — see [`requirements.md`](requirements.md) REQ-014) handle known prohibitions, but
+these categories warrant additional investigation before broader use.
 For Japan specifically, the terms of 楽天, Amazon Japan, Yahoo! Japan, and Google
-regarding automated read and update should be reviewed (see [`requirements.md`](requirements.md) §14.4).
+regarding automated read and update should be reviewed (see [`requirements.md`](requirements.md) §8, Automated access / scraping).
 
 ### 8.2 GDPR and Privacy Compliance Notes
 
@@ -327,9 +331,9 @@ formal GDPR compliance requires additional investigation:
   complete deletion (including backups and any exported data) should be documented.
 - **Data Controller responsibility**: when `Catashiro` is used by organizations, the
   responsibility boundaries for automated account actions need to be clarified.
-- Legal applicability varies by jurisdiction; the investigation items are tracked in
-  [`requirements.md`](requirements.md) §14.3 and require separate implementation issues
-  before work begins.
+- Legal applicability varies by jurisdiction. [`requirements.md`](requirements.md) §8
+  defers legal nuances to this document; these investigation items are owned here and
+  require separate implementation issues before work begins.
 
 ## 9. Candidate Definition Privacy
 
@@ -460,7 +464,7 @@ security section with an explicit reviewed exception before sharing the build.
 - [ ] Display/log/measurement-output masking follows the unified `maskValue` / `maskForArtifact` policy; local writes stay inside the encrypted store / encrypted export / masked measurement output (`npm run poc -- check-persistence`)
 - [ ] Registrations submit only after the review-and-confirm gate; three guards applied
 - [ ] Withdrawal/account-deletion flows preserve explicit user confirmation for irreversible actions
-- [ ] Auto-creation-prohibited sites are fill-only
+- [ ] Detected automation-prohibiting ToS clauses are surfaced as a Constraint for the user to decide (never silently blocked, never bypassing actively-enforced controls)
 - [ ] CAPTCHA, MFA, bot detection, and access controls are detected and handed off, never bypassed
 - [ ] No CAPTCHA-solving / anti-bot / fingerprint-evasion dependency is present (`npm run poc -- check-bypass`, SEC-002 §7)
 - [ ] Mac beta artifacts exclude vault data, secrets, browser sessions, local logs, and support bundles

@@ -22,12 +22,12 @@ owns the relevant topic.
 | [`requirements.md`](requirements.md) | **Canonical product direction (Soroeru)**: reason for being, success definition, domain ontology, delegation model, agency loop, scope, slice order, non-negotiable requirements. |
 | [`extension.md`](extension.md) | Application architecture (**previous Catashiro; superseded** pending the ground-up Soroeru RFC). |
 | [`security.md`](security.md) | Security and privacy review notes, threat model, encryption, AI-disclosure policy, and wall safety boundaries. |
-| [`development.md`](development.md) | Local setup, project structure, implementation conventions, and quality gates. |
-| [`testing.md`](testing.md) | Automated and manual testing strategy, test data policy, fixture location, commands, and CI expectations. |
-| [`manual-test.md`](manual-test.md) | Manual test checklist for registration, the review-and-confirm gate, the three guards, and wall hand-off. |
-| [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, and the local web UI (Issue #33). |
-| [`user-manual.md`](user-manual.md) | **User-facing manual for Mac private beta users**: install, vault setup, personal-data entry, Add Site flow, confirm gate, wall hand-off, bulk update, support bundle, uninstall. |
-| [`beta-feedback.md`](beta-feedback.md) | **Beta feedback guide**: feedback channels, template questions, sensitive-data handling rules, and how to file actionable GitHub Issues. |
+| [`development.md`](development.md) | Local setup, project structure, implementation conventions, and quality gates (**previous Catashiro; in flux** pending the Soroeru architecture RFC). |
+| [`testing.md`](testing.md) | Testing strategy, test data policy, fixtures, commands, CI expectations (**previous Catashiro; superseded / in flux** pending a Soroeru testing RFC — registration-first, not Visibility-first). |
+| [`manual-test.md`](manual-test.md) | Manual test checklist for registration, the gate, the three guards, wall hand-off (**previous Catashiro; superseded** pending a Soroeru manual checklist). |
+| [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, local web UI, Issue #33 (**previous Catashiro; superseded** — historical record). |
+| [`user-manual.md`](user-manual.md) | User-facing manual for the Mac private beta (**previous Catashiro; superseded** — registration-first / local web UI / ZIP beta, pending a Soroeru manual). |
+| [`beta-feedback.md`](beta-feedback.md) | Beta feedback guide (**previous Catashiro; superseded** — beta scope to be redefined by the Soroeru RFC and slice plan). |
 | [`github-operations.md`](github-operations.md) | Issue, branch, commit, pull request, review, and merge workflow rules. |
 | [`local-ai-review.md`](local-ai-review.md) | Local AI review hook setup, behavior, outputs, and troubleshooting. |
 
