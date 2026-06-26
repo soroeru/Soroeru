@@ -66,7 +66,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
 | Unintended payment obligation | Free trial silently becomes a paid subscription. | Payment-field stop; free-trial→subscription surfaced as high-risk; card filled only on approval. |
 | CAPTCHA / MFA bypass behavior | Circumvents site protections; violates ToS and project policy. | Detect and hand off; never solve, bypass, hide, or outsource. |
-| Automated creation where ToS forbids it | Account-creation automation violates the site's terms. | Fill only; the user presses the final button. |
+| Automated creation where ToS forbids it | Account-creation automation may violate the site's terms. | Surface the clause as a Constraint / high-risk item for the user to decide; never silently proceed, never silently hard-block, and never bypass actively enforced controls. |
 | API key leak | The user's AI account is abused. | Encrypt the API key with the same scheme; never log it. |
 | User-owned cloud storage exposes the vault file | Encrypted bytes may be copied or synced by a third-party storage provider. | Store only authenticated encrypted vault bytes; never provide the passphrase, derived key, decrypted records, or raw values to the storage provider. |
 | Local candidate definitions reveal user activity | Even without raw values, a candidate can reveal which sites the user visited, tried to register with, updated, or withdrew from. | Store local candidates in the encrypted vault; sanitize and require explicit opt-in before sharing. |
@@ -76,7 +76,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
 ## 3. Sensitive Data Handling
 
-Stored locally, **encrypted** (RFC §3):
+Stored locally, **encrypted** (see RFC-002 §4):
 
 - name (incl. phonetic / romanized), email, phone;
 - postal code and addresses (home / work / shipping / billing);
@@ -142,7 +142,8 @@ artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
 
 ## 4. Encryption (canonical)
 
-Per RFC §9. Use only widely vetted algorithms; do not roll custom crypto.
+Per [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md) §2.4 and
+§6. Use only widely vetted algorithms; do not roll custom crypto.
 
 1. **Master passphrase** — entered by the user at unlock; never stored.
 2. **Key derivation** — Argon2id (memory-hard) from passphrase + a stored 16-byte random

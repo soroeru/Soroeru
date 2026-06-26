@@ -19,8 +19,8 @@ When creating or updating `CLAUDE.md`, reuse the shared sections and replace the
 > Catashiro direction (history in git).
 >
 > The **repository / codebase identifier remains `catashiro`** (code is not renamed);
-> **Soroeru** is the product name. **Technology selection is deliberately not fixed** here
-> or in the architecture docs — it is decided ground-up, requirements-first, in a later RFC.
+> **Soroeru** is the product name. Target architecture / technology selection is owned by
+> [`docs/rfc/rfc-002-soroeru-architecture.md`](docs/rfc/rfc-002-soroeru-architecture.md).
 > The first capability slice is **Visibility (building the disclosure ledger)**, not
 > registration; the slice order is A Visibility → B Bulk Update → C Withdrawal → D
 > Registration.
@@ -46,8 +46,8 @@ through repetition.
 The first capability is **Visibility**: import the user's Google/Chrome Password Manager
 CSV, auto-log in to each site, collect what is registered there, and build a **disclosure
 ledger** so the user can see "what was given, where, and when," with stale values flagged.
-Browser automation is expected to use **Playwright** (browser-engine independence), but the
-final technology stack is decided ground-up in a later RFC.
+Browser automation uses **Playwright** (browser-engine independence) in the target
+architecture selected by RFC-002.
 
 ## Product Principles
 
@@ -174,45 +174,45 @@ Do not implement these unless the user explicitly changes the scope:
   the primary AI integration path
 - MCP server support in the MVP; a strictly permissioned local MCP server may be added
   later for advanced users, but it must not expose raw personal values or bypass
-  `Catashiro`'s approval gates
-- mobile apps, iOS app Catashiro, Android Autofill Service
+  Soroeru's approval gates
+- mobile apps, iOS app, Android Autofill Service
 - using any AI provider other than the user's configured one
 
 ## Tech Stack
 
-**Technology selection is deliberately not fixed.** It is decided ground-up,
-requirements-first, in a later architecture RFC. The existing codebase
-(TypeScript + Playwright + a Node local UI) may be reused **only where it fits the new
-requirements**; discarding it and re-selecting the stack from zero is explicitly permitted.
+Target stack is defined in
+[`docs/rfc/rfc-002-soroeru-architecture.md`](docs/rfc/rfc-002-soroeru-architecture.md):
 
-Constraints that any stack must satisfy (from the requirements, not a stack mandate):
+- Electron desktop app, TypeScript / Node.js, React + Vite renderer.
+- Playwright Library for headed browser automation, run behind a narrow automation service.
+- Versioned encrypted record vault using AES-256-GCM with Argon2id
+  (PBKDF2-HMAC-SHA-512 fallback), derived key in memory only.
+- Deterministic-first analysis; optional user-configured Anthropic/OpenAI providers only,
+  structure-only disclosure, no raw PII to the model.
+- Unsigned macOS DMG for MVP; signing/notarization and auto-update are later.
 
-- Headed browser automation where a human can take over a wall in the **same session**
-  (Playwright is the expected basis for browser-engine independence: Chromium/Firefox/WebKit).
-- Local encrypted storage: AES-256-GCM with a memory-hard KDF (Argon2id; PBKDF2-HMAC-SHA-512
-  as a fallback). Derived key in memory only.
-- AI optional, behind a provider-abstraction layer (the user's configured **Anthropic** or
-  **OpenAI** only); structure-only disclosure, no raw PII to the model.
-
-Do not introduce a framework, build tool, package manager, or test runner as a fait
-accompli — propose it in the architecture RFC with a documented reason.
+Do not introduce a framework, build tool, package manager, test runner, or backend service
+outside RFC-002's target stack without a new Issue/RFC explaining the requirements reason.
 
 ## Expected Architecture
 
-**Pending the ground-up architecture RFC.** [`docs/extension.md`](docs/extension.md) and
-[`docs/development.md`](docs/development.md) describe the *previous* Catashiro architecture
-and are **superseded** until the RFC lands; do not treat them as the target design.
+Target architecture is RFC-002. [`docs/extension.md`](docs/extension.md) and
+[`docs/development.md`](docs/development.md) still describe the *previous* Catashiro
+architecture/workflow and are retained only as reference until implementation docs are
+rewritten.
 
-Conceptually, Soroeru separates: a **store** of canonical Personal Attributes, Site
-Accounts, Disclosures, Account Relationships, Mandates, and Policies; a **definition/agent**
-layer (deterministic by default, optional AI analysis that receives structure, not raw
-values); an **automation** layer that drives a headed browser to log in, collect, update,
-withdraw, and hand off / resume; and a **UI** that is a *place of self-understanding* (the
-ledger, filtered lists, Reflection, the gate, Delegation Boundary, settings).
+Conceptually and architecturally, Soroeru separates: a **store/vault service** of canonical
+Personal Attributes, Site Accounts, Disclosures, Account Relationships, Mandates, Evidence,
+Policies, and Reflections; a **domain service** that owns Policy and Delegation Boundary
+decisions; a **definition/agent** layer (deterministic by default, optional AI analysis
+that receives structure, not raw values); an **automation** layer that drives a headed
+browser to log in, collect, update, withdraw, and hand off / resume; and a **UI** that is a
+*place of self-understanding* (the ledger, filtered lists, Reflection, the gate, Delegation
+Boundary, settings).
 
 ## Field Detection Strategy
 
-Two variants are built and compared (see RFC §8):
+Two variants are built and compared (see RFC-002 §7):
 
 1. **Deterministic**: reuse the scanner (`src/agent/scan.ts`) and rule-based classifier
    (`src/agent/classifier.ts`) to map fields (`autocomplete`, `name`, `id`,
@@ -274,8 +274,9 @@ Use these documents when present:
 - `README.md`: user-facing product overview, usage, limitations, and security notes
 - `docs/README.md`: documentation index and ownership guide
 - `docs/requirements.md`: **canonical product direction** and product requirements (Soroeru)
-- `docs/extension.md`: application architecture (previous Catashiro; **superseded** pending the ground-up RFC)
-- `docs/development.md`: setup, commands, and workflow (previous Catashiro; **in flux** pending the RFC)
+- `docs/rfc/rfc-002-soroeru-architecture.md`: target Soroeru architecture and technology selection
+- `docs/extension.md`: previous Catashiro architecture (**superseded**, reference only)
+- `docs/development.md`: setup, commands, and workflow (previous Catashiro; **in flux** until RFC-002 implementation docs land)
 - `docs/testing.md`: testing strategy
 - `docs/security.md`: security review notes
 - `docs/manual-test.md`: manual test checklist
@@ -341,14 +342,14 @@ storage/encryption behavior, run the relevant items against the local test sites
 
 ## Role of Codex in This Repository
 
-Codex should act as an implementation-focused coding agent for the autonomous `Catashiro`
-agent, respecting the local-first, encrypted-storage, and never-bypass-walls principles
+Codex should act as an implementation-focused coding agent for Soroeru, respecting the
+local-first, encrypted-storage, and never-bypass-walls principles
 above.
 
 Primary responsibilities:
 
 - read the repository instructions before editing
-- make small, coherent code changes aligned with the shared sections and RFC-001 v3
+- make small, coherent code changes aligned with the shared sections and RFC-002
 - update documentation when behavior or commands change
 - run available checks when feasible
 - clearly report what was changed and what was not verified

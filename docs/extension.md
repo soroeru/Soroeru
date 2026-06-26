@@ -2,10 +2,12 @@
 
 > **⚠️ SUPERSEDED (2026-06-25).** This document describes the **previous Catashiro**
 > architecture. The product is re-founded as **Soroeru（揃える）** (canonical direction:
-> [`requirements.md`](requirements.md)), and **technology/architecture selection is being
-> redone ground-up, requirements-first, in a later RFC**. Do not treat the design below as
-> the target architecture. It is retained for reference until the Soroeru architecture RFC
-> lands; the existing implementation may be reused only where it fits the new requirements.
+> [`requirements.md`](requirements.md)), and the target Soroeru architecture / technology
+> selection is now owned by
+> [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md). Do not
+> treat the design below as the target architecture. It is retained for reference until
+> implementation docs are rewritten; the existing implementation may be reused only where
+> it fits the new requirements.
 
 This document owns **`Catashiro` application architecture and design decisions**: the
 layer boundaries, the Playwright automation runtime, the encrypted store, the AI agent
