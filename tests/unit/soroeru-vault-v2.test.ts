@@ -126,6 +126,54 @@ test("recovery key unlocks the vault without the passphrase", async () => {
   }
 });
 
+test("rekey clears the recovery wrap", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    await vault.setupRecoveryKey();
+    assert.equal(vault.hasRecoveryKey, true);
+    // A record must exist for a wrong-passphrase open to fail GCM auth.
+    vault.put("policy", { id: "p", key: "k", value: "v", source: "default", updatedAt: 1 });
+    await vault.rekey("new-passphrase");
+    assert.equal(vault.hasRecoveryKey, false);
+    await vault.save();
+    // The new passphrase opens it; the old one no longer does.
+    assert.equal((await VaultV2.open(path, "new-passphrase")).isLocked, false);
+    await assert.rejects(() => VaultV2.open(path, PASSPHRASE));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("migrating a v1 vault carries its recovery wrapper into v2", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const legacy = await PocStore.open(path, PASSPHRASE);
+    const recoveryKey = await legacy.setupRecoveryKey();
+    legacy.setProfileValue("email", "メール", "legacy@example.test");
+    await legacy.save();
+
+    const migrated = await VaultV2.open(path, PASSPHRASE);
+    assert.equal(migrated.hasRecoveryKey, true);
+    await migrated.save();
+
+    const recovered = await VaultV2.openWithRecoveryKey(path, recoveryKey);
+    assert.equal(recovered.get("personalAttribute", "email")?.value, "legacy@example.test");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("rejects a JSON file that is neither v1 nor a tagged v2 vault", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    await writeFile(path, JSON.stringify({ hello: "world" }), "utf8");
+    await assert.rejects(() => VaultV2.open(path, PASSPHRASE), VaultFormatError);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("encrypted export/import round-trips and refuses to clobber", async () => {
   const { dir, path } = await tmpVaultPath();
   try {

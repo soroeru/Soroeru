@@ -145,6 +145,11 @@ export class VaultV2 {
       return VaultV2.migrateFromV1(filePath, raw as unknown as LegacyV1File, passphrase);
     }
     const file = raw as VaultFileV2 | undefined;
+    if (file && file.vaultVersion === undefined) {
+      // Neither a v1 store nor a tagged v2 file: fail cleanly instead of
+      // crashing later on `file.records` being undefined.
+      throw new VaultFormatError(`vault file at ${filePath} is not a recognized Soroeru vault`);
+    }
     if (file) VaultV2.validateV2Version(file);
     const kdf = file?.kdf ?? newKdfParams(kdfAlgo);
     const key = await deriveKey(passphrase, kdf);
@@ -201,6 +206,11 @@ export class VaultV2 {
       }
       const plaintext = await decryptRecord(key, { iv: env.iv, ct: env.ciphertext });
       const payload = JSON.parse(plaintext) as DomainRecord;
+      if (env.recordId !== payload.id) {
+        throw new VaultCorruptError(
+          `vault record envelope id "${env.recordId}" does not match payload id "${payload.id}"`,
+        );
+      }
       this.bucket(env.entityKind).set(payload.id, {
         payload,
         schemaVersion: env.schemaVersion,
@@ -356,8 +366,9 @@ export class VaultV2 {
   async save(): Promise<void> {
     const file = await this.serialize();
     await mkdir(dirname(this.filePath), { recursive: true });
+    // Owner-only perms: contents are encrypted, but a PII-bearing state file should not be world-readable.
     // persist: encrypted-store — AES-256-GCM encrypted record vault only (docs/security.md §4)
-    await writeFile(this.filePath, JSON.stringify(file), "utf8");
+    await writeFile(this.filePath, JSON.stringify(file), { encoding: "utf8", mode: 0o600 });
   }
 
   /** Same encrypted JSON shape as on disk, for the user to copy elsewhere as a backup. */
@@ -397,7 +408,7 @@ export class VaultV2 {
     }
     await mkdir(dirname(filePath), { recursive: true });
     // persist: encrypted-store — restoring an encrypted export writes the same encrypted shape (§4)
-    await writeFile(filePath, JSON.stringify(parsed), "utf8");
+    await writeFile(filePath, JSON.stringify(parsed), { encoding: "utf8", mode: 0o600 });
     return VaultV2.open(filePath, passphrase);
   }
 
@@ -498,6 +509,20 @@ export class VaultV2 {
         };
         if (typeof d.origin === "string" && d.origin) mandate.scope = d.origin;
         this.put("mandate", mandate);
+        return;
+      }
+      default: {
+        // The on-disk v1 file is untrusted at migration time. Surface an
+        // unrecognized record as a diagnostic rather than silently dropping it
+        // (the vault is the user's source of truth — no silent data loss).
+        const unknownKind = (payload as { kind?: unknown }).kind;
+        this.put("diagnostic", {
+          id: randomUUID(),
+          at: now,
+          type: "error",
+          message: `unmigrated legacy record kind: ${String(unknownKind)}`,
+          severity: "warn",
+        });
         return;
       }
     }

@@ -75,6 +75,11 @@ export class DomainService {
    * Upsert a canonical Personal Attribute. The attribute key is used as the
    * record id so a given attribute is canonical (one value per key). Changing a
    * value recomputes the stale-state of every Disclosure for that attribute.
+   *
+   * Invariant: any path that *changes which canonical value an attribute key
+   * resolves to* must call `recomputeStaleStatesForAttribute`. A future
+   * `deletePersonalAttribute` must route through that recompute so its
+   * Disclosures revert to `unknown` rather than staying pinned at current/stale.
    */
   setPersonalAttribute(input: SetPersonalAttributeInput): PersonalAttribute {
     const attribute: PersonalAttribute = {
