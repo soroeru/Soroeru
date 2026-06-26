@@ -1,5 +1,14 @@
 # Testing
 
+> **⚠️ SUPERSEDED / IN FLUX (2026-06-25).** This document describes the testing strategy of
+> the **previous Catashiro** (registration-first MVP, local Catashiro test sites). The
+> product is re-founded as **Soroeru（揃える）** (canonical direction:
+> [`requirements.md`](requirements.md)), whose first slice is **Visibility**, not
+> registration, and whose **technology/architecture is being redone ground-up in a later
+> RFC**. The testing strategy below — including the auto-creation-prohibited / fill-only
+> cases — reflects the old direction and is retained for reference only until a Soroeru
+> testing RFC lands. Do not treat it as the current checklist.
+
 This document owns the **testing strategy** for `Catashiro`: what to test, which test
 types apply, and how the suites map to the architecture layers.
 

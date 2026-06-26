@@ -1,5 +1,13 @@
 # Manual Test
 
+> **⚠️ SUPERSEDED / IN FLUX (2026-06-25).** This checklist targets the **previous Catashiro**
+> registration-first MVP (Add Site flow, confirm gate, the auto-creation-prohibited
+> `10-no-auto` / fill-only case, local web UI). The product is re-founded as
+> **Soroeru（揃える）** (canonical direction: [`requirements.md`](requirements.md)), whose
+> first slice is **Visibility** and whose **technology/architecture is being redone
+> ground-up in a later RFC**. Use this only as historical reference until a Soroeru manual
+> test checklist is written.
+
 This document owns the **browser-based manual test checklist** for `Catashiro`.
 
 > **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first

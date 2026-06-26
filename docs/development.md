@@ -1,5 +1,13 @@
 # Development
 
+> **⚠️ IN FLUX / partially superseded (2026-06-25).** The product is re-founded as
+> **Soroeru（揃える）** (canonical direction: [`requirements.md`](requirements.md)), and
+> **technology selection is being redone ground-up in a later RFC**. The setup, layout,
+> commands, and packaging below describe the **previous Catashiro** codebase. They remain
+> usable for the existing code, but the target stack, build, and packaging are decided in
+> the Soroeru architecture RFC; do not assume they are final. The repository identifier
+> stays `catashiro`.
+
 This document owns **local development workflow, repository layout,
 implementation conventions, and the canonical quality gate list** for `Catashiro`.
 
@@ -29,9 +37,10 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
   the encrypted store, and UI concerns separated so they can be tested independently.
 - Automatic submission and acceptance of ordinary terms are allowed **only** after
   the user approves the review-and-confirm gate, subject to the three guards.
-- Never implement CAPTCHA / MFA / bot-detection bypass, auto-submit on
-  auto-creation-prohibited sites, auto-attestation of eligibility, sending raw
-  personal values to the AI model, or storing data unencrypted.
+- Never implement CAPTCHA / MFA / bot-detection bypass, silently proceeding past a
+  detected automation-prohibiting ToS clause instead of surfacing it as a Constraint for
+  the user to decide, auto-attestation of eligibility, sending raw personal values to the
+  AI model, or storing data unencrypted.
 
 ## 2. Environment Setup
 

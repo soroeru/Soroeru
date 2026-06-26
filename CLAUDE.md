@@ -6,14 +6,21 @@ It mirrors the shared sections from `AGENTS.md` and replaces the Codex-specific
 section with Claude Code-specific guidance. When the shared sections in
 `AGENTS.md` change, update this file to match.
 
-> **Direction change (2026-06-12).** The project has pivoted from a Chrome-extension,
-> human-in-the-loop form *assistant* to **`Catashiro`**: a local-first, **autonomous
-> AI agent** that stores the user's full personal data and registers / updates the
-> user's accounts on their behalf. The canonical product direction is
-> [`docs/requirements.md`](docs/requirements.md). This file reflects that direction.
-> Sections that previously described an MV3 extension, human-in-the-loop filling, or
-> "do not store passwords / cards" have been intentionally replaced; their history is
-> in git.
+> **Direction change (2026-06-25).** The product is renamed and re-founded from
+> `Catashiro` to **Soroeru（揃える）**: a local-first **agency engine** for the domain of
+> personal information, online accounts, and online contracts. Soroeru is *not* framed as
+> an "autonomous form-filling agent"; its purpose is to help the user **acquire and grow
+> their own agency (free will)** in this domain — turning formally-possible choices into
+> practically-exercisable ones. The canonical product direction is
+> [`docs/requirements.md`](docs/requirements.md), which fully supersedes the prior
+> Catashiro direction (history in git).
+>
+> The **repository / codebase identifier remains `catashiro`** (code is not renamed);
+> **Soroeru** is the product name. **Technology selection is deliberately not fixed** here
+> or in the architecture docs — it is decided ground-up, requirements-first, in a later RFC.
+> The first capability slice is **Visibility (building the disclosure ledger)**, not
+> registration; the slice order is A Visibility → B Bulk Update → C Withdrawal → D
+> Registration.
 
 ---
 
@@ -21,41 +28,48 @@ section with Claude Code-specific guidance. When the shared sections in
 
 ## Project Overview
 
-`Catashiro` is a **local-first, autonomous personal-data ledger and account-state
-agent** for personal use.
+**Soroeru** is a **local-first agency engine** for personal use, in the domain of personal
+information, online accounts, and online contractual relationships.
 
-The user stores their personal data locally (encrypted). When the user gives a URL,
-the agent finds the registration page on that site, fills the form, and completes the
-registration on the user's behalf after a single review-and-confirm step. The agent
-also keeps a per-site inventory of what was submitted and can update the user's
-information across many sites when their data changes, plus help the user withdraw from
-services they no longer use.
+The product's reason for being is that these decisions are *formally* possible but
+*practically* impossible for a person alone (too tedious / complex / time-consuming /
+unmemorable). Soroeru turns that **formal choosability into practical choosability**, and —
+crucially — helps the user **acquire free will (agency) in this domain over time**. It must
+never become a *delegation of will* ("it did it for me"); the success mode is "I can do
+this." Soroeru automates *toil* (form filling, navigation, propagation) but keeps *judgment*
+(what to disclose, to whom, under what terms, when to revoke) with the user, growing it
+through repetition.
 
-The project starts as a personal tool. Browser automation is performed with
-**Playwright** so the agent is not tied to one browser engine (Chromium / Firefox /
-WebKit).
+The first capability is **Visibility**: import the user's Google/Chrome Password Manager
+CSV, auto-log in to each site, collect what is registered there, and build a **disclosure
+ledger** so the user can see "what was given, where, and when," with stale values flagged.
+Browser automation is expected to use **Playwright** (browser-engine independence), but the
+final technology stack is decided ground-up in a later RFC.
 
 ## Product Principles
 
-- Build a small, working autonomous agent the user can run locally.
+- **Never become a delegation of will.** Success is "I can do this," not "it did it for
+  me." Soroeru is an environment in which the user's will is *formed*, not a tool that
+  executes a finished will.
+- **Separate toil from judgment.** Toil (filling, navigation, propagation) may be fully
+  automated; judgment (what/whom/terms/revocation) stays with the user and is grown.
+- **Graduation / independence is success.** Over time the user should decide even when
+  Soroeru's prompting is faint; dependence should go *down*, not up.
+- **Default → understanding → self-selection.** Settings start at safe defaults; concise,
+  low-frequency, repeated suggestions let the user understand each option and choose it.
 - Keep the user's personal data **local and encrypted**; the user owns and manages it.
-- Provide `Catashiro` as OSS so the code managing the user's personal-data single source
-  of truth is inspectable, self-buildable, and portable.
-- Do not operate a hosted vault. The encrypted vault lives on local disk by default and
-  may later sync through user-owned cloud storage as encrypted bytes only.
-- AI is optional: deterministic mode must be the default usable experience, and AI mode
-  is an API Provider enhancement for ambiguous or unsupported cases.
-- Give the AI agent maximum autonomy; minimize required human intervention.
-- The agent may auto-fill and auto-submit registrations after the user approves a
-  single review-and-confirm gate; it may accept terms and complete the final submit
-  on the user's behalf within that approval.
-- **Never bypass CAPTCHA, MFA, bot detection, rate limits, paywalls, or access
-  controls.** These are the unavoidable hand-off points to the human (see below).
+- Provide Soroeru as OSS so the code managing the user's single source of truth is
+  inspectable, self-buildable, and portable.
+- Do not operate a hosted vault; the encrypted vault lives on local disk by default and may
+  later sync through user-owned cloud storage as encrypted bytes only.
+- AI is optional: deterministic mode must be the default usable experience; AI mode is an
+  API Provider enhancement for ambiguous or unsupported cases.
+- **Never bypass CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls.**
+  These are the unavoidable hand-off points to the human (see below).
 - Do not perform checkout / payment. Exception: a free-trial-that-becomes-a-paid-
-  subscription is surfaced as a high-risk item, and the card is filled only on the
-  user's explicit approval.
-- Prefer deterministic, inspectable form-matching logic; also evaluate an AI-driven
-  variant and compare accuracy.
+  subscription is surfaced as a high-risk item, and the card is filled only on the user's
+  explicit approval.
+- Prefer deterministic, inspectable matching logic; also evaluate an AI-driven variant.
 - Limit network egress to the target sites the user acts on, the user's own AI provider,
   and future user-owned encrypted-vault storage; no telemetry or other external services;
   never upload decrypted data or raw personal values.
@@ -64,20 +78,27 @@ WebKit).
 
 ## Autonomy and Human Hand-off Model
 
-Human-in-the-loop is **no longer the core model**. The agent acts autonomously. Human
-intervention is limited to two cases:
+Only **toil** is delegated; **judgment** is not. Delegation is governed by an explicit
+**Delegation Boundary**:
 
-1. **Missing data**: when a form needs information not in the store, prompt the user
-   for that value and save it as a new field for reuse.
-2. **Walls that cannot be automated**: CAPTCHA, MFA / OTP, identity verification, and
-   email/SMS verification links. The agent **detects but never bypasses** these. It
-   hands off to the user in the **same headed Playwright session**, waits for the user
-   to resolve the step, then resumes automation from where it paused.
+- **L0 confirm-required** (default for new users / high-risk operations): each execution is
+  shown at the gate for approval.
+- **L1 in-policy automatic** (MVP main mode): actions within the user's Policy run
+  automatically; deviations, unknowns, and high-risk items are confirmed.
+- **L2 fully automatic**: **out of scope for the MVP** (closest to delegation of will).
 
-Registration uses a **review-and-confirm gate**: after the agent analyzes the form
-(but before submitting), it shows what will be submitted, the terms links, and any
-detected high-risk clauses. On the user's single approval, the agent fills, accepts
-ordinary terms, and submits.
+Expansion (L0 → L1) is **user-initiated and gated by a light understanding check**, opened
+per operation type; reduction is **unconditional and immediate**. No implicit expansion.
+
+Human intervention also occurs for **missing data** (prompt and save a new reusable field)
+and at **walls that cannot be automated** — CAPTCHA, MFA / OTP, identity verification,
+email/SMS verification. The agent **detects but never bypasses** these; it hands off in the
+**same headed browser session**, waits, then resumes from where it paused.
+
+Actions that touch the world (e.g., a registration submit) use a **review-and-confirm gate**:
+before acting, it shows what will be submitted, terms links, and any detected high-risk
+clauses. The gate is treated as the **moment of agency**, designed to cultivate the user's
+own judgment, not to be rubber-stamped.
 
 ## Three Guards (registration safety)
 
@@ -93,44 +114,58 @@ When delegating terms acceptance and final submit, the agent applies:
 3. **No auto-attestation**: do not auto-check eligibility/identity statements
    ("I am 18+", residency, "I am authorized"); present them for the user to decide.
 
-**Sites whose terms prohibit automated account creation**: fill the data only, do not
-auto-submit; explain the restriction and let the user press the final button.
+A **fourth absolute boundary** (always confirmed, even at L1): **deleting data stored inside
+Soroeru** — an irreversible destruction of the user's own source of truth.
+
+Explicitly *not* absolute boundaries: **withdrawing from a site** (may execute within the
+delegated range) and a **first-seen site** (the three guards suffice).
+
+**Sites whose terms prohibit automated account creation**: a detected automation-prohibiting
+clause is **surfaced as a Constraint / high-risk item for the user to decide** — not silently
+hard-blocked and not unilaterally executed (the agency principle: inform; the user decides).
+The user may then choose to proceed (within the review-and-confirm gate and the three guards)
+or to stop. What is **never** done is bypassing controls a site **actively enforces** —
+CAPTCHA / MFA / bot detection — which are always detected and handed off.
 
 ## Initial Scope
 
-Planned capabilities:
+Slice order: **A Visibility → B Bulk Update → C Withdrawal cleanup → D New registration
+(last).** See [`docs/requirements.md`](docs/requirements.md) for the full requirements.
 
-- Local, encrypted store of the user's personal data:
-  - full name (incl. phonetic / romanized)
-  - email address
-  - phone number
-  - postal code and address (home / work / shipping / billing)
-  - company name, department name
-  - **credit card number, expiry, holder, security code (CVV)**
-  - **per-site login ID and password**
-  - other dynamically added fields
-- Given a URL: find the registration page, map fields, fill, run the review-and-
-  confirm gate, and submit (subject to the three guards).
-- Per-site inventory of what was submitted (references + hashes, not duplicated raw
-  values) and an authorization record (mandate) of what the user approved.
-- Bulk update: select sites, diff against the latest stored values, and update the
-  changed fields on each site.
-- Withdrawal management: identify unused services, prepare withdrawal tasks, and keep
-  irreversible final actions behind explicit user confirmation.
+- Local, encrypted store of the user's **Personal Attributes** (canonical values): name
+  (incl. phonetic/romanized), email, phone, postal code & addresses, company/department,
+  **credit card (number, expiry, holder, CVV)**, **per-site login ID/password**, and
+  dynamically added fields.
+- **A — Visibility (first slice)**: import the Google/Chrome Password Manager CSV
+  (`name, url, username, password, note`), auto-log in to each site, collect registered
+  personal info, and build the **Disclosure ledger** (references + hashes, not duplicated
+  raw values). Flag stale values (Disclosure ≠ canonical). Track **Account Relationship**
+  (newsletter / recurring billing / last-used) and provide filtered lists.
+- **B — Bulk update**: diff Disclosures against canonical values (cross-site by attribute)
+  and update changed fields.
+- **C — Withdrawal cleanup**: stop newsletters, cancel unused subscriptions, withdraw from
+  unused services; irreversible final actions and Soroeru-internal deletion stay gated.
+- **D — New registration (last)**: URL-driven registration with the review-and-confirm gate
+  and three guards.
+- Two-layer **Reflection** (initial footprint + post-action change) and **Policy/Preference**
+  formation (suggest after 3 consistent observations, ≤1/day; promote only on explicit
+  user confirmation).
 - Settings, including the user's own AI provider API key.
-- Shared site/form/field/withdrawal/wall definitions for deterministic and AI modes.
-- Local candidate definitions are stored encrypted; they may be shared only after
-  explicit opt-in sanitization/review.
+- Shared definitions for deterministic and AI modes; local candidate definitions stored
+  encrypted, shared only after explicit opt-in sanitization/review.
 - Detect CAPTCHA / MFA / verification walls and hand off / resume seamlessly.
 
 ## Explicitly Out of Scope
 
 Do not implement these unless the user explicitly changes the scope:
 
+- **L2 full automation** (MVP); delegation of judgment of any kind
 - checkout / purchase / payment (except the free-trial→subscription card case above)
 - **bypassing** CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls
-- multi-locale form detection in the PoC (PoC is Japanese-only; multi-locale is later)
-- `Catashiro`-operated hosted vaults, backend API servers, telemetry, analytics, or crash
+- collecting other people's data (only the user's own accounts, with the user's own
+  credentials)
+- multi-locale form detection (Japanese-only for now; multi-locale is later)
+- Soroeru-operated hosted vaults, backend API servers, telemetry, analytics, or crash
   reporting
 - app-embedded terminals, CLI Provider integration, or using Claude Code / Codex CLI as
   the primary AI integration path
@@ -142,34 +177,35 @@ Do not implement these unless the user explicitly changes the scope:
 
 ## Tech Stack
 
-Prefer this stack unless the repository has already standardized on something else:
+**Technology selection is deliberately not fixed.** It is decided ground-up,
+requirements-first, in a later architecture RFC. The existing codebase
+(TypeScript + Playwright + a Node local UI) may be reused **only where it fits the new
+requirements**; discarding it and re-selecting the stack from zero is explicitly permitted.
 
-- TypeScript
-- **Playwright** for browser automation (agent runtime) **and** end-to-end tests —
-  chosen for browser-engine independence (Chromium / Firefox / WebKit).
-- Local encrypted storage (see Security below): Web Crypto API (AES-256-GCM) with a
-  memory-hard KDF (Argon2id; PBKDF2-HMAC-SHA-512 as a Web-Crypto-only fallback).
-- AI providers: **Anthropic** (Claude Opus / Sonnet / Haiku) and **OpenAI**
-  (GPT-5.4 / GPT-5.4-mini / GPT-5.3-Codex), behind a provider-abstraction layer.
-- HTML / CSS and TypeScript (Vanilla or a framework) for the local UI.
+Constraints that any stack must satisfy (from the requirements, not a stack mandate):
 
-If introducing a framework, build tool, package manager, or test runner, document the
-reason and update the relevant docs.
+- Headed browser automation where a human can take over a wall in the **same session**
+  (Playwright is the expected basis for browser-engine independence: Chromium/Firefox/WebKit).
+- Local encrypted storage: AES-256-GCM with a memory-hard KDF (Argon2id; PBKDF2-HMAC-SHA-512
+  as a fallback). Derived key in memory only.
+- AI optional, behind a provider-abstraction layer (the user's configured **Anthropic** or
+  **OpenAI** only); structure-only disclosure, no raw PII to the model.
+
+Do not introduce a framework, build tool, package manager, or test runner as a fait
+accompli — propose it in the architecture RFC with a documented reason.
 
 ## Expected Architecture
 
-Canonical architecture lives in [`docs/extension.md`](docs/extension.md) and the RFC.
-In short, `Catashiro` is a **local Playwright-based application** with four layers:
+**Pending the ground-up architecture RFC.** [`docs/extension.md`](docs/extension.md) and
+[`docs/development.md`](docs/development.md) describe the *previous* Catashiro architecture
+and are **superseded** until the RFC lands; do not treat them as the target design.
 
-- **store layer**: encrypted personal data, per-site records, mandates, and local
-  candidate definitions;
-- **definition / agent layer**: deterministic definitions/classifiers by default, with
-  optional API Provider analysis for ambiguous cases — receives form structure, not raw
-  values;
-- **automation layer**: Playwright drives a (headed) browser to navigate, fill, submit,
-  observe, and hand off / resume across Chromium / Firefox / WebKit;
-- **UI layer**: personal-data management, per-site inventory, update/withdrawal tasks,
-  the review-and-confirm gate, and settings (vault location, API key).
+Conceptually, Soroeru separates: a **store** of canonical Personal Attributes, Site
+Accounts, Disclosures, Account Relationships, Mandates, and Policies; a **definition/agent**
+layer (deterministic by default, optional AI analysis that receives structure, not raw
+values); an **automation** layer that drives a headed browser to log in, collect, update,
+withdraw, and hand off / resume; and a **UI** that is a *place of self-understanding* (the
+ledger, filtered lists, Reflection, the gate, Delegation Boundary, settings).
 
 ## Field Detection Strategy
 
@@ -202,7 +238,7 @@ behind a small abstraction; do not over-engineer a schema engine early.
 ## Security and Privacy Requirements
 
 Canonical security and privacy decisions live in [`docs/security.md`](docs/security.md).
-Requirement-level statements live in [`docs/requirements.md`](docs/requirements.md) §7.
+Requirement-level statements live in [`docs/requirements.md`](docs/requirements.md) §8.
 
 Non-negotiable rules for agent sessions:
 
@@ -217,7 +253,8 @@ Non-negotiable rules for agent sessions:
   security code (CVV) as the most sensitive field.
 - **Never bypass CAPTCHA, MFA, bot detection, or access controls.** Detect and hand off.
 - Only submit a registration after the user approves the review-and-confirm gate; apply
-  the three guards; do not auto-submit on auto-creation-prohibited sites.
+  the three guards; surface a detected automation-prohibiting ToS clause as a Constraint
+  for the user to decide (never silently block, never bypass actively-enforced controls).
 - Do not auto-attest eligibility/identity statements.
 - Do not commit secrets, local state, real personal data, or AI review artifacts.
 
@@ -233,9 +270,9 @@ Use these documents when present:
 
 - `README.md`: user-facing product overview, usage, limitations, and security notes
 - `docs/README.md`: documentation index and ownership guide
-- `docs/requirements.md`: **canonical product direction** and product requirements
-- `docs/extension.md`: application architecture and design notes
-- `docs/development.md`: setup, commands, and workflow
+- `docs/requirements.md`: **canonical product direction** and product requirements (Soroeru)
+- `docs/extension.md`: application architecture (previous Catashiro; **superseded** pending the ground-up RFC)
+- `docs/development.md`: setup, commands, and workflow (previous Catashiro; **in flux** pending the RFC)
 - `docs/testing.md`: testing strategy
 - `docs/security.md`: security review notes
 - `docs/manual-test.md`: manual test checklist
@@ -348,7 +385,8 @@ Claude Code **must not** implement, even here:
 
 - bypassing or solving CAPTCHA, MFA, bot detection, rate limits, or access controls;
 - checkout / payment beyond the approved free-trial→subscription card case;
-- auto-submitting on sites whose terms prohibit automated account creation;
+- silently proceeding past a detected automation-prohibiting ToS clause instead of
+  surfacing it as a Constraint / high-risk item for the user to decide;
 - auto-attesting eligibility/identity statements;
 - sending raw personal values to the AI model or any non-provider service;
 - storing data unencrypted or logging decrypted values.
