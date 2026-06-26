@@ -5,9 +5,10 @@ being, success definition, domain ontology, delegation model, agency loop, scope
 non-negotiable requirements.
 
 This document is the **canonical product direction**.
-Out of scope here: application architecture and technology selection (a future,
-ground-up RFC), security rationale (see [`security.md`](security.md)), and agent
-operating rules (see `../AGENTS.md` and `../CLAUDE.md`).
+Out of scope here: application architecture and technology selection (see
+[`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md)), security
+rationale (see [`security.md`](security.md)), and agent operating rules (see `../AGENTS.md`
+and `../CLAUDE.md`).
 
 > **Direction change (2026-06-25).** The product is renamed and re-founded from
 > `Catashiro` to **Soroeru（揃える）**. It is no longer framed as an "autonomous form-filling
@@ -18,9 +19,10 @@ operating rules (see `../AGENTS.md` and `../CLAUDE.md`).
 >
 > The **repository / codebase identifier remains `catashiro`** for now (code is not
 > renamed); **Soroeru** is the product name. Technology selection is deliberately **not**
-> fixed here — it is decided ground-up, requirements-first, in a later architecture RFC.
-> The existing Electron epic (#156–#162) and the control-plane RFC (#163) are revisited
-> after this document is confirmed (rebaseline / replace / close).
+> fixed here — it is decided ground-up, requirements-first, in
+> [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md). The existing
+> Electron epic (#156–#162) and the control-plane RFC (#163) are revisited there
+> (rebaseline / replace / close).
 
 ## 1. Background & North Star
 

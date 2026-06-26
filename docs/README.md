@@ -10,19 +10,21 @@ owns the relevant topic.
 > **Soroeru（揃える）**, a local-first **agency engine** for personal-information,
 > account, and online-contract decisions. The canonical product direction is
 > [`requirements.md`](requirements.md), which fully supersedes the prior direction.
-> **Technology selection is deferred to a later ground-up RFC**; until then
-> [`extension.md`](extension.md) and [`development.md`](development.md) describe the
-> *previous* Catashiro architecture/workflow and are superseded / in flux. The
-> repository identifier stays `catashiro`; the product name is Soroeru.
+> **Technology selection is now owned by
+> [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md).**
+> [`extension.md`](extension.md) and [`development.md`](development.md) still describe the
+> *previous* Catashiro architecture/workflow for reference and are superseded / in flux.
+> The repository identifier stays `catashiro`; the product name is Soroeru.
 
 ## Document Responsibilities
 
 | Document | Responsibility |
 | --- | --- |
 | [`requirements.md`](requirements.md) | **Canonical product direction (Soroeru)**: reason for being, success definition, domain ontology, delegation model, agency loop, scope, slice order, non-negotiable requirements. |
-| [`extension.md`](extension.md) | Application architecture (**previous Catashiro; superseded** pending the ground-up Soroeru RFC). |
+| [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md) | **Target Soroeru architecture / technology selection**: runtime, UI, automation, vault, domain services, Slice A design, traceability. |
+| [`extension.md`](extension.md) | Application architecture (**previous Catashiro; superseded** by RFC-002, retained for reference until implementation docs are rewritten). |
 | [`security.md`](security.md) | Security and privacy review notes, threat model, encryption, AI-disclosure policy, and wall safety boundaries. |
-| [`development.md`](development.md) | Local setup, project structure, implementation conventions, and quality gates (**previous Catashiro; in flux** pending the Soroeru architecture RFC). |
+| [`development.md`](development.md) | Local setup, project structure, implementation conventions, and quality gates (**previous Catashiro; in flux** until RFC-002 implementation work updates commands). |
 | [`testing.md`](testing.md) | Testing strategy, test data policy, fixtures, commands, CI expectations (**previous Catashiro; superseded / in flux** pending a Soroeru testing RFC — registration-first, not Visibility-first). |
 | [`manual-test.md`](manual-test.md) | Manual test checklist for registration, the gate, the three guards, wall hand-off (**previous Catashiro; superseded** pending a Soroeru manual checklist). |
 | [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, local web UI, Issue #33 (**previous Catashiro; superseded** — historical record). |
@@ -34,7 +36,9 @@ owns the relevant topic.
 ## Primary Sources
 
 - Product behavior belongs in [`requirements.md`](requirements.md).
-- Application architecture belongs in [`extension.md`](extension.md).
+- Target Soroeru architecture belongs in
+  [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md).
+- Previous Catashiro architecture remains in [`extension.md`](extension.md) for reference.
 - Security decisions belong in [`security.md`](security.md).
 - Agent operating rules belong in `../AGENTS.md` and `../CLAUDE.md`.
 - Issue templates belong in `../.github/ISSUE_TEMPLATE/`, including
