@@ -3,12 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- The renderer is an untrusted UI surface: no remote origins, no inline
-         eval. It talks to the vault only through the preload bridge. -->
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
-    />
+    <!-- The renderer is an untrusted UI surface that talks to the vault only
+         through the preload bridge. The strict production CSP is injected at
+         build time (see vite.config.ts); it is intentionally absent here so the
+         Vite dev server's inline Fast Refresh preamble is not blocked in
+         `npm run dev`. -->
     <title>Soroeru</title>
   </head>
   <body>

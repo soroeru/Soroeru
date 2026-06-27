@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Label } from "@radix-ui/react-label";
+import { MIN_PASSPHRASE_LENGTH } from "../../electron/ipc/contract.js";
 import type { DomainSummary, VaultStatus } from "../../electron/ipc/contract.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
@@ -52,6 +53,10 @@ export function App(): React.JSX.Element {
         setPassphrase("");
         setSummary(await window.soroeru.domain.summary());
         setPhase("unlocked");
+      } catch {
+        // A rejected IPC invoke (e.g. a disk error in the main handler) must not
+        // become a silent failure or an unhandled rejection.
+        setError("操作に失敗しました。時間をおいて再試行してください。");
       } finally {
         setBusy(false);
       }
@@ -95,11 +100,17 @@ export function App(): React.JSX.Element {
           />
           <button
             type="submit"
-            disabled={busy || passphrase.length === 0}
+            disabled={
+              busy ||
+              (phase === "setup" ? passphrase.length < MIN_PASSPHRASE_LENGTH : passphrase.length === 0)
+            }
             className="rounded bg-neutral-900 px-4 py-2 text-white disabled:opacity-50"
           >
             {phase === "setup" ? "作成して解錠" : "解錠"}
           </button>
+          {phase === "setup" && (
+            <p className="text-xs text-neutral-400">{MIN_PASSPHRASE_LENGTH}文字以上で設定してください。</p>
+          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
         </form>
       )}

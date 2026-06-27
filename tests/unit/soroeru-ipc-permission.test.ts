@@ -137,6 +137,24 @@ test("a wrong passphrase is reported without unlocking and without leaking why",
   }
 });
 
+test("setup rejects a too-short passphrase at the trusted boundary", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+
+    const weak = (await bridge[IPC_CHANNELS.vaultSetup]("short")) as VaultMutationResult;
+    assert.equal(weak.ok, false);
+    assert.equal(weak.error, "passphrase-too-short");
+
+    // The vault must not have been created by the rejected setup.
+    const status = (await bridge[IPC_CHANNELS.vaultStatus]()) as VaultStatus;
+    assert.equal(status.exists, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("isIpcChannel rejects channels outside the allowlist", () => {
   assert.equal(isIpcChannel("soroeru:vault:status"), true);
   assert.equal(isIpcChannel("soroeru:vault:delete-everything"), false);

@@ -27,6 +27,13 @@ export const IPC_CHANNELS = {
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
 
+/**
+ * Minimum master-passphrase length, enforced in the trusted layer (the renderer
+ * is untrusted per RFC-002 §3, so its UI guard alone must not be load-bearing).
+ * Defined here so both the session boundary and the UI share one value.
+ */
+export const MIN_PASSPHRASE_LENGTH = 8;
+
 /** Frozen list form of the channel allowlist, for membership checks in tests. */
 export const IPC_CHANNEL_LIST: readonly IpcChannel[] = Object.freeze(
   Object.values(IPC_CHANNELS),

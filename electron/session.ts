@@ -9,6 +9,7 @@
 import { DomainService } from "../src/domain/domain-service.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
 import { vaultExists } from "../src/store/vault.js";
+import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
 import type { AttributeSummary, DomainSummary, VaultMutationResult, VaultStatus } from "./ipc/contract.js";
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
@@ -32,6 +33,9 @@ export class SoroeruSession {
 
   /** First-run vault creation. Fails if a vault already exists at the path. */
   async setup(passphrase: string): Promise<VaultMutationResult> {
+    if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+      return { ok: false, locked: true, error: "passphrase-too-short" };
+    }
     if (await vaultExists(this.vaultPath)) {
       return { ok: false, locked: true, error: "vault-already-exists" };
     }

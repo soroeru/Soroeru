@@ -68,6 +68,21 @@ test("wrong passphrase fails GCM authentication", async () => {
   }
 });
 
+test("wrong passphrase is rejected even on an empty saved vault (verifier)", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    // No records: previously there was no ciphertext for a wrong key to fail
+    // GCM auth on. The passphrase verifier closes that gap.
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    await vault.save();
+    await assert.rejects(() => VaultV2.open(path, "wrong-passphrase"));
+    // The correct passphrase still opens it cleanly.
+    assert.equal((await VaultV2.open(path, PASSPHRASE)).isLocked, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("lock clears decrypted records and blocks access", async () => {
   const { dir, path } = await tmpVaultPath();
   try {

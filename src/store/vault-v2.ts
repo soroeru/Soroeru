@@ -74,7 +74,13 @@ interface VaultFileV2 {
   metadata: VaultMetadata;
   /** Present iff a recovery key is configured: master key wrapped under the recovery KEK. */
   recovery?: EncryptedRecord;
-  /** Known token encrypted under the master key, for passphrase verification. */
+  /**
+   * Known token encrypted under the master key, for passphrase verification.
+   * Optional for forward-compat: a vault written before this field existed has
+   * none, so `open` only enforces the check when present. Vault v2 is
+   * pre-release (introduced in the immediately preceding commit), so no such
+   * legacy vault actually exists — every `save()` now writes a verifier.
+   */
   verifier?: EncryptedRecord;
   records: VaultRecordEnvelope[];
 }
