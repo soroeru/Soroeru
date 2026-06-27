@@ -51,7 +51,7 @@ Required tools for `Catashiro` development:
 - `bash`
 - `jq` for running the local AI review post-commit hook
 - `shasum` on macOS or `sha256sum`
-- Node.js
+- Node.js 22 LTS for local development and macOS release packaging
 - npm
 - TypeScript
 - Playwright browser binaries (Chromium / Firefox / WebKit) for the agent
@@ -119,51 +119,58 @@ is not committed.
 
 ## 3.1 Mac Beta Packaging
 
-The first beta packaging path intentionally avoids adding Electron, Tauri, auto-update,
-or a hosted backend. `npm run package:mac` creates a small macOS `.app` wrapper around
-the existing compiled TypeScript app and local web UI:
+The Soroeru private-beta packaging path is an unsigned macOS DMG built with
+Electron Forge and `@electron-forge/maker-dmg` (RFC-002 §2.6). It packages the
+Electron app, Vite renderer, compiled main/preload code, installed npm
+dependencies, and a hermetic Playwright Chromium browser so beta users do not
+need a system Node.js install.
 
 ```bash
 npm ci
-npx playwright install chromium
-npm run package:mac
+npm run package:dmg
 ```
 
 The script writes:
 
-- `release/Catashiro.app`
-- `release/Catashiro-mac-beta.zip`
+- `out/` Forge intermediate app / maker output
+- `release/Soroeru-<version>.dmg`
 
-The generated app starts `dist/compiled/run/cli.js ui deterministic 0`, binds the local
-web UI to `127.0.0.1`, opens the default browser, and stores the encrypted beta vault
-under `~/Library/Application Support/Catashiro` unless `CATASHIRO_STATE_ROOT` is set.
-Shutdown uses the existing `CatashiroApp.shutdown()` path, which closes tracked
-Playwright browser sessions and locks the vault.
+`npm run package:dmg` runs `npm run build:app`, installs bundled Chromium with
+`PLAYWRIGHT_BROWSERS_PATH=0`, invokes Electron Forge for `darwin`, then copies
+the generated DMG to `release/Soroeru-<version>.dmg`. The package is unsigned
+and not notarized for the MVP.
 
-The shared default path is implemented in `src/store/vault.ts`. Use
-`CATASHIRO_STATE_ROOT=/path/to/local/folder` for manual migration tests or a
-user-selected local vault folder; do not point it at shared cloud storage until a future
-encrypted-sync issue defines the provider and egress controls.
+The packaged app name is `Soroeru.app`, with bundle identifier
+`app.catashiro.soroeru`; the repository/package identifier remains `catashiro`.
+The app uses Electron's embedded Node runtime. At runtime, packaged builds set
+`PLAYWRIGHT_BROWSERS_PATH` to the bundled
+`node_modules/playwright-core/.local-browsers` directory unless the environment
+already overrides it. The vault defaults to
+`~/Library/Application Support/Soroeru/vault.json`; `CATASHIRO_STATE_ROOT`
+remains available for local migration tests and user-selected local vault
+folders. Do not point it at shared cloud storage until a future encrypted-sync
+Issue defines the provider and egress controls.
 
 Runtime expectations for the first private beta:
 
-- Node.js 22 or newer must be installed on the beta Mac, or `CATASHIRO_NODE_BINARY` must
-  point to a bundled Node executable. The launcher checks common Homebrew locations and
-  shows a macOS alert if Node is missing.
-- The ZIP is unsigned and not notarized until a later signing issue provides developer
-  credentials and release automation. Beta install notes must state this plainly.
-- `release/` is ignored by Git. Do not commit `.app`, ZIP, logs, vault files, or support
-  bundles.
+- Node.js is not required on the beta Mac.
+- The DMG is unsigned and not notarized until a later signing issue provides
+  Developer ID credentials and release automation. Beta install notes must
+  state this plainly.
+- Gatekeeper may block first launch. Use Finder right-click -> Open, or for
+  local testing only run `xattr -dr com.apple.quarantine /Applications/Soroeru.app`.
+- `out/` and `release/` are ignored by Git. Do not commit `.app`, DMG, logs,
+  vault files, or support bundles.
 - This package is Mac-only; Windows/Linux/App Store/auto-update packaging is out of scope.
 
 **Release automation.** Pushing a `v*` tag (e.g. `git tag v0.2 && git push origin v0.2`)
 triggers the `release-mac` GitHub Actions workflow on `macos-latest`. It runs the full
-release gate, builds the Mac artifact, then uploads `Catashiro-mac-beta.zip` to the
-GitHub release for that tag. If you create the release on the GitHub UI first (to write
-release notes), the workflow adds the artifact without overwriting your title or notes.
-If you push the tag without a pre-created release, the workflow creates one with
-auto-generated notes and marks it as a pre-release. No repository secrets are required;
-the workflow uses the built-in `GITHUB_TOKEN`.
+release gate, builds the unsigned DMG, then uploads `release/Soroeru-<version>.dmg`
+to the GitHub release for that tag. If you create the release on the GitHub UI first
+(to write release notes), the workflow adds the artifact without overwriting your title
+or notes. If you push the tag without a pre-created release, the workflow creates one
+with auto-generated notes and marks it as a pre-release. No repository secrets are
+required; the workflow uses the built-in `GITHUB_TOKEN`.
 
 Before sharing any private beta build, run the release-candidate checklist in
 [`manual-test.md`](manual-test.md) §0. It is the owning checklist for release
@@ -185,7 +192,7 @@ Current repository shape:
 ├── docs/
 ├── skills/            # repo-local Codex skills for project workflows
 ├── scripts/
-│   ├── package-mac.sh
+│   ├── rename-dmg.mjs
 │   └── setup-hooks.sh
 ├── website/           # static landing page for Mac beta download (website/index.html)
 ├── sites/             # local 10-pattern test sites (defs.ts + server.ts)
@@ -202,7 +209,8 @@ Current repository shape:
 │   └── unit/
 ├── package.json
 ├── package-lock.json
-├── release/           # generated Mac app/ZIP artifacts (gitignored)
+├── out/               # Electron Forge intermediate output (gitignored)
+├── release/           # generated DMG artifacts (gitignored)
 └── tsconfig.json
 ```
 
@@ -325,7 +333,7 @@ but the session-limit check and normal blocker handling still apply.
 
 - `state/` is local state and must not be committed.
 - `state/ai-reviews/` contains local AI review artifacts.
-- `release/` contains generated `.app` / ZIP artifacts and must not be committed.
+- `out/` and `release/` contain generated `.app` / DMG artifacts and must not be committed.
 - `node_modules/`, build outputs, coverage, and common caches are ignored by
   Git.
 - Keep durable workflow lessons near the owning document, Issue, or PR instead

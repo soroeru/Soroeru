@@ -23,7 +23,7 @@ Out of scope here: the overall test strategy and test-type matrix (see
 [`testing.md`](testing.md)), and the canonical command list (see
 [`development.md`](development.md)).
 
-## 0. Mac Private Beta Acceptance Smoke
+## 0. Soroeru Mac DMG Acceptance Smoke
 
 Run this checklist on an Apple Silicon Mac with macOS 14 Sonoma or macOS 15 Sequoia before
 inviting or expanding the first private beta group.
@@ -42,10 +42,10 @@ recorded in the beta release notes before users receive it.
       release-note bullets, including fixed issues, new limitations, and upgrade notes
 - [ ] Run the required local checks in §0.2 and confirm the GitHub checks for the
       release branch or release PR are green
-- [ ] Build the Mac artifact with `npm run package:mac`
-- [ ] Confirm `release/Catashiro.app` and `release/Catashiro-mac-beta.zip` were created
-      and that `release/` remains untracked / ignored by Git
-- [ ] Launch the generated `.app`, complete the install / first-run checks in §0.3, then
+- [ ] Build the Mac artifact with `npm run package:dmg`
+- [ ] Confirm `release/Soroeru-<version>.dmg` was created and that `out/` and `release/`
+      remain untracked / ignored by Git
+- [ ] Mount the generated DMG, complete the install / first-run checks in §0.3, then
       close the app and confirm no Playwright browser sessions remain open
 - [ ] Tag the tested commit as `beta-YYYY-MM-DD` or record the tested commit SHA in the
       release notes if a tag is not being used yet
@@ -69,7 +69,7 @@ issues or PRs.
 - [ ] `npm run release:check` passes, or the above equivalent commands are recorded
       individually with the same commit SHA
 - [ ] `npm run poc:matrix -- deterministic chromium`
-- [ ] `npm run package:mac`
+- [ ] `npm run package:dmg`
 - [ ] GitHub `ci / unit`, `ci / e2e-deterministic`, and `shellcheck` are green on the
       release PR / branch
 - [ ] If AI Provider mode changed, run one local AI-mode smoke with a user-owned test key
@@ -80,14 +80,15 @@ issues or PRs.
 
 Run these checks against the packaged `.app`, not only `npm run poc -- ui`.
 
-- [ ] Install by unzipping `Catashiro-mac-beta.zip` and moving `Catashiro.app` to the
-      beta install location documented for users
+- [ ] Mount `Soroeru-<version>.dmg` and move `Soroeru.app` to the beta install location
+      documented for users
 - [ ] If the build is unsigned, macOS presents the expected warning and the beta notes
-      already explain it
-- [ ] First launch opens the local web UI at `127.0.0.1` and does not require a hosted
-      account, cloud vault, telemetry opt-in, or browser extension install
+      already explain right-click -> Open and the local-test-only
+      `xattr -dr com.apple.quarantine /Applications/Soroeru.app` fallback
+- [ ] First launch opens the Soroeru Electron renderer and does not require Node.js, a
+      hosted account, cloud vault, telemetry opt-in, or browser extension install
 - [ ] Onboarding creates an encrypted local vault under
-      `~/Library/Application Support/Catashiro` by default, or under the documented
+      `~/Library/Application Support/Soroeru` by default, or under the documented
       `CATASHIRO_STATE_ROOT` override when set
 - [ ] Lock / unlock works with the master passphrase
 - [ ] Recovery-key generation shows the key once, then recovery-key unlock works after
@@ -137,7 +138,7 @@ Each beta build should include a short note with:
 - artifact name and distribution channel
 - supported platform: Apple Silicon Mac, macOS 14 Sonoma / macOS 15 Sequoia
 - signing / notarization status
-- setup prerequisites, including Node.js 22+ if the build does not bundle Node
+- setup prerequisites; current DMG builds do not require system Node.js
 - what changed since the previous beta
 - required fake-data test coverage and checks that passed
 - known limitations from §0.6
@@ -153,7 +154,7 @@ implementation and checks prove otherwise.
       browser-extension distribution are unsupported
 - [ ] Build is unsigned / not notarized unless a signing issue has explicitly changed
       this
-- [ ] Node.js 22+ is required unless the artifact bundles a Node runtime
+- [ ] System Node.js is not required by the DMG; the app uses Electron's embedded runtime
 - [ ] No auto-update channel; users install each beta manually
 - [ ] No hosted vault, backend sync, telemetry, analytics, or crash reporting
 - [ ] The encrypted vault is local by default; cloud-storage sync is unsupported unless a

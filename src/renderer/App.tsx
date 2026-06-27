@@ -88,9 +88,7 @@ export function App(): React.JSX.Element {
 
       {phase === "loading" && !statusError && <p>読み込み中…</p>}
 
-      {(phase === "setup" || phase === "unlock") && (
-        <VaultGate mode={phase} onSuccess={refresh} />
-      )}
+      {(phase === "setup" || phase === "unlock") && <VaultGate mode={phase} onSuccess={refresh} />}
 
       {phase === "unlocked" && (
         <>
@@ -164,7 +162,9 @@ function RecoveryKeyNotice({
     return (
       <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4">
         <p className="text-sm font-medium text-amber-900">リカバリーキー（一度だけ表示されます）</p>
-        <code className="select-all break-all rounded bg-white px-3 py-2 font-mono text-sm">{recoveryKey}</code>
+        <code className="select-all break-all rounded bg-white px-3 py-2 font-mono text-sm">
+          {recoveryKey}
+        </code>
         <p className="text-xs text-amber-800">
           安全な場所に保管してください。パスフレーズを忘れた場合の唯一の復旧手段です。再表示はできません。
         </p>
@@ -177,8 +177,14 @@ function RecoveryKeyNotice({
   if (hasRecoveryKey) return null;
   return (
     <div className="flex items-center justify-between gap-2 rounded border border-neutral-200 p-3">
-      <p className="text-sm text-neutral-600">リカバリーキーが未設定です。パスフレーズ紛失時の復旧用に作成できます。</p>
-      <button type="button" onClick={onGenerate} className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white">
+      <p className="text-sm text-neutral-600">
+        リカバリーキーが未設定です。パスフレーズ紛失時の復旧用に作成できます。
+      </p>
+      <button
+        type="button"
+        onClick={onGenerate}
+        className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white"
+      >
         作成
       </button>
     </div>
