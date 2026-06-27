@@ -95,7 +95,9 @@ test("the domain summary is sanitized: masked previews, no raw values leak", asy
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
     domain.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "user@example.test" });
-    domain.setPersonalAttribute({ attributeKey: "card.cvv", label: "CVV", value: "123" });
+    // Distinctive canary (not a 3-digit value) so the no-leak substring check
+    // below cannot coincidentally match random hex in UUIDs/timestamps.
+    domain.setPersonalAttribute({ attributeKey: "card.cvv", label: "CVV", value: "CVV-CANARY-LEAK" });
     await vault.save();
     vault.lock();
 
@@ -118,7 +120,7 @@ test("the domain summary is sanitized: masked previews, no raw values leak", asy
     const serialized = JSON.stringify(summary);
     assert.equal(serialized.includes("user@example.test"), false);
     assert.equal(serialized.includes("@example"), false);
-    assert.equal(serialized.includes("123"), false);
+    assert.equal(serialized.includes("CVV-CANARY-LEAK"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
