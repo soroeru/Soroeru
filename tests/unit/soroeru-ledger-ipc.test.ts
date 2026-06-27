@@ -46,8 +46,10 @@ async function seedLedger(path: string): Promise<{ siteId: string; emailDisclosu
   });
   // current: site holds the canonical phone value.
   domain.addDisclosure({ siteAccountId: site.id, attributeKey: "phone.full", siteHeldValue: "09011112222", sourceKind: "form-field" });
-  // most-sensitive: a CVV value the ledger must never reveal.
-  const cvvDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "card.cvv", siteHeldValue: "123", sourceKind: "billing-page" });
+  // most-sensitive: a CVV value the ledger must never reveal. Use a distinctive
+  // canary (not a 3-digit value) so the no-leak substring check below cannot
+  // coincidentally match random hex in UUIDs/timestamps.
+  const cvvDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "card.cvv", siteHeldValue: "CVV-CANARY-LEAK", sourceKind: "billing-page" });
   // unknown / hash-only: no raw value to reveal.
   const addressDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "address.full", normalizedValueHash: "deadbeef", sourceKind: "profile-text" });
 
@@ -128,7 +130,7 @@ test("the composed ledger summary and detail expose stale flags and masked previ
     // No raw value may appear anywhere in the serialized detail view.
     const serialized = JSON.stringify(detail);
     assert.equal(serialized.includes("old@example.test"), false);
-    assert.equal(serialized.includes("123"), false);
+    assert.equal(serialized.includes("CVV-CANARY-LEAK"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

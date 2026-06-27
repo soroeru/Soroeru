@@ -21,14 +21,14 @@ jobs:
 
       - run: npm ci
 
-      - name: Install Playwright Chromium (macOS)
+      - name: Install Playwright Chromium for release gate
         run: npx playwright install chromium
 
       - name: Run release gate (typecheck, unit tests, static checks)
         run: npm run release:check
 
-      - name: Build and package Mac app
-        run: npm run package:mac
+      - name: Build unsigned Soroeru DMG
+        run: npm run package:dmg
 
       - name: Create GitHub release if it does not exist
         run: |
@@ -40,10 +40,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Mac app ZIP to release
+      - name: Upload Mac DMG to release
         run: |
           gh release upload "${{ github.ref_name }}" \
-            release/Catashiro-mac-beta.zip \
+            release/Soroeru-*.dmg \
             --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

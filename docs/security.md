@@ -206,7 +206,7 @@ all data unless the user set up a recovery key beforehand.
 - **Error handling**: invalid JSON fails closed as `StoreCorruptError`; unsupported or
   newer format versions fail closed as `StoreFormatError`; locked-store access fails as
   `StoreLockedError`. Import validates JSON and format before writing the destination.
-- **Mac beta location**: app-bundle launches use `~/Library/Application Support/Catashiro`
+- **Mac beta location**: Soroeru Electron app launches use `~/Library/Application Support/Soroeru`
   by default (`CATASHIRO_STATE_ROOT` may override it for tests or an explicit
   user-selected local folder). Development commands continue to use `state/catashiro-poc`.
 
@@ -402,20 +402,21 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 
 ### 12.1 Mac Beta Artifact Safety
 
-The Mac private-beta artifact is generated locally by `npm run package:mac` and written to
-`release/` (gitignored). It bundles compiled application code and installed npm
-dependencies, but must not bundle:
+The Mac private-beta artifact is generated locally by `npm run package:dmg` and written to
+`release/` (gitignored), with Forge intermediate output under `out/` (gitignored). It
+bundles compiled application code, installed npm dependencies, Electron's embedded Node
+runtime, and the packaged Playwright Chromium browser, but must not bundle:
 
-- encrypted vault files from `state/` or `~/Library/Application Support/Catashiro`;
+- encrypted vault files from `state/` or `~/Library/Application Support/Soroeru`;
 - `.env`, API keys, passphrases, recovery keys, browser sessions, or cookies;
 - local AI review output under `state/ai-reviews/`;
 - screenshots, logs, diagnostics, or support bundles containing raw personal values.
 
-The generated launcher stores beta data under the user's app-support directory and writes
-process logs under `~/Library/Logs/Catashiro`. Logs must remain operational only; never
-log decrypted profile values, credentials, card data, CVV, API keys, or raw AI prompts.
+The packaged app stores beta data under the user's Soroeru app-support directory. Logs
+must remain operational only; never log decrypted profile values, credentials, card data,
+CVV, API keys, or raw AI prompts.
 
-The first beta ZIP is allowed to be unsigned / not notarized only for the invited
+The first beta DMG is allowed to be unsigned / not notarized only for the invited
 10-user private beta, and release notes must say so. Wider distribution requires a
 separate signing/notarization issue and a repeat of the security checklist below.
 
@@ -470,7 +471,7 @@ security section with an explicit reviewed exception before sharing the build.
 - [ ] No CAPTCHA-solving / anti-bot / fingerprint-evasion dependency is present (`npm run poc -- check-bypass`, SEC-002 §7)
 - [ ] Mac beta artifacts exclude vault data, secrets, browser sessions, local logs, and support bundles
 - [ ] Support bundles are user-initiated, local-only, redacted, and exclude raw values, vault bytes, API keys, prompts, cookies, screenshots, and traces
-- [ ] Signing/notarization status is documented before distributing a Mac beta ZIP
+- [ ] Signing/notarization status is documented before distributing a Mac beta DMG
 - [ ] Future MCP tools are disabled by default, local-only, permissioned, audited, and unable to expose raw values or bypass gates
 - [ ] Security-sensitive behavior is tested or manually verified
 

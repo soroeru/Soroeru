@@ -24,6 +24,12 @@ const DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const PRELOAD_PATH = join(appRoot, "dist", "preload", "preload.cjs");
 const RENDERER_INDEX = join(appRoot, "dist", "renderer", "index.html");
 
+function configurePackagedPlaywrightBrowsers(): void {
+  if (!app.isPackaged || process.env["PLAYWRIGHT_BROWSERS_PATH"]) return;
+  const bundledBrowsers = join(appRoot, "node_modules", "playwright-core", ".local-browsers");
+  process.env["PLAYWRIGHT_BROWSERS_PATH"] = bundledBrowsers;
+}
+
 /**
  * Resolve the vault file path. Honors the existing `CATASHIRO_STATE_ROOT`
  * override; otherwise uses Electron's per-app userData directory
@@ -68,6 +74,7 @@ async function createWindow(): Promise<void> {
 
 async function main(): Promise<void> {
   await app.whenReady();
+  configurePackagedPlaywrightBrowsers();
 
   const vaultPath = resolveVaultPath();
   await mkdir(dirname(vaultPath), { recursive: true });

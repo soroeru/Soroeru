@@ -58,7 +58,8 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-medium">CSV を取り込む</h2>
         <p className="text-sm text-neutral-500">
-          Google / Chrome パスワードマネージャーのエクスポート（name,url,username,password,note）をローカルで取り込みます。
+          Google / Chrome
+          パスワードマネージャーのエクスポート（name,url,username,password,note）をローカルで取り込みます。
         </p>
       </div>
 

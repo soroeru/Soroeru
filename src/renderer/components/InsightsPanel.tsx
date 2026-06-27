@@ -96,7 +96,9 @@ export function InsightsPanel({ reloadToken }: InsightsPanelProps): React.JSX.El
 function ReflectionRow({ finding }: { finding: ReflectionFinding }): React.JSX.Element {
   return (
     <li className="flex items-start gap-2">
-      <span className="mt-0.5 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">{finding.count}</span>
+      <span className="mt-0.5 rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">
+        {finding.count}
+      </span>
       <span>{finding.summary}</span>
     </li>
   );

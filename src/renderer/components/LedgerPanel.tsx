@@ -8,11 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Label } from "@radix-ui/react-label";
-import type {
-  DisclosureView,
-  SiteLedgerDetail,
-  SiteLedgerSummary,
-} from "../../../electron/ipc/contract.js";
+import type { DisclosureView, SiteLedgerDetail, SiteLedgerSummary } from "../../../electron/ipc/contract.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 
 interface LedgerPanelProps {
@@ -101,7 +97,9 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
               <span className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
                 <span>開示 {site.disclosureCount}</span>
                 {site.stale.stale > 0 && (
-                  <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">古い {site.stale.stale}</span>
+                  <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
+                    古い {site.stale.stale}
+                  </span>
                 )}
                 {site.stale.unknown > 0 && (
                   <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600">
