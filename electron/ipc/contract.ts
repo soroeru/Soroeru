@@ -18,6 +18,18 @@ import type {
   StaleState,
 } from "../../src/domain/entities.js";
 
+// Re-export the leaf-only ledger insight types so the renderer keeps a single
+// IPC-facing type source (contract.ts) without importing the Node-side domain.
+export type {
+  EvidenceRef,
+  LedgerFilter,
+  LedgerFilterKey,
+  LedgerFilterSite,
+  LedgerInsights,
+  ReflectionFinding,
+  ReflectionKind,
+} from "../../src/domain/insights-types.js";
+
 /**
  * The complete allowlist of IPC channels the preload bridge may invoke. Any
  * channel not listed here must be rejected by the main process and must be
@@ -34,6 +46,7 @@ export const IPC_CHANNELS = {
   csvImport: "soroeru:csv:import",
   ledgerSites: "soroeru:ledger:sites",
   ledgerSite: "soroeru:ledger:site",
+  ledgerInsights: "soroeru:ledger:insights",
   revealValue: "soroeru:ledger:reveal",
 } as const;
 

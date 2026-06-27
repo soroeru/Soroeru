@@ -10,9 +10,10 @@ import { reasonMessage } from "./messages.js";
 import { VaultGate } from "./components/VaultGate.js";
 import { CsvImportPanel } from "./components/CsvImportPanel.js";
 import { LedgerPanel } from "./components/LedgerPanel.js";
+import { InsightsPanel } from "./components/InsightsPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
-type Tab = "import" | "ledger";
+type Tab = "import" | "ledger" | "insights";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -108,6 +109,9 @@ export function App(): React.JSX.Element {
             <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
               開示台帳
             </TabButton>
+            <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>
+              インサイト
+            </TabButton>
           </nav>
 
           {tab === "import" && (
@@ -118,6 +122,7 @@ export function App(): React.JSX.Element {
             />
           )}
           {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}
+          {tab === "insights" && <InsightsPanel reloadToken={reloadToken} />}
         </>
       )}
     </main>

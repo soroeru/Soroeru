@@ -26,6 +26,7 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.csvImport]: (data: unknown) => session.importCsv(toCsvData(data)),
     [IPC_CHANNELS.ledgerSites]: () => session.ledgerSites(),
     [IPC_CHANNELS.ledgerSite]: (siteAccountId: unknown) => session.ledgerSite(String(siteAccountId ?? "")),
+    [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),
     [IPC_CHANNELS.revealValue]: (disclosureId: unknown, passphrase: unknown) =>
       session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
   };
