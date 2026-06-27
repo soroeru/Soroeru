@@ -10,6 +10,7 @@ import { DomainService } from "../src/domain/domain-service.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
 import { vaultExists } from "../src/store/vault.js";
 import { importPasswordCsv, CsvImportError } from "../src/domain/csv-import.js";
+import { computeLedgerInsights } from "../src/domain/ledger-insights.js";
 import {
   isSensitiveAttributeKey,
   MOST_SENSITIVE_ATTRIBUTE_KEY,
@@ -21,6 +22,7 @@ import type {
   CsvImportResult,
   DisclosureView,
   DomainSummary,
+  LedgerInsights,
   RecoveryKeyResult,
   RevealResult,
   SiteLedgerDetail,
@@ -178,6 +180,12 @@ export class SoroeruSession {
       .map((site) => this.composeSiteSummary(site.id))
       .filter((summary): summary is SiteLedgerSummary => summary !== undefined)
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  /** Cross-cutting filters and the initial Reflection derived from the ledger (RFC-002 §5.3). */
+  ledgerInsights(): LedgerInsights {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { filters: [], reflection: [] };
+    return computeLedgerInsights(this.domain);
   }
 
   /** The per-site composed ledger detail (masked disclosures, relationships, constraints). */

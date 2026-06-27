@@ -11,6 +11,7 @@ import {
   type CsvImportResult,
   type DomainSummary,
   type IpcChannel,
+  type LedgerInsights,
   type RecoveryKeyResult,
   type RevealResult,
   type SiteLedgerDetail,
@@ -39,6 +40,7 @@ export interface SoroeruApi {
   ledger: {
     sites(): Promise<SiteLedgerSummary[]>;
     site(siteAccountId: string): Promise<SiteLedgerDetail | undefined>;
+    insights(): Promise<LedgerInsights>;
     reveal(disclosureId: string, passphrase: string): Promise<RevealResult>;
   };
 }
@@ -64,6 +66,7 @@ export function createSoroeruApi(invoke: IpcInvoke): SoroeruApi {
       sites: () => invoke(IPC_CHANNELS.ledgerSites) as Promise<SiteLedgerSummary[]>,
       site: (siteAccountId) =>
         invoke(IPC_CHANNELS.ledgerSite, siteAccountId) as Promise<SiteLedgerDetail | undefined>,
+      insights: () => invoke(IPC_CHANNELS.ledgerInsights) as Promise<LedgerInsights>,
       reveal: (disclosureId, passphrase) =>
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,
     },
