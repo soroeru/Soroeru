@@ -1,8 +1,8 @@
 // CSV import & queue review (issue #160, RFC-002 §5.1). The user picks their
 // Google / Chrome Password Manager export; the file is read locally and sent as
 // bytes over IPC. Only a counts-only summary returns — never a raw credential.
-// After import the user reviews the imported sites and selects Visibility run
-// targets. (Launching the run is wired in a later slice; this captures intent.)
+// After import the user reviews the imported sites; the actual auto-login +
+// collection run is launched from the「収集」tab (CollectionPanel).
 
 import { useCallback, useState } from "react";
 import type { CsvImportResult } from "../../../electron/ipc/contract.js";
@@ -108,7 +108,7 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
               Visibility 収集の対象（{selected.size}/{summary.siteAccountIds.length}）
             </p>
             <p className="text-xs text-neutral-400">
-              この選択はまだ保存されません（収集の実行は後続スライスで対応します）。取り込み自体は完了しています。
+              取り込みは完了しています。実際の自動ログイン・収集は「収集」タブから実行できます。
             </p>
             <ul className="flex max-h-48 flex-col gap-1 overflow-auto text-sm">
               {summary.siteAccountIds.map((id) => (

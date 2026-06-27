@@ -29,6 +29,11 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),
     [IPC_CHANNELS.revealValue]: (disclosureId: unknown, passphrase: unknown) =>
       session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
+    [IPC_CHANNELS.visibilityRun]: (siteAccountId: unknown) =>
+      session.runVisibility(String(siteAccountId ?? "")),
+    [IPC_CHANNELS.visibilityResume]: () => session.resumeVisibility(),
+    [IPC_CHANNELS.visibilityAbort]: () => session.abortVisibility(),
+    [IPC_CHANNELS.visibilityStatus]: () => session.visibilityStatus(),
   };
 }
 

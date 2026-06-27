@@ -18,9 +18,16 @@ import {
   type SiteLedgerSummary,
   type VaultMutationResult,
   type VaultStatus,
+  type VisibilityEvent,
+  type VisibilityHandoffAck,
+  type VisibilityRunResultView,
+  type VisibilityStatusView,
 } from "./ipc/contract.js";
 
 export type IpcInvoke = (channel: IpcChannel, ...args: unknown[]) => Promise<unknown>;
+
+/** Subscribe to one-way Visibility events; returns an unsubscribe function. */
+export type VisibilityEventSubscribe = (listener: (event: VisibilityEvent) => void) => () => void;
 
 export interface SoroeruApi {
   vault: {
@@ -43,9 +50,20 @@ export interface SoroeruApi {
     insights(): Promise<LedgerInsights>;
     reveal(disclosureId: string, passphrase: string): Promise<RevealResult>;
   };
+  visibility: {
+    run(siteAccountId: string): Promise<VisibilityRunResultView>;
+    resume(): Promise<VisibilityHandoffAck>;
+    abort(): Promise<VisibilityHandoffAck>;
+    status(): Promise<VisibilityStatusView>;
+    /** Subscribe to run progress / wall hand-off events; returns an unsubscribe function. */
+    onEvent(listener: (event: VisibilityEvent) => void): () => void;
+  };
 }
 
-export function createSoroeruApi(invoke: IpcInvoke): SoroeruApi {
+export function createSoroeruApi(
+  invoke: IpcInvoke,
+  subscribeVisibility?: VisibilityEventSubscribe,
+): SoroeruApi {
   return {
     vault: {
       status: () => invoke(IPC_CHANNELS.vaultStatus) as Promise<VaultStatus>,
@@ -69,6 +87,14 @@ export function createSoroeruApi(invoke: IpcInvoke): SoroeruApi {
       insights: () => invoke(IPC_CHANNELS.ledgerInsights) as Promise<LedgerInsights>,
       reveal: (disclosureId, passphrase) =>
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,
+    },
+    visibility: {
+      run: (siteAccountId) =>
+        invoke(IPC_CHANNELS.visibilityRun, siteAccountId) as Promise<VisibilityRunResultView>,
+      resume: () => invoke(IPC_CHANNELS.visibilityResume) as Promise<VisibilityHandoffAck>,
+      abort: () => invoke(IPC_CHANNELS.visibilityAbort) as Promise<VisibilityHandoffAck>,
+      status: () => invoke(IPC_CHANNELS.visibilityStatus) as Promise<VisibilityStatusView>,
+      onEvent: (listener) => subscribeVisibility?.(listener) ?? (() => {}),
     },
   };
 }

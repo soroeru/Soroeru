@@ -7,8 +7,18 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import { createSoroeruApi } from "./preload-api.js";
+import { VISIBILITY_EVENT_CHANNEL, type VisibilityEvent } from "./ipc/contract.js";
 
 contextBridge.exposeInMainWorld(
   "soroeru",
-  createSoroeruApi((channel, ...args) => ipcRenderer.invoke(channel, ...args)),
+  createSoroeruApi(
+    (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    (listener) => {
+      // Wrap so the renderer never receives Electron's IpcRendererEvent (which
+      // can carry a sender handle); it sees only the sanitized payload.
+      const handler = (_event: unknown, payload: VisibilityEvent): void => listener(payload);
+      ipcRenderer.on(VISIBILITY_EVENT_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(VISIBILITY_EVENT_CHANNEL, handler);
+    },
+  ),
 );

@@ -14,8 +14,11 @@ import { computeLedgerInsights } from "../src/domain/ledger-insights.js";
 import {
   isSensitiveAttributeKey,
   MOST_SENSITIVE_ATTRIBUTE_KEY,
+  type SiteAccount,
   type Sensitivity,
 } from "../src/domain/entities.js";
+import type { SiteSession } from "../src/automation/page-driver.js";
+import { VisibilityService } from "./visibility-service.js";
 import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
 import type {
   AttributeSummary,
@@ -30,7 +33,21 @@ import type {
   StaleTally,
   VaultMutationResult,
   VaultStatus,
+  VisibilityEvent,
+  VisibilityHandoffAck,
+  VisibilityRunResultView,
+  VisibilityStatusView,
 } from "./ipc/contract.js";
+
+/** Construction-time hooks; production defaults to a lazily-created headed BrowserEngine. */
+export interface SoroeruSessionOptions {
+  /** Override how a per-site browser session is opened (tests / scripted E2E). */
+  openSession?: (site: SiteAccount) => Promise<SiteSession>;
+  /** Tear down an injected engine on shutdown (paired with a custom `openSession`). */
+  closeEngine?: () => Promise<void>;
+  /** Max chained wall hand-offs before a run gives up. */
+  maxHandoffs?: number;
+}
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
 function maskPreview(value: string): string {
@@ -48,8 +65,41 @@ function sensitivityFor(attributeKey: string): Sensitivity {
 export class SoroeruSession {
   private vault: VaultV2 | undefined;
   private domain: DomainService | undefined;
+  private readonly visibility: VisibilityService;
+  /** Lazily-created real engine (only when production `openSession` is used). */
+  private engine:
+    | { openSession: (site: SiteAccount) => Promise<SiteSession>; closeAll: () => Promise<void> }
+    | undefined;
+  private readonly closeInjectedEngine: (() => Promise<void>) | undefined;
+  private eventSink: ((event: VisibilityEvent) => void) | undefined;
 
-  constructor(private readonly vaultPath: string) {}
+  constructor(
+    private readonly vaultPath: string,
+    options: SoroeruSessionOptions = {},
+  ) {
+    this.closeInjectedEngine = options.closeEngine;
+    const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
+    this.visibility = new VisibilityService({
+      openSession,
+      emit: (event) => this.eventSink?.(event),
+      ...(options.maxHandoffs !== undefined ? { maxHandoffs: options.maxHandoffs } : {}),
+    });
+  }
+
+  /** Register the main-process sink that forwards Visibility events to the renderer. */
+  setVisibilityEventSink(sink: (event: VisibilityEvent) => void): void {
+    this.eventSink = sink;
+  }
+
+  /** Default production session opener: a headed Chromium BrowserEngine, created on first use. */
+  private async defaultOpenSession(site: SiteAccount): Promise<SiteSession> {
+    if (!this.engine) {
+      // Dynamic import keeps Playwright out of the module graph until a run starts.
+      const { BrowserEngine } = await import("../src/automation/browser-engine.js");
+      this.engine = new BrowserEngine();
+    }
+    return this.engine.openSession(site);
+  }
 
   async status(): Promise<VaultStatus> {
     return {
@@ -69,6 +119,7 @@ export class SoroeruSession {
     }
     this.vault = await VaultV2.open(this.vaultPath, passphrase);
     this.domain = new DomainService(this.vault);
+    this.visibility.setDomain(this.domain);
     await this.vault.save();
     return { ok: true, locked: false };
   }
@@ -81,6 +132,7 @@ export class SoroeruSession {
     try {
       this.vault = await VaultV2.open(this.vaultPath, passphrase);
       this.domain = new DomainService(this.vault);
+      this.visibility.setDomain(this.domain);
       return { ok: true, locked: false };
     } catch {
       // Do not surface the underlying error: it must not leak vault internals.
@@ -98,6 +150,7 @@ export class SoroeruSession {
     try {
       this.vault = await VaultV2.openWithRecoveryKey(this.vaultPath, recoveryKey);
       this.domain = new DomainService(this.vault);
+      this.visibility.setDomain(this.domain);
       return { ok: true, locked: false };
     } catch {
       // Wrong recovery key, or none configured: report uniformly, leak nothing.
@@ -108,10 +161,48 @@ export class SoroeruSession {
   }
 
   lock(): VaultMutationResult {
+    this.visibility.clearDomain();
     this.vault?.lock();
     this.vault = undefined;
     this.domain = undefined;
     return { ok: true, locked: true };
+  }
+
+  // --- Visibility run (auto-login / collection, RFC-002 §5.1 / §5.2) ---
+
+  /** Run Visibility collection for one site in a headed browser. Counts-only result. */
+  runVisibility(siteAccountId: string): Promise<VisibilityRunResultView> {
+    return this.visibility.runSite(siteAccountId);
+  }
+
+  /** Resume the active run after the user cleared a wall in the headed session. */
+  resumeVisibility(): VisibilityHandoffAck {
+    return this.visibility.resumeHandoff() ? { ok: true } : { ok: false, error: "no-active-handoff" };
+  }
+
+  /** Abandon the active wall hand-off; the run stops without bypassing the wall. */
+  abortVisibility(): VisibilityHandoffAck {
+    return this.visibility.abortHandoff() ? { ok: true } : { ok: false, error: "no-active-handoff" };
+  }
+
+  visibilityStatus(): VisibilityStatusView {
+    return this.visibility.status();
+  }
+
+  /**
+   * Orderly teardown for app quit (RFC-002 §5.2): stop any paused hand-off,
+   * close every Playwright session + the browser (no orphan process), and lock
+   * the vault (drop the derived key and decrypted records from memory).
+   */
+  async shutdown(): Promise<void> {
+    this.visibility.abortHandoff();
+    if (this.engine) {
+      await this.engine.closeAll();
+      this.engine = undefined;
+    } else if (this.closeInjectedEngine) {
+      await this.closeInjectedEngine();
+    }
+    this.lock();
   }
 
   /**
