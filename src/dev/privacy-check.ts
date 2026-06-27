@@ -2,7 +2,7 @@
 // encrypted storage abstraction, the encrypted export/import (SEC-003 / #44),
 // and the masked measurement output (docs/security.md §3).
 //
-// This scans `src/**/*.ts` and `run/**/*.ts`
+// This scans `src/**/*.ts`, `run/**/*.ts`, and `electron/**/*.ts`
 // (excluding `*.test.ts`) for lines that write to the local filesystem. Every
 // match must carry a `// persist: <category>` annotation (on the same line or
 // the line above) naming one of the allowed categories below; an unannotated
@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["src", "run"];
+const SCAN_DIRS = ["src", "run", "electron"];
 
 /** Allowed `// persist: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([

@@ -39,6 +39,13 @@ const APP_NAME = "Soroeru";
 const ENTITY_KIND_SET = new Set<string>(ENTITY_KINDS);
 
 /**
+ * Known plaintext encrypted under the master key and stored alongside the
+ * records. It lets `open` reject a wrong passphrase even when the vault holds no
+ * records yet (an empty vault has no ciphertext to fail GCM auth on otherwise).
+ */
+const PASSPHRASE_VERIFIER_TOKEN = "soroeru-vault-passphrase-verifier-v1";
+
+/**
  * Encrypted record envelope (RFC-002 §4). AES-GCM appends its 16-byte auth tag
  * to the ciphertext (Web Crypto behavior), so `ciphertext` holds ciphertext +
  * tag and no separate `tag` field is needed for round-tripping.
@@ -67,6 +74,8 @@ interface VaultFileV2 {
   metadata: VaultMetadata;
   /** Present iff a recovery key is configured: master key wrapped under the recovery KEK. */
   recovery?: EncryptedRecord;
+  /** Known token encrypted under the master key, for passphrase verification. */
+  verifier?: EncryptedRecord;
   records: VaultRecordEnvelope[];
 }
 
@@ -155,9 +164,21 @@ export class VaultV2 {
     const key = await deriveKey(passphrase, kdf);
     const now = Date.now();
     const metadata = file?.metadata ?? { createdAt: now, updatedAt: now, appName: APP_NAME };
+    // Reject a wrong passphrase up front, independent of record count.
+    if (file?.verifier) await VaultV2.assertPassphraseVerifier(key, file.verifier);
     const vault = new VaultV2(filePath, key, kdf, metadata, file?.recovery);
     if (file) await vault.loadRecords(file.records, key);
     return vault;
+  }
+
+  /** Decrypt the stored verifier token and confirm it matches; throw otherwise. */
+  private static async assertPassphraseVerifier(key: MasterKey, verifier: EncryptedRecord): Promise<void> {
+    // A wrong passphrase fails GCM auth here (decryptRecord throws). A successful
+    // decrypt that does not match the token means a corrupt/foreign verifier.
+    const token = await decryptRecord(key, verifier);
+    if (token !== PASSPHRASE_VERIFIER_TOKEN) {
+      throw new VaultCorruptError("vault passphrase verifier did not match");
+    }
   }
 
   /** Open the vault using a recovery key instead of the passphrase (RFC-002 §6). */
@@ -355,6 +376,7 @@ export class VaultV2 {
       vaultVersion: VAULT_FORMAT_VERSION,
       kdf: this.kdf,
       metadata: { ...this.metadata, updatedAt: now },
+      verifier: await encryptRecord(key, PASSPHRASE_VERIFIER_TOKEN),
       records,
     };
     if (this.recovery) file.recovery = this.recovery;

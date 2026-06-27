@@ -203,7 +203,7 @@ function aiMapperForUi(app: CatashiroApp): Mapper {
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
 function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
-  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/ and run/`);
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/, run/ and electron/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §6):");
     for (const v of result.violations) console.error(`  - ${v}`);
@@ -216,7 +216,7 @@ function cmdCheckEgress(): void {
 /** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
 function cmdCheckPersistence(): void {
   const result = checkLocalPersistence(process.cwd());
-  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under src/ and run/`);
+  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under src/, run/ and electron/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §3):");
     for (const v of result.violations) console.error(`  - ${v}`);
