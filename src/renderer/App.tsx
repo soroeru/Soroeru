@@ -1,14 +1,18 @@
-// Minimal renderer for slice A's first IPC round trip (issue #158): detect
-// whether a vault exists, set it up or unlock it, then show the sanitized
-// DomainService summary returned over typed IPC. This is intentionally a
-// skeleton — the full ledger / CSV / Reflection screens land in #160 / #161.
+// Slice A renderer (issue #160): vault setup / unlock (incl. recovery key) →
+// CSV import & queue review → Disclosure ledger (per-site composed view with
+// stale flags and re-authenticated reveal). Everything crosses the typed IPC
+// boundary; the renderer holds no fs/network/vault handle and sees only
+// sanitized, masked views (RFC-002 §3 / §5.1).
 
 import { useCallback, useEffect, useState } from "react";
-import { Label } from "@radix-ui/react-label";
-import { MIN_PASSPHRASE_LENGTH } from "../../electron/ipc/contract.js";
-import type { DomainSummary, VaultStatus } from "../../electron/ipc/contract.js";
+import type { VaultStatus } from "../../electron/ipc/contract.js";
+import { reasonMessage } from "./messages.js";
+import { VaultGate } from "./components/VaultGate.js";
+import { CsvImportPanel } from "./components/CsvImportPanel.js";
+import { LedgerPanel } from "./components/LedgerPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
+type Tab = "import" | "ledger";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -17,131 +21,161 @@ function phaseFor(status: VaultStatus): Phase {
 
 export function App(): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [passphrase, setPassphrase] = useState("");
-  const [error, setError] = useState<string | undefined>();
-  const [busy, setBusy] = useState(false);
-  const [summary, setSummary] = useState<DomainSummary | undefined>();
+  const [tab, setTab] = useState<Tab>("import");
+  const [hasRecoveryKey, setHasRecoveryKey] = useState(false);
+  const [recoveryKey, setRecoveryKey] = useState<string | undefined>();
+  const [reloadToken, setReloadToken] = useState(0);
+  const [recoveryError, setRecoveryError] = useState<string | undefined>();
+  const [statusError, setStatusError] = useState<string | undefined>();
 
   const refresh = useCallback(async () => {
-    const status = await window.soroeru.vault.status();
-    setPhase(phaseFor(status));
-    if (!status.locked && status.exists) {
-      setSummary(await window.soroeru.domain.summary());
+    // Guard the status round trip: a rejected invoke must not leave the app stuck
+    // on "loading" with an unhandled rejection (the pre-refactor gate did this).
+    try {
+      const status = await window.soroeru.vault.status();
+      setStatusError(undefined);
+      setPhase(phaseFor(status));
+      setHasRecoveryKey(status.hasRecoveryKey);
+    } catch {
+      setStatusError(reasonMessage(undefined));
     }
   }, []);
 
   useEffect(() => {
-    // Load-on-mount: synchronize the UI with the main-process vault state. The
-    // state update happens after the awaited IPC call, not synchronously.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
   }, [refresh]);
 
-  const submit = useCallback(
-    async (mode: "setup" | "unlock") => {
-      setBusy(true);
-      setError(undefined);
-      try {
-        const result =
-          mode === "setup"
-            ? await window.soroeru.vault.setup(passphrase)
-            : await window.soroeru.vault.unlock(passphrase);
-        if (!result.ok) {
-          setError(mode === "setup" ? "ボールトを作成できませんでした。" : "解錠に失敗しました。");
-          return;
-        }
-        setPassphrase("");
-        setSummary(await window.soroeru.domain.summary());
-        setPhase("unlocked");
-      } catch {
-        // A rejected IPC invoke (e.g. a disk error in the main handler) must not
-        // become a silent failure or an unhandled rejection.
-        setError("操作に失敗しました。時間をおいて再試行してください。");
-      } finally {
-        setBusy(false);
-      }
-    },
-    [passphrase],
-  );
-
   const lock = useCallback(async () => {
     await window.soroeru.vault.lock();
-    setSummary(undefined);
+    setRecoveryKey(undefined);
+    // Drop any stale recovery error so it cannot reappear on the next unlock.
+    setRecoveryError(undefined);
     await refresh();
+  }, [refresh]);
+
+  const generateRecovery = useCallback(async () => {
+    setRecoveryError(undefined);
+    try {
+      const result = await window.soroeru.vault.generateRecoveryKey();
+      if (!result.ok || !result.recoveryKey) {
+        setRecoveryError(reasonMessage(result.error));
+        return;
+      }
+      setRecoveryKey(result.recoveryKey);
+      await refresh();
+    } catch {
+      setRecoveryError(reasonMessage(undefined));
+    }
   }, [refresh]);
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-8">
-      <header>
-        <h1 className="text-2xl font-semibold">Soroeru</h1>
-        <p className="text-sm text-neutral-500">ローカルファースト・エージェンシーエンジン</p>
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Soroeru</h1>
+          <p className="text-sm text-neutral-500">ローカルファースト・エージェンシーエンジン</p>
+        </div>
+        {phase === "unlocked" && (
+          <button type="button" onClick={() => void lock()} className="text-sm underline">
+            施錠
+          </button>
+        )}
       </header>
 
-      {phase === "loading" && <p>読み込み中…</p>}
+      {statusError && <p className="text-sm text-red-600">{statusError}</p>}
+
+      {phase === "loading" && !statusError && <p>読み込み中…</p>}
 
       {(phase === "setup" || phase === "unlock") && (
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void submit(phase);
-          }}
-        >
-          <Label htmlFor="passphrase" className="text-sm font-medium">
-            {phase === "setup" ? "マスターパスフレーズを設定" : "マスターパスフレーズ"}
-          </Label>
-          <input
-            id="passphrase"
-            type="password"
-            autoComplete="off"
-            value={passphrase}
-            onChange={(event) => setPassphrase(event.target.value)}
-            className="rounded border border-neutral-300 px-3 py-2"
-          />
-          <button
-            type="submit"
-            disabled={
-              busy ||
-              (phase === "setup" ? passphrase.length < MIN_PASSPHRASE_LENGTH : passphrase.length === 0)
-            }
-            className="rounded bg-neutral-900 px-4 py-2 text-white disabled:opacity-50"
-          >
-            {phase === "setup" ? "作成して解錠" : "解錠"}
-          </button>
-          {phase === "setup" && (
-            <p className="text-xs text-neutral-400">{MIN_PASSPHRASE_LENGTH}文字以上で設定してください。</p>
-          )}
-          {error && <p className="text-sm text-red-600">{error}</p>}
-        </form>
+        <VaultGate mode={phase} onSuccess={refresh} />
       )}
 
-      {phase === "unlocked" && summary && (
-        <section className="flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">ドメイン概要</h2>
-            <button type="button" onClick={() => void lock()} className="text-sm underline">
-              施錠
-            </button>
-          </div>
-          <dl className="grid grid-cols-2 gap-2 text-sm">
-            <dt className="text-neutral-500">サイトアカウント数</dt>
-            <dd>{summary.siteAccountCount}</dd>
-            <dt className="text-neutral-500">個人属性数</dt>
-            <dd>{summary.attributeCount}</dd>
-          </dl>
-          {summary.attributes.length > 0 && (
-            <ul className="flex flex-col gap-1 text-sm">
-              {summary.attributes.map((attr) => (
-                <li key={attr.attributeKey} className="flex justify-between">
-                  <span>{attr.label}</span>
-                  <span className="font-mono text-neutral-500">{attr.preview || "—"}</span>
-                </li>
-              ))}
-            </ul>
+      {phase === "unlocked" && (
+        <>
+          <RecoveryKeyNotice
+            hasRecoveryKey={hasRecoveryKey}
+            recoveryKey={recoveryKey}
+            onGenerate={() => void generateRecovery()}
+            onDismiss={() => setRecoveryKey(undefined)}
+          />
+          {recoveryError && <p className="text-sm text-red-600">{recoveryError}</p>}
+
+          <nav className="flex gap-2 border-b border-neutral-200">
+            <TabButton active={tab === "import"} onClick={() => setTab("import")}>
+              取り込み
+            </TabButton>
+            <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
+              開示台帳
+            </TabButton>
+          </nav>
+
+          {tab === "import" && (
+            <CsvImportPanel
+              onImported={() => {
+                setReloadToken((token) => token + 1);
+              }}
+            />
           )}
-          <p className="text-xs text-neutral-400">値はマスク済みのプレビューです（生の値は表示しません）。</p>
-        </section>
+          {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}
+        </>
       )}
     </main>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-2 text-sm ${active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function RecoveryKeyNotice({
+  hasRecoveryKey,
+  recoveryKey,
+  onGenerate,
+  onDismiss,
+}: {
+  hasRecoveryKey: boolean;
+  recoveryKey: string | undefined;
+  onGenerate: () => void;
+  onDismiss: () => void;
+}): React.JSX.Element | null {
+  if (recoveryKey) {
+    return (
+      <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4">
+        <p className="text-sm font-medium text-amber-900">リカバリーキー（一度だけ表示されます）</p>
+        <code className="select-all break-all rounded bg-white px-3 py-2 font-mono text-sm">{recoveryKey}</code>
+        <p className="text-xs text-amber-800">
+          安全な場所に保管してください。パスフレーズを忘れた場合の唯一の復旧手段です。再表示はできません。
+        </p>
+        <button type="button" onClick={onDismiss} className="self-start text-xs underline">
+          保管しました
+        </button>
+      </div>
+    );
+  }
+  if (hasRecoveryKey) return null;
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border border-neutral-200 p-3">
+      <p className="text-sm text-neutral-600">リカバリーキーが未設定です。パスフレーズ紛失時の復旧用に作成できます。</p>
+      <button type="button" onClick={onGenerate} className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white">
+        作成
+      </button>
+    </div>
   );
 }

@@ -39,8 +39,14 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.vault.status();
   await api.vault.setup("x");
   await api.vault.unlock("x");
+  await api.vault.unlockWithRecoveryKey("x");
   await api.vault.lock();
+  await api.vault.generateRecoveryKey();
   await api.domain.summary();
+  await api.csv.import("x");
+  await api.ledger.sites();
+  await api.ledger.site("x");
+  await api.ledger.reveal("x", "y");
 
   for (const channel of invoked) {
     assert.ok(isIpcChannel(channel), `unexpected channel ${channel}`);
