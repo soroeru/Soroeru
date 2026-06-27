@@ -186,6 +186,42 @@ test("treats a double-quote mid unquoted field as a literal", async () => {
   });
 });
 
+test("dedups a duplicate (site, username) row within a single import", async () => {
+  await withDomain(async (domain) => {
+    const csv = [
+      HEADER,
+      "Example,https://example.test,alice,pw1,",
+      "Example,https://example.test,alice,pw1,",
+    ].join("\n");
+    const summary = importPasswordCsv(domain, { data: csv });
+    assert.equal(summary.importedCredentials, 1);
+    assert.equal(summary.skipped, 1);
+    const site = domain.listSiteAccounts().find((s) => s.domain === "example.test");
+    assert.ok(site);
+    assert.equal(domain.listCredentialsForSite(site.id).length, 1);
+  });
+});
+
+test("preserves a note containing an unquoted comma (extra columns rejoined)", async () => {
+  await withDomain(async (domain) => {
+    const csv = [HEADER, "Example,https://example.test,alice,pw,part one,part two"].join("\n");
+    const summary = importPasswordCsv(domain, { data: csv });
+    assert.equal(summary.importedCredentials, 1);
+    const site = domain.listSiteAccounts().find((s) => s.domain === "example.test");
+    assert.ok(site);
+    assert.equal(domain.listCredentialsForSite(site.id)[0]?.note, "part one,part two");
+  });
+});
+
+test("accepts a UTF-8 BOM-prefixed header (Windows export)", async () => {
+  await withDomain(async (domain) => {
+    const csv = "﻿" + [HEADER, "Example,https://example.test,alice,pw,"].join("\n");
+    const summary = importPasswordCsv(domain, { data: csv });
+    assert.equal(summary.importedCredentials, 1);
+    assert.equal(summary.sitesCreated, 1);
+  });
+});
+
 test("rejects an empty CSV with the 'empty' reason", async () => {
   await withDomain(async (domain) => {
     assert.throws(

@@ -8,8 +8,10 @@
 //     persistence and encrypts every credential at rest).
 //   - Validate byte size and row count BEFORE importing anything.
 //   - Never log username / password / note (this module has no logging at all).
-//   - Discard the raw CSV buffer after parsing (best-effort zeroing of a passed
-//     Uint8Array) so plaintext credentials do not linger in memory.
+//   - Discard the raw CSV byte buffer after parsing: a passed Uint8Array is
+//     zeroed. (Decoded strings and the vault's in-memory plaintext still hold
+//     the values — V8 strings cannot be wiped — so this scopes only to the raw
+//     buffer; values are never logged or re-exported.)
 //   - Never re-export plaintext credentials; the result is counts only.
 //   - Recommend (never perform) deletion of the user's source CSV file.
 
@@ -123,12 +125,25 @@ function importRows(domain: DomainService, dataRows: string[][]): CsvImportSumma
   for (const site of domain.listSiteAccounts()) sitesByDomain.set(site.domain, site.id);
   const seededIds = new Set<string>();
 
+  // Seen (siteId, username) pairs, primed from the vault, so credential dedup is
+  // O(1) per row instead of re-scanning the credential table each iteration.
+  const credentialKey = (siteId: string, username: string): string => `${siteId}\u0000${username}`;
+  const seenCredentials = new Set<string>();
+  for (const siteId of sitesByDomain.values()) {
+    for (const cred of domain.listCredentialsForSite(siteId)) {
+      seenCredentials.add(credentialKey(siteId, cred.username));
+    }
+  }
+
   for (const cols of dataRows) {
     if (cols.length < EXPECTED_HEADERS.length) {
       summary.skipped++;
       continue;
     }
-    const [name, rawUrl, username, password, note] = cols as [string, string, string, string, string];
+    const [name, rawUrl, username, password] = cols as [string, string, string, string];
+    // A non-Chrome / hand-edited export may leave an unquoted comma in `note`,
+    // producing extra columns; rejoin them so the note is preserved, not truncated.
+    const note = cols.slice(4).join(",");
 
     const parsed = normalizeSiteUrl(rawUrl);
     if (!parsed) {
@@ -155,14 +170,15 @@ function importRows(domain: DomainService, dataRows: string[][]): CsvImportSumma
     }
 
     // Seed-only dedup: skip a credential we already hold for this
-    // (site, username) pair. We intentionally do NOT update an existing
-    // credential's password here — refreshing rotated secrets is the job of the
-    // Bulk Update slice, not the Visibility seed import.
-    const exists = domain.listCredentialsForSite(siteId).some((c) => c.username === username);
-    if (exists) {
+    // (site, username) pair — including a duplicate row earlier in this same
+    // file. We intentionally do NOT update an existing credential's password
+    // here; refreshing rotated secrets is the Bulk Update slice's job.
+    const key = credentialKey(siteId, username);
+    if (seenCredentials.has(key)) {
       summary.skipped++;
       continue;
     }
+    seenCredentials.add(key);
 
     const credentialInput: Parameters<DomainService["addCredential"]>[0] = {
       siteAccountId: siteId,
