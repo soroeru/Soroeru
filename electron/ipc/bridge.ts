@@ -18,7 +18,30 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.vaultStatus]: () => session.status(),
     [IPC_CHANNELS.vaultSetup]: (passphrase: unknown) => session.setup(String(passphrase ?? "")),
     [IPC_CHANNELS.vaultUnlock]: (passphrase: unknown) => session.unlock(String(passphrase ?? "")),
+    [IPC_CHANNELS.vaultUnlockRecovery]: (recoveryKey: unknown) =>
+      session.unlockWithRecoveryKey(String(recoveryKey ?? "")),
     [IPC_CHANNELS.vaultLock]: () => session.lock(),
+    [IPC_CHANNELS.recoveryGenerate]: () => session.generateRecoveryKey(),
     [IPC_CHANNELS.domainSummary]: () => session.domainSummary(),
+    [IPC_CHANNELS.csvImport]: (data: unknown) => session.importCsv(toCsvData(data)),
+    [IPC_CHANNELS.ledgerSites]: () => session.ledgerSites(),
+    [IPC_CHANNELS.ledgerSite]: (siteAccountId: unknown) => session.ledgerSite(String(siteAccountId ?? "")),
+    [IPC_CHANNELS.revealValue]: (disclosureId: unknown, passphrase: unknown) =>
+      session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
   };
+}
+
+/**
+ * Coerce the renderer-supplied CSV payload into the importer's `string | Uint8Array`
+ * shape. Structured clone may deliver an ArrayBuffer, a typed array, or text;
+ * anything else becomes empty bytes (the importer then reports an empty CSV).
+ */
+function toCsvData(data: unknown): string | Uint8Array {
+  if (typeof data === "string") return data;
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return new Uint8Array(0);
 }
