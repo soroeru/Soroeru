@@ -94,6 +94,29 @@ encrypted store, measurement JSON) is written under `state/catashiro-poc/` and
 must not be committed. See [`verification-results.md`](verification-results.md)
 for full command reference and verification results.
 
+### 3.2 Soroeru desktop app (RFC-002 scaffold, #158)
+
+The Soroeru Electron app (main / preload / renderer) lives alongside the PoC
+during the migration:
+
+```bash
+npm run dev            # build main + preload, start Vite dev server, launch Electron
+npm run build:app      # tsc (main) + Vite preload bundle + Vite renderer build
+npm run lint           # ESLint over electron/ and src/renderer/
+npm run format         # Prettier check over the new app sources
+npm run typecheck      # tsc for the node/main build AND the renderer build
+```
+
+Layout: `electron/` is the trusted main process (owns the Vault v2 lifecycle and
+the typed IPC bridge); `src/renderer/` is the untrusted React UI surface that
+reaches the vault only through `window.soroeru` (preload `contextBridge`). The
+renderer window runs with `contextIsolation: true`, `nodeIntegration: false`,
+and `sandbox: true`; the sandboxed preload is bundled to a self-contained
+CommonJS file (`vite build --mode preload`). The vault file defaults to
+`app.getPath("userData")/vault.json` (`.../Application Support/Soroeru`) and
+still honors the `CATASHIRO_STATE_ROOT` override. App build output under `dist/`
+is not committed.
+
 ## 3.1 Mac Beta Packaging
 
 The first beta packaging path intentionally avoids adding Electron, Tauri, auto-update,

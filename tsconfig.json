@@ -12,5 +12,6 @@
     "outDir": "dist/compiled",
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "run/**/*.ts", "sites/**/*.ts"]
+  "include": ["src/**/*.ts", "electron/**/*.ts", "tests/**/*.ts", "run/**/*.ts", "sites/**/*.ts"],
+  "exclude": ["node_modules", "dist", "release", "src/renderer"]
 }

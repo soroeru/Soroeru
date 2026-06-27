@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The renderer is an untrusted UI surface that talks to the vault only
+         through the preload bridge. The strict production CSP is injected at
+         build time (see vite.config.ts); it is intentionally absent here so the
+         Vite dev server's inline Fast Refresh preamble is not blocked in
+         `npm run dev`. -->
+    <title>Soroeru</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
