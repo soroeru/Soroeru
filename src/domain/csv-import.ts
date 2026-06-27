@@ -51,7 +51,6 @@ export interface CsvImportSummary {
 export interface CsvImportInput {
   /** Raw CSV as text or bytes. A passed Uint8Array is zeroed after parsing. */
   data: string | Uint8Array;
-  now?: number;
 }
 
 /**
@@ -60,8 +59,6 @@ export interface CsvImportInput {
  * sanitized summary. The caller must `vault.save()` to persist.
  */
 export function importPasswordCsv(domain: DomainService, input: CsvImportInput): CsvImportSummary {
-  const ts = input.now ?? Date.now();
-
   // 1. Validate byte size before doing anything else.
   const byteLength =
     typeof input.data === "string" ? Buffer.byteLength(input.data, "utf8") : input.data.byteLength;
@@ -80,9 +77,11 @@ export function importPasswordCsv(domain: DomainService, input: CsvImportInput):
   }
 
   try {
-    const rows = parseCsv(csvText);
-    if (rows.length === 0) throw new CsvImportError("empty", "CSV has no rows");
+    // Detect emptiness explicitly so the caller gets an accurate reason (the
+    // parser always yields at least one row, so a row-count check cannot).
+    if (csvText.trim() === "") throw new CsvImportError("empty", "CSV is empty");
 
+    const rows = parseCsv(csvText);
     const headers = [...(rows[0] ?? [])];
     if (headers[0]?.startsWith("﻿")) headers[0] = headers[0].slice(1);
     if (headers.join(",") !== EXPECTED_HEADERS.join(",")) {
@@ -99,7 +98,7 @@ export function importPasswordCsv(domain: DomainService, input: CsvImportInput):
       throw new CsvImportError("too-many-rows", `CSV exceeds the ${MAX_CSV_ROWS}-row limit`);
     }
 
-    return importRows(domain, dataRows, ts);
+    return importRows(domain, dataRows);
   } finally {
     // 4. Drop our reference to the decoded text. (V8 cannot be forced to wipe an
     //    immutable string, but we keep no other copy and never log it.)
@@ -108,7 +107,7 @@ export function importPasswordCsv(domain: DomainService, input: CsvImportInput):
   }
 }
 
-function importRows(domain: DomainService, dataRows: string[][], ts: number): CsvImportSummary {
+function importRows(domain: DomainService, dataRows: string[][]): CsvImportSummary {
   const summary: CsvImportSummary = {
     totalDataRows: dataRows.length,
     importedCredentials: 0,
@@ -155,7 +154,10 @@ function importRows(domain: DomainService, dataRows: string[][], ts: number): Cs
       summary.siteAccountIds.push(siteId);
     }
 
-    // Skip a credential we already hold for this (site, username) pair.
+    // Seed-only dedup: skip a credential we already hold for this
+    // (site, username) pair. We intentionally do NOT update an existing
+    // credential's password here — refreshing rotated secrets is the job of the
+    // Bulk Update slice, not the Visibility seed import.
     const exists = domain.listCredentialsForSite(siteId).some((c) => c.username === username);
     if (exists) {
       summary.skipped++;
@@ -173,7 +175,6 @@ function importRows(domain: DomainService, dataRows: string[][], ts: number): Cs
     summary.importedCredentials++;
   }
 
-  void ts;
   return summary;
 }
 
@@ -226,7 +227,9 @@ function parseCsv(csvText: string): string[][] {
       } else {
         current += ch;
       }
-    } else if (ch === '"') {
+    } else if (ch === '"' && current === "") {
+      // A double-quote is special only at the start of a field (RFC 4180);
+      // anywhere else it is a literal character.
       inQuotes = true;
     } else if (ch === ",") {
       finishField();

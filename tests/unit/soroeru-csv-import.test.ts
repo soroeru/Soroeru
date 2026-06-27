@@ -156,6 +156,45 @@ test("rejects a CSV with too many rows before importing", async () => {
   });
 });
 
+test("parses quoted fields: embedded commas, escaped quotes, multi-line notes", async () => {
+  await withDomain(async (domain) => {
+    const csv = [
+      HEADER,
+      // password contains a comma; note is multi-line and contains an escaped quote.
+      'Example,https://example.test,alice,"pw,with,commas","line one\nline ""two"""',
+    ].join("\n");
+
+    const summary = importPasswordCsv(domain, { data: csv });
+    assert.equal(summary.importedCredentials, 1);
+
+    const site = domain.listSiteAccounts().find((s) => s.domain === "example.test");
+    assert.ok(site);
+    const cred = domain.listCredentialsForSite(site.id)[0];
+    assert.equal(cred?.password, "pw,with,commas");
+    assert.equal(cred?.note, 'line one\nline "two"');
+  });
+});
+
+test("treats a double-quote mid unquoted field as a literal", async () => {
+  await withDomain(async (domain) => {
+    const csv = [HEADER, 'Example,https://example.test,alice,5" pw,'].join("\n");
+    const summary = importPasswordCsv(domain, { data: csv });
+    assert.equal(summary.importedCredentials, 1);
+    const site = domain.listSiteAccounts().find((s) => s.domain === "example.test");
+    assert.ok(site);
+    assert.equal(domain.listCredentialsForSite(site.id)[0]?.password, '5" pw');
+  });
+});
+
+test("rejects an empty CSV with the 'empty' reason", async () => {
+  await withDomain(async (domain) => {
+    assert.throws(
+      () => importPasswordCsv(domain, { data: "   \n" }),
+      (err) => err instanceof CsvImportError && err.reason === "empty",
+    );
+  });
+});
+
 test("rejects a CSV with the wrong header", async () => {
   await withDomain(async (domain) => {
     const csv = ["url,login,secret", "https://example.test,alice,pw"].join("\n");
