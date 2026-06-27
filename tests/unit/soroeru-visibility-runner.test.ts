@@ -1,0 +1,310 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { DomainService } from "../../src/domain/domain-service.js";
+import type { SiteAccount } from "../../src/domain/entities.js";
+import { VaultV2 } from "../../src/store/vault-v2.js";
+import type { FormField, PageSnapshot } from "../../src/types.js";
+import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
+import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
+
+const PASSPHRASE = "unit-test-passphrase";
+
+async function openService(): Promise<{ dir: string; service: DomainService }> {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-visibility-"));
+  const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+  return { dir, service: new DomainService(vault) };
+}
+
+test("visibility runner logs in, collects redacted evidence, disclosures, relationships, and checkpoints", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "example.test",
+      url: "https://example.test/login",
+      displayName: "Example",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
+    service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "new@example.test", valueType: "email" });
+
+    const page = new FakePageDriver([
+      snapshot("https://example.test/login", [
+        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      ]),
+      snapshot(
+        "https://example.test/account",
+        [
+          field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+          field("profile-phone", { autocomplete: "tel", labels: ["電話番号"] }),
+        ],
+        "メールマガジンを購読中です。継続課金があります。",
+      ),
+    ], {
+      "profile-email": "old@example.test",
+      "profile-phone": "090-1234-5678",
+    });
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      now: () => 1_700_000_000_000,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.disclosures, 2);
+    assert.equal(page.filled["login-email"], "user@example.test");
+    assert.equal(page.filled["login-password"], "fake-pass");
+    assert.deepEqual(page.clicked, ["button[type=submit]"]);
+
+    const disclosures = service.listDisclosuresForSite(site.id);
+    assert.equal(disclosures.length, 2);
+    assert.equal(disclosures.find((d) => d.attributeKey === "email")?.staleState, "stale");
+    assert.equal(disclosures.find((d) => d.attributeKey === "phone.full")?.staleState, "unknown");
+    assert.ok(disclosures.every((d) => d.siteHeldValue === undefined));
+    assert.ok(disclosures.every((d) => d.normalizedValueHash));
+
+    const evidence = service.listEvidence();
+    assert.equal(evidence.length, 2);
+    assert.ok(evidence.every((item) => item.maskedSnippet && !item.maskedSnippet.includes("old@example.test")));
+    assert.ok(evidence.every((item) => item.normalizedHash));
+
+    assert.equal(service.listAccountRelationshipsForSite(site.id).length, 2);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+    assert.equal(page.closed, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner records a wall constraint and resumes after human handoff", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "mfa.example.test", url: "https://mfa.example.test/login", displayName: "MFA" });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+
+    const page = new FakePageDriver([
+      snapshot("https://mfa.example.test/login", [
+        field("email", { autocomplete: "username", labels: ["ログインID"] }),
+        field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      ]),
+      snapshot("https://mfa.example.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
+      snapshot("https://mfa.example.test/email-check", [], "確認メールを送信しました"),
+      snapshot("https://mfa.example.test/account", [field("email-current", { autocomplete: "email", labels: ["メールアドレス"] })]),
+    ], {
+      "email-current": "user@example.test",
+    });
+    let handoffs = 0;
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => {
+        handoffs++;
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(handoffs, 2);
+    assert.equal(service.listConstraints().filter((constraint) => constraint.kind === "wall").length, 2);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 1);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner reports the actual wall constraint count when handoff cannot clear chained walls", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "blocked.example.test",
+      url: "https://blocked.example.test/login",
+      displayName: "Blocked",
+    });
+    const page = new FakePageDriver([
+      snapshot("https://blocked.example.test/captcha", [], "私はロボットではありません"),
+      snapshot("https://blocked.example.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
+    ]);
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => "resolved",
+      maxHandoffs: 1,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "handoff");
+    assert.equal(result.constraints, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner surfaces automation-prohibiting terms as a constraint", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "tos.example.test", url: "https://tos.example.test/account", displayName: "ToS" });
+    const page = new FakePageDriver([
+      snapshot(
+        "https://tos.example.test/account",
+        [field("email", { autocomplete: "email", labels: ["メールアドレス"] })],
+        "No automated access is prohibited. newsletter",
+      ),
+    ], {
+      email: "user@example.test",
+    });
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(service.listConstraints()[0]?.kind, "tos-automation-prohibition");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner records failed checkpoint when opening the browser session fails", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "launch-fail.example.test",
+      url: "https://launch-fail.example.test/login",
+      displayName: "Launch Fail",
+    });
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: async () => {
+        throw new Error("browser launch failed");
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "failed");
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "failed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner does not click arbitrary buttons when credentials exist but no login fields are present", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "already-in.example.test",
+      url: "https://already-in.example.test/account",
+      displayName: "Already In",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    const page = new FakePageDriver([
+      {
+        ...snapshot("https://already-in.example.test/account", [
+          field("email-current", { autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+        buttons: [{ selector: "button.delete", text: "削除" }],
+      },
+    ], {
+      "email-current": "user@example.test",
+    });
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.deepEqual(page.clicked, []);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+class FakeSession implements SiteSession {
+  constructor(readonly page: FakePageDriver) {}
+
+  async close(): Promise<void> {
+    this.page.closed = true;
+  }
+}
+
+class FakePageDriver implements PageDriver {
+  filled: Record<string, string> = {};
+  clicked: string[] = [];
+  closed = false;
+  private index = 0;
+
+  constructor(
+    private readonly snapshots: PageSnapshot[],
+    private readonly values: Record<string, string> = {},
+  ) {}
+
+  async goto(): Promise<void> {}
+
+  currentUrl(): string {
+    return this.snapshots[Math.min(this.index, this.snapshots.length - 1)]?.url ?? "";
+  }
+
+  async snapshot(): Promise<PageSnapshot> {
+    const snapshot = this.snapshots[Math.min(this.index, this.snapshots.length - 1)];
+    this.index++;
+    if (!snapshot) throw new Error("no snapshot");
+    return snapshot;
+  }
+
+  async readValues(): Promise<Record<string, string>> {
+    return this.values;
+  }
+
+  async fillField(fieldId: string, value: string): Promise<void> {
+    this.filled[fieldId] = value;
+  }
+
+  async click(selector: string): Promise<void> {
+    this.clicked.push(selector);
+  }
+}
+
+function snapshot(url: string, fields: FormField[], visibleText = ""): PageSnapshot {
+  return {
+    url,
+    title: "Test",
+    fields,
+    buttons: [{ selector: "button[type=submit]", text: "ログイン" }],
+    links: [],
+    visibleText,
+    iframeSrcs: [],
+    wallMarkers: [],
+  };
+}
+
+function field(fieldId: string, overrides: Partial<FormField>): FormField {
+  return {
+    fieldId,
+    tag: "input",
+    type: "text",
+    name: "",
+    id: fieldId,
+    autocomplete: "",
+    required: false,
+    placeholder: "",
+    labels: [],
+    nearbyText: "",
+    ...overrides,
+  };
+}

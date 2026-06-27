@@ -13,13 +13,16 @@ import { randomUUID } from "node:crypto";
 import { normalizedValueHash } from "./normalize.js";
 import {
   type AccountRelationship,
+  type Constraint,
   type Credential,
   type Disclosure,
   type DisclosureSourceKind,
+  type Evidence,
   type PersonalAttribute,
   type SiteAccount,
   type Sensitivity,
   type StaleState,
+  type WorkflowCheckpoint,
 } from "./entities.js";
 import { isSensitiveAttributeKey, MOST_SENSITIVE_ATTRIBUTE_KEY } from "./entities.js";
 import type { VaultV2 } from "../store/vault-v2.js";
@@ -52,6 +55,7 @@ export interface AddDisclosureInput {
   siteAccountId: string;
   attributeKey: string;
   siteHeldValue?: string;
+  normalizedValueHash?: string;
   observedAt?: number;
   sourcePageUrl?: string;
   sourceKind: DisclosureSourceKind;
@@ -172,6 +176,7 @@ export class DomainService {
       disclosure.siteHeldValue = input.siteHeldValue;
       disclosure.normalizedValueHash = normalizedValueHash(input.attributeKey, input.siteHeldValue);
     }
+    if (input.normalizedValueHash !== undefined) disclosure.normalizedValueHash = input.normalizedValueHash;
     if (input.sourcePageUrl !== undefined) disclosure.sourcePageUrl = input.sourcePageUrl;
     disclosure.staleState = this.deriveStaleState(disclosure);
     this.vault.put("disclosure", disclosure);
@@ -244,4 +249,137 @@ export class DomainService {
   listAccountRelationshipsForSite(siteAccountId: string): AccountRelationship[] {
     return this.vault.list("accountRelationship").filter((r) => r.siteAccountId === siteAccountId);
   }
+
+  addAccountRelationship(input: AddAccountRelationshipInput): AccountRelationship {
+    const relationship: AccountRelationship = {
+      id: randomUUID(),
+      siteAccountId: input.siteAccountId,
+      kind: input.kind,
+      state: input.state,
+      confidence: input.confidence ?? 1,
+      evidenceIds: input.evidenceIds ?? [],
+      observedAt: input.observedAt ?? Date.now(),
+    };
+    if (input.detail !== undefined) relationship.detail = input.detail;
+    this.vault.put("accountRelationship", relationship);
+    return relationship;
+  }
+
+  // --- Evidence (audit trail; never raw values) ---
+
+  /**
+   * Record a piece of audit Evidence. Callers must pass only redacted material
+   * (URL, timestamp, field label/type, masked snippet, normalized hash). This
+   * method does not accept and never stores raw values, screenshots, cookies,
+   * or tokens (RFC-002 §5.1).
+   */
+  addEvidence(input: AddEvidenceInput): Evidence {
+    const evidence: Evidence = {
+      id: randomUUID(),
+      observedAt: input.observedAt ?? Date.now(),
+    };
+    if (input.siteAccountId !== undefined) evidence.siteAccountId = input.siteAccountId;
+    if (input.pageUrl !== undefined) evidence.pageUrl = input.pageUrl;
+    if (input.fieldLabel !== undefined) evidence.fieldLabel = input.fieldLabel;
+    if (input.fieldType !== undefined) evidence.fieldType = input.fieldType;
+    if (input.maskedSnippet !== undefined) evidence.maskedSnippet = input.maskedSnippet;
+    if (input.normalizedHash !== undefined) evidence.normalizedHash = input.normalizedHash;
+    this.vault.put("evidence", evidence);
+    return evidence;
+  }
+
+  listEvidence(): Evidence[] {
+    return this.vault.list("evidence");
+  }
+
+  // --- Constraints (surfaced, never silently enforced) ---
+
+  /** Surface a Constraint (e.g. a detected automation-prohibiting ToS clause). */
+  addConstraint(input: AddConstraintInput): Constraint {
+    const constraint: Constraint = {
+      id: randomUUID(),
+      kind: input.kind,
+      detail: input.detail,
+      evidenceIds: input.evidenceIds ?? [],
+      observedAt: input.observedAt ?? Date.now(),
+      resolution: input.resolution ?? "pending",
+    };
+    if (input.siteAccountId !== undefined) constraint.siteAccountId = input.siteAccountId;
+    this.vault.put("constraint", constraint);
+    return constraint;
+  }
+
+  listConstraints(): Constraint[] {
+    return this.vault.list("constraint");
+  }
+
+  // --- Workflow checkpoints (encrypted resume state, RFC-002 §5.2) ---
+
+  /**
+   * Insert or update the checkpoint for a (workflow, siteAccount) pair. The id
+   * is derived so a run resumes from one record per site rather than appending.
+   */
+  saveCheckpoint(input: SaveCheckpointInput): WorkflowCheckpoint {
+    const id = checkpointId(input.workflow, input.siteAccountId);
+    const checkpoint: WorkflowCheckpoint = {
+      id,
+      workflow: input.workflow,
+      step: input.step,
+      status: input.status,
+      updatedAt: Date.now(),
+    };
+    if (input.siteAccountId !== undefined) checkpoint.siteAccountId = input.siteAccountId;
+    if (input.resumeData !== undefined) checkpoint.resumeData = input.resumeData;
+    this.vault.put("workflowCheckpoint", checkpoint);
+    return checkpoint;
+  }
+
+  getCheckpoint(workflow: WorkflowCheckpoint["workflow"], siteAccountId?: string): WorkflowCheckpoint | undefined {
+    return this.vault.get("workflowCheckpoint", checkpointId(workflow, siteAccountId));
+  }
+
+  listCheckpoints(): WorkflowCheckpoint[] {
+    return this.vault.list("workflowCheckpoint");
+  }
+}
+
+export interface AddAccountRelationshipInput {
+  siteAccountId: string;
+  kind: AccountRelationship["kind"];
+  state: AccountRelationship["state"];
+  confidence?: number;
+  evidenceIds?: string[];
+  observedAt?: number;
+  detail?: string;
+}
+
+export interface AddEvidenceInput {
+  siteAccountId?: string;
+  pageUrl?: string;
+  observedAt?: number;
+  fieldLabel?: string;
+  fieldType?: string;
+  maskedSnippet?: string;
+  normalizedHash?: string;
+}
+
+export interface AddConstraintInput {
+  siteAccountId?: string;
+  kind: Constraint["kind"];
+  detail: string;
+  evidenceIds?: string[];
+  observedAt?: number;
+  resolution?: Constraint["resolution"];
+}
+
+export interface SaveCheckpointInput {
+  workflow: WorkflowCheckpoint["workflow"];
+  siteAccountId?: string;
+  step: string;
+  status: WorkflowCheckpoint["status"];
+  resumeData?: Record<string, string | number | boolean>;
+}
+
+function checkpointId(workflow: string, siteAccountId?: string): string {
+  return siteAccountId ? `${workflow}:${siteAccountId}` : workflow;
 }
