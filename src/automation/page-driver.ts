@@ -19,6 +19,11 @@ export interface PageDriver {
   snapshot(): Promise<PageSnapshot>;
   /** Locally-read field values, keyed by FormField.fieldId. Never sent to a model. */
   readValues(): Promise<Record<string, string>>;
+  /**
+   * Locally-read read-only display values, keyed by DisplayValueCandidate.valueId.
+   * Optional so scripted fakes need not implement it; never sent to a model.
+   */
+  readDisplayValues?(): Promise<Record<string, string>>;
   /** Fill a field (e.g. login) by its FormField.fieldId. */
   fillField(fieldId: string, value: string): Promise<void>;
   /** Click an element by CSS selector (e.g. a PageButton.selector). */

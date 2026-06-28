@@ -46,7 +46,7 @@ class PlaywrightPageDriver implements PageDriver {
   /** Structure-only snapshot (no values); also stamps elements with data-af-id. */
   async snapshot(): Promise<PageSnapshot> {
     const withFields = await waitForFields(this.page, 5000);
-    if (withFields.fields.length > 0) return withFields;
+    if (withFields.fields.length > 0 || (withFields.displayValues?.length ?? 0) > 0) return withFields;
     return snapshotPage(this.page);
   }
 
@@ -72,6 +72,26 @@ class PlaywrightPageDriver implements PageDriver {
           }
           if (typeof el.value === "string" && el.value !== "") out[id] = el.value;
         }
+      }
+      return out;
+    });
+  }
+
+  /**
+   * Read read-only display values stamped "d-*" by the scanner (account pages that
+   * render registered info as text). Inputs expose `.value`; other elements expose
+   * `.textContent`. Like `readValues`, these stay local and never reach a model.
+   */
+  async readDisplayValues(): Promise<Record<string, string>> {
+    return this.page.evaluate(() => {
+      const out: Record<string, string> = {};
+      for (const el of Array.from(document.querySelectorAll("[data-af-id]"))) {
+        const id = el.getAttribute("data-af-id");
+        if (!id || !id.startsWith("d")) continue; // display values are "d-*"
+        const value =
+          el instanceof HTMLInputElement ? el.value : (el.textContent ?? "");
+        const trimmed = value.trim();
+        if (trimmed !== "") out[id] = trimmed;
       }
       return out;
     });

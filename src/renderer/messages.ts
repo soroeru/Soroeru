@@ -60,6 +60,12 @@ export function visibilityStatusLabel(status: string): string {
       return "収集に失敗しました。";
     case "unreachable":
       return "サイトにアクセスできませんでした。アクセス不能一覧に記録しました。";
+    case "skipped":
+      return "Web サイトではない認証情報のため収集をスキップしました（例: アプリ）。";
+    case "login-failed":
+      return "ログインが完了しませんでした（パスワードの変更や追加手順の可能性）。要確認に記録しました。";
+    case "no-data":
+      return "ページには到達しましたが、収集できる情報が見つかりませんでした（手動確認を推奨）。";
     case "locked":
       return "ボールトが施錠されています。";
     case "busy":

@@ -244,7 +244,16 @@ export interface RevealResult {
 // --- Visibility run (auto-login / collection, RFC-002 §5.1 / §5.2) ---
 
 /** Terminal outcome of a per-site Visibility run as the renderer sees it. */
-export type VisibilityRunStatus = "collected" | "handoff" | "failed" | "unreachable" | "locked" | "busy";
+export type VisibilityRunStatus =
+  | "collected"
+  | "handoff"
+  | "failed"
+  | "unreachable"
+  | "skipped"
+  | "login-failed"
+  | "no-data"
+  | "locked"
+  | "busy";
 
 /** Counts-only result of a Visibility run; never a raw collected value. */
 export interface VisibilityRunResultView {

@@ -45,8 +45,14 @@ test("real-site Visibility collection from a local Google Passwords CSV", async 
     loginUrl?: string;
   }> = [];
 
+  // Optional cap for fast local iteration; defaults to every imported site.
+  const maxSites = Number.parseInt(process.env["CATASHIRO_E2E_MAX_SITES"] ?? "", 10);
+  const siteAccounts = Number.isFinite(maxSites) && maxSites > 0
+    ? domain.listSiteAccounts().slice(0, maxSites)
+    : domain.listSiteAccounts();
+
   try {
-    for (const site of domain.listSiteAccounts()) {
+    for (const site of siteAccounts) {
       const result = await runner.runSite(site.id);
       const updated = domain.getSiteAccount(site.id) ?? site;
       results.push({
@@ -90,7 +96,7 @@ test("real-site Visibility collection from a local Google Passwords CSV", async 
   // persist: measurement-output — local-only real-site status, never credentials or raw collected values
   await writeFile(artifactPath, JSON.stringify(artifact, null, 2), "utf8");
 
-  assert.equal(results.length, importSummary.siteAccountIds.length);
+  assert.equal(results.length, siteAccounts.length);
   assert.ok(
     results.some((result) => result.status === "collected" && result.disclosures > 0) ||
       wallSkipped.length > 0 ||

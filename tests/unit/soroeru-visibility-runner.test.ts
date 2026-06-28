@@ -280,6 +280,143 @@ test("visibility runner discovers a same-site login page and stores that URL on 
   }
 });
 
+test("visibility runner collects read-only display values (text-rendered account info, not form fields)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "profile.example.test",
+      url: "https://profile.example.test/account",
+      displayName: "Profile",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "current@example.test", valueType: "email" });
+
+    // The account page has NO editable form fields; the registered values are
+    // rendered as text (e.g. a <dl>), surfaced as displayValues by the scanner.
+    const accountPage = snapshot("https://profile.example.test/account", [], "登録情報", [
+      { valueId: "d-1", labelText: "メールアドレス", nearbyText: "" },
+      { valueId: "d-2", labelText: "電話番号", nearbyText: "" },
+    ]);
+    const page = new FakePageDriver([accountPage], {}, {
+      "d-1": "old@example.test",
+      "d-2": "090-1234-5678",
+    });
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      now: () => 1_700_000_000_000,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.disclosures, 2);
+    const disclosures = service.listDisclosuresForSite(site.id);
+    assert.equal(disclosures.find((d) => d.attributeKey === "email")?.staleState, "stale");
+    assert.ok(disclosures.every((d) => d.normalizedValueHash));
+    // The redacted evidence must not contain the raw display value.
+    const serialized = JSON.stringify({ evidence: service.listEvidence(), disclosures });
+    assert.equal(serialized.includes("old@example.test"), false);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner skips a non-web credential (e.g. android://) without marking it unreachable", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "com.example.app",
+      url: "android://hash@com.example.app/",
+      displayName: "Example App",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    let opened = false;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => {
+        opened = true;
+        return Promise.resolve(new FakeSession(new FakePageDriver([])));
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "skipped");
+    assert.equal(opened, false, "a non-web credential must not open a browser session");
+    const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
+    assert.ok(constraint?.detail.startsWith("non-web-credential:"));
+    assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner reports login-failed (not collected) when a password field remains and nothing was collected", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "stuck.example.test",
+      url: "https://stuck.example.test/login",
+      displayName: "Stuck",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    // Both snapshots are the same login page: the login click never advanced past it.
+    const loginSnapshot = snapshot("https://stuck.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+    ]);
+    const page = new FakePageDriver([loginSnapshot, loginSnapshot], {});
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "login-failed");
+    assert.equal(result.disclosures, 0);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 0);
+    assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
+    const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
+    assert.ok(constraint?.detail.startsWith("login-incomplete:"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner reports no-data (not collected) when the page yields no collectable values", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "empty.example.test",
+      url: "https://empty.example.test/account",
+      displayName: "Empty",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    // Already past login (no login fields), but readValues returns nothing.
+    const page = new FakePageDriver(
+      [snapshot("https://empty.example.test/account", [], "ようこそ")],
+      {},
+    );
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "no-data");
+    assert.equal(result.disclosures, 0);
+    assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
+    const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
+    assert.ok(constraint?.detail.startsWith("no-collectable-data:"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner records an unreachable URL without leaking credentials", async () => {
   const { dir, service } = await openService();
   try {
@@ -330,7 +467,12 @@ class FakePageDriver implements PageDriver {
   constructor(
     private readonly snapshots: PageSnapshot[],
     private readonly values: Record<string, string> = {},
+    private readonly displayValues: Record<string, string> = {},
   ) {}
+
+  async readDisplayValues(): Promise<Record<string, string>> {
+    return this.displayValues;
+  }
 
   async goto(url: string): Promise<void> {
     this.visited.push(url);
@@ -363,7 +505,12 @@ class FakePageDriver implements PageDriver {
   }
 }
 
-function snapshot(url: string, fields: FormField[], visibleText = ""): PageSnapshot {
+function snapshot(
+  url: string,
+  fields: FormField[],
+  visibleText = "",
+  displayValues: PageSnapshot["displayValues"] = [],
+): PageSnapshot {
   return {
     url,
     title: "Test",
@@ -373,6 +520,7 @@ function snapshot(url: string, fields: FormField[], visibleText = ""): PageSnaps
     visibleText,
     iframeSrcs: [],
     wallMarkers: [],
+    displayValues,
   };
 }
 
