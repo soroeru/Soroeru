@@ -58,6 +58,8 @@ export function visibilityStatusLabel(status: string): string {
       return "ウォール（CAPTCHA / MFA / 検証）で収集が止まりました。同じブラウザで解決してから再実行してください。";
     case "failed":
       return "収集に失敗しました。";
+    case "unreachable":
+      return "サイトにアクセスできませんでした。アクセス不能一覧に記録しました。";
     case "locked":
       return "ボールトが施錠されています。";
     case "busy":

@@ -12,7 +12,7 @@
 // quit leaves no orphan process and no plaintext browser profile on disk.
 
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from "playwright";
-import { snapshotPage } from "../agent/scan.js";
+import { snapshotPage, waitForFields } from "../agent/scan.js";
 import type { PageDriver, SiteSession } from "./page-driver.js";
 import type { PageSnapshot } from "../types.js";
 
@@ -45,6 +45,8 @@ class PlaywrightPageDriver implements PageDriver {
 
   /** Structure-only snapshot (no values); also stamps elements with data-af-id. */
   async snapshot(): Promise<PageSnapshot> {
+    const withFields = await waitForFields(this.page, 5000);
+    if (withFields.fields.length > 0) return withFields;
     return snapshotPage(this.page);
   }
 
@@ -85,6 +87,11 @@ class PlaywrightPageDriver implements PageDriver {
     // after, so let any triggered navigation settle first. No-op when the click
     // did not navigate (already loaded).
     await this.page.waitForLoadState("domcontentloaded").catch(() => {});
+  }
+
+  async waitForReady(): Promise<void> {
+    await this.page.waitForLoadState("domcontentloaded").catch(() => {});
+    await this.page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
   }
 }
 

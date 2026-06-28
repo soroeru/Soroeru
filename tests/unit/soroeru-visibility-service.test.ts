@@ -136,6 +136,7 @@ class FakePageDriver implements PageDriver {
     private readonly values: Record<string, string> = {},
   ) {}
   async goto(): Promise<void> {}
+  async waitForReady(): Promise<void> {}
   currentUrl(): string {
     return this.snapshots[Math.min(this.index, this.snapshots.length - 1)]?.url ?? "";
   }

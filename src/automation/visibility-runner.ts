@@ -18,7 +18,7 @@ export interface VisibilityRunnerOptions {
 
 export interface VisibilityRunResult {
   siteAccountId: string;
-  status: "collected" | "handoff" | "failed";
+  status: "collected" | "handoff" | "failed" | "unreachable";
   disclosures: number;
   relationships: number;
   constraints: number;
@@ -47,11 +47,16 @@ export class VisibilityRunner {
       session = await this.options.openSession(siteAccount);
       // egress: target-site — navigate only to the site account the user imported/selected.
       await session.page.goto(siteAccount.url ?? `https://${siteAccount.domain}/`);
+      await session.page.waitForReady();
       let snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "initial");
       if (!snapshot) return this.handoffResult(siteAccountId);
 
       if (credential) {
+        snapshot = await this.ensureLoginPage(siteAccount, session, snapshot);
+        snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page");
+        if (!snapshot) return this.handoffResult(siteAccountId);
         await this.login(session, credential, snapshot);
+        await session.page.waitForReady();
         snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "after-login");
         if (!snapshot) return this.handoffResult(siteAccountId);
       }
@@ -82,17 +87,55 @@ export class VisibilityRunner {
         constraints,
       };
     } catch (err) {
+      const unreachableReason = unreachableReasonFor(err);
       this.options.domain.saveCheckpoint({
         workflow: "visibility",
         siteAccountId,
-        step: "failed",
+        step: unreachableReason ? "unreachable" : "failed",
         status: "failed",
-        resumeData: { message: err instanceof Error ? err.message : String(err) },
+        resumeData: unreachableReason
+          ? { reason: unreachableReason, url: siteAccount.url ?? siteAccount.domain }
+          : { message: err instanceof Error ? err.message : String(err) },
       });
+      if (unreachableReason) {
+        this.recordUnreachable(siteAccount, unreachableReason);
+        return { siteAccountId, status: "unreachable", disclosures: 0, relationships: 0, constraints: 1 };
+      }
       return { siteAccountId, status: "failed", disclosures: 0, relationships: 0, constraints: 0 };
     } finally {
       await session?.close();
     }
+  }
+
+  private async ensureLoginPage(
+    siteAccount: SiteAccount,
+    session: SiteSession,
+    snapshot: PageSnapshot,
+  ): Promise<PageSnapshot> {
+    if (hasLoginFields(snapshot)) return snapshot;
+
+    const loginLink = findLoginLink(snapshot, siteAccount);
+    if (!loginLink) return snapshot;
+
+    this.options.domain.upsertSiteAccount({
+      id: siteAccount.id,
+      domain: siteAccount.domain,
+      url: loginLink,
+      displayName: siteAccount.displayName,
+      ...(siteAccount.relationshipSummary !== undefined
+        ? { relationshipSummary: siteAccount.relationshipSummary }
+        : {}),
+    });
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: siteAccount.id,
+      step: "login-discovered",
+      status: "in-progress",
+      resumeData: { url: loginLink },
+    });
+    await session.page.goto(loginLink);
+    await session.page.waitForReady();
+    return session.page.snapshot();
   }
 
   private requireSite(siteAccountId: string): SiteAccount {
@@ -161,6 +204,23 @@ export class VisibilityRunner {
     if (password) await session.page.fillField(password.fieldId, credential.password);
     const submit = snapshot.buttons.find((b) => /ログイン|login|sign in/i.test(b.text));
     if (submit) await session.page.click(submit.selector);
+  }
+
+  private recordUnreachable(siteAccount: SiteAccount, reason: string): void {
+    const evidenceInput: Parameters<DomainService["addEvidence"]>[0] = {
+      siteAccountId: siteAccount.id,
+      observedAt: this.now(),
+      maskedSnippet: "site was unreachable during Visibility collection",
+    };
+    if (siteAccount.url !== undefined) evidenceInput.pageUrl = siteAccount.url;
+    const evidence = this.options.domain.addEvidence(evidenceInput);
+    this.options.domain.addConstraint({
+      siteAccountId: siteAccount.id,
+      kind: "unknown-state",
+      detail: `access-unreachable: ${reason}`,
+      evidenceIds: [evidence.id],
+      observedAt: this.now(),
+    });
   }
 
   private recordTosConstraint(siteAccount: SiteAccount, snapshot: PageSnapshot): number {
@@ -275,6 +335,70 @@ export class VisibilityRunner {
 function findLoginField(fields: FormField[], kind: "username" | "password"): FormField | undefined {
   if (kind === "password") return fields.find((field) => field.type === "password" || field.autocomplete === "current-password");
   return fields.find((field) => field.autocomplete === "username" || field.type === "email" || /mail|email|user|login/i.test(`${field.name} ${field.id}`));
+}
+
+function hasLoginFields(snapshot: PageSnapshot): boolean {
+  return (
+    findLoginField(snapshot.fields, "password") !== undefined &&
+    findLoginField(snapshot.fields, "username") !== undefined
+  );
+}
+
+function findLoginLink(snapshot: PageSnapshot, siteAccount: SiteAccount): string | undefined {
+  const origin = originFor(snapshot.url);
+  const candidates = snapshot.links
+    .filter((link) => isSameSite(link.href, siteAccount.domain))
+    .map((link) => ({
+      href: absoluteHref(link.href, origin),
+      score: loginLinkScore(link.text, link.href),
+    }))
+    .filter((candidate) => candidate.href && candidate.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return candidates[0]?.href;
+}
+
+function loginLinkScore(text: string, href: string): number {
+  const haystack = `${text} ${href}`;
+  let score = 0;
+  if (/ログイン|login|sign[\s_-]?in|サインイン|会員ログイン|マイページ/i.test(haystack)) score += 3;
+  if (/account|member|auth|session|mypage/i.test(href)) score += 1;
+  if (/logout|sign[\s_-]?out|登録|register|signup|sign[\s_-]?up/i.test(haystack)) score -= 5;
+  return score;
+}
+
+function isSameSite(href: string, domain: string): boolean {
+  try {
+    const host = new URL(href).hostname.toLowerCase().replace(/^www\./, "");
+    return host === domain || host.endsWith(`.${domain}`);
+  } catch {
+    return href.startsWith("/") || href.startsWith("./") || href.startsWith("../");
+  }
+}
+
+function absoluteHref(href: string, origin: string | undefined): string | undefined {
+  try {
+    return origin ? new URL(href, origin).href : new URL(href).href;
+  } catch {
+    return undefined;
+  }
+}
+
+function originFor(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function unreachableReasonFor(err: unknown): string | undefined {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/ERR_NAME_NOT_RESOLVED|ENOTFOUND/i.test(message)) return "dns-not-found";
+  if (/ERR_CONNECTION_REFUSED|ECONNREFUSED/i.test(message)) return "connection-refused";
+  if (/ERR_TIMED_OUT|timeout/i.test(message)) return "timeout";
+  if (/ERR_CERT|certificate/i.test(message)) return "certificate-error";
+  if (/net::ERR_|Navigation|goto/i.test(message)) return "navigation-failed";
+  return undefined;
 }
 
 function sourceKindForField(field: FormField): "form-field" | "billing-page" | "newsletter-setting" {

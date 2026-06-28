@@ -235,6 +235,82 @@ test("visibility runner does not click arbitrary buttons when credentials exist 
   }
 });
 
+test("visibility runner discovers a same-site login page and stores that URL on the site account", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "example.test",
+      url: "https://example.test/",
+      displayName: "Example",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
+
+    const page = new FakePageDriver([
+      {
+        ...snapshot("https://example.test/", [], "トップページ"),
+        links: [
+          { href: "https://example.test/help", text: "ヘルプ" },
+          { href: "https://example.test/login", text: "ログイン" },
+        ],
+      },
+      snapshot("https://example.test/login", [
+        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      ]),
+      snapshot("https://example.test/account", [
+        field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+      ]),
+    ], {
+      "profile-email": "user@example.test",
+    });
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.deepEqual(page.visited, ["https://example.test/", "https://example.test/login"]);
+    assert.equal(service.getSiteAccount(site.id)?.url, "https://example.test/login");
+    assert.equal(service.listDisclosuresForSite(site.id).length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner records an unreachable URL without leaking credentials", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "gone.example.test",
+      url: "https://gone.example.test/login",
+      displayName: "Gone",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "real-user-canary", password: "real-password-canary", source: "csv-import" });
+    const page = new FakePageDriver([]);
+    page.gotoError = new Error("page.goto: net::ERR_NAME_NOT_RESOLVED at https://gone.example.test/login");
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "unreachable");
+    const constraint = service.listConstraints().find((item) => item.kind === "unknown-state");
+    assert.ok(constraint);
+    assert.equal(constraint.detail, "access-unreachable: dns-not-found");
+    const serialized = JSON.stringify({ constraints: service.listConstraints(), evidence: service.listEvidence() });
+    assert.equal(serialized.includes("real-user-canary"), false);
+    assert.equal(serialized.includes("real-password-canary"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 class FakeSession implements SiteSession {
   constructor(readonly page: FakePageDriver) {}
 
@@ -246,6 +322,8 @@ class FakeSession implements SiteSession {
 class FakePageDriver implements PageDriver {
   filled: Record<string, string> = {};
   clicked: string[] = [];
+  visited: string[] = [];
+  gotoError: Error | undefined;
   closed = false;
   private index = 0;
 
@@ -254,7 +332,12 @@ class FakePageDriver implements PageDriver {
     private readonly values: Record<string, string> = {},
   ) {}
 
-  async goto(): Promise<void> {}
+  async goto(url: string): Promise<void> {
+    this.visited.push(url);
+    if (this.gotoError) throw this.gotoError;
+  }
+
+  async waitForReady(): Promise<void> {}
 
   currentUrl(): string {
     return this.snapshots[Math.min(this.index, this.snapshots.length - 1)]?.url ?? "";

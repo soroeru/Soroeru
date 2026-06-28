@@ -5,6 +5,8 @@ state/
 .env
 .env.local
 *.session
+tests/e2e/Google_Passwords.csv
+tests/e2e/*.csv
 
 # Claude Code local-only settings (permissions, personal overrides)
 .claude/settings.local.json

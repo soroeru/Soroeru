@@ -23,6 +23,8 @@ export interface PageDriver {
   fillField(fieldId: string, value: string): Promise<void>;
   /** Click an element by CSS selector (e.g. a PageButton.selector). */
   click(selector: string): Promise<void>;
+  /** Wait briefly for a likely post-navigation page to settle before snapshotting. */
+  waitForReady(): Promise<void>;
 }
 
 /** A browser session bound to one Site Account; closing it disposes the context. */
