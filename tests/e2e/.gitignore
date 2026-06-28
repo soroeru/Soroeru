@@ -1,4 +1,8 @@
 *.csv
 *.session
 *.json
+# Saved real account pages (Plan B manual capture) — contain real PII, never commit.
+*.html
+*.mhtml
+*_files/
 !*.ts
