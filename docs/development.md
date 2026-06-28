@@ -126,9 +126,20 @@ dependencies, and a hermetic Playwright Chromium browser so beta users do not
 need a system Node.js install.
 
 ```bash
+nvm use            # Node 22 LTS (see .nvmrc); required for the DMG native deps
 npm ci
 npm run package:dmg
 ```
+
+> **Node version matters for DMG packaging.** The maker chain
+> (`@electron-forge/maker-dmg` → `electron-installer-dmg` → `appdmg`) pulls in
+> `nan`-based native modules (`macos-alias`, `fs-xattr`) that do **not** compile
+> against Node 23+ V8 headers. Because `appdmg` is an *optional* dependency, a
+> too-new Node silently skips it at install time and the build later fails with
+> `Cannot find module 'appdmg'`. Use Node 22 LTS (matches `.nvmrc` and CI). If
+> you previously ran `npm ci` under Node 23+, switch to Node 22 and re-run
+> `npm ci` so the native modules build. `npm run package:dmg` runs a preflight
+> (`scripts/check-node-version.mjs`) that fails fast with this guidance.
 
 The script writes:
 

@@ -12,15 +12,15 @@
     "build:app": "npm run build && npm run build:preload && npm run build:renderer",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "lint": "eslint .",
-    "format": "prettier --check electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs",
-    "format:write": "prettier --write electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs",
+    "format": "prettier --check electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs",
+    "format:write": "prettier --write electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs",
     "dev": "npm run build && npm run build:preload && concurrently -k -s first \"vite\" \"wait-on tcp:127.0.0.1:5173 && VITE_DEV_SERVER_URL=http://localhost:5173 electron dist/compiled/electron/main.js\"",
     "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js",
     "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/run/cli.js",
     "poc:serve": "npm run poc -- serve",
     "poc:matrix": "npm run poc -- matrix",
     "e2e:real-visibility": "npm run build && node --test dist/compiled/tests/e2e/real-visibility.e2e.js",
-    "package:dmg": "rm -rf out release/Soroeru-*.dmg && npm run build:app && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium && electron-forge make --platform=darwin && node scripts/rename-dmg.mjs",
+    "package:dmg": "node scripts/check-node-version.mjs && rm -rf out release/Soroeru-*.dmg && npm run build:app && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium && electron-forge make --platform=darwin && node scripts/rename-dmg.mjs",
     "release:check": "npm run typecheck && npm test && npm run poc -- check-egress && npm run poc -- check-persistence && npm run poc -- check-bypass"
   },
   "devDependencies": {
@@ -57,5 +57,8 @@
   },
   "optionalDependencies": {
     "appdmg": "^0.6.6"
+  },
+  "engines": {
+    "node": ">=20 <23"
   }
 }
