@@ -13,7 +13,7 @@ import { createIpcBridge } from "./ipc/bridge.js";
 import { VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
 
 // Product name (issue #158): the userData path becomes
-// ".../Application Support/Soroeru". The code identifier stays "catashiro".
+// ".../Application Support/Soroeru". The code identifier stays "soroeru".
 app.setName("Soroeru");
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -32,12 +32,12 @@ function configurePackagedPlaywrightBrowsers(): void {
 }
 
 /**
- * Resolve the vault file path. Honors the existing `CATASHIRO_STATE_ROOT`
+ * Resolve the vault file path. Honors the existing `SOROERU_STATE_ROOT`
  * override; otherwise uses Electron's per-app userData directory
  * (".../Application Support/Soroeru"), keeping it consistent with `app.getPath`.
  */
 function resolveVaultPath(): string {
-  const override = process.env["CATASHIRO_STATE_ROOT"];
+  const override = process.env["SOROERU_STATE_ROOT"];
   const stateRoot = override && override.length > 0 ? override : app.getPath("userData");
   return join(stateRoot, "vault.json");
 }

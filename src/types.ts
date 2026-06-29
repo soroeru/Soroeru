@@ -1,4 +1,4 @@
-// Shared types for the Catashiro agent PoC (Issue #33, RFC-001 v3 §8).
+// Shared types for the Soroeru agent PoC (Issue #33, RFC-001 v3 §8).
 // Field detection locale: Japanese only (Q7).
 
 /** Master profile keys known to the PoC. Custom fields use "custom.<slug>". */

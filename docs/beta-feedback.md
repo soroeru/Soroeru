@@ -13,9 +13,9 @@
 
 | 種別 | 送り先 |
 | ---- | ------ |
-| バグ報告・動作異常 | [GitHub Issues](https://github.com/ShinHaya/Catashiro/issues/new?template=beta-bug.md) |
-| 改善提案・機能要望 | [GitHub Issues](https://github.com/ShinHaya/Catashiro/issues/new?template=beta-feedback.md) |
-| インストール時の問題 | [GitHub Issues](https://github.com/ShinHaya/Catashiro/issues/new?template=beta-bug.md) — タイトルに「インストール:」を付けてください |
+| バグ報告・動作異常 | [GitHub Issues](https://github.com/ShinHaya/Soroeru/issues/new?template=beta-bug.md) |
+| 改善提案・機能要望 | [GitHub Issues](https://github.com/ShinHaya/Soroeru/issues/new?template=beta-feedback.md) |
+| インストール時の問題 | [GitHub Issues](https://github.com/ShinHaya/Soroeru/issues/new?template=beta-bug.md) — タイトルに「インストール:」を付けてください |
 
 現時点では GitHub Issues を一元窓口とします。Issue を書くのが難しい場合はメンテナに直接連絡してください。
 

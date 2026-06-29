@@ -9,7 +9,7 @@ import pkg from "../../package.json" with { type: "json" };
 import type { DiagnosticEvent, PocStore } from "../store/store.js";
 
 export interface SupportBundle {
-  schema: "catashiro-support-bundle-v1";
+  schema: "soroeru-support-bundle-v1";
   generatedAt: string;
   app: {
     name: string;
@@ -73,7 +73,7 @@ export function sanitizeDiagnosticEvent(event: DiagnosticEvent): DiagnosticEvent
 
 export function buildSupportBundle(store: PocStore, limit = 50): SupportBundle {
   return {
-    schema: "catashiro-support-bundle-v1",
+    schema: "soroeru-support-bundle-v1",
     generatedAt: new Date().toISOString(),
     app: {
       name: pkg.name,

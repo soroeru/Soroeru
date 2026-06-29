@@ -9,7 +9,7 @@
 > implementation docs are rewritten; the existing implementation may be reused only where
 > it fits the new requirements.
 
-This document owns **`Catashiro` application architecture and design decisions**: the
+This document owns **`Soroeru` application architecture and design decisions**: the
 layer boundaries, the Playwright automation runtime, the encrypted store, the AI agent
 boundary, and the registration / hand-off control flow.
 
@@ -26,11 +26,11 @@ rationale (see [`security.md`](security.md)).
 
 ## 1. Architecture Overview
 
-`Catashiro` is a local Mac desktop application for the MVP private beta, with four
+`Soroeru` is a local Mac desktop application for the MVP private beta, with four
 layers:
 
 ```text
-Catashiro (local app)
+Soroeru (local app)
 ├── store layer
 │   ├── personal data (name, address, phone, email, card incl. CVV, per-site credentials)
 │   ├── per-site records (references + hashes, not duplicated raw values)
@@ -96,7 +96,7 @@ Two seams keep the deterministic and AI variants interchangeable and testable:
 only `PageSnapshot` structure (labels / `name` / `id` / type / options / nearby text) and
 terms text. Raw profile values are resolved from the decrypted store and injected by the
 automation layer at fill time — they never enter a mapper input or an AI prompt. This
-invariant is asserted in `tests/unit/catashiro-poc-contracts.test.ts`.
+invariant is asserted in `tests/unit/soroeru-poc-contracts.test.ts`.
 
 ## 2. Automation Layer (Playwright)
 
@@ -124,12 +124,12 @@ invariant is asserted in `tests/unit/catashiro-poc-contracts.test.ts`.
   confidence is too low, a site/flow is unsupported, or the user explicitly asks for AI
   assistance. This keeps the default path predictable and limits the user's AI cost.
 - App-embedded terminals and CLI Provider integrations (for example driving Claude Code or
-  Codex CLI from inside `Catashiro`) are intentionally out of scope. API Providers are the
+  Codex CLI from inside `Soroeru`) are intentionally out of scope. API Providers are the
   supported AI integration path.
 
 ### 3.1 Mode Model
 
-`Catashiro` exposes two product modes over the same execution and definition contracts:
+`Soroeru` exposes two product modes over the same execution and definition contracts:
 
 - **Deterministic Mode** (default): uses official site definitions, local candidate
   definitions, form fingerprints, and rule-based classifiers. No AI API key or chat
@@ -262,8 +262,8 @@ ambiguous or unsupported.
 ## 9. Advanced Local MCP Server (future)
 
 A local MCP server is a future advanced-user extension, not part of the MVP. If added, it
-must expose only narrow, permissioned tools from `Catashiro` to an external AI agent. It is
-not an AI Provider and must not let an external CLI or agent bypass `Catashiro`'s own UI,
+must expose only narrow, permissioned tools from `Soroeru` to an external AI agent. It is
+not an AI Provider and must not let an external CLI or agent bypass `Soroeru`'s own UI,
 store boundary, or approval gates.
 
 Initial MCP capability should be read-only or planning-oriented, such as:
@@ -272,7 +272,7 @@ Initial MCP capability should be read-only or planning-oriented, such as:
 - stale-site and withdrawal-target discovery;
 - current-page structure inspection;
 - candidate mapping / withdrawal-flow proposals;
-- task creation inside `Catashiro` for later user review.
+- task creation inside `Soroeru` for later user review.
 
 MCP must not expose raw profile values, credentials, card numbers, CVV, decrypted vault
 exports, direct browser control, or submit/withdraw actions that skip the
@@ -311,16 +311,16 @@ beta before expanding to other platforms or distribution channels.
 `src/app/` is the local app shell that the UI layer and the automation
 layer both go through, rather than opening the store or launching browsers directly:
 
-- **`app.ts` — `CatashiroApp`**: owns the encrypted store's unlock/lock lifecycle (incl.
+- **`app.ts` — `SoroeruApp`**: owns the encrypted store's unlock/lock lifecycle (incl.
   idle auto-lock, default 10 minutes, 0 disables) and tracks Playwright `Browser`
   instances so `shutdown()` can close them all and lock the store in one step. A wrong
-  passphrase fails GCM authentication; `unlock()` fails closed with `CatashiroAppError`
+  passphrase fails GCM authentication; `unlock()` fails closed with `SoroeruAppError`
   rather than falling back to an unauthenticated read. `touch()` resets the idle timer on
   user/agent activity. Browser launching and the idle timers are injectable
   (`launchBrowserFn`, `setTimeoutFn` / `clearTimeoutFn`) so the lifecycle is unit-testable
-  without a real browser or real delays (`tests/unit/catashiro-poc-app.test.ts`).
+  without a real browser or real delays (`tests/unit/soroeru-poc-app.test.ts`).
 - **`runner.ts` — `AppRunner`**: the UI <-> automation boundary. It owns the chosen
-  `Mapper` and reads the store + browser lifecycle from `CatashiroApp`; the UI supplies
+  `Mapper` and reads the store + browser lifecycle from `SoroeruApp`; the UI supplies
   `AppRunnerHooks` (the review-and-confirm `Gate`, the missing-data prompt, the optional
   wall `HumanHandoff`, and the optional `humanFinalSubmit` surrogate for
   auto-creation-prohibited sites). `register()` / `update()` call `app.touch()` and then
@@ -328,13 +328,13 @@ layer both go through, rather than opening the store or launching browsers direc
   never constructs an `AgentDeps` or touches the store directly.
 
 Local state (the encrypted store file, matrix output, etc.) lives under
-`state/catashiro-poc/` (gitignored). AI provider/model selection is part of the encrypted
+`state/soroeru-poc/` (gitignored). AI provider/model selection is part of the encrypted
 store's `ProviderSettings` (set via `PocStore.setProviderSettings`); the env-var based
 `aiProviderFromEnv()` (`OPENAI_API_KEY` preferred, `ANTHROPIC_API_KEY` fallback) remains
 for the PoC CLI and measurement runner, which run outside the UI flow.
 
 The CLI's `app` subcommand (`npm run poc -- app`) is a lifecycle smoke test: unlock the
-store (reporting `CatashiroAppError` on a bad passphrase), launch a headed Chromium
+store (reporting `SoroeruAppError` on a bad passphrase), launch a headed Chromium
 browser, navigate to `about:blank`, then `shutdown()` (close the browser and lock the
 store).
 
@@ -343,10 +343,10 @@ store).
 The pre-pivot Chrome Extension (Manifest V3) files that previously lived under `src/` —
 `src/manifest.json`, `src/options/*`, `src/content/scanner.ts`,
 `src/storage/profile-store.ts`, and `src/shared/*` — predated the RFC-001 v3 pivot to a
-local Playwright application and were not part of the `Catashiro` runtime. They have been
+local Playwright application and were not part of the `Soroeru` runtime. They have been
 removed (#68); their history remains in git. The form scanner and rule-based classifier
 they contained informed the deterministic mapper now at `src/agent/scan.ts` and
-`src/agent/classifier.ts`. `src/` is now used exclusively for the `Catashiro` agent
+`src/agent/classifier.ts`. `src/` is now used exclusively for the `Soroeru` agent
 described in this document.
 
 ## 13. Local App UI (UI-001 / #17, UI-002 / #66)
@@ -361,12 +361,12 @@ npm run poc -- ui [deterministic|ai] [port]
 `src/app/web-ui.ts` starts a server-rendered local web app over
 Node's built-in HTTP server. It binds to `127.0.0.1` by default, uses no frontend
 framework, sets a restrictive content security policy, requires an in-memory CSRF token
-on every POST, and reads/writes data only through `CatashiroApp.store`. The server is a
+on every POST, and reads/writes data only through `SoroeruApp.store`. The server is a
 local UI facade, not a hosted backend or cloud service.
 
 Current web UI foundation:
 
-- **Onboarding / unlock** (#79) — `GET /` branches on `CatashiroApp.hasVault()` (whether
+- **Onboarding / unlock** (#79) — `GET /` branches on `SoroeruApp.hasVault()` (whether
   `<stateDir>/store.json` exists yet):
   - **First run** (no vault file): a vault-setup form (`POST /setup`) asks for the master
     passphrase twice (min. 8 chars, must match), shows the local vault file path, and
@@ -378,7 +378,7 @@ Current web UI foundation:
     reset-guidance copy.
   - The dashboard shows a persistent reminder banner linking to `設定` until a recovery
     key has been generated, and states the idle auto-lock duration
-    (`CatashiroApp.idleLockMs`) when enabled.
+    (`SoroeruApp.idleLockMs`) when enabled.
 - **Tabs** — the primary navigation is `個人情報`, `登録済みサイト`, and `設定`.
 - **Personal data** — the page has a top-right `編集` button and a single whole-page
   registration-info form. All known fields and custom fields are edited together, with
@@ -403,7 +403,7 @@ Current web UI foundation:
   persists only review-approved values into the encrypted profile store and records an
   `accountState=imported` inventory entry with hashes, never duplicated raw values.
 - **新規登録 (#81)** — `POST /registration/start` launches a headed Playwright browser
-  (`CatashiroApp.launchBrowser("chromium")`), opens a new page, and runs
+  (`SoroeruApp.launchBrowser("chromium")`), opens a new page, and runs
   `AppRunner.register()` in the background via `RegistrationSession`
   (`src/app/registration-session.ts`). Because `AppRunner.register()` runs to completion
   in one call but pauses on its `gate.decide` / `promptUser` / `handoff` hooks,
@@ -453,7 +453,7 @@ npm run poc -- ui:cli [deterministic|ai]
 ```
 
 `src/app/ui.ts` (`AppUI`) is that fallback CLI menu over
-`CatashiroApp` + `AppRunner`. Its injectable `UiIo` remains covered by
-`tests/unit/catashiro-poc-ui.test.ts`; the browser UI routes (including the
+`SoroeruApp` + `AppRunner`. Its injectable `UiIo` remains covered by
+`tests/unit/soroeru-poc-ui.test.ts`; the browser UI routes (including the
 `RegistrationSession` / `BulkUpdateSession` state machines and run routes) are covered by
-`tests/unit/catashiro-poc-web-ui.test.ts` and `tests/unit/catashiro-poc-registration.test.ts`.
+`tests/unit/soroeru-poc-web-ui.test.ts` and `tests/unit/soroeru-poc-registration.test.ts`.

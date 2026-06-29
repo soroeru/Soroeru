@@ -6,7 +6,7 @@ password-manager CSV files, session files, screenshots, or result JSON here.
 Run the real-site Visibility check explicitly:
 
 ```bash
-CATASHIRO_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visibility
+SOROERU_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visibility
 ```
 
 The CSV contains real credentials, so it is gitignored. The test never runs in
@@ -16,10 +16,10 @@ For faster local iteration, cap how many imported sites are run (defaults to
 all):
 
 ```bash
-CATASHIRO_E2E_MAX_SITES=20 CATASHIRO_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visibility
+SOROERU_E2E_MAX_SITES=20 SOROERU_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visibility
 ```
 
-The artifact under `state/catashiro-poc/e2e-real-visibility/` records counts only.
+The artifact under `state/soroeru-poc/e2e-real-visibility/` records counts only.
 Per-site `status` legend:
 
 - `collected` — logged in and collected at least one disclosure (success).

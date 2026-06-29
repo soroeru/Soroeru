@@ -17,7 +17,7 @@ and `../CLAUDE.md`).
 > information, online accounts, and online contractual relationships. This document fully
 > **supersedes** the previous Catashiro requirements; the prior direction lives in git.
 >
-> The **repository / codebase identifier remains `catashiro`** for now (code is not
+> The **repository / codebase identifier remains `soroeru`** for now (code is not
 > renamed); **Soroeru** is the product name. Technology selection is deliberately **not**
 > fixed here — it is decided ground-up, requirements-first, in
 > [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md). The existing

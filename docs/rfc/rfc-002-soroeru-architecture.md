@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-06-26
-Owner: Soroeru / Catashiro maintainers
+Owner: Soroeru / Soroeru maintainers
 
 ## Summary
 

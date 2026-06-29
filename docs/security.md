@@ -1,6 +1,6 @@
 # Security
 
-This document owns **security and privacy decisions** for `Catashiro`: principles, threat
+This document owns **security and privacy decisions** for `Soroeru`: principles, threat
 model, sensitive data handling, encryption, AI-disclosure policy, wall safety boundaries,
 DOM input safety, and dependency policy.
 
@@ -15,7 +15,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 > **never bypass CAPTCHA / MFA / bot detection / access controls**. See the §"Automated
 > access, scraping, and ToS" note below for the Soroeru-specific stance added for the
 > Visibility slice (CSV import, auto-login, collection). The repository identifier stays
-> `catashiro`.
+> `soroeru`.
 
 > **Automated access, scraping, and ToS (Soroeru, added 2026-06-25).** The first slice
 > (Visibility) imports the user's Google/Chrome Password Manager CSV, auto-logs in to each
@@ -114,7 +114,7 @@ a profile value can reach a display or a file:
   re-entering the master passphrase for `isSensitiveKey` fields before
   showing the raw value (Claude Review follow-up on #17).
 - `maskForArtifact(key, value)` — for **persisted artifacts**
-  (`state/catashiro-poc/matrix-*.json`, written by `npm run poc -- matrix`):
+  (`state/soroeru-poc/matrix-*.json`, written by `npm run poc -- matrix`):
   card / CVV / expiry / holder / password use the same strong mask; every
   other field is reduced to its length (e.g. `(17文字)`) or `(空)` — no raw
   value of any kind is written to disk outside the encrypted store. This is
@@ -123,7 +123,7 @@ a profile value can reach a display or a file:
 
 **Local persistence (PRIV-002 / #21)**: `npm run poc -- check-persistence`
 (`src/dev/privacy-check.ts`, tested by
-`tests/unit/catashiro-poc-privacy.test.ts`) scans
+`tests/unit/soroeru-poc-privacy.test.ts`) scans
 `{src,run}/**/*.ts` for local-filesystem writes and fails
 unless each one carries a `// persist: encrypted-store`,
 `// persist: encrypted-export`, or `// persist: measurement-output`
@@ -135,10 +135,10 @@ annotated.
 
 **`state/ai-reviews/`** (the local AI review hook,
 [`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
-source code, not on `state/catashiro-poc/` (the encrypted profile store); since
+source code, not on `state/soroeru-poc/` (the encrypted profile store); since
 profile values are encrypted at rest and never appear in source, review
 artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
-`state/catashiro-poc/` are Git-ignored.
+`state/soroeru-poc/` are Git-ignored.
 
 ## 4. Encryption (canonical)
 
@@ -189,7 +189,7 @@ all data unless the user set up a recovery key beforehand.
   optional `recovery` field in the store file. A single SHA-256 is sufficient here
   (unlike the passphrase KDF) because the recovery key already carries 256 bits of
   entropy.
-- **Recovery unlock**: `PocStore.openWithRecoveryKey()` / `CatashiroApp.unlockWithRecoveryKey()`
+- **Recovery unlock**: `PocStore.openWithRecoveryKey()` / `SoroeruApp.unlockWithRecoveryKey()`
   unwrap the master key with the recovery key instead of deriving it from a passphrase,
   then decrypt the store as usual. A wrong recovery key fails AES-GCM authentication and
   is rejected (fail-closed), matching the wrong-passphrase behavior in §4.7.
@@ -207,8 +207,8 @@ all data unless the user set up a recovery key beforehand.
   newer format versions fail closed as `StoreFormatError`; locked-store access fails as
   `StoreLockedError`. Import validates JSON and format before writing the destination.
 - **Mac beta location**: Soroeru Electron app launches use `~/Library/Application Support/Soroeru`
-  by default (`CATASHIRO_STATE_ROOT` may override it for tests or an explicit
-  user-selected local folder). Development commands continue to use `state/catashiro-poc`.
+  by default (`SOROERU_STATE_ROOT` may override it for tests or an explicit
+  user-selected local folder). Development commands continue to use `state/soroeru-poc`.
 
 ## 5. AI Provider Disclosure Policy
 
@@ -247,7 +247,7 @@ shadow state.
 
 **Static enforcement (PRIV-001 / #20)**: `npm run poc -- check-egress`
 (`src/dev/egress-check.ts`, tested by
-`tests/unit/catashiro-poc-egress.test.ts`) scans
+`tests/unit/soroeru-poc-egress.test.ts`) scans
 `{src,run}/**/*.ts` for network-call sites and fails unless each one
 carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
 `package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
@@ -275,16 +275,16 @@ security-check wording is treated as a wall too: when unsure, stop and ask the u
 
 **Static enforcement (SEC-002 / #23)**: `npm run poc -- check-bypass`
 (`src/dev/bypass-check.ts`, tested by
-`tests/unit/catashiro-poc-bypass.test.ts`) scans `package.json` `dependencies` /
+`tests/unit/soroeru-poc-bypass.test.ts`) scans `package.json` `dependencies` /
 `devDependencies` for package names matching a CAPTCHA-solving or anti-bot /
 browser-fingerprint-evasion denylist (e.g. `2captcha`, `anticaptcha`,
 `capsolver`, `*-stealth`, `rebrowser`, `fingerprint-injector`,
 `fingerprint-suite`). A dependency matching this denylist fails the check and
-must be reviewed against this section before it is added — `Catashiro` detects
+must be reviewed against this section before it is added — `Soroeru` detects
 walls and hands off; it never solves, bypasses, hides, or outsources them.
 
 **Detect-only invariant (SEC-002 / #23)**:
-`tests/unit/catashiro-poc-walls.test.ts` fixes two invariants that hold
+`tests/unit/soroeru-poc-walls.test.ts` fixes two invariants that hold
 regardless of which wall kind `detectWall` reports:
 
 - `handoffInstruction` copy never suggests solving, automating, bypassing, or
@@ -324,13 +324,13 @@ regarding automated read and update should be reviewed (see [`requirements.md`](
 
 ### 8.2 GDPR and Privacy Compliance Notes
 
-`Catashiro`'s local-first, no-hosted-vault, no-telemetry design aligns with core GDPR
+`Soroeru`'s local-first, no-hosted-vault, no-telemetry design aligns with core GDPR
 principles: data minimization, user ownership, and no third-party processing. However,
 formal GDPR compliance requires additional investigation:
 
 - **Right to be Forgotten**: the local vault can be deleted, but a mechanism to confirm
   complete deletion (including backups and any exported data) should be documented.
-- **Data Controller responsibility**: when `Catashiro` is used by organizations, the
+- **Data Controller responsibility**: when `Soroeru` is used by organizations, the
   responsibility boundaries for automated account actions need to be clarified.
 - Legal applicability varies by jurisdiction. [`requirements.md`](requirements.md) §8
   defers legal nuances to this document; these investigation items are owned here and
@@ -371,10 +371,10 @@ A local MCP server is a future advanced-user extension and must be disabled by d
 If added, it must be local-only, session-authorized, permission-scoped, and auditable.
 
 MCP tools may expose summaries, planning helpers, sanitized current-page structure,
-candidate-definition proposals, and `Catashiro` task creation for later review. MCP tools
+candidate-definition proposals, and `Soroeru` task creation for later review. MCP tools
 must not expose raw personal values, credentials, card numbers, CVV, API keys, decrypted
 vault exports, direct browser control, or submit/withdraw operations that skip
-`Catashiro`'s own review-and-confirm gates.
+`Soroeru`'s own review-and-confirm gates.
 
 All MCP calls should be logged in the encrypted vault with the tool name, time, requested
 scope, and sanitized result summary. Logs must not include decrypted values.

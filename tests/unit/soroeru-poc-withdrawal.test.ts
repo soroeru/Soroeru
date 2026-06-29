@@ -10,14 +10,14 @@ import { chromium, type Browser } from "playwright";
 import { startPocServer } from "../../sites/server.js";
 import { DeterministicMapper } from "../../src/agent/mapper.js";
 import { AppRunner } from "../../src/app/runner.js";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
 test("AppRunner.withdraw prepares the withdrawal page without clicking the final button", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-withdrawal-"));
   const site = await startPocServer();
-  const app = new CatashiroApp({
+  const app = new SoroeruApp({
     stateDir: dir,
     idleLockMs: 0,
     launchBrowserFn: async (): Promise<Browser> => chromium.launch({ headless: true }),

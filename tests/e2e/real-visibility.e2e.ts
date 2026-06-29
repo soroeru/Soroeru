@@ -13,13 +13,13 @@ const PASSPHRASE = "local-real-visibility-e2e-passphrase";
 const DEFAULT_CSV = "tests/e2e/Google_Passwords.csv";
 
 test("real-site Visibility collection from a local Google Passwords CSV", async (t) => {
-  const csvPath = process.env["CATASHIRO_E2E_PASSWORD_CSV"] ?? DEFAULT_CSV;
+  const csvPath = process.env["SOROERU_E2E_PASSWORD_CSV"] ?? DEFAULT_CSV;
   if (!existsSync(csvPath)) {
-    t.skip(`set CATASHIRO_E2E_PASSWORD_CSV or place ${DEFAULT_CSV} locally`);
+    t.skip(`set SOROERU_E2E_PASSWORD_CSV or place ${DEFAULT_CSV} locally`);
     return;
   }
 
-  const stateRoot = resolve(process.env["CATASHIRO_E2E_STATE_ROOT"] ?? "state/catashiro-poc/e2e-real-visibility");
+  const stateRoot = resolve(process.env["SOROERU_E2E_STATE_ROOT"] ?? "state/soroeru-poc/e2e-real-visibility");
   await mkdir(stateRoot, { recursive: true });
 
   const vault = await VaultV2.open(join(stateRoot, "vault.json"), PASSPHRASE);
@@ -28,7 +28,7 @@ test("real-site Visibility collection from a local Google Passwords CSV", async 
   const importSummary = importPasswordCsv(domain, { data: csvBytes });
   await vault.save();
 
-  const engine = new BrowserEngine({ headless: process.env["CATASHIRO_E2E_HEADFUL"] !== "1" });
+  const engine = new BrowserEngine({ headless: process.env["SOROERU_E2E_HEADFUL"] !== "1" });
   const runner = new VisibilityRunner({
     domain,
     openSession: (site) => engine.openSession(site),
@@ -46,7 +46,7 @@ test("real-site Visibility collection from a local Google Passwords CSV", async 
   }> = [];
 
   // Optional cap for fast local iteration; defaults to every imported site.
-  const maxSites = Number.parseInt(process.env["CATASHIRO_E2E_MAX_SITES"] ?? "", 10);
+  const maxSites = Number.parseInt(process.env["SOROERU_E2E_MAX_SITES"] ?? "", 10);
   const siteAccounts = Number.isFinite(maxSites) && maxSites > 0
     ? domain.listSiteAccounts().slice(0, maxSites)
     : domain.listSiteAccounts();

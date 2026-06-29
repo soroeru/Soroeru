@@ -7,16 +7,16 @@
 > layout, commands, and packaging below describe the **previous Catashiro** codebase. They
 > remain usable for the existing code, but the target stack, build, and packaging are
 > updated by future RFC-002 implementation work; do not assume the details below are final.
-> The repository identifier stays `catashiro`.
+> The repository identifier stays `soroeru`.
 
 This document owns **local development workflow, repository layout,
-implementation conventions, and the canonical quality gate list** for `Catashiro`.
+implementation conventions, and the canonical quality gate list** for `Soroeru`.
 
 > **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
 > autonomous agent (Playwright-based; see [`requirements.md`](requirements.md)).
 > The MV3-extension build / layout / command details that used to live below have been
 > removed along with that code (#68; history remains in git). This document now
-> describes the `Catashiro` agent's setup, layout, and commands.
+> describes the `Soroeru` agent's setup, layout, and commands.
 
 Out of scope here: application architecture (see [`extension.md`](extension.md)),
 product requirements (see [`requirements.md`](requirements.md)), test strategy
@@ -45,7 +45,7 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 
 ## 2. Environment Setup
 
-Required tools for `Catashiro` development:
+Required tools for `Soroeru` development:
 
 - `git`
 - `bash`
@@ -90,7 +90,7 @@ npm run release:check              # beta privacy/security release gate (typeche
 ```
 
 Each `npm run poc ...` invocation runs `npm run build` first. State (the
-encrypted store, measurement JSON) is written under `state/catashiro-poc/` and
+encrypted store, measurement JSON) is written under `state/soroeru-poc/` and
 must not be committed. See [`verification-results.md`](verification-results.md)
 for full command reference and verification results.
 
@@ -114,7 +114,7 @@ renderer window runs with `contextIsolation: true`, `nodeIntegration: false`,
 and `sandbox: true`; the sandboxed preload is bundled to a self-contained
 CommonJS file (`vite build --mode preload`). The vault file defaults to
 `app.getPath("userData")/vault.json` (`.../Application Support/Soroeru`) and
-still honors the `CATASHIRO_STATE_ROOT` override. App build output under `dist/`
+still honors the `SOROERU_STATE_ROOT` override. App build output under `dist/`
 is not committed.
 
 ## 3.1 Mac Beta Packaging
@@ -152,12 +152,12 @@ the generated DMG to `release/Soroeru-<version>.dmg`. The package is unsigned
 and not notarized for the MVP.
 
 The packaged app name is `Soroeru.app`, with bundle identifier
-`app.catashiro.soroeru`; the repository/package identifier remains `catashiro`.
+`app.soroeru.soroeru`; the repository/package identifier remains `soroeru`.
 The app uses Electron's embedded Node runtime. At runtime, packaged builds set
 `PLAYWRIGHT_BROWSERS_PATH` to the bundled
 `node_modules/playwright-core/.local-browsers` directory unless the environment
 already overrides it. The vault defaults to
-`~/Library/Application Support/Soroeru/vault.json`; `CATASHIRO_STATE_ROOT`
+`~/Library/Application Support/Soroeru/vault.json`; `SOROERU_STATE_ROOT`
 remains available for local migration tests and user-selected local vault
 folders. Do not point it at shared cloud storage until a future encrypted-sync
 Issue defines the provider and egress controls.
@@ -210,7 +210,7 @@ Current repository shape:
 ├── src/
 │   ├── agent/         # scanner, deterministic classifier, guards, gate, walls, filler, orchestration
 │   │   └── ai/        # AI mapper + provider abstraction
-│   ├── app/           # CatashiroApp / AppRunner / startWebUiServer / AppUI
+│   ├── app/           # SoroeruApp / AppRunner / startWebUiServer / AppUI
 │   ├── dev/           # PRIV-001/002, SEC-002 static checks
 │   ├── store/         # encrypted store (crypto, recovery, store)
 │   ├── profile.ts
