@@ -68,8 +68,7 @@ export class SoroeruSession {
   private readonly visibility: VisibilityService;
   /** Lazily-created real engine (only when production `openSession` is used). */
   private engine:
-    | { openSession: (site: SiteAccount) => Promise<SiteSession>; closeAll: () => Promise<void> }
-    | undefined;
+    { openSession: (site: SiteAccount) => Promise<SiteSession>; closeAll: () => Promise<void> } | undefined;
   private readonly closeInjectedEngine: (() => Promise<void>) | undefined;
   private eventSink: ((event: VisibilityEvent) => void) | undefined;
 
