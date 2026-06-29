@@ -129,6 +129,23 @@ export interface PageLink {
   text: string;
 }
 
+/**
+ * A read-only value shown as page text (not an editable form control), e.g. an
+ * account page rendering "メールアドレス: foo@example.com" as a <dl>/<table> row
+ * or a disabled/readonly <input>. Structure-only: the label is captured here for
+ * classification, but the raw value is NOT — it is read separately and locally
+ * (PageDriver.readDisplayValues), keyed by `valueId`, so this snapshot stays
+ * safe to hand to an optional AI mapper (RFC-002 §5.1).
+ */
+export interface DisplayValueCandidate {
+  /** Synthetic id; the scanner stamps the value element with data-af-id=<valueId> ("d-*"). */
+  valueId: string;
+  /** The key/label text describing this value (e.g. a <dt> or <th>). */
+  labelText: string;
+  /** Nearby text fallback for classification. */
+  nearbyText: string;
+}
+
 /** Structure-only snapshot of the current page. Contains no profile values. */
 export interface PageSnapshot {
   url: string;
@@ -142,6 +159,11 @@ export interface PageSnapshot {
   iframeSrcs: string[];
   /** Known wall-widget DOM markers found on the page (e.g. "g-recaptcha"). */
   wallMarkers: string[];
+  /**
+   * Read-only display values (label + id only; raw value read separately). Optional
+   * so legacy snapshot constructions stay valid; the real scanner always sets it.
+   */
+  displayValues?: DisplayValueCandidate[];
 }
 
 /** How a checkbox should be treated by the agent. */

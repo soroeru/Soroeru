@@ -113,8 +113,8 @@ export function computeLedgerInsights(domain: DomainService): LedgerInsights {
     if (wallOrUnknown.length > 0 || stalledByCheckpoint) {
       stalledSites.push({
         ...base,
-        reason: "CAPTCHA / MFA / 検証などで収集が止まり、未確認です。",
-        nextAction: "同じセッションでハンドオフを再開し、収集を続けます。",
+        reason: "収集が完了していません（ウォール / ログイン未完了 / 到達不可 / 情報なしなど）。詳細は要確認をご確認ください。",
+        nextAction: "サイトを開いて状態を確認し、必要に応じて再収集します。",
         evidence: toEvidenceRefs(wallOrUnknown.flatMap((c) => c.evidenceIds), evidenceById),
       });
     }

@@ -206,6 +206,11 @@ function normalizeSiteUrl(rawUrl: string): { domain: string; anchor: string } | 
   } catch {
     return undefined;
   }
+  // Soroeru collects from websites only. Password-manager exports also carry
+  // non-web credentials (e.g. Android apps as `android://<hash>@<package>`);
+  // reject any non-http(s) scheme so they are skipped, not mis-imported as a
+  // site that can only ever be "unreachable".
+  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
   const host = url.hostname.toLowerCase();
   // Password-manager exports carry real domains; reject bare single-label hosts.
   if (!host.includes(".")) return undefined;

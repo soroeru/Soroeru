@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
 import { SoroeruSession } from "./session.js";
 import { createIpcBridge } from "./ipc/bridge.js";
+import { VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
 
 // Product name (issue #158): the userData path becomes
 // ".../Application Support/Soroeru". The code identifier stays "soroeru".
@@ -49,7 +50,7 @@ function registerIpc(session: SoroeruSession): void {
   }
 }
 
-async function createWindow(): Promise<void> {
+async function createWindow(session: SoroeruSession): Promise<BrowserWindow> {
   const window = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -65,11 +66,18 @@ async function createWindow(): Promise<void> {
     },
   });
 
+  // Forward Visibility run progress / wall hand-off events to this window. The
+  // payload is sanitized (counts / references / masked wording) by the service.
+  session.setVisibilityEventSink((event) => {
+    if (!window.isDestroyed()) window.webContents.send(VISIBILITY_EVENT_CHANNEL, event);
+  });
+
   if (DEV_SERVER_URL) {
     await window.loadURL(DEV_SERVER_URL);
   } else {
     await window.loadFile(RENDERER_INDEX);
   }
+  return window;
 }
 
 async function main(): Promise<void> {
@@ -81,10 +89,27 @@ async function main(): Promise<void> {
   const session = new SoroeruSession(vaultPath);
   registerIpc(session);
 
-  await createWindow();
+  await createWindow(session);
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) void createWindow(session);
+  });
+
+  // Orderly teardown (RFC-002 §5.2): close every Playwright session + the
+  // browser and lock the vault before the process exits, so quit leaves no
+  // orphan browser process and no derived key in memory. `before-quit` is
+  // async-safe: prevent the default once, run shutdown, then quit for real.
+  let shuttingDown = false;
+  app.on("before-quit", (event) => {
+    if (shuttingDown) return;
+    event.preventDefault();
+    shuttingDown = true;
+    void session
+      .shutdown()
+      .catch(() => {
+        // Teardown is best-effort; never block the quit on a wedged browser.
+      })
+      .finally(() => app.quit());
   });
 }
 

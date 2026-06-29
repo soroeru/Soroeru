@@ -49,6 +49,32 @@ export function relationshipLabel(kind: string): string {
   }
 }
 
+/** Human label for the terminal status of a Visibility run. */
+export function visibilityStatusLabel(status: string): string {
+  switch (status) {
+    case "collected":
+      return "収集が完了しました。";
+    case "handoff":
+      return "ウォール（CAPTCHA / MFA / 検証）で収集が止まりました。同じブラウザで解決してから再実行してください。";
+    case "failed":
+      return "収集に失敗しました。";
+    case "unreachable":
+      return "サイトにアクセスできませんでした。アクセス不能一覧に記録しました。";
+    case "skipped":
+      return "Web サイトではない認証情報のため収集をスキップしました（例: アプリ）。";
+    case "login-failed":
+      return "ログインが完了しませんでした（パスワードの変更や追加手順の可能性）。要確認に記録しました。";
+    case "no-data":
+      return "ページには到達しましたが、収集できる情報が見つかりませんでした（手動確認を推奨）。";
+    case "locked":
+      return "ボールトが施錠されています。";
+    case "busy":
+      return "別の収集が進行中です。";
+    default:
+      return "収集が終了しました。";
+  }
+}
+
 /** Human label for a stale state shown as the ledger's freshness flag. */
 export function staleLabel(state: "current" | "stale" | "unknown"): string {
   switch (state) {

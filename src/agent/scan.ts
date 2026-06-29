@@ -15,11 +15,16 @@ export async function snapshotPage(page: Page): Promise<PageSnapshot> {
   return { ...raw, url: page.url(), title: await page.title() };
 }
 
-/** Poll until the page exposes at least one form field or the timeout elapses (dynamic rendering). */
+/**
+ * Poll until the page exposes at least one form field or read-only display value,
+ * or the timeout elapses (dynamic rendering). Display-only account pages have no
+ * form fields, so waiting on fields alone would always burn the full timeout.
+ */
 export async function waitForFields(page: Page, timeoutMs = 5000): Promise<PageSnapshot> {
   const deadline = Date.now() + timeoutMs;
   let snapshot = await snapshotPage(page);
-  while (snapshot.fields.length === 0 && Date.now() < deadline) {
+  const isEmpty = (s: PageSnapshot): boolean => s.fields.length === 0 && (s.displayValues?.length ?? 0) === 0;
+  while (isEmpty(snapshot) && Date.now() < deadline) {
     await page.waitForTimeout(150);
     snapshot = await snapshotPage(page);
   }
@@ -33,6 +38,7 @@ function scanInPage(): {
   visibleText: string;
   iframeSrcs: string[];
   wallMarkers: string[];
+  displayValues: NonNullable<PageSnapshot["displayValues"]>;
 } {
   const SUPPORTED_TYPES = new Set([
     "text", "email", "tel", "url", "search", "number", "password",
@@ -181,6 +187,63 @@ function scanInPage(): {
     if (document.querySelector(`.${marker}`)) wallMarkers.push(marker);
   }
 
+  // --- Read-only display values (account pages that render registered info as text) ---
+  // The runner collects these the same way as form fields, but the raw value is
+  // read separately and locally; here we only export the label + a stamp id.
+  const PLACEHOLDER_VALUES = new Set([
+    "", "-", "—", "--", "未登録", "未設定", "未入力", "なし", "未連携", "非公開",
+    "設定する", "変更", "編集", "登録する", "追加", "削除", "表示", "非表示",
+  ]);
+  const isPlausibleValue = (text: string): boolean => {
+    const t = text.trim();
+    if (t.length === 0 || t.length > 200) return false;
+    if (PLACEHOLDER_VALUES.has(t)) return false;
+    if (!/[0-9A-Za-z぀-ヿ一-鿿@]/.test(t)) return false; // not pure punctuation/symbols
+    return true;
+  };
+  const hasFormControl = (el: Element): boolean => el.querySelector("input, select, textarea, button") !== null;
+
+  const displayValues: NonNullable<PageSnapshot["displayValues"]> = [];
+  const seenValueEls = new Set<Element>();
+  const pushDisplay = (valueEl: HTMLElement, rawValue: string, labelText: string, nearbyText: string): void => {
+    if (seenValueEls.has(valueEl)) return;
+    if (!isPlausibleValue(rawValue)) return;
+    if (!isVisible(valueEl)) return;
+    const label = labelText.trim();
+    const nearby = nearbyText.trim();
+    if (label.length === 0 && nearby.length === 0) return;
+    seenValueEls.add(valueEl);
+    displayValues.push({
+      valueId: stamp(valueEl, "d"),
+      labelText: label.slice(0, 80),
+      nearbyText: nearby.slice(0, 80),
+    });
+  };
+
+  // (a) Read-only / disabled inputs hold a value the field loop intentionally skipped.
+  for (const el of Array.from(document.querySelectorAll("input"))) {
+    if (!(el instanceof HTMLInputElement)) continue;
+    if (!(el.disabled || el.readOnly)) continue;
+    if (el.type === "password" || el.type === "hidden") continue;
+    pushDisplay(el, el.value ?? "", labelTextsFor(el).join(" "), nearbyTextFor(el));
+  }
+
+  // (b) Definition lists: <dt> label → <dd> value (when the dd is plain text).
+  for (const dd of Array.from(document.querySelectorAll("dd"))) {
+    if (!(dd instanceof HTMLElement) || hasFormControl(dd)) continue;
+    const dt = dd.previousElementSibling;
+    const label = dt?.tagName === "DT" ? (dt.textContent ?? "") : "";
+    pushDisplay(dd, dd.textContent ?? "", label, "");
+  }
+
+  // (c) Table rows: <th> label → <td> value (when the td is plain text).
+  for (const tr of Array.from(document.querySelectorAll("tr"))) {
+    const th = tr.querySelector("th");
+    const td = tr.querySelector("td");
+    if (!(th instanceof HTMLElement) || !(td instanceof HTMLElement) || hasFormControl(td)) continue;
+    pushDisplay(td, td.textContent ?? "", th.textContent ?? "", "");
+  }
+
   return {
     fields,
     buttons,
@@ -188,5 +251,6 @@ function scanInPage(): {
     visibleText: (document.body?.innerText ?? "").slice(0, 8000),
     iframeSrcs: Array.from(document.querySelectorAll("iframe")).map((f) => f.src),
     wallMarkers,
+    displayValues,
   };
 }

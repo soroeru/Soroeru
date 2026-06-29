@@ -48,6 +48,13 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.ledger.site("x");
   await api.ledger.insights();
   await api.ledger.reveal("x", "y");
+  await api.visibility.run("x");
+  await api.visibility.resume();
+  await api.visibility.abort();
+  await api.visibility.status();
+  // onEvent only subscribes (no channel invoke); calling it must not throw and
+  // returns an unsubscribe function even with no subscribe transport provided.
+  assert.equal(typeof api.visibility.onEvent(() => {}), "function");
 
   for (const channel of invoked) {
     assert.ok(isIpcChannel(channel), `unexpected channel ${channel}`);

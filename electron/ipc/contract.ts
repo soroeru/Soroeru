@@ -48,9 +48,21 @@ export const IPC_CHANNELS = {
   ledgerSite: "soroeru:ledger:site",
   ledgerInsights: "soroeru:ledger:insights",
   revealValue: "soroeru:ledger:reveal",
+  visibilityRun: "soroeru:visibility:run",
+  visibilityResume: "soroeru:visibility:resume",
+  visibilityAbort: "soroeru:visibility:abort",
+  visibilityStatus: "soroeru:visibility:status",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
+
+/**
+ * One-way main→renderer channel for Visibility run progress / wall hand-off
+ * events. It is NOT in `IPC_CHANNELS` because the renderer only *subscribes*
+ * (it never invokes it); the invoke allowlist above stays the renderer's full
+ * set of callable channels.
+ */
+export const VISIBILITY_EVENT_CHANNEL = "soroeru:visibility:event" as const;
 
 /**
  * Minimum master-passphrase length, enforced in the trusted layer (the renderer
@@ -228,3 +240,54 @@ export interface RevealResult {
   value?: string;
   error?: string;
 }
+
+// --- Visibility run (auto-login / collection, RFC-002 §5.1 / §5.2) ---
+
+/** Terminal outcome of a per-site Visibility run as the renderer sees it. */
+export type VisibilityRunStatus =
+  | "collected"
+  | "handoff"
+  | "failed"
+  | "unreachable"
+  | "skipped"
+  | "login-failed"
+  | "no-data"
+  | "locked"
+  | "busy";
+
+/** Counts-only result of a Visibility run; never a raw collected value. */
+export interface VisibilityRunResultView {
+  siteAccountId: string;
+  status: VisibilityRunStatus;
+  disclosures: number;
+  relationships: number;
+  constraints: number;
+}
+
+/** Whether a run is in progress and whether it is paused at a wall hand-off. */
+export interface VisibilityStatusView {
+  running: boolean;
+  siteAccountId?: string;
+  /** True when the run is paused waiting for the user to clear a wall in the headed browser. */
+  awaitingHandoff: boolean;
+  /** Hand-off instruction text (what to resolve), present only while awaiting hand-off. */
+  instruction?: string;
+}
+
+/** Acknowledgement of a resume/abort request against the active hand-off. */
+export interface VisibilityHandoffAck {
+  ok: boolean;
+  /** A non-sensitive reason when `ok` is false (e.g. "no-active-handoff"). */
+  error?: string;
+}
+
+/**
+ * A one-way Visibility event pushed to the renderer over
+ * `VISIBILITY_EVENT_CHANNEL`. Carries only references / counts / masked
+ * hand-off wording — never a raw collected value.
+ */
+export type VisibilityEvent =
+  | { type: "run-started"; siteAccountId: string }
+  | { type: "handoff"; siteAccountId: string; instruction: string; evidence: string }
+  | { type: "resumed"; siteAccountId: string }
+  | { type: "run-finished"; result: VisibilityRunResultView };

@@ -123,6 +123,30 @@ The hook skips when:
 use it manually to suppress review for ordinary commits; use `[skip-review]`
 when the skip should be visible in Git history.
 
+### Temporarily disabling the hook (e.g. during acceptance testing)
+
+For a session where the hook should not fire **at all** (such as the Product
+Owner's manual acceptance testing, where many small commits would otherwise
+queue reviews), disable it locally instead of editing the tracked
+`.githooks/post-commit`:
+
+```bash
+# Disable: drop the local-only hooksPath. Git falls back to .git/hooks/, which
+# has no post-commit, so no review is queued. This is local config only — it is
+# not committed and does not affect other clones.
+git config --unset core.hooksPath
+
+# Re-enable when done (idempotent; either works):
+git config core.hooksPath .githooks
+# or:
+bash scripts/setup-hooks.sh
+```
+
+Prefer this over commenting out or deleting `.githooks/post-commit`, which is
+tracked in git and shared across machines. Per-commit skips should still use
+`[skip-review]` so the skip is visible in history; the `core.hooksPath` toggle is
+for a whole working session.
+
 ## 7. Review Follow-Up Policy
 
 If a review result is `NIT_ONLY`, a follow-up commit or amend that only

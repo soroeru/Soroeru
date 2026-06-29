@@ -1,8 +1,8 @@
 // CSV import & queue review (issue #160, RFC-002 §5.1). The user picks their
 // Google / Chrome Password Manager export; the file is read locally and sent as
 // bytes over IPC. Only a counts-only summary returns — never a raw credential.
-// After import the user reviews the imported sites and selects Visibility run
-// targets. (Launching the run is wired in a later slice; this captures intent.)
+// After import the user reviews the imported sites; the actual auto-login +
+// collection run is launched from the「収集」tab (CollectionPanel).
 
 import { useCallback, useState } from "react";
 import type { CsvImportResult } from "../../../electron/ipc/contract.js";
@@ -18,7 +18,6 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [summary, setSummary] = useState<ImportSummary | undefined>();
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
 
   const onFile = useCallback(
     async (file: File | undefined) => {
@@ -33,7 +32,6 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
           return;
         }
         setSummary(result.summary);
-        setSelected(new Set(result.summary.siteAccountIds));
         await onImported();
       } catch {
         setError(reasonMessage(undefined));
@@ -43,15 +41,6 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
     },
     [onImported],
   );
-
-  const toggle = useCallback((siteAccountId: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(siteAccountId)) next.delete(siteAccountId);
-      else next.add(siteAccountId);
-      return next;
-    });
-  }, []);
 
   return (
     <section className="flex flex-col gap-4">
@@ -104,19 +93,14 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
           )}
 
           <div className="flex flex-col gap-2">
-            <p className="text-sm font-medium">
-              Visibility 収集の対象（{selected.size}/{summary.siteAccountIds.length}）
-            </p>
+            <p className="text-sm font-medium">取り込まれたサイト（{summary.siteAccountIds.length}）</p>
             <p className="text-xs text-neutral-400">
-              この選択はまだ保存されません（収集の実行は後続スライスで対応します）。取り込み自体は完了しています。
+              取り込みは完了しています。実際の自動ログイン・収集は「収集」タブでサイトごとに実行できます。
             </p>
             <ul className="flex max-h-48 flex-col gap-1 overflow-auto text-sm">
               {summary.siteAccountIds.map((id) => (
-                <li key={id}>
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={selected.has(id)} onChange={() => toggle(id)} />
-                    <span className="font-mono text-xs text-neutral-500">{id}</span>
-                  </label>
+                <li key={id} className="font-mono text-xs text-neutral-500">
+                  {id}
                 </li>
               ))}
             </ul>

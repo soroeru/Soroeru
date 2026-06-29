@@ -49,6 +49,29 @@ ledger** so the user can see "what was given, where, and when," with stale value
 Browser automation uses **Playwright** (browser-engine independence) in the target
 architecture selected by RFC-002.
 
+## Product Ownership and AI Responsibilities
+
+The human user is the **Product Owner** for Soroeru. The Product Owner owns product intent,
+priority, acceptance, release judgment, and the final decision about what is valuable,
+acceptable, and safe for users.
+
+AI agents are not merely coding assistants in this repository. They are expected to cover
+the implementation-side roles needed to realize the Product Owner's intent, including:
+
+- **Product management support**: turn the Product Owner's intent into Issues, scope,
+  acceptance criteria, risks, and release-readiness checks.
+- **Software design / architecture**: propose and implement designs aligned with
+  RFC-002, security requirements, and the local-first agency principles.
+- **Programming**: make coherent code and documentation changes, keeping them small,
+  reviewable, and consistent with repository patterns.
+- **QA / release verification**: design and run automated and manual checks, review PRs
+  strictly, identify release blockers, and report residual risk honestly.
+
+When the Product Owner asks for product direction, implementation, review, or release
+readiness, agents should proactively carry the work across these roles instead of
+assuming the Product Owner will also act as product manager, software designer,
+programmer, or QA owner.
+
 ## Product Principles
 
 - **Never become a delegation of will.** Success is "I can do this," not "it did it for
@@ -342,16 +365,19 @@ storage/encryption behavior, run the relevant items against the local test sites
 
 ## Role of Codex in This Repository
 
-Codex should act as an implementation-focused coding agent for Soroeru, respecting the
-local-first, encrypted-storage, and never-bypass-walls principles
-above.
+Codex should act as an implementation-side product partner for Soroeru: product
+management support, software design, programming, QA, review, and release-verification
+work are all in scope. Codex must respect the Product Owner's intent and the
+local-first, encrypted-storage, and never-bypass-walls principles above.
 
 Primary responsibilities:
 
 - read the repository instructions before editing
+- translate Product Owner intent into concrete scope, acceptance criteria, and risks
+- propose and implement designs aligned with RFC-002 and the shared product principles
 - make small, coherent code changes aligned with the shared sections and RFC-002
 - update documentation when behavior or commands change
-- run available checks when feasible
+- run available checks and perform QA/review when feasible
 - clearly report what was changed and what was not verified
 
 ## Codex Operating Rules

@@ -9,11 +9,12 @@ import type { VaultStatus } from "../../electron/ipc/contract.js";
 import { reasonMessage } from "./messages.js";
 import { VaultGate } from "./components/VaultGate.js";
 import { CsvImportPanel } from "./components/CsvImportPanel.js";
+import { CollectionPanel } from "./components/CollectionPanel.js";
 import { LedgerPanel } from "./components/LedgerPanel.js";
 import { InsightsPanel } from "./components/InsightsPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
-type Tab = "import" | "ledger" | "insights";
+type Tab = "import" | "collect" | "ledger" | "insights";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -104,6 +105,9 @@ export function App(): React.JSX.Element {
             <TabButton active={tab === "import"} onClick={() => setTab("import")}>
               取り込み
             </TabButton>
+            <TabButton active={tab === "collect"} onClick={() => setTab("collect")}>
+              収集
+            </TabButton>
             <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
               開示台帳
             </TabButton>
@@ -117,6 +121,12 @@ export function App(): React.JSX.Element {
               onImported={() => {
                 setReloadToken((token) => token + 1);
               }}
+            />
+          )}
+          {tab === "collect" && (
+            <CollectionPanel
+              reloadToken={reloadToken}
+              onCollected={() => setReloadToken((token) => token + 1)}
             />
           )}
           {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}

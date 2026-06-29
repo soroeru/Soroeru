@@ -130,6 +130,22 @@ test("skips rows with unparseable or single-label URLs", async () => {
   });
 });
 
+test("skips non-web credentials (android:// and other non-http schemes)", async () => {
+  await withDomain(async (domain) => {
+    const csv = [
+      HEADER,
+      "Android App,android://abc123hash@com.example.app/,alice,pw,",
+      "FTP,ftp://files.example.test,bob,pw,",
+      "Web,https://ok.example.test,carol,pw,",
+    ].join("\n");
+    const summary = importPasswordCsv(domain, { data: csv });
+    assert.equal(summary.importedCredentials, 1);
+    assert.equal(summary.skipped, 2);
+    assert.equal(summary.sitesCreated, 1);
+    assert.equal(domain.listSiteAccounts().every((s) => !s.domain.startsWith("com.example.app")), true);
+  });
+});
+
 test("rejects an oversize CSV before importing", async () => {
   await withDomain(async (domain) => {
     const big = new Uint8Array(MAX_CSV_BYTES + 1);
