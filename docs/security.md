@@ -528,8 +528,8 @@ gate:
 npm run release:check
 ```
 
-`release:check` runs typecheck, the unit test suite, and the three static hardening gates
-that protect the beta boundary:
+`release:check` runs typecheck, the unit test suite, the three static hardening gates
+that protect the beta boundary, and the dependency-audit gate:
 
 - `npm run poc -- check-egress` — network egress annotations plus telemetry /
   analytics dependency denylist (PRIV-001, §6)
@@ -537,6 +537,11 @@ that protect the beta boundary:
   encrypted store/export and masked measurement output (PRIV-002, §3)
 - `npm run poc -- check-bypass` — CAPTCHA-solving / anti-bot / fingerprint-evasion
   dependency denylist (SEC-002, §7)
+- `npm run audit:check` — production dependency audit gate (SEC-003,
+  `npm audit --omit=dev --audit-level=high`), the same command CI runs; shares its
+  threshold/scope so local and CI never drift (§12, [`dependency-security.md`](dependency-security.md)).
+  Requires registry access; see [`development.md`](development.md) §8.1 for the offline
+  note and the rationale for keeping it in the release gate rather than per-commit.
 
 Treat a failure in any of these as a release blocker. Fix the code or update the owning
 security section with an explicit reviewed exception before sharing the build.
