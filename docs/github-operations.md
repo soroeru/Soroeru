@@ -16,7 +16,8 @@ Out of scope here: local setup and quality gate commands (see
 - Avoid direct pushes to `main`.
 - Use feature flags or safe incremental changes for unfinished work that must
   merge early.
-- Multiple agents may work in parallel, each in its own `git worktree` (see §2).
+- Multiple agents may work in parallel, each in its own `git worktree` (see §2,
+  *Parallel multi-agent development*).
 
 ## 2. Starting Work
 
@@ -68,9 +69,9 @@ across many Issues, so it is not pinned to any single Issue branch — for the
 next Issue, re-run the §2 recipe (`git fetch origin && git switch -c <new-branch>
 origin/main`) from the same worktree.
 
-- `core.hooksPath` is set with `git config --local` (shared Git config), so
-  running `scripts/setup-hooks.sh` once enables the local AI review hook in every
-  worktree.
+- `core.hooksPath` is set with `git config --local` (stored in the shared common
+  git dir, not per-worktree), so running `scripts/setup-hooks.sh` once enables
+  the local AI review hook in every worktree.
 - `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
   tree, so worktrees do not contend for the same review lock.
 - Branch-prefix routing already separates reviewers (see §8): keep the Codex CLI
