@@ -141,15 +141,17 @@ push to `main`:
 
 | Job | Steps | Covers |
 | --- | --- | --- |
-| `unit` | `npm run typecheck`, `npm test`, `npm run poc -- check-egress` (PRIV-001), `npm run poc -- check-persistence` (PRIV-002), `npm run poc -- check-bypass` (SEC-002) | All unit-testable layers in §2.1, including the AI mapper exercised against a `StubProvider` (`soroeru-poc-ai-mapper.test.ts`) — no real API key is used or required. |
-| `e2e-deterministic` | `npx playwright install --with-deps chromium`, `npm run poc:matrix -- deterministic chromium` | The full registration + bulk-update E2E matrix (§8) against the local test sites, deterministic mapper, chromium only. `npm run poc:matrix` exits non-zero (`hasFailures`, `run/measure.ts`) if any site's registration, guard evaluation, bulk-update result/mandate, the trial-card decline path, or wall-detection/resume fixtures regress. |
+| `unit` | `actions/cache` for `~/.cache/ms-playwright`, `npm run typecheck`, `npm test`, `npm run poc -- check-egress` (PRIV-001), `npm run poc -- check-persistence` (PRIV-002), `npm run poc -- check-bypass` (SEC-002) | All unit-testable layers in §2.1, including the AI mapper exercised against a `StubProvider` (`soroeru-poc-ai-mapper.test.ts`) — no real API key is used or required. The Playwright browser cache shortens the Chromium install step on a cache hit. |
+| `e2e-deterministic` | `actions/cache` for `~/.cache/ms-playwright`, `npx playwright install --with-deps chromium`, `npm run poc:matrix -- deterministic chromium` | The full registration + bulk-update E2E matrix (§8) against the local test sites, deterministic mapper, chromium only. `npm run poc:matrix` exits non-zero (`hasFailures`, `run/measure.ts`) if any site's registration, guard evaluation, bulk-update result/mandate, the trial-card decline path, or wall-detection/resume fixtures regress. The browser cache reduces the repeated Chromium download cost, while `--with-deps` still installs the Ubuntu packages Chromium needs on a fresh runner. |
 
 **CI vs. local-only (decision for #45):**
 
 - **In CI**: typecheck, unit tests (incl. the AI-mapper unit tests against a
   stub provider — this is the "AI variant via stub provider" the Claude
   review follow-up on #45 asked for), the PRIV-001/PRIV-002/SEC-002 static
-  checks, and the deterministic E2E matrix on chromium.
+  checks, and the deterministic E2E matrix on chromium. Both Playwright jobs
+  cache `~/.cache/ms-playwright` so repeated runs can skip most browser
+  downloads when the cache hits.
 - **Local-only**: `npm run poc:matrix -- both` across `chromium,firefox,webkit`
   (PORT-001 cross-engine coverage) and the AI variant against a real provider
   (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, REQ-012) — both require either
