@@ -203,6 +203,44 @@ test("saved page import rejects mhtml files at the trusted boundary", async () =
   }
 });
 
+test("saved page import does not mark a site collected when no disclosures are found", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      error?: string;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const blankHtml = "<!doctype html><html><body><main>blank</main></body></html>";
+    const result = (await bridge[IPC_CHANNELS.savedPageImport]({
+      siteAccountId,
+      fileName: "account.html",
+      data: new TextEncoder().encode(blankHtml),
+    })) as { ok: boolean; summary?: { disclosures: number }; error?: string };
+    assert.equal(result.ok, true);
+    assert.equal(result.summary?.disclosures, 0);
+
+    const sites = (await bridge[IPC_CHANNELS.ledgerSites]()) as Array<{
+      siteAccountId: string;
+      collected: boolean;
+    }>;
+    assert.equal(sites.find((site) => site.siteAccountId === siteAccountId)?.collected, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("isIpcChannel rejects channels outside the allowlist", () => {
   assert.equal(isIpcChannel("soroeru:vault:status"), true);
   assert.equal(isIpcChannel("soroeru:vault:delete-everything"), false);

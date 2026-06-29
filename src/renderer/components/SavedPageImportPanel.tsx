@@ -6,6 +6,7 @@ const badFileMessage = "保存した HTML ファイル（.html / .htm）を選�
 
 interface SavedPageImportPanelProps {
   siteAccountId: string;
+  disabled?: boolean;
   onImported: () => Promise<void> | void;
 }
 
@@ -15,6 +16,7 @@ function isSavedPageFile(file: File): boolean {
 
 export function SavedPageImportPanel({
   siteAccountId,
+  disabled = false,
   onImported,
 }: SavedPageImportPanelProps): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -25,7 +27,7 @@ export function SavedPageImportPanel({
 
   const onFile = useCallback(
     async (file: File | undefined) => {
-      if (!file) return;
+      if (!file || disabled) return;
       if (!isSavedPageFile(file)) {
         setError(badFileMessage);
         return;
@@ -47,7 +49,7 @@ export function SavedPageImportPanel({
         setBusy(false);
       }
     },
-    [onImported, siteAccountId],
+    [disabled, onImported, siteAccountId],
   );
 
   return (
@@ -62,19 +64,21 @@ export function SavedPageImportPanel({
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || disabled}
           onClick={() => inputRef.current?.click()}
           className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:bg-neutral-300"
         >
           保存ページを選択
         </button>
-        <p className="text-xs text-neutral-500">HTML のみ。外部サイトにはアクセスしません。</p>
+        <p className="text-xs text-neutral-500">
+          HTML のみ。外部サイトにはアクセスしません。{disabled ? "収集中は取り込みを一時停止しています。" : ""}
+        </p>
       </div>
       <input
         ref={inputRef}
         type="file"
         accept=".html,.htm,text/html"
-        disabled={busy}
+        disabled={busy || disabled}
         onChange={(event) => {
           void onFile(event.target.files?.[0]);
           event.target.value = "";
@@ -85,11 +89,11 @@ export function SavedPageImportPanel({
       <div
         onDragEnter={(event) => {
           event.preventDefault();
-          if (!busy) setDragging(true);
+          if (!busy && !disabled) setDragging(true);
         }}
         onDragOver={(event) => {
           event.preventDefault();
-          if (!busy) setDragging(true);
+          if (!busy && !disabled) setDragging(true);
         }}
         onDragLeave={(event) => {
           event.preventDefault();
@@ -98,11 +102,11 @@ export function SavedPageImportPanel({
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          if (!busy) void onFile(event.dataTransfer.files[0]);
+          if (!busy && !disabled) void onFile(event.dataTransfer.files[0]);
         }}
-        aria-disabled={busy}
+        aria-disabled={busy || disabled}
         className={`flex min-h-24 flex-col items-center justify-center gap-1 rounded border border-dashed p-3 text-center ${
-          busy
+          busy || disabled
             ? "border-neutral-200 bg-neutral-50 text-neutral-400"
             : dragging
               ? "border-neutral-900 bg-neutral-100 text-neutral-900"

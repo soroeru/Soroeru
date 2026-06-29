@@ -162,12 +162,13 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
                     {showSavedPageImport && (
                       <button
                         type="button"
+                        disabled={runningSiteId !== undefined}
                         onClick={() =>
                           setSavedPageSiteId((current) =>
                             current === site.siteAccountId ? undefined : site.siteAccountId,
                           )
                         }
-                        className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
+                        className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         保存ページを取り込む
                       </button>
@@ -185,6 +186,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
                 {savedPageSiteId === site.siteAccountId && (
                   <SavedPageImportPanel
                     siteAccountId={site.siteAccountId}
+                    disabled={runningSiteId !== undefined}
                     onImported={() => {
                       void loadSites();
                       onCollected();

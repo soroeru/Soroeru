@@ -61,17 +61,19 @@ export async function importSavedPage(input: SavedPageImportInput): Promise<Save
       normalizedHash: sourceHash,
       ...(sourceUrl !== undefined ? { pageUrl: sourceUrl } : {}),
     });
-    input.domain.saveCheckpoint({
-      workflow: "visibility",
-      siteAccountId: input.siteAccount.id,
-      step: "manual-import",
-      status: "done",
-      resumeData: {
-        source: "manual-import",
-        fileHash: sourceHash.slice(0, 16),
-        disclosures: collection.disclosures,
-      },
-    });
+    if (collection.disclosures > 0) {
+      input.domain.saveCheckpoint({
+        workflow: "visibility",
+        siteAccountId: input.siteAccount.id,
+        step: "manual-import",
+        status: "done",
+        resumeData: {
+          source: "manual-import",
+          fileHash: sourceHash.slice(0, 16),
+          disclosures: collection.disclosures,
+        },
+      });
+    }
     return {
       siteAccountId: input.siteAccount.id,
       disclosures: collection.disclosures,
