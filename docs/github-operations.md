@@ -16,17 +16,23 @@ Out of scope here: local setup and quality gate commands (see
 - Avoid direct pushes to `main`.
 - Use feature flags or safe incremental changes for unfinished work that must
   merge early.
+- Multiple agents may work in parallel, each in its own `git worktree` (see §2).
 
 ## 2. Starting Work
 
-Sync from the latest `main` before starting:
+Create the Issue branch directly from the latest `origin/main`, without checking
+out local `main`:
 
 ```bash
 git fetch origin
-git switch main
-git pull --ff-only origin main
-git switch -c <agent>/issue-<number>-<short-english-slug>
+git switch -c <agent>/issue-<number>-<short-english-slug> origin/main
 ```
+
+Do not check out local `main` to start work. Git refuses to check out the same
+`main` in two working trees at once, and a `git switch main` in a shared working
+tree would disrupt another agent working in parallel (see "Parallel multi-agent
+development" below). The recipe above is also fully backward compatible for
+single-working-tree work.
 
 Branch examples:
 
@@ -39,6 +45,41 @@ Rules:
 - Include the Issue number.
 - Keep the English slug short and descriptive.
 - Record the branch name in the GitHub Issue when useful.
+
+### Parallel multi-agent development (worktrees)
+
+Claude and Codex can run the Issue Implementation Loop at the same time. The
+loop defers branch creation to this section, so the recipe above is all the loop
+needs; the loop skill itself is not modified.
+
+Give each agent its own working tree with `git worktree` so branch switches and
+working-tree state never collide:
+
+```bash
+git worktree add ../Soroeru-codex  origin/main
+git worktree add ../Soroeru-claude origin/main
+```
+
+- `core.hooksPath` is set with `git config --local` (shared Git config), so
+  running `scripts/setup-hooks.sh` once enables the local AI review hook in every
+  worktree.
+- `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
+  tree, so worktrees do not contend for the same review lock.
+- Branch-prefix routing already separates reviewers (see §8): keep the Codex CLI
+  on a `codex/*` worktree and the Claude CLI on a `claude/*` worktree, and each
+  commit is reviewed by the matching reviewer automatically.
+
+Partition the backlog into **lanes with no cross-lane dependencies**, and hand
+each loop an ordered, dependency-respecting Issue list. The loop integrates a
+dependency before starting a dependent Issue, so a cross-lane dependency would
+serialize the two agents — zero cross-lane dependencies is what keeps them truly
+parallel. Use the Issues' `blocked_by` relationships to find disjoint lanes; the
+dependency-ordered list within a lane is then safe because each blocker merges
+before its dependent.
+
+If a lane needs to add or change a shared dependency manifest
+(`package.json` / `package-lock.json`), coordinate with the other lane first to
+avoid lockfile conflicts.
 
 ## 3. Issue Workflow
 
@@ -135,6 +176,10 @@ documentation rather than mixing them into the core workflow.
 - Merge only after required checks pass.
 - Re-run relevant checks after addressing review feedback.
 - Let `Closes #<issue>` close Issues automatically when possible.
+- When agents work in parallel, integrate `main` before merging: `git fetch
+  origin` then `git merge origin/main` (or rebase) and re-run the relevant
+  checks. Keep PRs small and merge frequently so a lane does not drift far from
+  `main`.
 
 ## 10. Learned Operational Notes
 
