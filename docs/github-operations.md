@@ -64,7 +64,9 @@ git worktree add ../Soroeru-claude origin/main
 Each worktree starts in detached HEAD at `origin/main` (Git prints a "detached
 HEAD" notice — this is expected); the §2 recipe then creates the per-Issue
 branch inside that worktree. The worktree is a persistent home for the agent
-across many Issues, so it is not pinned to any single Issue branch.
+across many Issues, so it is not pinned to any single Issue branch — for the
+next Issue, re-run the §2 recipe (`git fetch origin && git switch -c <new-branch>
+origin/main`) from the same worktree.
 
 - `core.hooksPath` is set with `git config --local` (shared Git config), so
   running `scripts/setup-hooks.sh` once enables the local AI review hook in every
@@ -183,10 +185,10 @@ documentation rather than mixing them into the core workflow.
 - Merge only after required checks pass.
 - Re-run relevant checks after addressing review feedback.
 - Let `Closes #<issue>` close Issues automatically when possible.
-- When agents work in parallel, integrate `main` before merging: `git fetch
-  origin` then `git merge origin/main` (or rebase) and re-run the relevant
+- When agents work in parallel, integrate `origin/main` before merging: `git
+  fetch origin` then `git merge origin/main` (or rebase) and re-run the relevant
   checks. Keep PRs small and merge frequently so a lane does not drift far from
-  `main`.
+  `origin/main`.
 
 ## 10. Learned Operational Notes
 
