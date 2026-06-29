@@ -1,0 +1,42 @@
+# Dependabot configuration.
+#
+# This file is intentionally written to be reusable across projects: the only
+# project-specific choices are the listed ecosystems and directories. Schedules,
+# PR limits, and grouping below are sensible defaults you can copy as-is.
+#
+# It complements the CI `npm audit` gate (see `.github/workflows/ci.yml`):
+#   - the CI gate FAILS builds on new high/critical advisories in production
+#     (runtime + optional) dependencies — the shipped attack surface;
+#   - Dependabot opens update PRs (including security updates) across ALL
+#     dependencies, including build-time-only devDependencies that the audit
+#     gate deliberately does not block on.
+#
+# Operation and triage rules: see `docs/dependency-security.md`.
+version: 2
+updates:
+  # Application / library dependencies.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    # Reduce PR noise: batch non-security updates into grouped PRs. Dependabot
+    # still opens individual PRs for security updates regardless of grouping.
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+      production-dependencies:
+        dependency-type: "production"
+
+  # GitHub Actions pinned in workflows (keeps action versions current/patched).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
