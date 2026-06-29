@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Catashiro — ローカルファースト自動登録エージェント (Mac プライベートベータ)</title>
+  <title>Soroeru — ローカルファースト自動登録エージェント (Mac プライベートベータ)</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -167,29 +167,29 @@
 
 <header>
   <span class="badge">Mac プライベートベータ</span>
-  <h1>Catashiro</h1>
+  <h1>Soroeru</h1>
   <p class="tagline">あなたの代わりに Web サイトへの会員登録・情報更新を自動で行う、<br>ローカルファーストの自律型エージェントアプリ。</p>
   <div class="cta-wrap">
-    <a class="btn-primary" href="https://github.com/ShinHaya/Catashiro/releases/latest">
+    <a class="btn-primary" href="https://github.com/ShinHaya/Soroeru/releases/latest">
       Mac 向け最新版をダウンロード
     </a>
-    <a class="btn-secondary" href="https://github.com/ShinHaya/Catashiro/blob/main/docs/user-manual.md">
+    <a class="btn-secondary" href="https://github.com/ShinHaya/Soroeru/blob/main/docs/user-manual.md">
       ユーザーマニュアルを読む →
     </a>
   </div>
   <p style="font-size:0.875rem; color: var(--muted);">
     対応: Apple Silicon Mac（macOS 14 Sonoma / 15 Sequoia）&nbsp;·&nbsp;
-    コード: <a href="https://github.com/ShinHaya/Catashiro">GitHub でオープンソース</a>
+    コード: <a href="https://github.com/ShinHaya/Soroeru">GitHub でオープンソース</a>
   </p>
 </header>
 
 <main>
 
-<!-- What is Catashiro -->
+<!-- What is Soroeru -->
 <section>
-  <h2>Catashiro とは</h2>
+  <h2>Soroeru とは</h2>
   <p>
-    Catashiro は、あなたの氏名・住所・電話番号・メールアドレス・クレジットカードなどの個人情報を
+    Soroeru は、あなたの氏名・住所・電話番号・メールアドレス・クレジットカードなどの個人情報を
     あなたの Mac の中で暗号化して管理し、<strong>AI エージェントがあなたの代わりに Web サイトへの
     会員登録・情報更新・退会を自動で完了させる</strong>ローカルアプリです。
   </p>
@@ -227,8 +227,8 @@
     <ul style="margin-top: 0.5rem;">
       <li>アプリは <strong>未署名・未公証</strong>です（Gatekeeper の警告が出ます。下記の回避手順を参照）。</li>
       <li>動作検証はまだ限定的です。重要な個人情報を試す前にテストデータで流れを確認してください。</li>
-      <li>バグや改善点は <a href="https://github.com/ShinHaya/Catashiro/issues/new">GitHub Issues</a> または
-        <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/beta-feedback.md">フィードバックガイド</a>
+      <li>バグや改善点は <a href="https://github.com/ShinHaya/Soroeru/issues/new">GitHub Issues</a> または
+        <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/beta-feedback.md">フィードバックガイド</a>
         に記載の方法でお知らせください。</li>
     </ul>
   </div>
@@ -255,8 +255,8 @@
     <li>
       <div>
         <strong>ZIP をダウンロードして展開する</strong><br>
-        <a href="https://github.com/ShinHaya/Catashiro/releases/latest">GitHub Releases の最新版</a>
-        から <code>Catashiro-mac-beta.zip</code> をダウンロードし、ダブルクリックで展開します。
+        <a href="https://github.com/ShinHaya/Soroeru/releases/latest">GitHub Releases の最新版</a>
+        から <code>Soroeru-mac-beta.zip</code> をダウンロードし、ダブルクリックで展開します。
       </div>
     </li>
     <li>
@@ -265,10 +265,10 @@
         未署名のため、<em>「開発元が確認できないため開けません」</em>と表示されます。
         ZIP を展開したフォルダで次のコマンドを実行してください。
         <br><br>
-        <code>xattr -rc Catashiro.app</code>
+        <code>xattr -rc Soroeru.app</code>
         <br><br>
-        その後、Finder から <code>Catashiro.app</code> を右クリック →「開く」→「開く」で起動できます。
-        詳しくは <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/user-manual.md">ユーザーマニュアル §2</a>
+        その後、Finder から <code>Soroeru.app</code> を右クリック →「開く」→「開く」で起動できます。
+        詳しくは <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/user-manual.md">ユーザーマニュアル §2</a>
         を参照してください。
       </div>
     </li>
@@ -295,7 +295,7 @@
     </li>
   </ol>
   <p>詳しい操作は
-    <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/user-manual.md">ユーザーマニュアル</a>
+    <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/user-manual.md">ユーザーマニュアル</a>
     をご覧ください。
   </p>
 </section>
@@ -305,7 +305,7 @@
   <h2>セキュリティとプライバシー</h2>
   <div class="callout callout--ok">
     <p><strong>データはあなたの Mac から出ません。</strong>暗号化されたボルトファイルがローカルに存在するだけです。
-    Catashiro 自身のサーバーへのデータ送信・テレメトリは一切ありません。</p>
+    Soroeru 自身のサーバーへのデータ送信・テレメトリは一切ありません。</p>
   </div>
   <ul>
     <li>個人情報・カード番号・CVV・各サイトのパスワード・API キーはすべて <strong>AES-256-GCM で暗号化</strong>して保存。
@@ -315,7 +315,7 @@
       検知したら同じブラウザ画面であなたに引き継ぎ、完了後に再開します。</li>
     <li>最終送信は<strong>あなたの確認ゲートを通過した後にのみ</strong>行います。
       高リスクな規約条項（自動課金、強制仲裁、第三者データ提供など）が見つかれば確認画面で警告します。</li>
-    <li>ソースコードは <a href="https://github.com/ShinHaya/Catashiro">GitHub で公開</a>されており、
+    <li>ソースコードは <a href="https://github.com/ShinHaya/Soroeru">GitHub で公開</a>されており、
       誰でも確認・ビルドできます。</li>
   </ul>
 </section>
@@ -339,14 +339,14 @@
   <h2>フィードバック</h2>
   <p>
     バグ報告・改善要望は
-    <a href="https://github.com/ShinHaya/Catashiro/issues/new">GitHub Issues</a>
+    <a href="https://github.com/ShinHaya/Soroeru/issues/new">GitHub Issues</a>
     へお願いします。実際の個人情報・パスワード・カード番号・API キーは絶対に記載しないでください。
     ログを共有する場合は、アプリの「設定」→「サポートバンドルを書き出す」で生成した
     <strong>リダクション済みファイル</strong>を使用してください（個人情報の値は自動で除外されます）。
   </p>
   <p>
     詳しい報告手順は
-    <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/beta-feedback.md">フィードバックガイド（docs/beta-feedback.md）</a>
+    <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/beta-feedback.md">フィードバックガイド（docs/beta-feedback.md）</a>
     を参照してください。
   </p>
 </section>
@@ -356,11 +356,11 @@
 <footer>
   <div class="container">
     <p>
-      Catashiro は個人利用のためのオープンソースツールです。
-      <a href="https://github.com/ShinHaya/Catashiro">GitHub</a> ·
-      <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/user-manual.md">ユーザーマニュアル</a> ·
-      <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/security.md">セキュリティ詳細</a> ·
-      <a href="https://github.com/ShinHaya/Catashiro/blob/main/docs/beta-feedback.md">フィードバックガイド</a>
+      Soroeru は個人利用のためのオープンソースツールです。
+      <a href="https://github.com/ShinHaya/Soroeru">GitHub</a> ·
+      <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/user-manual.md">ユーザーマニュアル</a> ·
+      <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/security.md">セキュリティ詳細</a> ·
+      <a href="https://github.com/ShinHaya/Soroeru/blob/main/docs/beta-feedback.md">フィードバックガイド</a>
     </p>
     <p style="margin-top: 0.5rem;">License: TBD</p>
   </div>

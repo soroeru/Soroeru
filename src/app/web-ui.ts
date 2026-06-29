@@ -3,7 +3,7 @@
 // This is intentionally server-rendered over Node's built-in HTTP server for
 // the first implementation slice: no new frontend framework, no telemetry, and
 // no remote backend. The server binds to 127.0.0.1 by default and all writes go
-// through CatashiroApp/PocStore so encrypted-at-rest behavior stays unchanged.
+// through SoroeruApp/PocStore so encrypted-at-rest behavior stays unchanged.
 
 import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -34,7 +34,7 @@ import {
 } from "../types.js";
 import type { RegistrationResult, UpdateResult, WithdrawalResult } from "../agent/agent.js";
 import type { PocStore, ProfileEntry, ProviderSettings } from "../store/store.js";
-import { CatashiroApp, CatashiroAppError } from "./app.js";
+import { SoroeruApp, SoroeruAppError } from "./app.js";
 import { BulkUpdateSession, type BulkUpdateSessionState, type BulkUpdateTarget } from "./bulk-update-session.js";
 import { exportSupportBundleJson } from "./diagnostics.js";
 import { AppRunner } from "./runner.js";
@@ -85,7 +85,7 @@ class HttpError extends Error {
 }
 
 export interface WebUiServerOptions {
-  app: CatashiroApp;
+  app: SoroeruApp;
   host?: string;
   port?: number;
   log?: (message: string) => void;
@@ -272,7 +272,7 @@ const BRAND_MARK =
   '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="1" y="1" width="22" height="22" rx="6" fill="#1f5f8b"></rect><path d="M12 6v8m0 0-3.5-3.5M12 14l3.5-3.5" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7 18h10" stroke="#ffffff" stroke-width="2" stroke-linecap="round"></path></svg>';
 
 class WebUiServer {
-  private readonly app: CatashiroApp;
+  private readonly app: SoroeruApp;
   private readonly host: string;
   private readonly port: number;
   private readonly log: (message: string) => void;
@@ -513,8 +513,8 @@ class WebUiServer {
       res,
       200,
       this.renderLayout(
-        "Catashiro — 停止中",
-        `<section class="panel"><h1>Catashiro を停止しています</h1><p>アプリを安全に終了しています。このタブは閉じてください。</p></section>`,
+        "Soroeru — 停止中",
+        `<section class="panel"><h1>Soroeru を停止しています</h1><p>アプリを安全に終了しています。このタブは閉じてください。</p></section>`,
       ),
     );
     // Wait for the OS networking stack to accept all bytes before exiting.
@@ -549,7 +549,7 @@ class WebUiServer {
   }
 
   private renderLocked(flash: Flash | undefined, hasVault: boolean): string {
-    return this.renderLayout("Catashiro", hasVault ? this.renderUnlockPanels(flash) : this.renderSetupPanels(flash));
+    return this.renderLayout("Soroeru", hasVault ? this.renderUnlockPanels(flash) : this.renderSetupPanels(flash));
   }
 
   /** First-run onboarding: no encrypted store file exists yet (#79). */
@@ -557,8 +557,8 @@ class WebUiServer {
     return `
       <section class="hero-band">
         <div>
-          <p class="eyebrow">Local-first Catashiro</p>
-          <h1>Catashiro を開く</h1>
+          <p class="eyebrow">Local-first Soroeru</p>
+          <h1>Soroeru を開く</h1>
           <p>初めての起動です。この画面はあなたのPC上だけで動きます。個人情報は暗号化して保存し、クラウド同期やテレメトリは使いません。</p>
         </div>
       </section>
@@ -596,8 +596,8 @@ class WebUiServer {
     return `
       <section class="hero-band">
         <div>
-          <p class="eyebrow">Local-first Catashiro</p>
-          <h1>Catashiro を開く</h1>
+          <p class="eyebrow">Local-first Soroeru</p>
+          <h1>Soroeru を開く</h1>
           <p>この画面はあなたのPC上だけで動きます。個人情報は暗号化して保存し、クラウド同期やテレメトリは使いません。</p>
         </div>
       </section>
@@ -646,12 +646,12 @@ class WebUiServer {
     const withdrawalRunning = this.withdrawal?.session.getState().kind === "running";
     const autoRefreshSeconds = (regRunning || bulkRunning || withdrawalRunning) ? 2 : undefined;
     return this.renderLayout(
-      "Catashiro dashboard",
+      "Soroeru dashboard",
       `
         <header class="app-header">
           <div>
             <p class="eyebrow">Local web app</p>
-            <h1>Catashiro</h1>
+            <h1>Soroeru</h1>
             ${this.renderIdleLockNote()}
           </div>
           <div style="display:flex;gap:var(--space-3)">
@@ -1106,7 +1106,7 @@ class WebUiServer {
   <div class="win">
     <div class="win__bar">
       ${ICON_LOCK}
-      <span>Catashiro — ローカルアプリ</span>
+      <span>Soroeru — ローカルアプリ</span>
     </div>
     <div class="win__body">
       ${this.app.isUnlocked ? this.renderChatRail() : ""}
@@ -1127,7 +1127,7 @@ class WebUiServer {
         <div class="rail__brand">
           ${BRAND_MARK}
           <div>
-            <strong>Catashiro</strong>
+            <strong>Soroeru</strong>
             <div class="rail__status"><span class="dot dot--safe"></span>ローカルで実行中</div>
           </div>
         </div>
@@ -1553,7 +1553,7 @@ class WebUiServer {
         ? `
           <div class="callout callout--risk">
             <h4>⚠ 自動承認を停止した項目</h4>
-            <p class="small">以下の内容はCatashiroが自動で同意・実行しません。内容を確認したうえで、登録を続けるかどうかご判断ください。</p>
+            <p class="small">以下の内容はSoroeruが自動で同意・実行しません。内容を確認したうえで、登録を続けるかどうかご判断ください。</p>
             <ul>
               ${request.analysis.highRiskFlags
                 .map((flag) => {
@@ -1572,7 +1572,7 @@ class WebUiServer {
       ? `
         <div class="callout callout--risk">
           <h4>自動アカウント作成について</h4>
-          <p class="small">このサイトの規約は、自動化された手段によるアカウント作成を禁止しています。Catashiroはフォームの入力のみを行い、最後の登録ボタンはご自身で押してください。</p>
+          <p class="small">このサイトの規約は、自動化された手段によるアカウント作成を禁止しています。Soroeruはフォームの入力のみを行い、最後の登録ボタンはご自身で押してください。</p>
         </div>
       `
       : "";
@@ -1582,7 +1582,7 @@ class WebUiServer {
         ? `
           <div>
             <h4>ご自身でご確認のうえチェックしてください</h4>
-            <p class="small muted">以下の項目はCatashiroが自動でチェックすることはありません。当てはまる場合のみチェックしてください。</p>
+            <p class="small muted">以下の項目はSoroeruが自動でチェックすることはありません。当てはまる場合のみチェックしてください。</p>
             ${request.attestations
               .map(
                 (a) => `
@@ -1639,7 +1639,7 @@ class WebUiServer {
     return `
       <div class="callout callout--risk">
         <h4>お支払いについて</h4>
-        <p class="small">このサイトは${escapeHtml(reason)}。Catashiroは入力・送信を行わずここで停止します。続きはご自身でブラウザ上で操作してください。</p>
+        <p class="small">このサイトは${escapeHtml(reason)}。Soroeruは入力・送信を行わずここで停止します。続きはご自身でブラウザ上で操作してください。</p>
       </div>
     `;
   }
@@ -1649,7 +1649,7 @@ class WebUiServer {
       <section class="callout callout--risk stack">
         <h3>新規登録: ${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
         <p>${escapeHtml(instruction)}</p>
-        <p class="small muted">このまま開いているブラウザで対応してください。完了後、この画面の「対応が完了したので再開する」を押すと、Catashiroは同じセッションを再観測して続行します。</p>
+        <p class="small muted">このまま開いているブラウザで対応してください。完了後、この画面の「対応が完了したので再開する」を押すと、Soroeruは同じセッションを再観測して続行します。</p>
         <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
         <form method="post" action="/registration/handoff-resolve">
           ${this.csrfInput()}
@@ -1813,7 +1813,7 @@ class WebUiServer {
       <section class="callout callout--risk stack">
         <h3>一括更新: ${escapeHtml(siteId)} で${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
         <p>${escapeHtml(instruction)}</p>
-        <p class="small muted">このサイトだけ一時停止しています。開いているブラウザで対応し、完了後に再開してください。Catashiroは同じセッションを再観測して続行します。</p>
+        <p class="small muted">このサイトだけ一時停止しています。開いているブラウザで対応し、完了後に再開してください。Soroeruは同じセッションを再観測して続行します。</p>
         <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
         <form method="post" action="/bulk/handoff-resolve">
           ${this.csrfInput()}
@@ -1904,7 +1904,7 @@ class WebUiServer {
       <section class="callout callout--risk stack">
         <h3>退会フロー: ${escapeHtml(WALL_KIND_LABELS[wall.kind])}への対応が必要です</h3>
         <p>${escapeHtml(instruction)}</p>
-        <p class="small muted">開いているブラウザで対応し、完了後に再開してください。Catashiroは同じセッションを再観測します。</p>
+        <p class="small muted">開いているブラウザで対応し、完了後に再開してください。Soroeruは同じセッションを再観測します。</p>
         <p class="small muted">検出内容: ${escapeHtml(wall.evidence)}</p>
         <form method="post" action="/withdrawal/handoff-resolve">
           ${this.csrfInput()}
@@ -1968,7 +1968,7 @@ class WebUiServer {
       return `
         <div class="callout callout--risk stack">
           <h4>退会タスク</h4>
-          <p class="small">このサービスは退会候補です。Catashiroは退会ページ探しや通常項目の準備を支援できますが、不可逆な退会・アカウント削除の最終ボタンは自動で押しません。</p>
+          <p class="small">このサービスは退会候補です。Soroeruは退会ページ探しや通常項目の準備を支援できますが、不可逆な退会・アカウント削除の最終ボタンは自動で押しません。</p>
           ${
             record.withdrawalPreparedAt
               ? `<p class="small muted">準備済み: ${escapeHtml(new Date(record.withdrawalPreparedAt).toLocaleString("ja-JP"))} / 最終操作はユーザー確認が必要です。</p>`
@@ -1979,7 +1979,7 @@ class WebUiServer {
             <input type="hidden" name="siteId" value="${escapeHtml(record.siteId)}">
             <label class="field-delete">
               <input type="checkbox" name="confirmFinalManual" value="1">
-              退会・アカウント削除の最終確認は自分で行い、Catashiroに自動実行させません
+              退会・アカウント削除の最終確認は自分で行い、Soroeruに自動実行させません
             </label>
             <button type="submit" class="secondary">退会タスクを準備</button>
           </form>
@@ -2181,7 +2181,7 @@ class WebUiServer {
       if (isNewVault) await this.app.store.save();
       this.redirect(res, "ok", "暗号化ストアを開きました。", "profile");
     } catch (err) {
-      const message = err instanceof CatashiroAppError ? err.message : "ストアを開けませんでした。";
+      const message = err instanceof SoroeruAppError ? err.message : "ストアを開けませんでした。";
       this.redirect(res, "error", message, "profile");
     }
   }
@@ -2196,7 +2196,7 @@ class WebUiServer {
       await this.app.unlockWithRecoveryKey(recoveryKey);
       this.redirect(res, "ok", "リカバリーキーで開きました。", "profile");
     } catch (err) {
-      const message = err instanceof CatashiroAppError ? err.message : "リカバリーキーで開けませんでした。";
+      const message = err instanceof SoroeruAppError ? err.message : "リカバリーキーで開けませんでした。";
       this.redirect(res, "error", message, "profile");
     }
   }
@@ -2517,7 +2517,7 @@ class WebUiServer {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Disposition", `attachment; filename="catashiro-support-${Date.now()}.json"`);
+    res.setHeader("Content-Disposition", `attachment; filename="soroeru-support-${Date.now()}.json"`);
     res.end(body);
   }
 
@@ -2536,7 +2536,7 @@ class WebUiServer {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Disposition", `attachment; filename="catashiro-candidate-${safeDownloadName(submitted.id)}.json"`);
+    res.setHeader("Content-Disposition", `attachment; filename="soroeru-candidate-${safeDownloadName(submitted.id)}.json"`);
     res.end(body);
   }
 

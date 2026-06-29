@@ -6,7 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { importChromeCsv } from "../../src/agent/chrome-csv-importer.js";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 
 const PASSPHRASE = "unit-test-passphrase";
@@ -15,9 +15,9 @@ const PASSPHRASE = "unit-test-passphrase";
 // Direct importChromeCsv() tests
 // ---------------------------------------------------------------------------
 
-async function withStore(fn: (app: CatashiroApp) => Promise<void>): Promise<void> {
+async function withStore(fn: (app: SoroeruApp) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-csv-import-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   try {
     await app.unlock(PASSPHRASE);
     await fn(app);
@@ -173,7 +173,7 @@ test("importChromeCsv: quoted note フィールド内の改行を1レコード�
 
 async function withWebUi(fn: (server: WebUiServerHandle) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-csv-webui-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await fn(server);
@@ -184,9 +184,9 @@ async function withWebUi(fn: (server: WebUiServerHandle) => Promise<void>): Prom
   }
 }
 
-async function withWebUiApp(fn: (app: CatashiroApp, server: WebUiServerHandle, dir: string) => Promise<void>): Promise<void> {
+async function withWebUiApp(fn: (app: SoroeruApp, server: WebUiServerHandle, dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-csv-webui-app-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await fn(app, server, dir);

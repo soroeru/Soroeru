@@ -18,10 +18,10 @@ const ENGINES = { chromium, firefox, webkit } as const;
 /** Default idle auto-lock timeout: 10 minutes. 0 disables idle auto-lock. */
 export const DEFAULT_IDLE_LOCK_MS = 10 * 60 * 1000;
 
-export class CatashiroAppError extends Error {
+export class SoroeruAppError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
-    this.name = "CatashiroAppError";
+    this.name = "SoroeruAppError";
   }
 }
 
@@ -30,7 +30,7 @@ export type BrowserLauncher = (engine: EngineName, options?: { headless?: boolea
 const defaultLauncher: BrowserLauncher = (engine, options) =>
   ENGINES[engine].launch({ headless: options?.headless ?? false });
 
-export interface CatashiroAppOptions {
+export interface SoroeruAppOptions {
   /** Local state directory; the encrypted store lives at `<stateDir>/store.json`. */
   stateDir: string;
   /** Idle auto-lock timeout in ms. 0 disables. Default: DEFAULT_IDLE_LOCK_MS. */
@@ -49,7 +49,7 @@ export interface CatashiroAppOptions {
  * both go through this shell rather than opening the store or launching
  * browsers directly.
  */
-export class CatashiroApp {
+export class SoroeruApp {
   /** Idle auto-lock timeout in ms (0 disables). Exposed so the UI can explain the behavior. */
   readonly idleLockMs: number;
   private readonly launchBrowserFn: BrowserLauncher;
@@ -61,7 +61,7 @@ export class CatashiroApp {
 
   readonly storeFilePath: string;
 
-  constructor(options: CatashiroAppOptions) {
+  constructor(options: SoroeruAppOptions) {
     this.storeFilePath = join(options.stateDir, "store.json");
     this.idleLockMs = options.idleLockMs ?? DEFAULT_IDLE_LOCK_MS;
     this.launchBrowserFn = options.launchBrowserFn ?? defaultLauncher;
@@ -87,14 +87,14 @@ export class CatashiroApp {
    * Unlock (or create) the encrypted store with the master passphrase. A
    * wrong passphrase on an existing store fails AES-GCM authentication; the
    * shell never falls back to an unauthenticated read and instead fails
-   * closed with `CatashiroAppError`.
+   * closed with `SoroeruAppError`.
    */
   async unlock(passphrase: string): Promise<PocStore> {
     let store: PocStore;
     try {
       store = await PocStore.open(this.storeFilePath, passphrase);
     } catch (err) {
-      throw new CatashiroAppError("failed to unlock the store (wrong passphrase or corrupted store file)", {
+      throw new SoroeruAppError("failed to unlock the store (wrong passphrase or corrupted store file)", {
         cause: err,
       });
     }
@@ -105,7 +105,7 @@ export class CatashiroApp {
 
   /**
    * Unlock the encrypted store with a recovery key instead of the passphrase
-   * (SEC-003 / #44). Fails closed with `CatashiroAppError` if no recovery key
+   * (SEC-003 / #44). Fails closed with `SoroeruAppError` if no recovery key
    * was configured, or the given key does not unwrap the stored master key.
    */
   async unlockWithRecoveryKey(recoveryKey: string): Promise<PocStore> {
@@ -113,7 +113,7 @@ export class CatashiroApp {
     try {
       store = await PocStore.openWithRecoveryKey(this.storeFilePath, recoveryKey);
     } catch (err) {
-      throw new CatashiroAppError("failed to unlock the store with the recovery key (invalid key or no recovery key configured)", {
+      throw new SoroeruAppError("failed to unlock the store with the recovery key (invalid key or no recovery key configured)", {
         cause: err,
       });
     }
@@ -124,7 +124,7 @@ export class CatashiroApp {
 
   /** The unlocked store. Throws if `unlock()` has not been called or the store is locked. */
   get store(): PocStore {
-    if (!this._store || this._store.isLocked) throw new CatashiroAppError("store is not unlocked");
+    if (!this._store || this._store.isLocked) throw new SoroeruAppError("store is not unlocked");
     return this._store;
   }
 

@@ -11,7 +11,7 @@ import {
   newKdfParams,
 } from "../../src/store/crypto.js";
 import { PocStore, StoreCorruptError, StoreFormatError, StoreLockedError, STORE_FORMAT_VERSION } from "../../src/store/store.js";
-import { CATASHIRO_APP_SUPPORT_DIR, defaultVaultStateDir } from "../../src/store/vault.js";
+import { SOROERU_APP_SUPPORT_DIR, defaultVaultStateDir } from "../../src/store/vault.js";
 
 // Fake data only (docs/testing.md).
 const PASSPHRASE = "unit-test-passphrase";
@@ -160,7 +160,7 @@ test("opening a corrupt store file fails closed with StoreCorruptError", async (
 });
 
 test("default vault location is the Mac app-support directory for app bundles", () => {
-  assert.equal(defaultVaultStateDir({ appBundle: true }), CATASHIRO_APP_SUPPORT_DIR);
-  assert.equal(defaultVaultStateDir({ appBundle: true, override: "/tmp/catashiro-test" }), "/tmp/catashiro-test");
-  assert.equal(defaultVaultStateDir({ appBundle: false }), "state/catashiro-poc");
+  assert.equal(defaultVaultStateDir({ appBundle: true }), SOROERU_APP_SUPPORT_DIR);
+  assert.equal(defaultVaultStateDir({ appBundle: true, override: "/tmp/soroeru-test" }), "/tmp/soroeru-test");
+  assert.equal(defaultVaultStateDir({ appBundle: false }), "state/soroeru-poc");
 });

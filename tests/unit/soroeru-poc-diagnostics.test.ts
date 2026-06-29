@@ -9,7 +9,7 @@ import { PocStore } from "../../src/store/store.js";
 const PASSPHRASE = "unit-test-passphrase";
 
 async function withStore(fn: (store: PocStore) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(join(tmpdir(), "catashiro-diag-"));
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-diag-"));
   try {
     const store = await PocStore.open(join(dir, "store.json"), PASSPHRASE);
     await fn(store);
@@ -41,9 +41,9 @@ test("support bundle exports redacted local diagnostics without vault or raw val
     });
 
     const bundle = buildSupportBundle(store);
-    assert.equal(bundle.schema, "catashiro-support-bundle-v1");
+    assert.equal(bundle.schema, "soroeru-support-bundle-v1");
     assert.equal(bundle.privacy.redacted, true);
-    assert.equal(bundle.app.name, "catashiro");
+    assert.equal(bundle.app.name, "soroeru");
     assert.ok(bundle.runtime.node);
     assert.equal(bundle.diagnostics.length, 1);
     assert.equal(bundle.diagnostics[0]!.metadata?.siteId, "example.test");

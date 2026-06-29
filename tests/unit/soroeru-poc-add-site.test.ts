@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import { startPocServer } from "../../sites/server.js";
 
@@ -48,7 +48,7 @@ async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
 test("Add Site notRegistered status launches a registration session", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-add-site-"));
   const site = await startPocServer();
-  const app = new CatashiroApp({
+  const app = new SoroeruApp({
     stateDir: dir,
     idleLockMs: 0,
     launchBrowserFn: async () => chromium.launch({ headless: true }),
@@ -74,7 +74,7 @@ test("Add Site notRegistered status launches a registration session", async () =
 test("Add Site registered status performs a quick import without launching a browser", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-add-site-"));
   let browserLaunched = false;
-  const app = new CatashiroApp({
+  const app = new SoroeruApp({
     stateDir: dir,
     idleLockMs: 0,
     launchBrowserFn: async () => {
@@ -109,7 +109,7 @@ test("Add Site registered status performs a quick import without launching a bro
 test("Add Site uncertain status warns without saving a record or launching a browser", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-add-site-"));
   let browserLaunched = false;
-  const app = new CatashiroApp({
+  const app = new SoroeruApp({
     stateDir: dir,
     idleLockMs: 0,
     launchBrowserFn: async () => {
@@ -139,7 +139,7 @@ test("Add Site uncertain status warns without saving a record or launching a bro
 
 test("Add Site with a missing URL warns and does not save a record", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-add-site-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     const token = await unlockThroughUi(server);

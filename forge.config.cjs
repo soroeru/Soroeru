@@ -6,7 +6,7 @@ module.exports = {
   packagerConfig: {
     name: "Soroeru",
     executableName: "Soroeru",
-    appBundleId: "app.catashiro.soroeru",
+    appBundleId: "app.soroeru.soroeru",
     appCategoryType: "public.app-category.productivity",
     appVersion: packageJson.version,
     buildVersion: packageJson.version,

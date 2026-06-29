@@ -10,7 +10,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser } from "playwright";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 import { AppRunner } from "../../src/app/runner.js";
 import { AppUI, type UiIo } from "../../src/app/ui.js";
 import type { Mapper } from "../../src/agent/mapper.js";
@@ -56,10 +56,10 @@ class FakeIo implements UiIo {
   }
 }
 
-async function withApp(fn: (app: CatashiroApp, runner: AppRunner) => Promise<void>): Promise<void> {
+async function withApp(fn: (app: SoroeruApp, runner: AppRunner) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-ui-"));
   try {
-    const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn: refuseLaunch });
+    const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn: refuseLaunch });
     await app.unlock(PASSPHRASE);
     const runner = new AppRunner(app, {} as unknown as Mapper);
     await fn(app, runner);

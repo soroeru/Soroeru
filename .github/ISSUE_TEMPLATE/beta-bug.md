@@ -9,7 +9,7 @@ labels: bug, beta-feedback
 
 ## 環境
 
-- Catashiro バージョン:
+- Soroeru バージョン:
 - macOS バージョン:
 - Mac の機種 (例: M2 MacBook Air):
 - Node.js バージョン (`node -v`):

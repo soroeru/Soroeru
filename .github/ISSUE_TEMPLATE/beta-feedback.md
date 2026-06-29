@@ -27,7 +27,7 @@ labels: enhancement, beta-feedback
 
 ## 環境（任意）
 
-- Catashiro バージョン:
+- Soroeru バージョン:
 - macOS バージョン:
 - Mac の機種:
 

@@ -1,6 +1,6 @@
 # Documentation Guide
 
-This directory contains development-facing documentation for `Catashiro` (formerly
+This directory contains development-facing documentation for `Soroeru` (formerly
 `formfill-assistant`).
 
 Keep this file as a short index. Put detailed decisions in the document that
@@ -14,8 +14,8 @@ owns the relevant topic.
 > [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md).**
 > [`development.md`](development.md) now includes the Soroeru Electron app commands and
 > unsigned DMG packaging flow. [`extension.md`](extension.md) still preserves older
-> Catashiro architecture notes until it is fully rewritten around RFC-002.
-> The repository identifier stays `catashiro`; the product name is Soroeru.
+> Soroeru architecture notes until it is fully rewritten around RFC-002.
+> The repository identifier stays `soroeru`; the product name is Soroeru.
 
 ## Document Responsibilities
 
@@ -23,7 +23,7 @@ owns the relevant topic.
 | --- | --- |
 | [`requirements.md`](requirements.md) | **Canonical product direction (Soroeru)**: reason for being, success definition, domain ontology, delegation model, agency loop, scope, slice order, non-negotiable requirements. |
 | [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md) | **Target Soroeru architecture / technology selection**: runtime, UI, automation, vault, domain services, Slice A design, traceability. |
-| [`extension.md`](extension.md) | Application architecture notes: RFC-002 is canonical; older Catashiro sections are retained for reference until the document is fully rewritten. |
+| [`extension.md`](extension.md) | Application architecture notes: RFC-002 is canonical; older Soroeru sections are retained for reference until the document is fully rewritten. |
 | [`security.md`](security.md) | Security and privacy review notes, threat model, encryption, AI-disclosure policy, and wall safety boundaries. |
 | [`development.md`](development.md) | Local setup, Soroeru Electron commands, DMG packaging, project structure, implementation conventions, and quality gates. |
 | [`testing.md`](testing.md) | Testing strategy, test data policy, fixtures, commands, CI expectations (**previous Catashiro; superseded / in flux** pending a Soroeru testing RFC — registration-first, not Visibility-first). |

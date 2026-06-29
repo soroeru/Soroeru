@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 import { collectImportCandidates, saveImportedProfileValues } from "../../src/agent/importer.js";
 import type { Mapper } from "../../src/agent/mapper.js";
 import type { MappingPlan, PageLink, PageSnapshot, TermsAnalysis } from "../../src/types.js";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 import { AppRunner } from "../../src/app/runner.js";
 import { startPocServer } from "../../sites/server.js";
 
@@ -50,7 +50,7 @@ test("existing-account import extracts local values without sending them to the 
   const dir = await mkdtemp(join(tmpdir(), "af-poc-import-"));
   const site = await startPocServer();
   const browser = await chromium.launch({ headless: true });
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   try {
     await app.unlock(PASSPHRASE);
     await seedRegisteredAccount(site.siteUrl("01-basic"));
@@ -97,7 +97,7 @@ test("existing-account import extracts local values without sending them to the 
 
 test("declining the import review leaves the vault and inventory unchanged", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-import-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   try {
     await app.unlock(PASSPHRASE);
     const record = await saveImportedProfileValues(
@@ -121,7 +121,7 @@ test("declining the import review leaves the vault and inventory unchanged", asy
 
 test("review-before-save: accepting with edits updates the store and returns a site record", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-import-review-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   try {
     await app.unlock(PASSPHRASE);
     const importResult = {
@@ -157,7 +157,7 @@ test("review-before-save: accepting with edits updates the store and returns a s
 
 test("review-before-save: accepting without edits stores all candidates as-is", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-import-noedits-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   try {
     await app.unlock(PASSPHRASE);
     const importResult = {
@@ -187,7 +187,7 @@ test("import from account settings page: readonly inputs are excluded by the sca
   const dir = await mkdtemp(join(tmpdir(), "af-poc-import-account-"));
   const site = await startPocServer();
   const browser = await chromium.launch({ headless: true });
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   try {
     await app.unlock(PASSPHRASE);
     await seedRegisteredAccount(site.siteUrl("01-basic"));
