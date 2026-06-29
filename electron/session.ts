@@ -19,6 +19,7 @@ import {
 } from "../src/domain/entities.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
 import { VisibilityService } from "./visibility-service.js";
+import { importSavedPage } from "../src/automation/saved-page-importer.js";
 import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
 import type {
   AttributeSummary,
@@ -28,6 +29,8 @@ import type {
   LedgerInsights,
   RecoveryKeyResult,
   RevealResult,
+  SavedPageImportRequest,
+  SavedPageImportResult,
   SiteLedgerDetail,
   SiteLedgerSummary,
   StaleTally,
@@ -260,6 +263,34 @@ export class SoroeruSession {
     }
   }
 
+  async importSavedPage(request: SavedPageImportRequest): Promise<SavedPageImportResult> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    const siteAccount = this.domain.getSiteAccount(request.siteAccountId);
+    if (!siteAccount) return { ok: false, error: "not-found" };
+    if (!isSavedPageFile(request.fileName)) return { ok: false, error: "bad-file-type" };
+    try {
+      const summary = await importSavedPage({
+        domain: this.domain,
+        siteAccount,
+        data: request.data,
+        fileName: request.fileName,
+      });
+      await this.vault.save();
+      return {
+        ok: true,
+        summary: {
+          siteAccountId: summary.siteAccountId,
+          disclosures: summary.disclosures,
+          ...(summary.sourceUrl !== undefined ? { sourceUrl: summary.sourceUrl } : {}),
+          sourceHashPreview: summary.sourceHash.slice(0, 16),
+          recommendSourceDeletion: summary.recommendSourceDeletion,
+        },
+      };
+    } catch {
+      return { ok: false, error: "import-failed" };
+    }
+  }
+
   // --- Disclosure ledger (RFC-002 §4.2 / §5.1) ---
 
   /** Composed per-site ledger rows. Returns an empty list when locked. */
@@ -368,4 +399,8 @@ export class SoroeruSession {
       collected: disclosures.length > 0 || checkpointDone,
     };
   }
+}
+
+function isSavedPageFile(fileName: string): boolean {
+  return /\.(html?|mhtml)$/i.test(fileName);
 }

@@ -44,6 +44,7 @@ export const IPC_CHANNELS = {
   recoveryGenerate: "soroeru:vault:recovery-generate",
   domainSummary: "soroeru:domain:summary",
   csvImport: "soroeru:csv:import",
+  savedPageImport: "soroeru:saved-page:import",
   ledgerSites: "soroeru:ledger:sites",
   ledgerSite: "soroeru:ledger:site",
   ledgerInsights: "soroeru:ledger:insights",
@@ -161,6 +162,28 @@ export interface CsvImportResult {
   /** A non-sensitive reason code when `ok` is false (e.g. "too-large", "bad-header"). */
   error?: string;
   summary?: CsvImportSummaryView;
+}
+
+// --- Saved account page import (local manual-import fallback, issue #184) ---
+
+export interface SavedPageImportRequest {
+  siteAccountId: string;
+  fileName: string;
+  data: Uint8Array;
+}
+
+export interface SavedPageImportSummaryView {
+  siteAccountId: string;
+  disclosures: number;
+  sourceUrl?: string;
+  sourceHashPreview: string;
+  recommendSourceDeletion: boolean;
+}
+
+export interface SavedPageImportResult {
+  ok: boolean;
+  error?: string;
+  summary?: SavedPageImportSummaryView;
 }
 
 // --- Disclosure ledger (RFC-002 §4.2 / §5.1) ---

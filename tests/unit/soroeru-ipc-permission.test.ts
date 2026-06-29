@@ -44,6 +44,7 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.vault.generateRecoveryKey();
   await api.domain.summary();
   await api.csv.import("x");
+  await api.savedPage.import({ siteAccountId: "x", fileName: "account.html", data: new Uint8Array() });
   await api.ledger.sites();
   await api.ledger.site("x");
   await api.ledger.insights();

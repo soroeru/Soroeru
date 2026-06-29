@@ -209,6 +209,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
         <span className="flex items-center gap-2">
           <span>{disclosure.label}</span>
           <StaleBadge state={disclosure.staleState} />
+          <SourceBadge sourceKind={disclosure.sourceKind} />
         </span>
         <span className="flex items-center gap-2">
           <span className="font-mono text-neutral-500">{value ?? (disclosure.preview || "—")}</span>
@@ -268,6 +269,15 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
 
       {error && <p className="text-xs text-red-600">{error}</p>}
     </li>
+  );
+}
+
+function SourceBadge({ sourceKind }: { sourceKind: DisclosureView["sourceKind"] }): React.JSX.Element | null {
+  if (sourceKind !== "manual-import") return null;
+  return (
+    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">
+      保存ページ
+    </span>
   );
 }
 

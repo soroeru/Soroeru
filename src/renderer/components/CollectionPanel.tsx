@@ -14,6 +14,7 @@ import type {
   VisibilityRunResultView,
 } from "../../../electron/ipc/contract.js";
 import { reasonMessage, visibilityStatusLabel } from "../messages.js";
+import { SavedPageImportPanel } from "./SavedPageImportPanel.js";
 
 interface CollectionPanelProps {
   /** Bumped by the parent after a CSV import so the site list refetches. */
@@ -32,6 +33,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [runningSiteId, setRunningSiteId] = useState<string | undefined>();
+  const [savedPageSiteId, setSavedPageSiteId] = useState<string | undefined>();
   const [handoff, setHandoff] = useState<HandoffState | undefined>();
   const [lastResult, setLastResult] = useState<VisibilityRunResultView | undefined>();
   const onCollectedRef = useRef(onCollected);
@@ -143,27 +145,52 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
         <ul className="flex flex-col divide-y divide-neutral-200">
           {sites.map((site) => {
             const isRunning = runningSiteId === site.siteAccountId;
+            const showSavedPageImport = !site.collected || site.constraintCount > 0;
             return (
-              <li key={site.siteAccountId} className="flex items-center justify-between gap-2 py-2">
-                <span className="flex flex-col">
-                  <span className="font-medium">{site.displayName}</span>
-                  <span className="text-xs text-neutral-400">{site.domain}</span>
-                </span>
-                <span className="flex items-center gap-2">
-                  {site.collected ? (
-                    <span className="text-xs text-green-700">収集済み（開示 {site.disclosureCount}）</span>
-                  ) : (
-                    <span className="text-xs text-neutral-400">未収集</span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void run(site.siteAccountId)}
-                    disabled={runningSiteId !== undefined}
-                    className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-                  >
-                    {isRunning ? "収集中…" : site.collected ? "再収集" : "収集"}
-                  </button>
-                </span>
+              <li key={site.siteAccountId} className="flex flex-col gap-2 py-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex flex-col">
+                    <span className="font-medium">{site.displayName}</span>
+                    <span className="text-xs text-neutral-400">{site.domain}</span>
+                  </span>
+                  <span className="flex flex-wrap items-center justify-end gap-2">
+                    {site.collected ? (
+                      <span className="text-xs text-green-700">収集済み（開示 {site.disclosureCount}）</span>
+                    ) : (
+                      <span className="text-xs text-neutral-400">未収集</span>
+                    )}
+                    {showSavedPageImport && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSavedPageSiteId((current) =>
+                            current === site.siteAccountId ? undefined : site.siteAccountId,
+                          )
+                        }
+                        className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
+                      >
+                        保存ページを取り込む
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void run(site.siteAccountId)}
+                      disabled={runningSiteId !== undefined}
+                      className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                    >
+                      {isRunning ? "収集中…" : site.collected ? "再収集" : "収集"}
+                    </button>
+                  </span>
+                </div>
+                {savedPageSiteId === site.siteAccountId && (
+                  <SavedPageImportPanel
+                    siteAccountId={site.siteAccountId}
+                    onImported={() => {
+                      void loadSites();
+                      onCollected();
+                    }}
+                  />
+                )}
               </li>
             );
           })}

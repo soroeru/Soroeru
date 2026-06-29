@@ -58,8 +58,9 @@ working-tree state never collide:
 
 ```bash
 git fetch origin
-git worktree add ../Soroeru-codex  origin/main
-git worktree add ../Soroeru-claude origin/main
+mkdir -p .worktrees
+git worktree add .worktrees/codex  origin/main
+git worktree add .worktrees/claude origin/main
 ```
 
 Each worktree starts in detached HEAD at `origin/main` (Git prints a "detached
@@ -68,6 +69,11 @@ branch inside that worktree. The worktree is a persistent home for the agent
 across many Issues, so it is not pinned to any single Issue branch — for the
 next Issue, re-run the §2 recipe (`git fetch origin && git switch -c <new-branch>
 origin/main`) from the same worktree.
+
+Keep the Codex worktree inside the repository root, for example
+`.worktrees/codex`, so it stays within the sandbox write root in this
+environment. Avoid sibling paths such as `../Soroeru-codex`; they are easy to
+misconfigure against the sandbox and force avoidable approval requests.
 
 - `core.hooksPath` is set with `git config --local` (stored in the shared common
   git dir, not per-worktree), so running `scripts/setup-hooks.sh` once enables

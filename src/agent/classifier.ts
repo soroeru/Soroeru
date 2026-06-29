@@ -93,14 +93,19 @@ const RULES: Rule[] = [
   // --- postal (split before full) ---
   { id: "postal-3", key: "postal.full", transform: "postal3", label: /郵便番号.*(上?3桁)/ , attr: /zip_?1$|postal_?1$/i },
   { id: "postal-4", key: "postal.full", transform: "postal4", label: /郵便番号.*(下?4桁)/ , attr: /zip_?2$|postal_?2$/i },
-  { id: "postal-full", key: "postal.full", label: /郵便番号|〒/, attr: /zip|postal|yubin/i },
+  { id: "postal-full", key: "postal.full", label: /郵便番号|〒/, attr: /zip|postal|yubin|address\[zip\]/i },
+  // Shopify-style saved address forms use bracketed names that should not fall through to generic address.
+  { id: "shopify-name-sei", key: "name.sei", attr: /address\[last_name\]/i },
+  { id: "shopify-name-mei", key: "name.mei", attr: /address\[first_name\]/i },
+  { id: "shopify-phone", key: "phone.full", attr: /address\[phone\]/i },
+  { id: "shopify-company", key: "company.name", attr: /address\[company\]/i },
   // --- address (specific before generic) ---
   { id: "address-after-pref", key: "address.full", transform: "addressAfterPref", label: /都道府県以降|それ以降の住所/ },
   { id: "address-full-with-pref", key: "address.full", label: /住所（都道府県|住所.*都道府県(から|を含む)/ },
-  { id: "address-pref", key: "address.pref", label: /都道府県/, attr: /pref|todofuken/i },
-  { id: "address-city", key: "address.city", label: /市区町村/, attr: /city|shikuchoson/i },
-  { id: "address-street", key: "address.street", label: /番地|丁目/, attr: /street|banchi|addr(ess)?_?1$/i },
-  { id: "address-building", key: "address.building", label: /建物|マンション|部屋番号/, attr: /building|bldg|addr(ess)?_?2$/i },
+  { id: "address-pref", key: "address.pref", label: /都道府県/, attr: /pref|todofuken|address\[province\]/i },
+  { id: "address-city", key: "address.city", label: /市区町村/, attr: /city|shikuchoson|address\[city\]/i },
+  { id: "address-street", key: "address.street", label: /番地|丁目/, attr: /street|banchi|addr(ess)?_?1$|address\[address1\]/i },
+  { id: "address-building", key: "address.building", label: /建物|マンション|部屋番号/, attr: /building|bldg|addr(ess)?_?2$|address\[address2\]/i },
   { id: "address-full", key: "address.full", label: /住所/, attr: /address|jusho/i },
   // --- kana (split before full; before 姓/名) ---
   { id: "kana-sei", key: "name.kana.sei", label: /^セイ|姓.*(カナ|かな)/, attr: /(last|family)_?name_?kana|sei_?kana/i },

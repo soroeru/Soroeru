@@ -16,6 +16,7 @@ const REASONS: Record<string, string> = {
   "too-many-rows": "CSV の行数が多すぎます。",
   empty: "CSV が空です。",
   "bad-header": "CSV のヘッダー形式が想定と異なります（name,url,username,password,note）。",
+  "bad-file-type": "対応しているファイル形式を選択してください。",
   "import-failed": "取り込みに失敗しました。",
   // Reveal
   "not-found": "対象が見つかりません。",

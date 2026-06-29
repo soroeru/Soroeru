@@ -81,7 +81,8 @@ export type DisclosureSourceKind =
   | "profile-text"
   | "billing-page"
   | "newsletter-setting"
-  | "user-confirmed";
+  | "user-confirmed"
+  | "manual-import";
 
 /** Derived by comparing the site-held value hash with the canonical attribute hash. */
 export type StaleState = "current" | "stale" | "unknown";
