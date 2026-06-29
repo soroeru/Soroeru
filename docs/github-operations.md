@@ -56,9 +56,15 @@ Give each agent its own working tree with `git worktree` so branch switches and
 working-tree state never collide:
 
 ```bash
+git fetch origin
 git worktree add ../Soroeru-codex  origin/main
 git worktree add ../Soroeru-claude origin/main
 ```
+
+Each worktree starts in detached HEAD at `origin/main` (Git prints a "detached
+HEAD" notice — this is expected); the §2 recipe then creates the per-Issue
+branch inside that worktree. The worktree is a persistent home for the agent
+across many Issues, so it is not pinned to any single Issue branch.
 
 - `core.hooksPath` is set with `git config --local` (shared Git config), so
   running `scripts/setup-hooks.sh` once enables the local AI review hook in every
@@ -77,9 +83,10 @@ parallel. Use the Issues' `blocked_by` relationships to find disjoint lanes; the
 dependency-ordered list within a lane is then safe because each blocker merges
 before its dependent.
 
-If a lane needs to add or change a shared dependency manifest
-(`package.json` / `package-lock.json`), coordinate with the other lane first to
-avoid lockfile conflicts.
+If a lane needs to change a repo-wide shared file that both lanes touch —
+dependency manifests (`package.json` / `package-lock.json`), shared config
+(`tsconfig.json`, `.githooks/config`), or this workflow doc — coordinate with
+the other lane first to avoid merge/lockfile conflicts.
 
 ## 3. Issue Workflow
 
