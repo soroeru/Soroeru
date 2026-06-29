@@ -191,6 +191,34 @@ documentation rather than mixing them into the core workflow.
   checks. Keep PRs small and merge frequently so a lane does not drift far from
   `origin/main`.
 
+### Cleaning up after merge
+
+Delete the Issue branch once its PR is merged — leftover branches accumulate and
+obscure which work is still in flight.
+
+- **Remote branch**: deleted automatically on merge when the repository has
+  `delete_branch_on_merge` enabled (the intended config here), so merging a PR
+  removes its remote branch and no manual remote deletion is needed for the
+  normal flow. If that setting is ever disabled, delete the remote branch
+  manually (`git push origin --delete <branch>`).
+- **Local branch + stale tracking refs**: clean these up yourself after merge.
+  Squash merge (the preferred merge here) does not make the branch an ancestor of
+  `main`, so confirm the PR is merged (`gh pr view <n> --json state,mergedAt`)
+  and force-delete:
+
+  ```bash
+  git fetch origin --prune          # drop remote-tracking refs for deleted branches
+  git branch -D <agent>/issue-<n>-<slug>
+  ```
+
+  For a non-squash (true) merge the branch is a `main` ancestor, so plain
+  `git branch -d` suffices.
+
+- **Local AI review artifacts**: after the review cycle settles, clean up
+  `state/ai-reviews/` per the cleanup policy in
+  [`local-ai-review.md`](local-ai-review.md) §8 (delete the review `*.md` and
+  logs; keep `last-reviewed.json`).
+
 ## 10. Learned Operational Notes
 
 Record durable lessons inline near the relevant workflow, Issue, or PR instead
