@@ -202,7 +202,7 @@ obscure which work is still in flight.
   normal flow. If that setting is ever disabled, delete the remote branch
   manually (`git push origin --delete <branch>`).
 - **Local branch + stale tracking refs**: clean these up yourself after merge.
-  Squash merge (the default here) does not make the branch an ancestor of
+  Squash merge (the preferred merge here) does not make the branch an ancestor of
   `main`, so confirm the PR is merged (`gh pr view <n> --json state,mergedAt`)
   and force-delete:
 
