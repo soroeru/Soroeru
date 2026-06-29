@@ -277,9 +277,38 @@ For production privacy/security hardening, run:
 - `npm run release:check`
 
 This command is the beta release gate for typecheck, unit tests, network-egress
-allowlisting, local-persistence allowlisting, and CAPTCHA / anti-bot bypass dependency
-denylisting. Treat any failure as a release blocker; the owning policy is
-[`security.md`](security.md) §13.
+allowlisting, local-persistence allowlisting, CAPTCHA / anti-bot bypass dependency
+denylisting, and the dependency-audit gate (`audit:check`, see below). Treat any failure
+as a release blocker; the owning policy is [`security.md`](security.md) §13.
+
+### 8.1 Local dependency-audit gate (shift-left)
+
+Dependency-vulnerability detection runs in CI (`SEC-003`, see
+[`dependency-security.md`](dependency-security.md)). To catch new advisories locally
+before CI, the same check is available as `npm run audit:check`
+(= `npm audit --omit=dev --audit-level=high`) and is wired into `npm run release:check`
+so the local release gate matches the CI gate.
+
+Decision (why this shape):
+
+- **Reuse, single source of truth.** Local and CI run the **same** `audit:check` script
+  with the same threshold (`high`) and scope (`--omit=dev`, production = runtime +
+  optional deps), so acceptance rules never drift between the two. Accepted build-time-
+  only advisories are excluded by scope and tracked in [`security.md`](security.md) §12.0
+  (no separate allowlist to maintain).
+- **Where it runs.** In `release:check` (the release gate), **not** on every commit:
+  `npm audit` needs the network and adds latency, so per-commit auditing would be noisy
+  and offline-hostile. A `pre-push` git hook is a reasonable **opt-in** addition (mirror
+  the opt-in model in [`local-ai-review.md`](local-ai-review.md)); it is intentionally
+  not enabled by default.
+- **Offline behavior.** `audit:check` requires registry access. When offline it will
+  fail; that is acceptable for a release gate (a release should be audited online). For
+  ordinary offline development, run the other gates individually
+  (`npm run typecheck`, `npm test`, the `poc -- check-*` gates) and run `audit:check`
+  when back online. Do not add a network call to per-commit gates.
+- **Conclusion.** CI (#180) is the enforcing line of defense; this local hook is the
+  shift-left convenience that shares its exact command, so a developer sees the same
+  pass/fail before pushing.
 
 For code changes, run the available gates:
 

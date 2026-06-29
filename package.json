@@ -21,7 +21,7 @@
     "poc:matrix": "npm run poc -- matrix",
     "e2e:real-visibility": "npm run build && node --test dist/compiled/tests/e2e/real-visibility.e2e.js",
     "package:dmg": "node scripts/check-node-version.mjs && rm -rf out release/Soroeru-*.dmg && npm run build:app && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium && electron-forge make --platform=darwin && node scripts/rename-dmg.mjs",
-    "release:check": "npm run typecheck && npm test && npm run poc -- check-egress && npm run poc -- check-persistence && npm run poc -- check-bypass",
+    "release:check": "npm run typecheck && npm test && npm run poc -- check-egress && npm run poc -- check-persistence && npm run poc -- check-bypass && npm run audit:check",
     "audit:check": "npm audit --omit=dev --audit-level=high"
   },
   "devDependencies": {
