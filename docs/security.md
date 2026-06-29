@@ -400,6 +400,92 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - Run the documented audit / update check when the toolchain supports it; document build /
   framework decisions in [`development.md`](development.md).
 
+**Continuous detection (operation rules).** Dependency vulnerabilities are monitored
+continuously by two layers: **Dependabot** (`.github/dependabot.yml`) opens update PRs
+across all dependencies, and a **CI audit gate** (`SEC-003`, `npm run audit:check` =
+`npm audit --omit=dev --audit-level=high` in `.github/workflows/ci.yml`) fails builds on
+new high/critical advisories in the **production** surface (runtime + optional deps).
+The gate is intentionally scoped to production deps so the accepted build-time-only
+`devDependency` advisories below do not keep CI permanently red. The reusable setup,
+threshold/scope rationale, acceptance flow, and triage steps live in
+[`dependency-security.md`](dependency-security.md); the accepted advisories themselves
+are recorded in §12.0 below.
+
+### 12.0 Build-Time-Only Dependency Vulnerabilities (interim risk acceptance)
+
+Some `devDependency` advisories cannot currently be cleanly fixed because they are
+pulled transitively by the packaging toolchain (`@electron-forge/cli`, already at its
+latest `7.11.2`). These chains run only during **build / packaging** (DMG generation on
+a developer or CI machine) and are **not present in the distributed runtime**, which
+ships only the compiled app, the runtime dependencies (currently `playwright` plus a
+vetted Argon2id implementation, `hash-wasm`), Electron's embedded Node, and the packaged
+Chromium.
+They are therefore **not an end-user runtime attack surface**.
+
+**Scope of the interim risk acceptance**
+
+- **`tar` (high)** — via `@electron-forge/core-utils → @electron/rebuild →
+  @electron/node-gyp → make-fetch-happen → cacache`. Advisories such as Hardlink Path
+  Traversal / Symlink Poisoning / Arbitrary File Write / PAX smuggling
+  (GHSA-34x7-hfp2-rc4v and others).
+- **`tmp` (high) + `external-editor` / `@inquirer/editor` / `@inquirer/prompts` (low)**
+  — via `@electron-forge/cli → @inquirer/prompts → @inquirer/editor → external-editor →
+  tmp`. Advisories: arbitrary temp write via symlink `dir` (GHSA-52f5-9888-hmc6) and
+  path traversal via unsanitized prefix/postfix (GHSA-ph9p-34f9-6g65).
+
+**Premises that bound the risk**
+
+1. **Build-time only / not shipped.** These packages execute only while building or
+   packaging the app. The exploit preconditions (processing an attacker-controlled
+   archive / temp path) do not occur in normal local DMG builds from this repository.
+2. **No clean upstream fix today.** `@electron-forge/cli` is already at the latest
+   `7.11.2`; the only `npm audit` "fix" it offers is a downgrade to `7.6.1`
+   (semver-major regression), which is not a real fix. `npm audit` reports
+   `fixAvailable: false` for both `tar` (vulnerable range `<=7.5.15`) and `tmp`
+   (vulnerable range `<=0.2.5`).
+
+**Override escalation — evaluated, NOT adopted (2026-06-29)**
+
+Forcing patched versions via `overrides` (`tar: ^7.5.19`, `tmp: ^0.2.7`) was evaluated
+and **rejected** for now:
+
+- The override does **not** resolve cleanly. `npm install --package-lock-only` leaves
+  `tar@6.2.1` and `tmp@0.0.33` marked **`invalid`** because `@electron/rebuild`,
+  `@electron/node-gyp`, `cacache`, and `external-editor` pin the old major ranges
+  (`tar@^6`, `tmp@^0.0.33`).
+- A clean fix requires a **major** bump (tar 6→7, tmp 0.0→0.2). Those consumers call the
+  old programmatic APIs, so forcing the new majors risks breaking native rebuild and
+  **DMG packaging** (`npm run package:dmg`).
+- Per the controlling Issue, an override is adopted **only if `npm run package:dmg`
+  succeeds with it**. That could not be safely verified in the working environment, so
+  the override is **not applied**; we keep tracking + risk acceptance instead.
+
+**Upstream tracking references**
+
+- electron-forge: <https://github.com/electron/forge>
+- `@electron/rebuild` (tar consumer): <https://github.com/electron/rebuild>
+- `@electron/node-gyp`: <https://github.com/electron/node-gyp>
+- Inquirer.js (`@inquirer/prompts` / `@inquirer/editor`):
+  <https://github.com/SBoudrias/Inquirer.js>
+- `node-tmp`: <https://github.com/raszi/node-tmp>
+
+Re-evaluate when `@electron/rebuild` promotes `tar`, the inquirer chain drops `tmp`, or
+`@electron-forge/cli` ships an updated transitive tree.
+
+**Residual unresolved count (release-judgment input, honest record)**
+
+This branch is stacked on #178 (`jsdom` removal), so the `undici` chain is already gone
+here. Measured on this branch on **2026-06-29** (`npm audit`): **22 advisories total — 19
+high, 3 low**, all build-time-only via the chains above. `npm audit` counts per package
+node, not per advisory, so the 19 high are `tar` plus every `@electron-forge/*` /
+`@electron` package that transitively depends on it (`@electron/rebuild`,
+`@electron/node-gyp`, `make-fetch-happen`, `cacache`, the `@electron-forge/*` packages)
+and `tmp`; the 3 low are `external-editor` / `@inquirer/editor` / `@inquirer/prompts`.
+`npm audit --omit=dev` (production scope — the runtime `dependencies` `hash-wasm` and
+`playwright`, plus `optionalDependencies`; note `appdmg`, the optional build-only DMG
+tool, is not installed on this platform) reports **0 vulnerabilities**. Counts shift with
+upstream updates; re-check at release time.
+
 ### 12.1 Mac Beta Artifact Safety
 
 The Mac private-beta artifact is generated locally by `npm run package:dmg` and written to
@@ -442,8 +528,8 @@ gate:
 npm run release:check
 ```
 
-`release:check` runs typecheck, the unit test suite, and the three static hardening gates
-that protect the beta boundary:
+`release:check` runs typecheck, the unit test suite, the three static hardening gates
+that protect the beta boundary, and the dependency-audit gate:
 
 - `npm run poc -- check-egress` — network egress annotations plus telemetry /
   analytics dependency denylist (PRIV-001, §6)
@@ -451,6 +537,11 @@ that protect the beta boundary:
   encrypted store/export and masked measurement output (PRIV-002, §3)
 - `npm run poc -- check-bypass` — CAPTCHA-solving / anti-bot / fingerprint-evasion
   dependency denylist (SEC-002, §7)
+- `npm run audit:check` — production dependency audit gate (SEC-003,
+  `npm audit --omit=dev --audit-level=high`), the same command CI runs; shares its
+  threshold/scope so local and CI never drift (§12, [`dependency-security.md`](dependency-security.md)).
+  Requires registry access; see [`development.md`](development.md) §8.1 for the offline
+  note and the rationale for keeping it in the release gate rather than per-commit.
 
 Treat a failure in any of these as a release blocker. Fix the code or update the owning
 security section with an explicit reviewed exception before sharing the build.
