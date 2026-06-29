@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { SavedPageImportSummaryView } from "../../../electron/ipc/contract.js";
 import { reasonMessage } from "../messages.js";
 
-const badFileMessage = "保存した HTML ファイル（.html / .htm / .mhtml）を選択してください。";
+const badFileMessage = "保存した HTML ファイル（.html / .htm）を選択してください。";
 
 interface SavedPageImportPanelProps {
   siteAccountId: string;
@@ -10,7 +10,7 @@ interface SavedPageImportPanelProps {
 }
 
 function isSavedPageFile(file: File): boolean {
-  return /\.(html?|mhtml)$/i.test(file.name);
+  return /\.(html?|htm)$/i.test(file.name);
 }
 
 export function SavedPageImportPanel({
@@ -73,7 +73,7 @@ export function SavedPageImportPanel({
       <input
         ref={inputRef}
         type="file"
-        accept=".html,.htm,.mhtml,text/html"
+        accept=".html,.htm,text/html"
         disabled={busy}
         onChange={(event) => {
           void onFile(event.target.files?.[0]);

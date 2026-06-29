@@ -145,7 +145,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
         <ul className="flex flex-col divide-y divide-neutral-200">
           {sites.map((site) => {
             const isRunning = runningSiteId === site.siteAccountId;
-            const showSavedPageImport = !site.collected || site.constraintCount > 0;
+            const showSavedPageImport = true;
             return (
               <li key={site.siteAccountId} className="flex flex-col gap-2 py-2">
                 <div className="flex items-center justify-between gap-2">

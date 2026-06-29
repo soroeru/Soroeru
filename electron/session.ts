@@ -402,5 +402,5 @@ export class SoroeruSession {
 }
 
 function isSavedPageFile(fileName: string): boolean {
-  return /\.(html?|mhtml)$/i.test(fileName);
+  return /\.(html?|htm)$/i.test(fileName);
 }
