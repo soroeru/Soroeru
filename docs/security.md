@@ -400,6 +400,17 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 - Run the documented audit / update check when the toolchain supports it; document build /
   framework decisions in [`development.md`](development.md).
 
+**Continuous detection (operation rules).** Dependency vulnerabilities are monitored
+continuously by two layers: **Dependabot** (`.github/dependabot.yml`) opens update PRs
+across all dependencies, and a **CI audit gate** (`SEC-003`, `npm run audit:check` =
+`npm audit --omit=dev --audit-level=high` in `.github/workflows/ci.yml`) fails builds on
+new high/critical advisories in the **production** surface (runtime + optional deps).
+The gate is intentionally scoped to production deps so the accepted build-time-only
+`devDependency` advisories below do not keep CI permanently red. The reusable setup,
+threshold/scope rationale, acceptance flow, and triage steps live in
+[`dependency-security.md`](dependency-security.md); the accepted advisories themselves
+are recorded in §12.0 below.
+
 ### 12.0 Build-Time-Only Dependency Vulnerabilities (interim risk acceptance)
 
 Some `devDependency` advisories cannot currently be cleanly fixed because they are
@@ -407,7 +418,8 @@ pulled transitively by the packaging toolchain (`@electron-forge/cli`, already a
 latest `7.11.2`). These chains run only during **build / packaging** (DMG generation on
 a developer or CI machine) and are **not present in the distributed runtime**, which
 ships only the compiled app, the runtime dependencies (currently `playwright` plus a
-vetted Argon2id implementation), Electron's embedded Node, and the packaged Chromium.
+vetted Argon2id implementation, `hash-wasm`), Electron's embedded Node, and the packaged
+Chromium.
 They are therefore **not an end-user runtime attack surface**.
 
 **Scope of the interim risk acceptance**
