@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RegistrationSession } from "../../src/app/registration-session.js";
 import { BulkUpdateSession } from "../../src/app/bulk-update-session.js";
-import { CatashiroApp, type BrowserLauncher, type CatashiroAppOptions } from "../../src/app/app.js";
+import { SoroeruApp, type BrowserLauncher, type SoroeruAppOptions } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import type { AppRunner } from "../../src/app/runner.js";
 import type { Page, Browser } from "playwright";
@@ -187,11 +187,11 @@ test("BulkUpdateSession cancel is no-op when already done", async () => {
 // ---------------------------------------------------------------------------
 
 async function withWebUi(
-  fn: (app: CatashiroApp, server: WebUiServerHandle) => Promise<void>,
-  appOptions?: Partial<Omit<CatashiroAppOptions, "stateDir">>,
+  fn: (app: SoroeruApp, server: WebUiServerHandle) => Promise<void>,
+  appOptions?: Partial<Omit<SoroeruAppOptions, "stateDir">>,
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-task-progress-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, ...appOptions });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0, ...appOptions });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await fn(app, server);

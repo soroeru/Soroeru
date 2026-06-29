@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { chromium, type Browser, type Page } from "playwright";
 import { startPocServer, type PocServer } from "../../sites/server.js";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import { AppRunner, type AppRunnerHooks } from "../../src/app/runner.js";
 import { RegistrationSession } from "../../src/app/registration-session.js";
@@ -68,11 +68,11 @@ const refuseLaunch = async (): Promise<Browser> => {
 };
 
 async function withRegistrationWebUi(
-  fn: (ctx: { app: CatashiroApp; server: WebUiServerHandle; site: PocServer; token: string }) => Promise<void>,
+  fn: (ctx: { app: SoroeruApp; server: WebUiServerHandle; site: PocServer; token: string }) => Promise<void>,
 ): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-registration-"));
   const site = await startPocServer();
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn: headlessChromium });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn: headlessChromium });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     const token = await unlockThroughUi(server);
@@ -89,7 +89,7 @@ async function withRegistrationWebUi(
 
 test("starting registration with an empty URL warns and does not launch a browser", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-registration-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn: refuseLaunch });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0, launchBrowserFn: refuseLaunch });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     const token = await unlockThroughUi(server);

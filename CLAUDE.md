@@ -15,7 +15,7 @@ section with Claude Code-specific guidance. When the shared sections in
 > [`docs/requirements.md`](docs/requirements.md), which fully supersedes the prior
 > Catashiro direction (history in git).
 >
-> The **repository / codebase identifier remains `catashiro`** (code is not renamed);
+> The **repository / codebase identifier is now `soroeru`** (renamed from `catashiro`);
 > **Soroeru** is the product name. Target architecture / technology selection is owned by
 > [`docs/rfc/rfc-002-soroeru-architecture.md`](docs/rfc/rfc-002-soroeru-architecture.md).
 > The first capability slice is **Visibility (building the disclosure ledger)**, not
@@ -194,7 +194,7 @@ outside RFC-002's target stack without a new Issue/RFC explaining the requiremen
 ## Expected Architecture
 
 Target architecture is RFC-002. [`docs/extension.md`](docs/extension.md) and
-[`docs/development.md`](docs/development.md) still describe the *previous* Catashiro
+[`docs/development.md`](docs/development.md) still describe the *previous* Soroeru
 architecture/workflow and are retained only as reference until implementation docs are
 rewritten.
 

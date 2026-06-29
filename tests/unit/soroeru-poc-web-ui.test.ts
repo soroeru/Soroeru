@@ -6,16 +6,16 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CatashiroApp } from "../../src/app/app.js";
+import { SoroeruApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
 import { sha256Hex } from "../../src/store/store.js";
 import type { LocalCandidateDefinition } from "../../src/types.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
-async function withWebUi(fn: (app: CatashiroApp, server: WebUiServerHandle) => Promise<void>): Promise<void> {
+async function withWebUi(fn: (app: SoroeruApp, server: WebUiServerHandle) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-web-ui-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await fn(app, server);
@@ -69,7 +69,7 @@ function localCandidate(id: string): LocalCandidateDefinition {
 test("locked screen renders onboarding and rejects POSTs without the CSRF token", async () => {
   await withWebUi(async (_app, server) => {
     const html = await getHtml(server);
-    assert.match(html, /Catashiro を開く/);
+    assert.match(html, /Soroeru を開く/);
     assert.match(html, /クラウド同期やテレメトリは使いません/);
 
     const res = await post(server, "/unlock", { passphrase: PASSPHRASE });
@@ -166,7 +166,7 @@ test("dashboard shows a recovery-key reminder until a recovery key is generated"
 
 test("dashboard explains idle auto-lock duration when idle auto-lock is enabled", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-web-ui-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 5 * 60 * 1000 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 5 * 60 * 1000 });
   const server = await startWebUiServer({ app, port: 0 });
   try {
     await unlockThroughUi(server);
@@ -450,7 +450,7 @@ test("candidate definitions can be previewed and marked submitted from the local
     });
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type") ?? "", /application\/json/);
-    assert.match(res.headers.get("content-disposition") ?? "", /catashiro-candidate-candidate-alpha\.json/);
+    assert.match(res.headers.get("content-disposition") ?? "", /soroeru-candidate-candidate-alpha\.json/);
     const draft = (await res.json()) as { title: string; candidate: LocalCandidateDefinition };
     assert.equal(draft.title, "Local candidate definition: 候補サイト");
     assert.equal(draft.candidate.status, "submitted");
@@ -513,7 +513,7 @@ test("diagnostics export requires confirmation and returns a redacted support bu
     assert.equal(exported.status, 200);
     assert.match(exported.headers.get("content-type") ?? "", /application\/json/);
     const body = await exported.text();
-    assert.match(body, /catashiro-support-bundle-v1/);
+    assert.match(body, /soroeru-support-bundle-v1/);
     assert.ok(!body.includes("taro@example.test"));
     assert.ok(!body.includes("4111 1111 1111 1111"));
   });
@@ -635,7 +635,7 @@ test("withdrawal task flow requires explicit final-action confirmation", async (
 
 test("POST /shutdown renders stopping page and invokes onShutdownRequest callback", async () => {
   const dir = await mkdtemp(join(tmpdir(), "af-poc-web-ui-shutdown-"));
-  const app = new CatashiroApp({ stateDir: dir, idleLockMs: 0 });
+  const app = new SoroeruApp({ stateDir: dir, idleLockMs: 0 });
   let callbackInvoked = false;
   const server = await startWebUiServer({
     app,
@@ -647,7 +647,7 @@ test("POST /shutdown renders stopping page and invokes onShutdownRequest callbac
     const res = await post(server, "/shutdown", { csrf: token });
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.match(html, /Catashiro を停止しています/);
+    assert.match(html, /Soroeru を停止しています/);
     assert.ok(callbackInvoked, "onShutdownRequest must be called after the response is sent");
   } finally {
     await server.close();

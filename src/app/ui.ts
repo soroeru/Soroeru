@@ -1,5 +1,5 @@
 // Local app UI (RFC-001 v3 §7, UI-001 / #17): an interactive CLI menu over
-// `CatashiroApp` + `AppRunner` for personal data management, site inventory /
+// `SoroeruApp` + `AppRunner` for personal data management, site inventory /
 // mandates, bulk-update selection, new registration (via the
 // review-and-confirm gate, `CliGate`), and settings (AI provider, recovery
 // key, encrypted export/import).
@@ -22,7 +22,7 @@ import {
   type SiteRecord,
 } from "../types.js";
 import { PocStore, type ProfileEntry } from "../store/store.js";
-import { CatashiroAppError, type CatashiroApp } from "./app.js";
+import { SoroeruAppError, type SoroeruApp } from "./app.js";
 import type { AppRunner, AppRunnerHooks } from "./runner.js";
 
 /** Prompt for a line of input, echoed normally. Returns the trimmed value. */
@@ -101,7 +101,7 @@ const defaultIo: UiIo = { ask, confirm, askSecret, log: (m) => console.log(m) };
 /** Interactive CLI UI: the single entry point a UI-driving command needs. */
 export class AppUI {
   constructor(
-    private readonly app: CatashiroApp,
+    private readonly app: SoroeruApp,
     private readonly runner: AppRunner,
     private readonly io: UiIo = defaultIo,
   ) {}
@@ -113,7 +113,7 @@ export class AppUI {
         if (!(await this.reunlock())) return;
       }
       this.app.touch();
-      this.io.log("\n=== Catashiro ===");
+      this.io.log("\n=== Soroeru ===");
       this.io.log("1) 個人情報  2) サイト一覧 / mandate  3) 一括更新  4) 新規登録  5) 設定  0) 終了");
       const choice = await this.io.ask("> ");
       try {
@@ -141,7 +141,7 @@ export class AppUI {
             this.io.log("不明な選択です");
         }
       } catch (err) {
-        if (err instanceof CatashiroAppError) {
+        if (err instanceof SoroeruAppError) {
           this.io.log(`\n${err.message}`);
           continue;
         }
@@ -158,7 +158,7 @@ export class AppUI {
       await this.app.unlock(passphrase);
       return true;
     } catch (err) {
-      this.io.log(err instanceof CatashiroAppError ? err.message : String(err));
+      this.io.log(err instanceof SoroeruAppError ? err.message : String(err));
       return false;
     }
   }

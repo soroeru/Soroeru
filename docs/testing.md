@@ -1,7 +1,7 @@
 # Testing
 
 > **⚠️ SUPERSEDED / IN FLUX (2026-06-25).** This document describes the testing strategy of
-> the **previous Catashiro** (registration-first MVP, local Catashiro test sites). The
+> the **previous Catashiro** (registration-first MVP, local Soroeru test sites). The
 > product is re-founded as **Soroeru（揃える）** (canonical direction:
 > [`requirements.md`](requirements.md)), whose first slice is **Visibility**, not
 > registration, and whose **technology/architecture is being redone ground-up in a later
@@ -9,7 +9,7 @@
 > cases — reflects the old direction and is retained for reference only until a Soroeru
 > testing RFC lands. Do not treat it as the current checklist.
 
-This document owns the **testing strategy** for `Catashiro`: what to test, which test
+This document owns the **testing strategy** for `Soroeru`: what to test, which test
 types apply, and how the suites map to the architecture layers.
 
 > **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
@@ -55,21 +55,21 @@ isolation. Current coverage:
 
 | Layer / seam | Modules | Tests |
 | --- | --- | --- |
-| Store (crypto boundary) | `store/crypto.ts`, `store/store.ts` | `catashiro-poc-crypto.test.ts` |
-| Agent — deterministic mapper | `agent/classifier.ts`, `agent/guards.ts` | `catashiro-poc-classifier.test.ts`, `catashiro-poc-guards.test.ts` |
-| Agent — AI mapper | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `catashiro-poc-ai-mapper.test.ts` |
-| Agent — wall detection | `agent/walls.ts` | `catashiro-poc-walls.test.ts` |
-| Agent — phase timing (PERF-001) | `agent/perf.ts` | `catashiro-poc-perf.test.ts` |
-| Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `catashiro-poc-contracts.test.ts` |
-| Automation (DOM scan) | `agent/scan.ts` | exercised via the E2E matrix (§8, `catashiro-poc-measure.test.ts`) |
-| UI — local web app | `app/web-ui.ts` | `catashiro-poc-web-ui.test.ts` |
-| UI — Add Site branch selection | `app/web-ui.ts` (`addSite`) | `catashiro-poc-add-site.test.ts` |
-| UI — legacy terminal fallback | `app/ui.ts` | `catashiro-poc-ui.test.ts` |
-| Agent — existing-account import | `agent/importer.ts` | `catashiro-poc-importer.test.ts` |
-| Measurement / CI gate | `run/measure.ts` | `catashiro-poc-measure.test.ts` |
-| Dev checks (PRIV-001/002, SEC-002) | `src/dev/{egress,privacy,bypass}-check.ts` | `catashiro-poc-{egress,privacy,bypass}.test.ts` |
+| Store (crypto boundary) | `store/crypto.ts`, `store/store.ts` | `soroeru-poc-crypto.test.ts` |
+| Agent — deterministic mapper | `agent/classifier.ts`, `agent/guards.ts` | `soroeru-poc-classifier.test.ts`, `soroeru-poc-guards.test.ts` |
+| Agent — AI mapper | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `soroeru-poc-ai-mapper.test.ts` |
+| Agent — wall detection | `agent/walls.ts` | `soroeru-poc-walls.test.ts` |
+| Agent — phase timing (PERF-001) | `agent/perf.ts` | `soroeru-poc-perf.test.ts` |
+| Shared contracts & seams | `types.ts`, `mapper.ts`, `normalization.ts` | `soroeru-poc-contracts.test.ts` |
+| Automation (DOM scan) | `agent/scan.ts` | exercised via the E2E matrix (§8, `soroeru-poc-measure.test.ts`) |
+| UI — local web app | `app/web-ui.ts` | `soroeru-poc-web-ui.test.ts` |
+| UI — Add Site branch selection | `app/web-ui.ts` (`addSite`) | `soroeru-poc-add-site.test.ts` |
+| UI — legacy terminal fallback | `app/ui.ts` | `soroeru-poc-ui.test.ts` |
+| Agent — existing-account import | `agent/importer.ts` | `soroeru-poc-importer.test.ts` |
+| Measurement / CI gate | `run/measure.ts` | `soroeru-poc-measure.test.ts` |
+| Dev checks (PRIV-001/002, SEC-002) | `src/dev/{egress,privacy,bypass}-check.ts` | `soroeru-poc-{egress,privacy,bypass}.test.ts` |
 
-`catashiro-poc-contracts.test.ts` additionally locks the cross-layer invariant that the
+`soroeru-poc-contracts.test.ts` additionally locks the cross-layer invariant that the
 agent layer never receives raw personal values.
 
 ## 3. Test Environment
@@ -114,7 +114,7 @@ npm test
 `npm test` builds the project, then runs unit tests from `tests/unit/` (Node's
 built-in test runner).
 
-For the `Catashiro` agent (§8 below), the E2E test matrix is run via:
+For the `Soroeru` agent (§8 below), the E2E test matrix is run via:
 
 ```bash
 npm run poc:matrix -- deterministic chromium   # CI: see §7
@@ -141,7 +141,7 @@ push to `main`:
 
 | Job | Steps | Covers |
 | --- | --- | --- |
-| `unit` | `npm run typecheck`, `npm test`, `npm run poc -- check-egress` (PRIV-001), `npm run poc -- check-persistence` (PRIV-002), `npm run poc -- check-bypass` (SEC-002) | All unit-testable layers in §2.1, including the AI mapper exercised against a `StubProvider` (`catashiro-poc-ai-mapper.test.ts`) — no real API key is used or required. |
+| `unit` | `npm run typecheck`, `npm test`, `npm run poc -- check-egress` (PRIV-001), `npm run poc -- check-persistence` (PRIV-002), `npm run poc -- check-bypass` (SEC-002) | All unit-testable layers in §2.1, including the AI mapper exercised against a `StubProvider` (`soroeru-poc-ai-mapper.test.ts`) — no real API key is used or required. |
 | `e2e-deterministic` | `npx playwright install --with-deps chromium`, `npm run poc:matrix -- deterministic chromium` | The full registration + bulk-update E2E matrix (§8) against the local test sites, deterministic mapper, chromium only. `npm run poc:matrix` exits non-zero (`hasFailures`, `run/measure.ts`) if any site's registration, guard evaluation, bulk-update result/mandate, the trial-card decline path, or wall-detection/resume fixtures regress. |
 
 **CI vs. local-only (decision for #45):**
@@ -159,7 +159,7 @@ push to `main`:
   [`manual-test.md`](manual-test.md)) also remain local/manual.
 - Local AI review (`docs/local-ai-review.md`) remains local, as before.
 
-## 8. Catashiro PoC Test Matrix (TEST-001 / #45)
+## 8. Soroeru PoC Test Matrix (TEST-001 / #45)
 
 `run/measure.ts` (`npm run poc:matrix`) is the E2E layer:
 for each of the 10 local test sites (`sites/defs.ts`) it
@@ -190,16 +190,16 @@ scenario to the requirements it exercises (see [`requirements.md`](requirements.
 | Login page fixture (per-site `/login` route) | all 10 sites | REQ-009 (login-wall hand-off) |
 | Login + MFA wall fixture | `/login-wall/` | REQ-009, SEC-002 |
 | Account settings extraction (per-site `/account` route) | all 10 sites | REQ-011 (import from read-only page) |
-| Add Site branch selection: notRegistered / registered / uncertain | `catashiro-poc-add-site.test.ts` | REQ-003, REQ-011 |
-| Import review-before-save: approve with edits, decline, account page | `catashiro-poc-importer.test.ts` | REQ-011, SEC-003 |
+| Add Site branch selection: notRegistered / registered / uncertain | `soroeru-poc-add-site.test.ts` | REQ-003, REQ-011 |
+| Import review-before-save: approve with edits, decline, account page | `soroeru-poc-importer.test.ts` | REQ-011, SEC-003 |
 | Deterministic vs. AI mapping-plan comparison | all 10 sites, `deterministic` vs `ai` variant | REQ-004, REQ-012 |
-| AI mapper schema, key/transform validation, terms analysis (stub provider) | `catashiro-poc-ai-mapper.test.ts` | REQ-004, REQ-012, SEC-003 |
-| Encrypted store, recovery key, encrypted export/import | `catashiro-poc-{crypto,recovery}.test.ts` | SEC-001, SEC-003 (recovery) |
-| Network egress / local persistence / anti-bypass static checks | `catashiro-poc-{egress,privacy,bypass}.test.ts` | PRIV-001, PRIV-002, SEC-002 |
-| `hasFailures` CI gate over the above | `catashiro-poc-measure.test.ts` | TEST-001 (this issue) |
+| AI mapper schema, key/transform validation, terms analysis (stub provider) | `soroeru-poc-ai-mapper.test.ts` | REQ-004, REQ-012, SEC-003 |
+| Encrypted store, recovery key, encrypted export/import | `soroeru-poc-{crypto,recovery}.test.ts` | SEC-001, SEC-003 (recovery) |
+| Network egress / local persistence / anti-bypass static checks | `soroeru-poc-{egress,privacy,bypass}.test.ts` | PRIV-001, PRIV-002, SEC-002 |
+| `hasFailures` CI gate over the above | `soroeru-poc-measure.test.ts` | TEST-001 (this issue) |
 
 All data, terms text, and prohibitions in the local test sites are fictional
-(§4 fake-data-only rule) and exist only to exercise `Catashiro`; real-site
+(§4 fake-data-only rule) and exist only to exercise `Soroeru`; real-site
 tests, real CAPTCHA/MFA services, and a performance dashboard are explicitly
 non-scope for this issue (see Issue #45 non-scope; performance baselines are
 tracked separately under PERF-001 / #18).
@@ -223,14 +223,14 @@ Every `runRegistration` / `runUpdate` call reports per-phase elapsed time via
 `npm run poc:matrix` (`run/measure.ts`) accumulates these
 into `SiteResultRow.phaseTimingsMs` / `UpdateResultRow.phaseTimingsMs`, prints
 a per-site phase-timing table (`formatResult`), and persists them in
-`state/catashiro-poc/matrix-*.json` — phase name and a millisecond number only,
+`state/soroeru-poc/matrix-*.json` — phase name and a millisecond number only,
 satisfying PRIV-001/PRIV-002 (no raw personal values, page content, AI request
 payloads, or provider API keys ever appear in these tables).
 
 A phase that exceeds `AF_POC_SLOW_PHASE_MS` (default 5000ms) emits a
 user-visible progress note via `deps.log` (`slowPhaseNote`) so a long-running
 phase (e.g. a slow page render) does not look like the agent is stuck.
-`catashiro-poc-perf.test.ts` covers `emptyPhaseTimings` and `slowPhaseNote`
+`soroeru-poc-perf.test.ts` covers `emptyPhaseTimings` and `slowPhaseNote`
 (threshold behavior, per-phase labels, and that the note contains only the
 phase label and a duration).
 

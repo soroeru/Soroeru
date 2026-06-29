@@ -29,7 +29,7 @@ import { aiProviderFromEnv, createProvider } from "../src/agent/ai/provider.js";
 import { CliGate } from "../src/agent/gate.js";
 import { DeterministicMapper, type Mapper } from "../src/agent/mapper.js";
 import { DUMMY_PROFILE_SEED } from "../src/profile.js";
-import { CatashiroApp, CatashiroAppError } from "../src/app/app.js";
+import { SoroeruApp, SoroeruAppError } from "../src/app/app.js";
 import { AppRunner } from "../src/app/runner.js";
 import { askSecret, AppUI } from "../src/app/ui.js";
 import { startWebUiServer, type WebUiServerHandle } from "../src/app/web-ui.js";
@@ -40,8 +40,8 @@ import { checkLocalPersistence } from "../src/dev/privacy-check.js";
 import { formatResult, hasFailures, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = defaultVaultStateDir({
-  appBundle: process.env["CATASHIRO_APP_BUNDLE"] === "1",
-  ...(process.env["CATASHIRO_STATE_ROOT"] ? { override: process.env["CATASHIRO_STATE_ROOT"] } : {}),
+  appBundle: process.env["SOROERU_APP_BUNDLE"] === "1",
+  ...(process.env["SOROERU_STATE_ROOT"] ? { override: process.env["SOROERU_STATE_ROOT"] } : {}),
 });
 
 function openUrlInDefaultBrowser(url: string): void {
@@ -129,7 +129,7 @@ async function cmdMatrix(variantArg: string, enginesArg: string): Promise<void> 
 
 async function cmdRegister(siteId: string, variantArg: string): Promise<void> {
   const server = await startPocServer();
-  const app = new CatashiroApp({ stateDir: join(STATE_ROOT, "manual") });
+  const app = new SoroeruApp({ stateDir: join(STATE_ROOT, "manual") });
   try {
     await app.unlock(process.env["AF_POC_PASSPHRASE"] ?? "poc-dummy-passphrase");
     for (const seed of DUMMY_PROFILE_SEED) {
@@ -161,11 +161,11 @@ async function cmdRegister(siteId: string, variantArg: string): Promise<void> {
 }
 
 async function cmdApp(): Promise<void> {
-  const app = new CatashiroApp({ stateDir: join(STATE_ROOT, "app") });
+  const app = new SoroeruApp({ stateDir: join(STATE_ROOT, "app") });
   try {
     await app.unlock(process.env["AF_POC_PASSPHRASE"] ?? "poc-dummy-passphrase");
   } catch (err) {
-    if (err instanceof CatashiroAppError) {
+    if (err instanceof SoroeruAppError) {
       console.error(`store unlock failed: ${err.message}`);
       return;
     }
@@ -189,7 +189,7 @@ async function cmdApp(): Promise<void> {
  * configured via Settings (encrypted store), falling back to environment
  * variables (REQ-012) for users who have not opened Settings yet.
  */
-function aiMapperForUi(app: CatashiroApp): Mapper {
+function aiMapperForUi(app: SoroeruApp): Mapper {
   const settings = app.store.getSettings();
   const provider = settings ? createProvider(settings) : aiProviderFromEnv();
   if (!provider) {
@@ -240,13 +240,13 @@ function cmdCheckBypass(): void {
 
 async function cmdCliUi(variantArg: string): Promise<void> {
   const server = await startPocServer();
-  const app = new CatashiroApp({ stateDir: join(STATE_ROOT, "manual") });
+  const app = new SoroeruApp({ stateDir: join(STATE_ROOT, "manual") });
   try {
     const passphrase = process.env["AF_POC_PASSPHRASE"] ?? (await askSecret("マスターパスフレーズ: "));
     try {
       await app.unlock(passphrase);
     } catch (err) {
-      if (err instanceof CatashiroAppError) {
+      if (err instanceof SoroeruAppError) {
         console.error(err.message);
         return;
       }
@@ -270,7 +270,7 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
   if (parsedPort !== undefined && (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535)) {
     throw new Error("port must be an integer between 0 and 65535");
   }
-  const app = new CatashiroApp({ stateDir: join(STATE_ROOT, "manual") });
+  const app = new SoroeruApp({ stateDir: join(STATE_ROOT, "manual") });
 
   let shuttingDown = false;
   let serverHandle: WebUiServerHandle | undefined;
@@ -292,10 +292,10 @@ async function cmdWebUi(variantArg: string, portArg: string | undefined): Promis
     onShutdownRequest: () => { void shutdown(); },
   });
   serverHandle = server;
-  console.log(`Catashiro local web app: ${server.url}`);
+  console.log(`Soroeru local web app: ${server.url}`);
   console.log(`mapper variant: ${variantArg}`);
   console.log("Press Ctrl+C to stop.");
-  if (process.env["CATASHIRO_OPEN_BROWSER"] === "1") openUrlInDefaultBrowser(server.url);
+  if (process.env["SOROERU_OPEN_BROWSER"] === "1") openUrlInDefaultBrowser(server.url);
 
   process.once("SIGINT", () => {
     void shutdown();
