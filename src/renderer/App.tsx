@@ -168,13 +168,41 @@ function RecoveryKeyNotice({
   onGenerate: () => void;
   onDismiss: () => void;
 }): React.JSX.Element | null {
+  const [copiedRecoveryKey, setCopiedRecoveryKey] = useState<string | undefined>();
+  const copyState = copiedRecoveryKey === recoveryKey ? "copied" : "idle";
+
+  useEffect(() => {
+    if (copyState !== "copied") return;
+    const timeout = window.setTimeout(() => {
+      setCopiedRecoveryKey(undefined);
+    }, 3000);
+    return () => window.clearTimeout(timeout);
+  }, [copyState]);
+
+  const copyRecoveryKey = useCallback(async () => {
+    if (!recoveryKey) return;
+    try {
+      await navigator.clipboard.writeText(recoveryKey);
+      setCopiedRecoveryKey(recoveryKey);
+    } catch {
+      // Manual select-all remains available when clipboard access is unavailable.
+    }
+  }, [recoveryKey]);
+
   if (recoveryKey) {
     return (
       <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4">
         <p className="text-sm font-medium text-amber-900">リカバリーキー（一度だけ表示されます）</p>
-        <code className="select-all break-all rounded bg-white px-3 py-2 font-mono text-sm">
-          {recoveryKey}
-        </code>
+        <div className="flex flex-col gap-2 rounded bg-white p-3 sm:flex-row sm:items-start">
+          <code className="min-w-0 flex-1 select-all break-all font-mono text-sm">{recoveryKey}</code>
+          <button
+            type="button"
+            onClick={() => void copyRecoveryKey()}
+            className="shrink-0 rounded border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-900"
+          >
+            {copyState === "copied" ? "コピーしました" : "コピー"}
+          </button>
+        </div>
         <p className="text-xs text-amber-800">
           安全な場所に保管してください。パスフレーズを忘れた場合の唯一の復旧手段です。再表示はできません。
         </p>
