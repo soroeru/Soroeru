@@ -26,7 +26,7 @@ owns the relevant topic.
 | [`extension.md`](extension.md) | Application architecture notes: RFC-002 is canonical; older Soroeru sections are retained for reference until the document is fully rewritten. |
 | [`security.md`](security.md) | Security and privacy review notes, threat model, encryption, AI-disclosure policy, and wall safety boundaries. |
 | [`development.md`](development.md) | Local setup, Soroeru Electron commands, DMG packaging, project structure, implementation conventions, and quality gates. |
-| [`testing.md`](testing.md) | Testing strategy, test data policy, fixtures, commands, CI expectations (**previous Catashiro; superseded / in flux** pending a Soroeru testing RFC — registration-first, not Visibility-first). |
+| [`testing.md`](testing.md) | **Current testing strategy (Soroeru)**: what to test per layer, the keep-vs-reduce inventory criteria, test data policy, fixtures, commands, CI expectations, and the registration/bulk-update E2E matrix. |
 | [`manual-test.md`](manual-test.md) | Manual test checklist. §0 owns the Soroeru unsigned DMG smoke; older registration-first checks remain as historical/reference coverage until rewritten. |
 | [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, local web UI, Issue #33 (**previous Catashiro; superseded** — historical record). |
 | [`user-manual.md`](user-manual.md) | User-facing manual for the Mac private beta (**previous Catashiro; superseded** — registration-first / local web UI / ZIP beta, pending a Soroeru manual). |
