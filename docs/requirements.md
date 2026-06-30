@@ -82,6 +82,12 @@ central aggregation (consistent with local-first / no hosted vault / no telemetr
   meaning naturally and chooses it deliberately.
 - **Local-first and user-owned.** Personal data is stored locally and encrypted; the user
   owns it. No hosted vault, no telemetry.
+- **Verified identity, user-governed disclosure.** Canonical identity attributes (legal name,
+  residence address, date of birth, sex) are established by the user's own public personal
+  authentication (My Number Card / JPKI) and are **not hand-editable**; Soroeru stores verified
+  real data, not fabricated or pseudonymous values. Sovereignty is preserved as the **right to
+  choose which verified attributes to disclose to which site** — not as the freedom to fabricate.
+  See §4.2; full requirement in Issue #218.
 
 ## 3. Success Metrics
 
@@ -105,7 +111,7 @@ themselves.
 
 | Concept | Tier | Role |
 | --- | --- | --- |
-| Personal Attribute | MVP-required | The user's **canonical value** (the single source of truth; one set). |
+| Personal Attribute | MVP-required | The user's **canonical value** (the single source of truth; one set). The **basic-4 identity attributes** (legal name, residence address, DOB, sex) are JPKI-sourced and **non-editable** (see §4.2); other attributes are user-managed. |
 | Site Account | MVP-required | The per-site login / ongoing-relationship anchor (seeded from the CSV: name/url/username/password/note). |
 | Disclosure | MVP-required, core | "Which attribute was disclosed to which site, and when" (an attribute×site edge + as-of). **Stale = Disclosure.value ≠ Personal Attribute.canonical.** |
 | Account Relationship | MVP-required | Ongoing relationship: newsletter-subscription state / recurring-billing state / last-used time. Powers the filtered lists. |
@@ -115,6 +121,7 @@ themselves.
 | Capability / Unlock state | MVP-required | Per-operation unlock tier (L0/L1) + internalization signals. |
 | Mandate | MVP-required (light) | A record of what the user authorized (collection counts as an authorized action). |
 | Evidence / Audit | MVP-required (light) | Audit log of what happened — references + hashes, not duplicated raw values. |
+| Identity Verification | MVP-required | The result of My Number Card (JPKI) verification: verified basic-4 attributes + verification Evidence (cert serial/hash, issuer, timestamp). Never stores the 12-digit My Number or the card PIN (see §4.2 / [`security.md`](security.md) §14). |
 | Policy | MVP (from defaults) | An articulated norm (want / refuse). Starts at safe defaults; reaches self-selection via repeated suggestions. |
 | Preference | MVP-light | A situational tendency (pre-norm). Material for suggestions; promotes to Policy through repetition. |
 | Option | Derived (non-persistent) | "A newly appeared choice" — e.g., the filtered lists; a computed presentation concept, not a stored entity. |
@@ -134,6 +141,37 @@ themselves.
 - Payoffs: (1) sites collect different fields → `(account, attribute, value, as-of)` rows
   stay flexible; (2) bulk update (B) becomes first-class via a cross-site query
   "attribute = X and value ≠ canonical"; (3) hashing / Evidence concentrate on Disclosure.
+
+### 4.2 Identity Verification and canonical identity (My Number / JPKI)
+
+Soroeru anchors canonical identity in the user's own **public personal authentication**
+(マイナンバーカード / JPKI), so that the data the user manages — and propagates across sites —
+is verified real data rather than free-form text. Full requirement and rationale: **Issue
+#218**.
+
+- **First-launch gate.** Verification via the My Number Card (公的個人認証 / JPKI) is required
+  before any use, including A Visibility (an onboarding "slice 0").
+- **Basic-4 are canonical and non-editable.** Legal name, residence (住民票) address, date of
+  birth, and sex are taken **only** from the card and cannot be hand-edited. Address changes
+  only by re-reading an updated card (after a 転居 filing); v1 keeps the 住民票 address only — a
+  separate mailing address is a known limitation.
+- **Derived fields are editable but unverified.** Kana (read from the card face when present,
+  else user-entered) and romaji (always user-entered) are marked "derived from the verified
+  legal name, unverified" and checked for consistency with the kanji original.
+- **Phone / email require ownership verification.** Adding or changing a phone number or email
+  requires an OTP ownership check; at most **3** of each may be stored. Removing a verified
+  contact is deletion of Soroeru-internal data — the **fourth absolute boundary** (always
+  confirmed).
+- **Sovereignty as disclosure choice (link to the agency thesis).** Only verified real data is
+  stored; agency is the user's choice of *which verified attributes to disclose to which site*.
+  Fabricated / pseudonymous values are intentionally not supported.
+- **Scope (R1): user-side only for now.** Soroeru helps the user manage verified real data. The
+  *site-side* benefit — sites trusting Soroeru registrations as identity-verified, so fake
+  accounts fall (the second sense of "揃える") — is **deferred**: delivering a verification the
+  site can check requires a verifiable credential plus site adoption, which conflicts with the
+  no-hosted-service / local-first principles. Recorded as future direction, not built in the MVP.
+- **My Number / JPKI handling, assurance level, and legal constraints**: see
+  [`security.md`](security.md) §14.
 
 ## 5. Delegation Boundary
 
@@ -247,6 +285,15 @@ registration (last).**
     principle: inform; the user decides; never bypass active enforcement).
   - Bulk collection of *others'* data and circumventing access controls are out of scope.
   - Legal nuances are reviewed separately in [`security.md`](security.md).
+- **Identity verification (My Number / JPKI)** — see §4.2 and [`security.md`](security.md) §14:
+  - The **12-digit My Number is never stored**; store only the basic-4 attributes from the
+    signing certificate (which does not contain the number) plus verification Evidence (cert
+    serial/hash, issuer, timestamp). The **card PIN is never stored or logged**.
+  - Basic-4 attributes are non-editable; phone / email require OTP ownership verification (≤3
+    each); removing a verified contact is the fourth absolute boundary.
+  - Assurance is local certificate-signature validation; revocation-checked official
+    verification (署名検証者 status) and an NFC card reader are out of MVP scope and recorded as
+    constraints.
 
 ## 9. Out of Scope
 
@@ -254,7 +301,10 @@ registration (last).**
   free-trial→subscription card case); **bypassing** CAPTCHA / MFA / bot detection / rate
   limits / paywalls / access controls; collecting other people's data; hosted vaults,
   backend API servers, telemetry, analytics, crash reporting; mobile apps and non-macOS
-  platforms (for now).
+  platforms (for now); **site-side verifiable-credential (VC) issuance and any
+  trust-registry / relying-party integration for "Soroeru-verified" sign-up (future
+  direction, Issue #218); identity onboarding for users without a My Number Card or outside
+  Japan (v1 is Japan-resident, card-holder only).**
 
 ## 10. Functional Requirements
 
@@ -262,7 +312,7 @@ Tier reflects the slice order (A first). Status is `Planned` pending the archite
 
 | ID | Requirement | Slice | Priority |
 | --- | --- | --- | --- |
-| REQ-001 | Store and edit Personal Attributes (canonical values) locally, encrypted at rest; CVV treated as most sensitive. | A | Must |
+| REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; CVV treated as most sensitive. Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. | A | Must |
 | REQ-004 | Collect registered personal information per site and build the Disclosure ledger (references + hashes, not duplicated raw values). | A | Must |
@@ -276,6 +326,11 @@ Tier reflects the slice order (A first). Status is `Planned` pending the archite
 | REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
 | REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only, structure-only disclosure. | A–D | Must |
 | REQ-014 | Treat a detected automation-prohibiting ToS clause as a surfaced Constraint for the user to decide; never silently block, never bypass active controls. | A | Must |
+| REQ-015 | Require My Number Card (JPKI) verification at first launch before any use; take basic-4 attributes (name, residence address, DOB, sex) from the card only, non-editable; update address only by re-reading an updated card. | A | Must |
+| REQ-016 | Never store the 12-digit My Number or the card PIN; store only basic-4 attributes plus verification Evidence (cert serial/hash, issuer, timestamp). | A | Must |
+| REQ-017 | Allow derived name fields (kana, romaji) as editable-but-unverified, consistency-checked against the verified legal name. | A | Must |
+| REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
+| REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | A | Won't (MVP) |
 
 ## 11. Glossary
 

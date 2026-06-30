@@ -584,3 +584,46 @@ For each beta release PR or release note, record only high-level evidence:
 
 Do not paste AI prompts, raw personal values, API keys, vault bytes, support bundles, or
 real-site screenshots into release evidence.
+
+## 14. Identity Verification (My Number / JPKI)
+
+Canonical identity is anchored in the user's own public personal authentication
+(マイナンバーカード / JPKI). Requirement and product rationale: [`requirements.md`](requirements.md)
+§4.2 and Issue #218. This section owns the security, privacy, and legal handling.
+
+**Non-negotiable handling rules:**
+
+- **Never store the 12-digit My Number (個人番号).** Identity comes from the **signing
+  certificate (署名用電子証明書)**, whose basic-4 attributes (legal name, residence address, DOB,
+  sex) do **not** contain the number. Storing or retaining the number for identity-management
+  purposes is outside the 番号法's permitted uses and is prohibited.
+- **Never store or log the card PIN** (the signing-certificate password). It is used only
+  transiently in memory to read/sign with the card, then discarded — same discipline as the
+  master passphrase and the derived key.
+- **Store only**: the basic-4 attributes (encrypted at rest, like other Personal Attributes)
+  and **verification Evidence** — certificate serial / hash, issuer, and verification timestamp.
+  Do not retain the raw certificate beyond what Evidence requires.
+- **Derived fields** (kana, romaji) are stored as **unverified** and clearly distinguished from
+  the verified basic-4; they are never presented as JPKI-verified.
+- **Phone / email**: ownership is verified by an OTP round-trip; the OTP is never logged. At most
+  3 of each are stored. Removing a verified contact is Soroeru-internal data deletion — the
+  fourth absolute boundary (always confirmed).
+
+**Assurance level (honest limitation):**
+
+- The MVP performs **local certificate-signature validation** against the published JPKI CA
+  certificates. It does **not** perform revocation-checked official verification, which requires
+  **署名検証者 (signature-verifier) status** designated by 総務大臣 — too heavy for a local-first
+  OSS app. The assurance claim is therefore "valid JPKI-signed basic-4 at verification time,"
+  not "officially verified, currently non-revoked."
+- A hardware **NFC / IC card reader** is required on desktop (Electron / macOS); this is an
+  adoption constraint, not a security control.
+
+**Residual / investigation items (recorded, not resolved):**
+
+- Identity onboarding is **Japan-resident, card-holder only**; no fallback path in v1.
+- The **site-side trust benefit** (relying parties treating Soroeru sign-ups as identity-verified)
+  is deferred; it would require issuing a verifiable credential and site adoption, and must not
+  introduce a hosted service, backend, or telemetry (Issue #218).
+- For regulated industries, Soroeru-mediated verification is **not** a recognized 犯収法 eKYC
+  method; any future site-side claim must be designed to the applicable standard separately.

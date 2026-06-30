@@ -150,6 +150,26 @@ The user may then choose to proceed (within the review-and-confirm gate and the 
 or to stop. What is **never** done is bypassing controls a site **actively enforces** —
 CAPTCHA / MFA / bot detection — which are always detected and handed off.
 
+## Identity Verification (My Number / JPKI)
+
+Canonical identity is anchored in the user's own public personal authentication
+(マイナンバーカード / JPKI). See [`docs/requirements.md`](docs/requirements.md) §4.2,
+[`docs/security.md`](docs/security.md) §14, and Issue #218.
+
+- First-launch requires My Number Card (JPKI) verification before any use (onboarding slice 0).
+- Basic-4 attributes (legal name, residence address, DOB, sex) are taken from the card only and
+  are **non-editable**; address updates only via re-reading an updated card. Kana / romaji are
+  editable-but-unverified derived fields.
+- **Never store the 12-digit My Number or the card PIN.** Store only the basic-4 attributes and
+  verification Evidence (cert serial/hash, issuer, timestamp). Assurance is local
+  certificate-signature validation (no 署名検証者 revocation checking in the MVP).
+- Phone / email require OTP ownership verification; at most 3 of each; removing a verified
+  contact is the fourth absolute boundary (always confirmed).
+- Store **verified real data only** — no fabricated / pseudonymous values. Sovereignty is the
+  user's choice of *which verified attributes to disclose to which site*.
+- Scope is **user-side only**; site-side verifiable-credential issuance / relying-party trust is
+  deferred and must not add a hosted service, backend, or telemetry.
+
 ## Initial Scope
 
 Slice order: **A Visibility → B Bulk Update → C Withdrawal cleanup → D New registration
