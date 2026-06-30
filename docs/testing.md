@@ -26,9 +26,9 @@ Out of scope here: the browser-based manual checklist itself (see
 Tests exist to give confidence that the **risk-carrying behavior** works and that the
 **security non-negotiables hold** — not to maximize a coverage number.
 
-Module paths below are relative to `src/` unless prefixed `electron/`, which is the
-top-level trusted main-process layer (IPC, session, the main-side visibility service).
-Concentrate effort on:
+Module paths below are relative to `src/`, except the top-level directories `electron/`
+(the trusted main-process layer — IPC, session, the main-side visibility service), `run/`,
+`sites/`, and `tests/`, which are written from the repo root. Concentrate effort on:
 
 - the encrypted vault, key derivation, recovery key, and migration (`store/vault-v2.ts`,
   `store/crypto.ts`, `store/recovery.ts`);
@@ -129,7 +129,7 @@ surface; **B/C/D** layers are present for the later slices.
 | Agent — AI mapper / provider (stub) | B/D | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `soroeru-poc-ai-mapper`, `soroeru-poc-provider` |
 | Agent — wall detection | A/D | `agent/walls.ts`, `automation/wall-detection.ts` | `soroeru-poc-walls` |
 | Agent — guards & gate (registration safety) | D | `agent/guards.ts`, `agent/gate.ts` | `soroeru-poc-guards`, `soroeru-poc-gate` |
-| Agent — records / inventory / mandate | B/D | `agent/records.ts` (+ inventory) | `soroeru-poc-records`, `soroeru-poc-inventory` |
+| Agent — records / inventory / mandate | B/D | `agent/records.ts` | `soroeru-poc-records`, `soroeru-poc-inventory` |
 | Agent — site/field definitions | A/D | `agent/definitions.ts`, `agent/official-definitions.ts` | `soroeru-poc-definitions` |
 | Agent — existing-account import | A/B | `agent/importer.ts` | `soroeru-poc-importer` |
 | Agent — phase timing (PERF-001) | all | `agent/perf.ts` | `soroeru-poc-perf`, `soroeru-poc-measure` |
