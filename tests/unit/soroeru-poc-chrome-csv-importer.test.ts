@@ -8,8 +8,7 @@ import { join } from "node:path";
 import { importChromeCsv } from "../../src/agent/chrome-csv-importer.js";
 import { SoroeruApp } from "../../src/app/app.js";
 import { startWebUiServer, type WebUiServerHandle } from "../../src/app/web-ui.js";
-
-const PASSPHRASE = "unit-test-passphrase";
+import { csrf, getHtml, PASSPHRASE, post, postFormData, unlockThroughUi } from "./helpers/web-ui-client.js";
 
 // ---------------------------------------------------------------------------
 // Direct importChromeCsv() tests
@@ -195,41 +194,6 @@ async function withWebUiApp(fn: (app: SoroeruApp, server: WebUiServerHandle, dir
     await app.shutdown();
     await rm(dir, { recursive: true, force: true });
   }
-}
-
-async function getHtml(server: WebUiServerHandle, path = "/"): Promise<string> {
-  const res = await fetch(new URL(path, server.url));
-  assert.equal(res.status, 200);
-  return res.text();
-}
-
-function csrf(html: string): string {
-  const match = /name="csrf" value="([^"]+)"/.exec(html);
-  assert.ok(match, "expected csrf token");
-  return match[1]!;
-}
-
-async function post(server: WebUiServerHandle, path: string, body: Record<string, string>): Promise<Response> {
-  return fetch(new URL(path, server.url), {
-    method: "POST",
-    body: new URLSearchParams(body),
-    redirect: "manual",
-  });
-}
-
-async function postFormData(server: WebUiServerHandle, path: string, body: FormData): Promise<Response> {
-  return fetch(new URL(path, server.url), {
-    method: "POST",
-    body,
-    redirect: "manual",
-  });
-}
-
-async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
-  const token = csrf(await getHtml(server));
-  const res = await post(server, "/unlock", { csrf: token, passphrase: PASSPHRASE });
-  assert.equal(res.status, 303);
-  return token;
 }
 
 test("POST /import/chrome-csv: Google Passwords.csv をアップロードすると選択UIにリダイレクト", async () => {
