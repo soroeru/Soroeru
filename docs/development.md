@@ -196,6 +196,8 @@ Current repository shape:
 
 ```text
 .
+├── .claude/
+│   └── skills/        # symlinks each repo skill into Claude Code's skills dir
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
 │   └── workflows/

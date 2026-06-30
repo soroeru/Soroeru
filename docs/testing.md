@@ -65,8 +65,9 @@ design principles we want enforced here:
 
 The skill illustrates these principles with `vitest` / React Testing Library / cloud-resource
 examples; this repo's runner is Node's built-in `node --test` over `tests/unit/*.test.ts`
-(§3, §5) with no React or database layer, so **adapt the example syntax to `node --test`
-while keeping the principles**.
+(§3, §5), and the current PoC has no React renderer or database layer, so **adapt the
+example syntax to `node --test` while keeping the principles** (revisit when the RFC-002
+React renderer lands).
 
 The skill is the source of truth for *how* tests are written; this document remains the
 source of truth for *what* to test and *which layer* (§1, §2.1) under Soroeru's
