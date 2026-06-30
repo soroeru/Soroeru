@@ -203,6 +203,36 @@ test("saved page import rejects mhtml files at the trusted boundary", async () =
   }
 });
 
+test("saved page import rejects oversized files before parsing", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const result = (await bridge[IPC_CHANNELS.savedPageImport]({
+      siteAccountId,
+      fileName: "account.html",
+      data: new Uint8Array(5 * 1024 * 1024 + 1),
+    })) as { ok: boolean; error?: string };
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "too-large");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("saved page import does not mark a site collected when no disclosures are found", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
@@ -241,8 +271,65 @@ test("saved page import does not mark a site collected when no disclosures are f
   }
 });
 
+test("saved page import is rejected while a visibility run is in progress", async () => {
+  const { dir, path } = await tmpVaultPath();
+  let releaseRun: (() => void) | undefined;
+  try {
+    const runBlocker = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const session = new SoroeruSession(path, {
+      openSession: async () => {
+        await runBlocker;
+        throw new Error("stop run");
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const runPromise = bridge[IPC_CHANNELS.visibilityRun](siteAccountId);
+    await waitFor(async () => {
+      const status = (await bridge[IPC_CHANNELS.visibilityStatus]()) as { running: boolean };
+      return status.running;
+    });
+
+    const result = (await bridge[IPC_CHANNELS.savedPageImport]({
+      siteAccountId,
+      fileName: "account.html",
+      data: new TextEncoder().encode("<!doctype html><html></html>"),
+    })) as { ok: boolean; error?: string };
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "busy");
+
+    releaseRun?.();
+    await runPromise;
+  } finally {
+    releaseRun?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("isIpcChannel rejects channels outside the allowlist", () => {
   assert.equal(isIpcChannel("soroeru:vault:status"), true);
   assert.equal(isIpcChannel("soroeru:vault:delete-everything"), false);
   assert.equal(isIpcChannel("fs:readFile"), false);
 });
+
+async function waitFor(predicate: () => boolean | Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 1000; i++) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error("condition not met");
+}

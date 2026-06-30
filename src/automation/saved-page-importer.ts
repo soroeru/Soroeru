@@ -5,6 +5,8 @@ import type { DomainService } from "../domain/domain-service.js";
 import type { SiteAccount } from "../domain/entities.js";
 import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
 
+export const MAX_SAVED_PAGE_BYTES = 5 * 1024 * 1024;
+
 export interface SavedPageImportInput {
   domain: DomainService;
   siteAccount: SiteAccount;
