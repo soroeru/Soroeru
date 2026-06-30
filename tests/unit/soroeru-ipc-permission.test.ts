@@ -358,6 +358,40 @@ test("saved page fallback opens a site in the default browser via an injected op
   }
 });
 
+test("saved page fallback refuses to open non-web URLs in the default browser", async () => {
+  const { dir, path } = await tmpVaultPath();
+  const opened: string[] = [];
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({
+      domain: "example.test",
+      url: "file:///Users/example/private.html",
+      displayName: "Example",
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path, {
+      openExternal: async (url) => {
+        opened.push(url);
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultUnlock](PASSPHRASE);
+
+    const result = (await bridge[IPC_CHANNELS.savedPageOpenSite](site.id)) as {
+      ok: boolean;
+      error?: string;
+    };
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "bad-url");
+    assert.deepEqual(opened, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("saved page fallback skip records a manual-check constraint without marking the site collected", async () => {
   const { dir, path } = await tmpVaultPath();
   try {

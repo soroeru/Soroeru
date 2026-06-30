@@ -314,7 +314,8 @@ export class SoroeruSession {
     const siteAccount = this.domain.getSiteAccount(siteAccountId);
     if (!siteAccount) return { ok: false, error: "not-found" };
     // egress: target-site — fallback URL opened only after an explicit user action.
-    const url = siteAccount.url ?? `https://${siteAccount.domain}`;
+    const url = safeExternalSiteUrl(siteAccount);
+    if (!url) return { ok: false, error: "bad-url" };
     if (!this.openExternal) return { ok: false, error: "open-failed" };
     try {
       await this.openExternal(url);
@@ -463,4 +464,16 @@ export class SoroeruSession {
 
 function isSavedPageFile(fileName: string): boolean {
   return /\.(html?|htm)$/i.test(fileName);
+}
+
+function safeExternalSiteUrl(siteAccount: SiteAccount): string | undefined {
+  // egress: target-site — constructs only the target site URL that may be opened after explicit user action.
+  const candidate = siteAccount.url ?? `https://${siteAccount.domain}`;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
