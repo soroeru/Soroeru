@@ -137,8 +137,11 @@ When delegating terms acceptance and final submit, the agent applies:
 2. **Payment stop (with one exception)**: if a registration form contains card /
    payment fields, stop and hand off — except free-trial→subscription, which is shown
    as a high-risk item and, only on approval, the card is auto-filled.
-3. **No auto-attestation**: do not auto-check eligibility/identity statements
-   ("I am 18+", residency, "I am authorized"); present them for the user to decide.
+3. **No auto-attestation**: do not auto-check statements of *eligibility or identity*
+   ("I am 18+", residency, "I am authorized"); present them for the user to decide. A
+   statement of the user's own *intent to act* (e.g. "I want to cancel"), already approved at
+   the gate, may be auto-checked — the guard targets eligibility/identity claims, not the
+   user's own decision.
 
 A **fourth absolute boundary** (always confirmed, even at L1): **deleting data stored inside
 Soroeru** — an irreversible destruction of the user's own source of truth.
@@ -151,7 +154,14 @@ clause is **surfaced as a Constraint / high-risk item for the user to decide** �
 hard-blocked and not unilaterally executed (the agency principle: inform; the user decides).
 The user may then choose to proceed (within the review-and-confirm gate and the three guards)
 or to stop. What is **never** done is bypassing controls a site **actively enforces** —
-CAPTCHA / MFA / bot detection — which are always detected and handed off.
+CAPTCHA / MFA / bot detection / rate limits — which are always detected and handed off. The
+boundary line is **access control, not the ToS**: a ToS automation ban is civil (the user is a
+party to that contract) and is contested on the user's behalf as a Constraint; circumventing an
+actively-enforced access control is the criminal line (不正アクセス禁止法 / CFAA). Acting on
+ToS-gray additionally requires four legitimacy preconditions — explicit per-operation consent,
+the user's own account/credentials, a reversibility assessment, and a hard **Evidence** record
+(no record, no action). See [`docs/requirements.md`](docs/requirements.md) §8 and
+[`docs/security.md`](docs/security.md) §7.
 
 ## Identity Verification (My Number / JPKI)
 
