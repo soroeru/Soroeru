@@ -63,6 +63,11 @@ design principles we want enforced here:
 - **One action per test**, Arrange-Act-Assert structure, no test-only methods leaking into
   production code.
 
+The skill illustrates these principles with `vitest` / React Testing Library / cloud-resource
+examples; this repo's runner is Node's built-in `node --test` over `tests/unit/*.test.ts`
+(§3, §5) with no React or database layer, so **adapt the example syntax to `node --test`
+while keeping the principles**.
+
 The skill is the source of truth for *how* tests are written; this document remains the
 source of truth for *what* to test and *which layer* (§1, §2.1) under Soroeru's
 risk-focused, never-bypass-walls principles. When the two seem to conflict, prefer fewer,
