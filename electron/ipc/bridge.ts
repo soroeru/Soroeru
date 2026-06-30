@@ -24,6 +24,7 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.recoveryGenerate]: () => session.generateRecoveryKey(),
     [IPC_CHANNELS.domainSummary]: () => session.domainSummary(),
     [IPC_CHANNELS.csvImport]: (data: unknown) => session.importCsv(toCsvData(data)),
+    [IPC_CHANNELS.savedPageImport]: (request: unknown) => session.importSavedPage(toSavedPageImportRequest(request)),
     [IPC_CHANNELS.ledgerSites]: () => session.ledgerSites(),
     [IPC_CHANNELS.ledgerSite]: (siteAccountId: unknown) => session.ledgerSite(String(siteAccountId ?? "")),
     [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),
@@ -37,6 +38,15 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
   };
 }
 
+function toSavedPageImportRequest(request: unknown): { siteAccountId: string; fileName: string; data: Uint8Array } {
+  const input = request && typeof request === "object" ? request as Record<string, unknown> : {};
+  return {
+    siteAccountId: String(input["siteAccountId"] ?? ""),
+    fileName: String(input["fileName"] ?? ""),
+    data: toBytes(input["data"]),
+  };
+}
+
 /**
  * Coerce the renderer-supplied CSV payload into the importer's `string | Uint8Array`
  * shape. Structured clone may deliver an ArrayBuffer, a typed array, or text;
@@ -44,6 +54,10 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
  */
 function toCsvData(data: unknown): string | Uint8Array {
   if (typeof data === "string") return data;
+  return toBytes(data);
+}
+
+function toBytes(data: unknown): Uint8Array {
   if (data instanceof Uint8Array) return data;
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   if (ArrayBuffer.isView(data)) {

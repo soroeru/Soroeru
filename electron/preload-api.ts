@@ -13,6 +13,8 @@ import {
   type IpcChannel,
   type LedgerInsights,
   type RecoveryKeyResult,
+  type SavedPageImportRequest,
+  type SavedPageImportResult,
   type RevealResult,
   type SiteLedgerDetail,
   type SiteLedgerSummary,
@@ -43,6 +45,9 @@ export interface SoroeruApi {
   };
   csv: {
     import(data: string | Uint8Array): Promise<CsvImportResult>;
+  };
+  savedPage: {
+    import(request: SavedPageImportRequest): Promise<SavedPageImportResult>;
   };
   ledger: {
     sites(): Promise<SiteLedgerSummary[]>;
@@ -79,6 +84,10 @@ export function createSoroeruApi(
     },
     csv: {
       import: (data) => invoke(IPC_CHANNELS.csvImport, data) as Promise<CsvImportResult>,
+    },
+    savedPage: {
+      import: (request) =>
+        invoke(IPC_CHANNELS.savedPageImport, request) as Promise<SavedPageImportResult>,
     },
     ledger: {
       sites: () => invoke(IPC_CHANNELS.ledgerSites) as Promise<SiteLedgerSummary[]>,

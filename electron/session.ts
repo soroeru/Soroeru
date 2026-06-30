@@ -19,6 +19,7 @@ import {
 } from "../src/domain/entities.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
 import { VisibilityService } from "./visibility-service.js";
+import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-page-importer.js";
 import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
 import type {
   AttributeSummary,
@@ -28,6 +29,8 @@ import type {
   LedgerInsights,
   RecoveryKeyResult,
   RevealResult,
+  SavedPageImportRequest,
+  SavedPageImportResult,
   SiteLedgerDetail,
   SiteLedgerSummary,
   StaleTally,
@@ -72,6 +75,7 @@ export class SoroeruSession {
     | undefined;
   private readonly closeInjectedEngine: (() => Promise<void>) | undefined;
   private eventSink: ((event: VisibilityEvent) => void) | undefined;
+  private collectionRunning = false;
 
   constructor(
     private readonly vaultPath: string,
@@ -171,8 +175,16 @@ export class SoroeruSession {
   // --- Visibility run (auto-login / collection, RFC-002 §5.1 / §5.2) ---
 
   /** Run Visibility collection for one site in a headed browser. Counts-only result. */
-  runVisibility(siteAccountId: string): Promise<VisibilityRunResultView> {
-    return this.visibility.runSite(siteAccountId);
+  async runVisibility(siteAccountId: string): Promise<VisibilityRunResultView> {
+    if (this.collectionRunning) {
+      return { siteAccountId, status: "busy", disclosures: 0, relationships: 0, constraints: 0 };
+    }
+    this.collectionRunning = true;
+    try {
+      return await this.visibility.runSite(siteAccountId);
+    } finally {
+      this.collectionRunning = false;
+    }
   }
 
   /** Resume the active run after the user cleared a wall in the headed session. */
@@ -257,6 +269,39 @@ export class SoroeruSession {
     } catch (err) {
       // CsvImportError carries a safe reason code; anything else is reported opaquely.
       return { ok: false, error: err instanceof CsvImportError ? err.reason : "import-failed" };
+    }
+  }
+
+  async importSavedPage(request: SavedPageImportRequest): Promise<SavedPageImportResult> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    if (this.collectionRunning) return { ok: false, error: "busy" };
+    const siteAccount = this.domain.getSiteAccount(request.siteAccountId);
+    if (!siteAccount) return { ok: false, error: "not-found" };
+    if (!isSavedPageFile(request.fileName)) return { ok: false, error: "bad-file-type" };
+    if (request.data.byteLength > MAX_SAVED_PAGE_BYTES) return { ok: false, error: "too-large" };
+    this.collectionRunning = true;
+    try {
+      const summary = await importSavedPage({
+        domain: this.domain,
+        siteAccount,
+        data: request.data,
+        fileName: request.fileName,
+      });
+      await this.vault.save();
+      return {
+        ok: true,
+        summary: {
+          siteAccountId: summary.siteAccountId,
+          disclosures: summary.disclosures,
+          ...(summary.sourceUrl !== undefined ? { sourceUrl: summary.sourceUrl } : {}),
+          sourceHashPreview: summary.sourceHash.slice(0, 16),
+          recommendSourceDeletion: summary.recommendSourceDeletion,
+        },
+      };
+    } catch {
+      return { ok: false, error: "import-failed" };
+    } finally {
+      this.collectionRunning = false;
     }
   }
 
@@ -368,4 +413,8 @@ export class SoroeruSession {
       collected: disclosures.length > 0 || checkpointDone,
     };
   }
+}
+
+function isSavedPageFile(fileName: string): boolean {
+  return /\.(html?|htm)$/i.test(fileName);
 }

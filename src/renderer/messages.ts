@@ -11,11 +11,13 @@ const REASONS: Record<string, string> = {
   "unlock-failed": "解錠に失敗しました。パスフレーズまたはリカバリーキーをご確認ください。",
   "recovery-failed": "リカバリーキーを生成できませんでした。",
   locked: "ボールトが施錠されています。",
+  busy: "別の収集処理が実行中です。完了してから再試行してください。",
   // CSV import
-  "too-large": "CSV ファイルが大きすぎます。",
+  "too-large": "ファイルが大きすぎます。",
   "too-many-rows": "CSV の行数が多すぎます。",
   empty: "CSV が空です。",
   "bad-header": "CSV のヘッダー形式が想定と異なります（name,url,username,password,note）。",
+  "bad-file-type": "保存した HTML ファイル（.html / .htm）を選択してください。",
   "import-failed": "取り込みに失敗しました。",
   // Reveal
   "not-found": "対象が見つかりません。",

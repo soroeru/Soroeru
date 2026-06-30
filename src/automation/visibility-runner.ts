@@ -1,8 +1,7 @@
-import { classifyFieldsWithEvidence } from "../agent/classifier.js";
 import type { DomainService } from "../domain/domain-service.js";
 import type { Credential, SiteAccount } from "../domain/entities.js";
-import type { DisplayValueCandidate, FormField, MappingEntry, PageSnapshot } from "../types.js";
-import { redactedEvidence } from "./evidence.js";
+import type { FormField, PageSnapshot } from "../types.js";
+import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
 import type { SiteSession } from "./page-driver.js";
 import { WallDetectionService } from "./wall-detection.js";
 
@@ -78,10 +77,17 @@ export class VisibilityRunner {
       // info as text, not editable fields). Synthetic fields run through the same
       // deterministic classifier; the raw values stay local and are redacted/hashed.
       const displayValues = (await session.page.readDisplayValues?.()) ?? {};
-      const displayFields = (snapshot.displayValues ?? []).map(toSyntheticField);
+      const displayFields = (snapshot.displayValues ?? []).map(displayValueToSyntheticField);
       const combinedFields = [...snapshot.fields, ...displayFields];
       const combinedValues = { ...values, ...displayValues };
-      const collection = this.collectFields(siteAccount, snapshot, combinedFields, combinedValues);
+      const collection = collectDisclosures({
+        domain: this.options.domain,
+        siteAccount,
+        snapshot,
+        fields: combinedFields,
+        values: combinedValues,
+        now: this.now,
+      });
       const relationships = this.recordRelationships(siteAccount, snapshot);
 
       // Honest completion (review #177 P1): zero disclosures is never reported as
@@ -358,71 +364,6 @@ export class VisibilityRunner {
     return 1;
   }
 
-  private collectFields(
-    siteAccount: SiteAccount,
-    snapshot: PageSnapshot,
-    fields: FormField[],
-    values: Record<string, string>,
-  ): { disclosures: number } {
-    const classification = classifyFieldsWithEvidence(fields, []);
-    let disclosures = 0;
-    for (const entry of classification.plan.entries) {
-      const field = fields.find((candidate) => candidate.fieldId === entry.fieldId);
-      const value = values[entry.fieldId];
-      if (!field || value === undefined || value === "") continue;
-      this.recordDisclosure(siteAccount, snapshot, field, entry, value);
-      disclosures++;
-    }
-
-    for (const fieldId of classification.plan.unmappedRequired) {
-      const field = fields.find((candidate) => candidate.fieldId === fieldId);
-      if (!field) continue;
-      this.options.domain.addDisclosure({
-        siteAccountId: siteAccount.id,
-        attributeKey: `custom.unknown.${field.fieldId}`,
-        observedAt: this.now(),
-        sourcePageUrl: snapshot.url,
-        sourceKind: "form-field",
-        confidence: 0,
-      });
-      disclosures++;
-    }
-    return { disclosures };
-  }
-
-  private recordDisclosure(
-    siteAccount: SiteAccount,
-    snapshot: PageSnapshot,
-    field: FormField,
-    entry: MappingEntry,
-    value: string,
-  ): void {
-    const label = field.labels[0] ?? field.placeholder ?? field.nearbyText ?? field.name ?? field.id;
-    const evidence = this.options.domain.addEvidence(
-      redactedEvidence({
-        siteAccountId: siteAccount.id,
-        pageUrl: snapshot.url,
-        fieldLabel: label,
-        fieldType: field.type,
-        attributeKey: entry.profileKey,
-        value,
-        observedAt: this.now(),
-      }),
-    );
-    const normalizedValueHash = evidence.normalizedHash;
-    if (!normalizedValueHash) return;
-    this.options.domain.addDisclosure({
-      siteAccountId: siteAccount.id,
-      attributeKey: entry.profileKey,
-      normalizedValueHash,
-      observedAt: this.now(),
-      sourcePageUrl: snapshot.url,
-      sourceKind: sourceKindForField(field),
-      confidence: 1,
-      evidenceIds: [evidence.id],
-    });
-  }
-
   private recordRelationships(siteAccount: SiteAccount, snapshot: PageSnapshot): number {
     const findings: Array<{ kind: "newsletter" | "recurring-billing" | "free-trial"; detail: string }> = [];
     if (/メールマガジン|ニュースレター|newsletter/i.test(snapshot.visibleText)) {
@@ -512,23 +453,6 @@ function originFor(url: string): string | undefined {
   }
 }
 
-/** A read-only display value as a synthetic FormField, so it flows through the
- * same deterministic classifier and redaction path as a real form field. */
-function toSyntheticField(candidate: DisplayValueCandidate): FormField {
-  return {
-    fieldId: candidate.valueId,
-    tag: "input",
-    type: "text",
-    name: "",
-    id: "",
-    autocomplete: "",
-    required: false,
-    placeholder: "",
-    labels: candidate.labelText ? [candidate.labelText] : [],
-    nearbyText: candidate.nearbyText,
-  };
-}
-
 function isHttpUrl(url: string): boolean {
   try {
     const protocol = new URL(url).protocol;
@@ -554,11 +478,4 @@ function unreachableReasonFor(err: unknown): string | undefined {
   if (/ERR_CERT|certificate/i.test(message)) return "certificate-error";
   if (/net::ERR_|Navigation|goto/i.test(message)) return "navigation-failed";
   return undefined;
-}
-
-function sourceKindForField(field: FormField): "form-field" | "billing-page" | "newsletter-setting" {
-  const text = `${field.name} ${field.id} ${field.labels.join(" ")} ${field.nearbyText}`;
-  if (/card|billing|請求|支払/.test(text)) return "billing-page";
-  if (/newsletter|mailmagazine|メールマガジン|ニュースレター/.test(text)) return "newsletter-setting";
-  return "form-field";
 }

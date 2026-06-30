@@ -46,6 +46,27 @@ test("japanese labels map without name/id hints (table layout)", () => {
   assert.equal(keyOf(fields, "f4"), "company.name");
 });
 
+test("shopify address bracket names map to address attributes", () => {
+  const fields = [
+    field({ fieldId: "zip", name: "address[zip]" }),
+    field({ fieldId: "city", name: "address[city]" }),
+    field({ fieldId: "address1", name: "address[address1]" }),
+    field({ fieldId: "province", name: "address[province]" }),
+    field({ fieldId: "first", name: "address[first_name]" }),
+    field({ fieldId: "last", name: "address[last_name]" }),
+    field({ fieldId: "phone", name: "address[phone]" }),
+    field({ fieldId: "company", name: "address[company]" }),
+  ];
+  assert.equal(keyOf(fields, "zip"), "postal.full");
+  assert.equal(keyOf(fields, "city"), "address.city");
+  assert.equal(keyOf(fields, "address1"), "address.street");
+  assert.equal(keyOf(fields, "province"), "address.pref");
+  assert.equal(keyOf(fields, "first"), "name.mei");
+  assert.equal(keyOf(fields, "last"), "name.sei");
+  assert.equal(keyOf(fields, "phone"), "phone.full");
+  assert.equal(keyOf(fields, "company"), "company.name");
+});
+
 test("specific rules win over generic ones", () => {
   // 「住所（都道府県から）」 must NOT map to address.pref
   const addr = field({ fieldId: "a", placeholder: "住所（都道府県から）" });
