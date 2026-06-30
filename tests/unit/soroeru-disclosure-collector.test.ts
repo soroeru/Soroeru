@@ -25,6 +25,7 @@ test("disclosure collector records manual-import disclosures and skips empty tem
       field("zip", { name: "address[zip]" }),
       field("city", { name: "address[city]" }),
       field("empty", { name: "address-[zip]" }),
+      field("unknown-empty", { required: true }),
     ];
     const result = collectDisclosures({
       domain,
@@ -35,6 +36,7 @@ test("disclosure collector records manual-import disclosures and skips empty tem
         zip: "100-0001",
         city: "千代田区",
         empty: "",
+        "unknown-empty": "",
       },
       sourceKind: "manual-import",
       now: () => 1_700_000_000_000,

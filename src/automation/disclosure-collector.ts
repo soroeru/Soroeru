@@ -28,6 +28,10 @@ export function collectDisclosures(options: DisclosureCollectionOptions): { disc
   for (const fieldId of classification.plan.unmappedRequired) {
     const field = options.fields.find((candidate) => candidate.fieldId === fieldId);
     if (!field) continue;
+    if (options.sourceKind === "manual-import") {
+      const value = options.values[field.fieldId];
+      if (value === undefined || value === "") continue;
+    }
     options.domain.addDisclosure({
       siteAccountId: options.siteAccount.id,
       attributeKey: `custom.unknown.${field.fieldId}`,

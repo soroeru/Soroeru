@@ -31,7 +31,7 @@ export async function importSavedPage(input: SavedPageImportInput): Promise<Save
 
   const browser = await chromium.launch({ headless: true });
   try {
-    const context = await browser.newContext();
+    const context = await browser.newContext({ javaScriptEnabled: false });
     await context.route("**/*", (route) => {
       const url = route.request().url();
       if (url.startsWith("data:") || url.startsWith("about:") || url.startsWith("blob:")) {
