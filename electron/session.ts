@@ -48,6 +48,8 @@ export interface SoroeruSessionOptions {
   openSession?: (site: SiteAccount) => Promise<SiteSession>;
   /** Tear down an injected engine on shutdown (paired with a custom `openSession`). */
   closeEngine?: () => Promise<void>;
+  /** Open a URL in the user's default browser (injected by Electron main). */
+  openExternal?: (url: string) => Promise<void>;
   /** Max chained wall hand-offs before a run gives up. */
   maxHandoffs?: number;
 }
@@ -74,6 +76,7 @@ export class SoroeruSession {
     | { openSession: (site: SiteAccount) => Promise<SiteSession>; closeAll: () => Promise<void> }
     | undefined;
   private readonly closeInjectedEngine: (() => Promise<void>) | undefined;
+  private readonly openExternal: ((url: string) => Promise<void>) | undefined;
   private eventSink: ((event: VisibilityEvent) => void) | undefined;
   private collectionRunning = false;
 
@@ -82,6 +85,7 @@ export class SoroeruSession {
     options: SoroeruSessionOptions = {},
   ) {
     this.closeInjectedEngine = options.closeEngine;
+    this.openExternal = options.openExternal;
     const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
     this.visibility = new VisibilityService({
       openSession,
@@ -302,6 +306,48 @@ export class SoroeruSession {
       return { ok: false, error: "import-failed" };
     } finally {
       this.collectionRunning = false;
+    }
+  }
+
+  async openSiteInDefaultBrowser(siteAccountId: string): Promise<{ ok: boolean; url?: string; error?: string }> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    const siteAccount = this.domain.getSiteAccount(siteAccountId);
+    if (!siteAccount) return { ok: false, error: "not-found" };
+    // egress: target-site — fallback URL opened only after an explicit user action.
+    const url = siteAccount.url ?? `https://${siteAccount.domain}`;
+    if (!this.openExternal) return { ok: false, error: "open-failed" };
+    try {
+      await this.openExternal(url);
+      return { ok: true, url };
+    } catch {
+      return { ok: false, error: "open-failed" };
+    }
+  }
+
+  async markSavedPageManualCheck(siteAccountId: string): Promise<{ ok: boolean; error?: string }> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    const siteAccount = this.domain.getSiteAccount(siteAccountId);
+    if (!siteAccount) return { ok: false, error: "not-found" };
+    try {
+      const observedAt = Date.now();
+      this.domain.addConstraint({
+        siteAccountId,
+        kind: "unknown-state",
+        detail: "保存ページ取り込みをスキップし、ユーザーがこのサイトを手動で確認する印を付けました。",
+        observedAt,
+        resolution: "user-stopped",
+      });
+      this.domain.saveCheckpoint({
+        workflow: "visibility",
+        siteAccountId,
+        step: "manual-check",
+        status: "failed",
+        resumeData: { source: "manual-check" },
+      });
+      await this.vault.save();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "mark-failed" };
     }
   }
 

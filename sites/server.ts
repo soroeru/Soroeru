@@ -114,6 +114,11 @@ async function handle(
     return;
   }
 
+  if (path.startsWith("/saved-page-guide/") || path === "/saved-page-guide") {
+    send(savedPageGuideFixture(path));
+    return;
+  }
+
   const m = /^\/site\/([^/]+)(\/.*)?$/.exec(path);
   if (!m) {
     send(page("Not Found", "<h1>404 Not Found</h1>"), 404);
@@ -615,6 +620,51 @@ ${hidden}
   }
   if (path === "/wall-flow/success") {
     return page("壁つき登録テスト - 完了", "<h1>登録が完了しました</h1>");
+  }
+  return page("Not Found", "<h1>404</h1>");
+}
+
+/** Dummy pages for the saved-page import guide. Fake values only; no real-site screenshots needed. */
+function savedPageGuideFixture(path: string): string {
+  const base = "/saved-page-guide";
+  if (path === "/saved-page-guide" || path === "/saved-page-guide/") {
+    return page(
+      "保存ページ取り込みガイド",
+      `<h1>保存ページ取り込みガイド</h1>
+<p>このページ群は Soroeru の案内用スクリーンショット/GIF を撮るためのローカルダミーサイトです。</p>
+<ul>
+  <li><a href="${base}/wall">セキュリティ確認の例</a></li>
+  <li><a href="${base}/account">登録情報ページの例</a></li>
+</ul>`,
+    );
+  }
+  if (path === "/saved-page-guide/wall") {
+    return page(
+      "セキュリティ確認の例",
+      `<h1>セキュリティ確認</h1>
+<p>この表示はダミーです。実際の CAPTCHA ウィジェットではありません。</p>
+<div style="border:1px solid #aaa; padding:1rem; width:20rem; background:#f8f8f8">
+  <label><input type="checkbox"> 私はロボットではありません</label>
+  <p class="notice">安全確認の例</p>
+</div>
+<p><a href="${base}/account">確認後の登録情報ページへ進む</a></p>`,
+    );
+  }
+  if (path === "/saved-page-guide/account") {
+    return page(
+      "登録情報ページの例",
+      `<h1>登録情報</h1>
+<p>下の値はすべて架空のテストデータです。</p>
+<form>
+  <div class="row"><label for="guide_name">氏名</label><input id="guide_name" name="name" autocomplete="name" value="山田 テスト"></div>
+  <div class="row"><label for="guide_email">メールアドレス</label><input id="guide_email" name="email" type="email" autocomplete="email" value="guide-user@example.test"></div>
+  <div class="row"><label for="guide_zip">郵便番号</label><input id="guide_zip" name="address[zip]" value="100-0001"></div>
+  <div class="row"><label for="guide_city">市区町村</label><input id="guide_city" name="address[city]" value="千代田区"></div>
+  <div class="row"><label for="guide_address">住所</label><input id="guide_address" name="address[address1]" value="千代田1-1-1"></div>
+  <div class="row"><label for="guide_phone">電話番号</label><input id="guide_phone" name="address[phone]" type="tel" value="03-0000-0000"></div>
+</form>
+<p class="notice">Chrome で右クリック → 別名で保存 → ウェブページ、HTML のみ、の撮影に使います。</p>`,
+    );
   }
   return page("Not Found", "<h1>404</h1>");
 }

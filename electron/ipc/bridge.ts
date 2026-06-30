@@ -25,6 +25,10 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.domainSummary]: () => session.domainSummary(),
     [IPC_CHANNELS.csvImport]: (data: unknown) => session.importCsv(toCsvData(data)),
     [IPC_CHANNELS.savedPageImport]: (request: unknown) => session.importSavedPage(toSavedPageImportRequest(request)),
+    [IPC_CHANNELS.savedPageOpenSite]: (siteAccountId: unknown) =>
+      session.openSiteInDefaultBrowser(String(siteAccountId ?? "")),
+    [IPC_CHANNELS.savedPageMarkManual]: (siteAccountId: unknown) =>
+      session.markSavedPageManualCheck(String(siteAccountId ?? "")),
     [IPC_CHANNELS.ledgerSites]: () => session.ledgerSites(),
     [IPC_CHANNELS.ledgerSite]: (siteAccountId: unknown) => session.ledgerSite(String(siteAccountId ?? "")),
     [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),

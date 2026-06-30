@@ -45,6 +45,8 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.domain.summary();
   await api.csv.import("x");
   await api.savedPage.import({ siteAccountId: "x", fileName: "account.html", data: new Uint8Array() });
+  await api.savedPage.openSite("x");
+  await api.savedPage.markManualCheck("x");
   await api.ledger.sites();
   await api.ledger.site("x");
   await api.ledger.insights();
@@ -316,6 +318,79 @@ test("saved page import is rejected while a visibility run is in progress", asyn
     await runPromise;
   } finally {
     releaseRun?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page fallback opens a site in the default browser via an injected opener", async () => {
+  const { dir, path } = await tmpVaultPath();
+  const opened: string[] = [];
+  try {
+    const session = new SoroeruSession(path, {
+      openExternal: async (url) => {
+        opened.push(url);
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const result = (await bridge[IPC_CHANNELS.savedPageOpenSite](siteAccountId)) as {
+      ok: boolean;
+      url?: string;
+      error?: string;
+    };
+    assert.equal(result.ok, true);
+    assert.equal(result.url, "https://example.test/account");
+    assert.deepEqual(opened, ["https://example.test/account"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page fallback skip records a manual-check constraint without marking the site collected", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const result = (await bridge[IPC_CHANNELS.savedPageMarkManual](siteAccountId)) as {
+      ok: boolean;
+      error?: string;
+    };
+    assert.equal(result.ok, true);
+
+    const detail = (await bridge[IPC_CHANNELS.ledgerSite](siteAccountId)) as {
+      collected: boolean;
+      constraints: Array<{ kind: string; detail: string; resolution?: string }>;
+    };
+    assert.equal(detail.collected, false);
+    const manual = detail.constraints.find((constraint) => constraint.detail.includes("手動で確認"));
+    assert.equal(manual?.kind, "unknown-state");
+    assert.equal(manual?.resolution, "user-stopped");
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

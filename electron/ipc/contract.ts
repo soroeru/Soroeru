@@ -45,6 +45,8 @@ export const IPC_CHANNELS = {
   domainSummary: "soroeru:domain:summary",
   csvImport: "soroeru:csv:import",
   savedPageImport: "soroeru:saved-page:import",
+  savedPageOpenSite: "soroeru:saved-page:open-site",
+  savedPageMarkManual: "soroeru:saved-page:mark-manual",
   ledgerSites: "soroeru:ledger:sites",
   ledgerSite: "soroeru:ledger:site",
   ledgerInsights: "soroeru:ledger:insights",
@@ -184,6 +186,17 @@ export interface SavedPageImportResult {
   ok: boolean;
   error?: string;
   summary?: SavedPageImportSummaryView;
+}
+
+export interface SavedPageOpenSiteResult {
+  ok: boolean;
+  url?: string;
+  error?: string;
+}
+
+export interface SavedPageManualCheckResult {
+  ok: boolean;
+  error?: string;
 }
 
 // --- Disclosure ledger (RFC-002 §4.2 / §5.1) ---
