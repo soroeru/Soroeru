@@ -246,8 +246,11 @@ Labels exist so the Product Owner and AI agents can scan the backlog and quickly
 judge **what kind** of Issue it is, **how risky** it is (via the `security` label,
 see 11.3), and **when** to do it — and so the Issue Implementation Loop can be
 handed a sensible order. Keep the scheme small: more axes mean more authoring cost
-per Issue. Soroeru uses **two axes only** — *type* and *priority* — plus a few
-stackable modifier labels and the existing GitHub standard labels.
+per Issue. Soroeru uses **two ordering axes** — *type* and *priority* — plus a
+`security` risk marker (§11.3), a few other stackable modifier labels, and the
+existing GitHub standard labels. The modifier labels (`security`, `discussion`,
+`acceptance-test`) already exist in the repo; only the `priority:*` labels are new
+(creation tracked as a follow-up, see 11.5).
 
 ### 11.1 Type (what kind of Issue) — reuse existing labels
 
@@ -280,7 +283,7 @@ ordering only*, not how carefully the work must be handled (see 11.3).
 | Label         | Meaning                                                                                     |
 | ------------- | ------------------------------------------------------------------------------------------- |
 | `priority:P0` | Do now — release blocker; active security / data-loss / privacy harm; broken main flow      |
-| `priority:P1` | Soon — important for the current slice; notable UX friction; security hardening not actively exploited |
+| `priority:P1` | Soon — important for the current slice; notable UX friction; non-urgent hardening |
 | `priority:P2` | Later — valuable but deferrable, typically the next slice                                    |
 | `priority:P3` | Someday — nice-to-have, cleanup, or tech debt without pressing impact                        |
 
@@ -309,10 +312,11 @@ data stored inside Soroeru.
 For each new Issue: **one type label, optionally one `priority:*`**, then add
 `security` / `discussion` / `acceptance-test` if they apply.
 
-### 11.5 Legacy title-prefix mapping
+### 11.5 Legacy title-prefix or tag mapping
 
-Early Issues encoded type and level in title prefixes rather than labels. When
-triaging or relabeling them, map prefixes as follows. Every Issue still gets
+Early Issues encoded type and level in title prefixes or ad-hoc tags rather than
+labels (some rows below, e.g. `MVP` / `workflow` / `RFC`, are tags, not `-*`
+prefixes). When triaging or relabeling them, map as follows. Every Issue still gets
 **exactly one type label** (§11.1); where the table maps a prefix to a modifier
 (`security` / `discussion`) or a `priority:*` label, that label **stacks on top of
 a type label** — usually `enhancement` unless the Issue is clearly a `bug` or
