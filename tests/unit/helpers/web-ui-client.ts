@@ -72,12 +72,13 @@ export async function pollHtml(
   predicate: (html: string) => boolean,
   { path = "/", timeoutMs = 60000 }: { path?: string; timeoutMs?: number } = {},
 ): Promise<string> {
+  let lastHtml = "";
   return waitFor<string>(
     async () => {
-      const html = await getHtml(server, path);
-      return predicate(html) ? html : undefined;
+      lastHtml = await getHtml(server, path);
+      return predicate(lastHtml) ? lastHtml : undefined;
     },
-    `web UI state at ${path}`,
+    () => `web UI state at ${path}; last html:\n${lastHtml}`,
     { timeoutMs, intervalMs: 100 },
   );
 }

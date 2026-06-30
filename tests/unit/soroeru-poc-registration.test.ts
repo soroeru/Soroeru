@@ -235,10 +235,13 @@ type RegistrationState = ReturnType<RegistrationSession["getState"]>;
 
 /** Wait until the session transitions into `kind`, returning the matching state. */
 function waitForState(session: RegistrationSession, kind: RegistrationState["kind"]): Promise<RegistrationState> {
-  return waitFor(() => {
-    const state = session.getState();
-    return state.kind === kind ? state : undefined;
-  }, `session state "${kind}"`);
+  return waitFor(
+    () => {
+      const state = session.getState();
+      return state.kind === kind ? state : undefined;
+    },
+    () => `session state "${kind}" (last seen "${session.getState().kind}")`,
+  );
 }
 
 test("RegistrationSession: a missing-data prompt pauses the run until provideData resolves it", async () => {
