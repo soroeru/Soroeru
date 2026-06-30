@@ -31,7 +31,7 @@ owns the relevant topic.
 | [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, local web UI, Issue #33 (**previous Catashiro; superseded** — historical record). |
 | [`user-manual.md`](user-manual.md) | User-facing manual for the Mac private beta (**previous Catashiro; superseded** — registration-first / local web UI / ZIP beta, pending a Soroeru manual). |
 | [`beta-feedback.md`](beta-feedback.md) | Beta feedback guide (**previous Catashiro; superseded** — beta scope to be redefined by the Soroeru RFC and slice plan). |
-| [`github-operations.md`](github-operations.md) | Issue, branch, commit, pull request, review, and merge workflow rules. |
+| [`github-operations.md`](github-operations.md) | Issue, branch, label/priority, commit, pull request, review, and merge workflow rules. |
 | [`local-ai-review.md`](local-ai-review.md) | Local AI review hook setup, behavior, outputs, and troubleshooting. |
 
 ## Primary Sources

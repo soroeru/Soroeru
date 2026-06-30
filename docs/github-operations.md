@@ -239,3 +239,99 @@ Examples:
 
 Reintroduce a separate lessons document only after ownership and update
 frequency are clear.
+
+## 11. Issue Labels and Priority
+
+Labels exist so the Product Owner and AI agents can scan the backlog and quickly
+judge **what kind** of Issue it is, **how risky** it is (via the `security` label,
+see 11.3), and **when** to do it — and so the Issue Implementation Loop can be
+handed a sensible order. Keep the scheme small: more axes mean more authoring cost
+per Issue. Soroeru uses **two ordering axes** — *type* and *priority* — plus a
+`security` risk marker (§11.3), a few other stackable modifier labels, and the
+existing GitHub standard labels. The modifier labels (`security`, `discussion`,
+`acceptance-test`) already exist in the repo; only the `priority:*` labels are new
+(creation tracked as a follow-up, see 11.5).
+
+### 11.1 Type (what kind of Issue) — reuse existing labels
+
+Apply **exactly one** type label to every Issue. No new type labels are
+introduced.
+
+| Label           | Use for                                          |
+| --------------- | ------------------------------------------------ |
+| `enhancement`   | New feature or request (default for slice work)  |
+| `bug`           | Defect in existing behavior                      |
+| `documentation` | Docs-only changes                                |
+
+**Modifier labels (stack freely on top of the one type label):**
+
+| Label             | Use for                                                            |
+| ----------------- | ----------------------------------------------------------------- |
+| `security`        | Security / privacy work — **also the high-risk marker** (see 11.3) |
+| `discussion`      | Direction must be decided through dialogue before implementation  |
+| `acceptance-test` | Surfaced during Product Owner acceptance testing                  |
+
+GitHub standard labels (`question`, `duplicate`, `invalid`, `wontfix`,
+`help wanted`, `good first issue`) keep their conventional meaning.
+
+### 11.2 Priority (when to do it) — `priority:*`
+
+Apply **at most one** `priority:*` label. Priority is **optional**: an Issue with
+no `priority:*` label is simply not yet triaged. Priority expresses *urgency /
+ordering only*, not how carefully the work must be handled (see 11.3).
+
+| Label         | Meaning                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------- |
+| `priority:P0` | Do now — release blocker; active security / data-loss / privacy harm; broken main flow      |
+| `priority:P1` | Soon — important for the current slice; notable UX friction; non-urgent hardening |
+| `priority:P2` | Later — valuable but deferrable, typically the next slice                                    |
+| `priority:P3` | Someday — nice-to-have, cleanup, or tech debt without pressing impact                        |
+
+We use `priority:P0..P3` rather than `level:L0..L3` deliberately: Soroeru's
+product model already uses **L0/L1/L2** for the Delegation Boundary
+([`requirements.md`](requirements.md)), and reusing `L*` for Issue urgency would conflate the
+two. Slice order (A Visibility → B Bulk Update → C Withdrawal → D Registration)
+informs priority but does not replace it; the final ordering is the Product
+Owner's call.
+
+### 11.3 Priority is not risk
+
+The `security` label — not the priority — drives **how conservatively** an Issue
+is handled. A `security` Issue may be `priority:P1` (not urgent) yet still require
+careful review under the Three Guards and [`security.md`](security.md). Keep the
+two separate so "must be handled carefully" is never collapsed into "must be done
+right now."
+
+Tag an Issue `security` whenever it touches any of: raw-PII leakage, encryption /
+key handling, network egress beyond the allowed targets, the never-bypass walls
+(CAPTCHA / MFA / bot detection / access controls), or irreversible deletion of
+data stored inside Soroeru.
+
+### 11.4 Authoring rule
+
+For each new Issue: **one type label, optionally one `priority:*`**, then add
+`security` / `discussion` / `acceptance-test` if they apply.
+
+### 11.5 Legacy title-prefix or tag mapping
+
+Early Issues encoded type and level in title prefixes or ad-hoc tags rather than
+labels (some rows below, e.g. `MVP` / `workflow` / `RFC`, are tags, not `-*`
+prefixes). When triaging or relabeling them, map as follows. Every Issue still gets
+**exactly one type label** (§11.1); where the table maps a prefix to a modifier
+(`security` / `discussion`) or a `priority:*` label, that label **stacks on top of
+a type label** — usually `enhancement` unless the Issue is clearly a `bug` or
+`documentation`.
+
+| Prefix                | Type           | Modifier / priority                     |
+| --------------------- | -------------- | --------------------------------------- |
+| `REQ-*`               | `enhancement`  | `priority:*` by slice                   |
+| `SEC-*`, `PRIV-*`     | `enhancement`  | `security`                              |
+| `SAFE-*`              | `enhancement`  | `security` or `discussion`              |
+| `UI-*`, `PERF-*`      | `enhancement`  | —                                       |
+| `MVP`                 | `enhancement`  | `priority:P0` / `priority:P1`           |
+| `workflow`, `ci`      | `enhancement` or `documentation` | —                     |
+| `RFC`, `Discovery`    | `documentation` | `discussion`                           |
+
+Creating the `priority:*` GitHub labels and relabeling existing open Issues is
+tracked as a separate follow-up so this convention can be reviewed without mixing
+in a bulk migration.
