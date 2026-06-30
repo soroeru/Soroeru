@@ -111,10 +111,12 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
 
   const resume = useCallback(() => void window.soroeru.visibility.resume(), []);
   const abort = useCallback(() => void window.soroeru.visibility.abort(), []);
-  const showGuide = useCallback((siteAccountId: string) => {
+  const showGuide = useCallback(async (siteAccountId: string) => {
+    await window.soroeru.visibility.abort();
+    setRunningSiteId(undefined);
+    setHandoff(undefined);
     setGuideSiteId(siteAccountId);
     setSavedPageSiteId(siteAccountId);
-    void window.soroeru.visibility.abort();
   }, []);
   const markManual = useCallback(
     async (siteAccountId: string) => {
@@ -178,7 +180,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
             <button type="button" onClick={abort} className="text-sm underline">
               中止
             </button>
-            <button type="button" onClick={() => showGuide(handoff.siteAccountId)} className="text-sm underline">
+            <button type="button" onClick={() => void showGuide(handoff.siteAccountId)} className="text-sm underline">
               別の方法でこのサイトの情報を取り込む
             </button>
           </div>
