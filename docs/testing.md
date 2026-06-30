@@ -87,8 +87,9 @@ RFC-002 React renderer lands).
 
 ### 1.2 Keep vs. reduce (the test-inventory criteria)
 
-This table is the **input to test-inventory / refactor work** (e.g. #213). Apply it per test,
-not per file: a single file can hold both keep-tier and reduce-tier cases.
+This table is the **input to test-inventory / consolidation work** (#213 applied it as the
+first such pass). Apply it per test, not per file: a single file can hold both keep-tier and
+reduce-tier cases.
 
 | Tier | Applies to | Action |
 | --- | --- | --- |
@@ -120,9 +121,9 @@ surface; **B/C/D** layers are present for the later slices.
 | Layer / seam | Slice | Modules | Tests |
 | --- | --- | --- | --- |
 | VaultService (crypto boundary) | A | `store/vault-v2.ts`, `store/crypto.ts`, `store/recovery.ts`, `store/store.ts` (v1/legacy store, still in-tree) | `soroeru-vault-v2`, `soroeru-poc-crypto`, `soroeru-poc-recovery`, `soroeru-poc-candidates` (encrypted per-vault candidates) |
-| DomainService (trusted layer: ledger, mandates, policy) | A | `domain/domain-service.ts`, `domain/entities.ts`, `domain/normalize.ts`, `domain/ledger-insights.ts`, `domain/insights-types.ts` | `soroeru-domain-service`, `soroeru-ledger-insights`, `soroeru-visibility-service`, `soroeru-visibility-runner` |
-| IPC permission boundary (renderer ⇄ main) | A | `electron/ipc/*`, domain-service allowlist | `soroeru-ipc-permission`, `soroeru-ledger-ipc` |
-| AutomationService (collect / login / saved-page / walls) | A | `automation/disclosure-collector.ts`, `automation/page-driver.ts`, `automation/saved-page-importer.ts`, `automation/visibility-runner.ts`, `automation/wall-detection.ts`, `agent/scan.ts` | `soroeru-disclosure-collector`, `soroeru-saved-page-importer`, `soroeru-saved-page-guide-fixture`, `soroeru-scan-display-values` |
+| DomainService (trusted layer: ledger, mandates, policy) | A | `domain/domain-service.ts`, `domain/entities.ts`, `domain/normalize.ts`, `domain/ledger-insights.ts`, `domain/insights-types.ts` | `soroeru-domain-service`, `soroeru-ledger-insights` |
+| Main-side VisibilityService + IPC permission boundary (renderer ⇄ main) | A | `electron/visibility-service.ts`, `electron/ipc/*`, domain-service allowlist | `soroeru-visibility-service`, `soroeru-ipc-permission`, `soroeru-ledger-ipc` |
+| AutomationService (collect / login / saved-page / walls) | A | `automation/disclosure-collector.ts`, `automation/page-driver.ts`, `automation/saved-page-importer.ts`, `automation/visibility-runner.ts`, `agent/scan.ts` | `soroeru-disclosure-collector`, `soroeru-visibility-runner`, `soroeru-saved-page-importer`, `soroeru-saved-page-guide-fixture`, `soroeru-scan-display-values` |
 | CSV import (Visibility entry point) | A | `domain/csv-import.ts`, `agent/chrome-csv-importer.ts` | `soroeru-csv-import`, `soroeru-poc-chrome-csv-importer` |
 | Agent — deterministic mapper / classifier | B/D | `agent/mapper.ts`, `agent/classifier.ts`, `agent/normalization.ts` | `soroeru-poc-classifier`, `soroeru-poc-contracts` |
 | Agent — AI mapper / provider (stub) | B/D | `agent/ai/ai-mapper.ts`, `agent/ai/provider.ts` | `soroeru-poc-ai-mapper`, `soroeru-poc-provider` |
@@ -239,7 +240,12 @@ the packaged `.app` artifact before sharing a build with beta users.
 trial-card decline path, and the wall-detection / wall-resume fixtures. Ground truth is
 embedded per field in `sites/defs.ts` and compared against both the agent's mapping plan and
 what the local test-site server actually received. The table below maps each scenario to the
-requirements it exercises (see [`requirements.md`](requirements.md) §6–7 for IDs).
+requirements it exercises (see [`requirements.md`](requirements.md) §6–7 for IDs). The upper
+rows (sites `01`–`10`, bulk update, the wall fixtures, login/account routes) are the Playwright
+E2E scenarios; the lower rows (Add Site, import review, AI mapper, crypto/recovery/vault,
+egress/privacy/bypass, the `hasFailures` gate) are the supporting **`node --test`
+unit/integration checks** that gate the same requirements — listed here for the requirement
+traceability, not because they run in a browser.
 
 | Scenario | Site(s) / fixture | Requirements |
 | --- | --- | --- |
