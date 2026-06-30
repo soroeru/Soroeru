@@ -14,8 +14,8 @@ import type { AppRunner } from "../../src/app/runner.js";
 import type { Page, Browser } from "playwright";
 import type { GateDecision, GateRequest, WallDetection } from "../../src/types.js";
 import type { RegistrationResult, UpdateResult } from "../../src/agent/agent.js";
-
-const PASSPHRASE = "unit-test-passphrase";
+import { csrf, getHtml, post, unlockThroughUi } from "./helpers/web-ui-client.js";
+import { waitFor } from "./helpers/wait.js";
 
 // ---------------------------------------------------------------------------
 // Minimal stubs
@@ -167,19 +167,14 @@ test("BulkUpdateSession cancel is no-op when already done", async () => {
     [{ siteId: "b.test", siteTopUrl: "http://b.test/", profileKeys: ["email"] }],
   );
   session.start();
-  // Allow run() to advance past newPage() so update() is called and sets resolveFn.
-  await new Promise((r) => setTimeout(r, 10));
+  // Wait until run() has advanced past newPage() and called update() (which sets resolveFn).
+  await waitFor(() => resolveFn, "update() to be invoked");
   resolveFn(); // complete the one target
-  // Give the microtask queue a chance to advance to the done state.
-  await new Promise((r) => setTimeout(r, 10));
-  const state = session.getState();
-  if (state.kind === "done") {
-    session.cancel(); // should be no-op
-    assert.equal(session.getState().kind, "done");
-  } else {
-    session.cancel();
-    assert.equal(session.getState().kind, "cancelled");
-  }
+  // Wait for the run to settle into the done state before cancelling.
+  await waitFor(() => session.getState().kind === "done", "bulk update to finish");
+
+  session.cancel(); // should be a no-op once done
+  assert.equal(session.getState().kind, "done");
 });
 
 // ---------------------------------------------------------------------------
@@ -200,33 +195,6 @@ async function withWebUi(
     await app.shutdown();
     await rm(dir, { recursive: true, force: true });
   }
-}
-
-async function getHtml(server: WebUiServerHandle, path = "/"): Promise<string> {
-  const res = await fetch(new URL(path, server.url));
-  assert.equal(res.status, 200);
-  return res.text();
-}
-
-function csrf(html: string): string {
-  const match = /name="csrf" value="([^"]+)"/.exec(html);
-  assert.ok(match, "expected csrf token");
-  return match[1]!;
-}
-
-async function post(server: WebUiServerHandle, path: string, body: Record<string, string>): Promise<Response> {
-  return fetch(new URL(path, server.url), {
-    method: "POST",
-    body: new URLSearchParams(body),
-    redirect: "manual",
-  });
-}
-
-async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
-  const token = csrf(await getHtml(server));
-  const res = await post(server, "/unlock", { csrf: token, passphrase: PASSPHRASE });
-  assert.equal(res.status, 303);
-  return token;
 }
 
 test("POST /registration/cancel warns when no registration is running", async () => {

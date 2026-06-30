@@ -8,7 +8,6 @@ import { test } from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { chromium, type Browser, type Page } from "playwright";
 import { startPocServer, type PocServer } from "../../sites/server.js";
 import { SoroeruApp } from "../../src/app/app.js";
@@ -18,45 +17,12 @@ import { RegistrationSession } from "../../src/app/registration-session.js";
 import { DUMMY_PROFILE_SEED } from "../../src/profile.js";
 import type { RegistrationResult } from "../../src/agent/agent.js";
 import type { LocalCandidateDefinition } from "../../src/types.js";
-
-const PASSPHRASE = "unit-test-passphrase";
-
-async function getHtml(server: WebUiServerHandle, path = "/"): Promise<string> {
-  const res = await fetch(new URL(path, server.url));
-  assert.equal(res.status, 200);
-  return await res.text();
-}
-
-function csrf(html: string): string {
-  const match = /name="csrf" value="([^"]+)"/.exec(html);
-  assert.ok(match, "expected csrf token in rendered form");
-  return match[1]!;
-}
-
-async function post(server: WebUiServerHandle, path: string, body: Record<string, string>): Promise<Response> {
-  return await fetch(new URL(path, server.url), {
-    method: "POST",
-    body: new URLSearchParams(body),
-    redirect: "manual",
-  });
-}
-
-async function unlockThroughUi(server: WebUiServerHandle): Promise<string> {
-  const token = csrf(await getHtml(server));
-  const res = await post(server, "/unlock", { csrf: token, passphrase: PASSPHRASE });
-  assert.equal(res.status, 303);
-  return token;
-}
+import { getHtml, pollHtml, post, unlockThroughUi } from "./helpers/web-ui-client.js";
+import { waitFor } from "./helpers/wait.js";
 
 /** Poll the sites tab until `predicate` matches; the registration run advances in the background. */
-async function pollSites(server: WebUiServerHandle, predicate: (html: string) => boolean, timeoutMs = 60000): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const html = await getHtml(server, "/?tab=sites");
-    if (predicate(html)) return html;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for registration state; last html:\n${html}`);
-    await sleep(100);
-  }
+function pollSites(server: WebUiServerHandle, predicate: (html: string) => boolean, timeoutMs = 60000): Promise<string> {
+  return pollHtml(server, predicate, { path: "/?tab=sites", timeoutMs });
 }
 
 /** The default launcher opens a headed browser; tests always run headless. */
@@ -265,6 +231,19 @@ function fakeRunner(register: (page: Page, url: string, hooks: AppRunnerHooks) =
 
 const FAKE_PAGE = {} as unknown as Page;
 
+type RegistrationState = ReturnType<RegistrationSession["getState"]>;
+
+/** Wait until the session transitions into `kind`, returning the matching state. */
+function waitForState(session: RegistrationSession, kind: RegistrationState["kind"]): Promise<RegistrationState> {
+  return waitFor(
+    () => {
+      const state = session.getState();
+      return state.kind === kind ? state : undefined;
+    },
+    () => `session state "${kind}" (last seen "${session.getState().kind}")`,
+  );
+}
+
 test("RegistrationSession: a missing-data prompt pauses the run until provideData resolves it", async () => {
   const runner = fakeRunner(async (_page, _url, hooks) => {
     const value = await hooks.promptUser("ご職業");
@@ -274,17 +253,13 @@ test("RegistrationSession: a missing-data prompt pauses the run until provideDat
 
   const session = new RegistrationSession(runner, FAKE_PAGE, "http://example.test");
   session.start();
-  await sleep(0);
 
-  const awaiting = session.getState();
-  assert.equal(awaiting.kind, "awaiting-data");
+  const awaiting = await waitForState(session, "awaiting-data");
   assert.equal((awaiting as { label: string }).label, "ご職業");
 
   assert.equal(session.provideData("会社員"), true);
-  await sleep(0);
 
-  const done = session.getState();
-  assert.equal(done.kind, "done");
+  const done = await waitForState(session, "done");
   assert.equal((done as { result: RegistrationResult }).result.status, "registered");
 });
 
@@ -303,14 +278,11 @@ test("RegistrationSession: the review-and-confirm gate pauses the run until deci
 
   const session = new RegistrationSession(runner, FAKE_PAGE, "http://example.test");
   session.start();
-  await sleep(0);
-  assert.equal(session.getState().kind, "awaiting-gate");
+  await waitForState(session, "awaiting-gate");
 
   assert.equal(session.decideGate({ approved: false, attestationApprovals: {}, cardApproved: false }), true);
-  await sleep(0);
 
-  const done = session.getState();
-  assert.equal(done.kind, "done");
+  const done = await waitForState(session, "done");
   assert.equal((done as { result: RegistrationResult }).result.status, "declined");
 });
 
@@ -324,15 +296,11 @@ test("RegistrationSession: a wall hand-off pauses the run; resolving it resumes 
 
   const resumeSession = new RegistrationSession(resumed, FAKE_PAGE, "http://example.test");
   resumeSession.start();
-  await sleep(0);
-  const awaiting = resumeSession.getState();
-  assert.equal(awaiting.kind, "awaiting-handoff");
+  const awaiting = await waitForState(resumeSession, "awaiting-handoff");
   assert.deepEqual((awaiting as { wall: typeof wall }).wall, wall);
 
   assert.equal(resumeSession.resolveHandoff("resolved"), true);
-  await sleep(0);
-  const resumedDone = resumeSession.getState();
-  assert.equal(resumedDone.kind, "done");
+  const resumedDone = await waitForState(resumeSession, "done");
   assert.equal((resumedDone as { result: RegistrationResult }).result.status, "registered");
 
   const aborted = fakeRunner(async (_page, _url, hooks) => {
@@ -342,13 +310,10 @@ test("RegistrationSession: a wall hand-off pauses the run; resolving it resumes 
 
   const abortSession = new RegistrationSession(aborted, FAKE_PAGE, "http://example.test");
   abortSession.start();
-  await sleep(0);
-  assert.equal(abortSession.getState().kind, "awaiting-handoff");
+  await waitForState(abortSession, "awaiting-handoff");
 
   assert.equal(abortSession.resolveHandoff("abort"), true);
-  await sleep(0);
-  const abortDone = abortSession.getState();
-  assert.equal(abortDone.kind, "done");
+  const abortDone = await waitForState(abortSession, "done");
   assert.equal((abortDone as { result: RegistrationResult }).result.status, "manualHandoff");
 });
 
@@ -361,10 +326,8 @@ test("RegistrationSession: an exception during register() surfaces as an error s
 
   const session = new RegistrationSession(runner, FAKE_PAGE, "http://example.test");
   session.start();
-  await sleep(0);
 
-  const state = session.getState();
-  assert.equal(state.kind, "error");
+  const state = await waitForState(session, "error");
   assert.equal((state as { message: string }).message, "boom");
 });
 
