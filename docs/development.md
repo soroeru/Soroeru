@@ -197,13 +197,13 @@ Current repository shape:
 ```text
 .
 ├── .claude/
-│   └── skills/        # symlinks each repo skill into Claude Code's skills dir
+│   └── skills/        # committed relative symlinks exposing each repo skill to Claude Code
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
 │   └── workflows/
 ├── .githooks/
 ├── docs/
-├── skills/            # repo-local agent skills (workflow + writing-good-tests); .claude/skills/ symlinks these for Claude Code
+├── skills/            # repo-local agent skills (issue-implementation-loop + writing-good-tests); .claude/skills/ symlinks these for Claude Code
 ├── scripts/
 │   ├── rename-dmg.mjs
 │   └── setup-hooks.sh
@@ -228,6 +228,11 @@ Current repository shape:
 ```
 
 Update this section when real directories are added or removed.
+
+The `.claude/skills/*` entries are committed relative symlinks into `skills/`
+(e.g. `.claude/skills/writing-good-tests -> ../../skills/writing-good-tests`),
+so a fresh clone restores them automatically — there is no manual setup step,
+and skill content has a single source of truth under `skills/`.
 
 ## 5. Implementation Conventions
 

@@ -42,6 +42,11 @@ judgment. Use **fake data only** everywhere (§4).
 
 ### 1.1 Writing tests: use the `writing-good-tests` skill
 
+> This section is **in force despite the SUPERSEDED banner above**: the banner
+> applies to the old Catashiro *what-to-test* checklist, but this *how-to-write-tests*
+> rule is direction-independent and binding now. The same requirement is mirrored as a
+> convention in [`development.md`](development.md) §5 (the live conventions doc).
+
 When **writing or reviewing any test** in this repository, agents must use the
 repo-local **`writing-good-tests`** skill
 ([`skills/writing-good-tests/SKILL.md`](../skills/writing-good-tests/SKILL.md); also
