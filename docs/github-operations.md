@@ -280,7 +280,7 @@ ordering only*, not how carefully the work must be handled (see 11.3).
 | Label         | Meaning                                                                                     |
 | ------------- | ------------------------------------------------------------------------------------------- |
 | `priority:P0` | Do now — release blocker; active security / data-loss / privacy harm; broken main flow      |
-| `priority:P1` | Soon — important for the current slice (A Visibility); notable UX friction; security hardening not actively exploited |
+| `priority:P1` | Soon — important for the current slice; notable UX friction; security hardening not actively exploited |
 | `priority:P2` | Later — valuable but deferrable, typically the next slice                                    |
 | `priority:P3` | Someday — nice-to-have, cleanup, or tech debt without pressing impact                        |
 
@@ -312,17 +312,21 @@ For each new Issue: **one type label, optionally one `priority:*`**, then add
 ### 11.5 Legacy title-prefix mapping
 
 Early Issues encoded type and level in title prefixes rather than labels. When
-triaging or relabeling them, map prefixes as follows:
+triaging or relabeling them, map prefixes as follows. Every Issue still gets
+**exactly one type label** (§11.1); where the table maps a prefix to a modifier
+(`security` / `discussion`) or a `priority:*` label, that label **stacks on top of
+a type label** — usually `enhancement` unless the Issue is clearly a `bug` or
+`documentation`.
 
-| Prefix                | Label                                            |
-| --------------------- | ------------------------------------------------ |
-| `REQ-*`               | `enhancement` (+ `priority:*` by slice)          |
-| `SEC-*`, `PRIV-*`     | `security`                                        |
-| `SAFE-*`              | `security` or `discussion`                        |
-| `UI-*`, `PERF-*`      | `enhancement`                                     |
-| `MVP`                 | `priority:P0` / `priority:P1`                      |
-| `workflow`, `ci`      | `enhancement` or `documentation`                  |
-| `RFC`, `Discovery`    | `discussion`                                       |
+| Prefix                | Type           | Modifier / priority                     |
+| --------------------- | -------------- | --------------------------------------- |
+| `REQ-*`               | `enhancement`  | `priority:*` by slice                   |
+| `SEC-*`, `PRIV-*`     | `enhancement`  | `security`                              |
+| `SAFE-*`              | `enhancement`  | `security` or `discussion`              |
+| `UI-*`, `PERF-*`      | `enhancement`  | —                                       |
+| `MVP`                 | `enhancement`  | `priority:P0` / `priority:P1`           |
+| `workflow`, `ci`      | `enhancement` or `documentation` | —                     |
+| `RFC`, `Discovery`    | `documentation` | `discussion`                           |
 
 Creating the `priority:*` GitHub labels and relabeling existing open Issues is
 tracked as a separate follow-up so this convention can be reviewed without mixing
