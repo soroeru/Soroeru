@@ -45,6 +45,8 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.domain.summary();
   await api.csv.import("x");
   await api.savedPage.import({ siteAccountId: "x", fileName: "account.html", data: new Uint8Array() });
+  await api.savedPage.openSite("x");
+  await api.savedPage.markManualCheck("x");
   await api.ledger.sites();
   await api.ledger.site("x");
   await api.ledger.insights();
@@ -316,6 +318,161 @@ test("saved page import is rejected while a visibility run is in progress", asyn
     await runPromise;
   } finally {
     releaseRun?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page fallback opens a site in the default browser via an injected opener", async () => {
+  const { dir, path } = await tmpVaultPath();
+  const opened: string[] = [];
+  try {
+    const session = new SoroeruSession(path, {
+      openExternal: async (url) => {
+        opened.push(url);
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const result = (await bridge[IPC_CHANNELS.savedPageOpenSite](siteAccountId)) as {
+      ok: boolean;
+      url?: string;
+      error?: string;
+    };
+    assert.equal(result.ok, true);
+    assert.equal(result.url, "https://example.test/account");
+    assert.deepEqual(opened, ["https://example.test/account"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page fallback refuses to open non-web URLs in the default browser", async () => {
+  const { dir, path } = await tmpVaultPath();
+  const opened: string[] = [];
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({
+      domain: "example.test",
+      url: "file:///Users/example/private.html",
+      displayName: "Example",
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path, {
+      openExternal: async (url) => {
+        opened.push(url);
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultUnlock](PASSPHRASE);
+
+    const result = (await bridge[IPC_CHANNELS.savedPageOpenSite](site.id)) as {
+      ok: boolean;
+      error?: string;
+    };
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "bad-url");
+    assert.deepEqual(opened, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page fallback manual-check is rejected while a visibility run is in progress", async () => {
+  const { dir, path } = await tmpVaultPath();
+  let releaseRun: (() => void) | undefined;
+  try {
+    const runBlocker = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const session = new SoroeruSession(path, {
+      openSession: async () => {
+        await runBlocker;
+        throw new Error("stop run");
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const runPromise = bridge[IPC_CHANNELS.visibilityRun](siteAccountId);
+    await waitFor(async () => {
+      const status = (await bridge[IPC_CHANNELS.visibilityStatus]()) as { running: boolean };
+      return status.running;
+    });
+
+    const result = (await bridge[IPC_CHANNELS.savedPageMarkManual](siteAccountId)) as {
+      ok: boolean;
+      error?: string;
+    };
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "busy");
+
+    releaseRun?.();
+    await runPromise;
+  } finally {
+    releaseRun?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page fallback skip records a manual-check constraint without marking the site collected", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const result = (await bridge[IPC_CHANNELS.savedPageMarkManual](siteAccountId)) as {
+      ok: boolean;
+      error?: string;
+    };
+    assert.equal(result.ok, true);
+
+    const detail = (await bridge[IPC_CHANNELS.ledgerSite](siteAccountId)) as {
+      collected: boolean;
+      constraints: Array<{ kind: string; detail: string; resolution?: string }>;
+    };
+    assert.equal(detail.collected, false);
+    const manual = detail.constraints.find((constraint) => constraint.detail.includes("手動で確認"));
+    assert.equal(manual?.kind, "unknown-state");
+    assert.equal(manual?.resolution, "user-stopped");
+  } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });

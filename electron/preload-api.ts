@@ -13,8 +13,10 @@ import {
   type IpcChannel,
   type LedgerInsights,
   type RecoveryKeyResult,
+  type SavedPageManualCheckResult,
   type SavedPageImportRequest,
   type SavedPageImportResult,
+  type SavedPageOpenSiteResult,
   type RevealResult,
   type SiteLedgerDetail,
   type SiteLedgerSummary,
@@ -48,6 +50,8 @@ export interface SoroeruApi {
   };
   savedPage: {
     import(request: SavedPageImportRequest): Promise<SavedPageImportResult>;
+    openSite(siteAccountId: string): Promise<SavedPageOpenSiteResult>;
+    markManualCheck(siteAccountId: string): Promise<SavedPageManualCheckResult>;
   };
   ledger: {
     sites(): Promise<SiteLedgerSummary[]>;
@@ -88,6 +92,10 @@ export function createSoroeruApi(
     savedPage: {
       import: (request) =>
         invoke(IPC_CHANNELS.savedPageImport, request) as Promise<SavedPageImportResult>,
+      openSite: (siteAccountId) =>
+        invoke(IPC_CHANNELS.savedPageOpenSite, siteAccountId) as Promise<SavedPageOpenSiteResult>,
+      markManualCheck: (siteAccountId) =>
+        invoke(IPC_CHANNELS.savedPageMarkManual, siteAccountId) as Promise<SavedPageManualCheckResult>,
     },
     ledger: {
       sites: () => invoke(IPC_CHANNELS.ledgerSites) as Promise<SiteLedgerSummary[]>,

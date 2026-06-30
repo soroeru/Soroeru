@@ -4,7 +4,7 @@
 // window with strict isolation. The renderer reaches the vault solely through
 // these typed channels, never directly.
 
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
@@ -86,7 +86,10 @@ async function main(): Promise<void> {
 
   const vaultPath = resolveVaultPath();
   await mkdir(dirname(vaultPath), { recursive: true });
-  const session = new SoroeruSession(vaultPath);
+  const session = new SoroeruSession(vaultPath, {
+    // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
+    openExternal: (url) => shell.openExternal(url),
+  });
   registerIpc(session);
 
   await createWindow(session);

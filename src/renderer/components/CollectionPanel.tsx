@@ -16,6 +16,9 @@ import type {
 import { reasonMessage, visibilityStatusLabel } from "../messages.js";
 import { SavedPageImportPanel } from "./SavedPageImportPanel.js";
 
+const guideWallImage = new URL("../assets/saved-page-guide-wall.png", import.meta.url).href;
+const guideAccountImage = new URL("../assets/saved-page-guide-account.png", import.meta.url).href;
+
 interface CollectionPanelProps {
   /** Bumped by the parent after a CSV import so the site list refetches. */
   reloadToken: number;
@@ -26,6 +29,7 @@ interface CollectionPanelProps {
 interface HandoffState {
   siteAccountId: string;
   instruction: string;
+  fallbackSuggested: boolean;
 }
 
 export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelProps): React.JSX.Element {
@@ -34,8 +38,10 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
   const [loadError, setLoadError] = useState<string | undefined>();
   const [runningSiteId, setRunningSiteId] = useState<string | undefined>();
   const [savedPageSiteId, setSavedPageSiteId] = useState<string | undefined>();
+  const [guideSiteId, setGuideSiteId] = useState<string | undefined>();
   const [handoff, setHandoff] = useState<HandoffState | undefined>();
   const [lastResult, setLastResult] = useState<VisibilityRunResultView | undefined>();
+  const resumedHandoffSites = useRef<Set<string>>(new Set());
   const onCollectedRef = useRef(onCollected);
   useEffect(() => {
     onCollectedRef.current = onCollected;
@@ -64,16 +70,25 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
         case "run-started":
           setRunningSiteId(event.siteAccountId);
           setHandoff(undefined);
+          setGuideSiteId(undefined);
+          resumedHandoffSites.current.delete(event.siteAccountId);
           break;
         case "handoff":
-          setHandoff({ siteAccountId: event.siteAccountId, instruction: event.instruction });
+          setHandoff({
+            siteAccountId: event.siteAccountId,
+            instruction: event.instruction,
+            fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
+          });
+          if (resumedHandoffSites.current.has(event.siteAccountId)) setGuideSiteId(event.siteAccountId);
           break;
         case "resumed":
+          resumedHandoffSites.current.add(event.siteAccountId);
           setHandoff(undefined);
           break;
         case "run-finished":
           setRunningSiteId(undefined);
           setHandoff(undefined);
+          resumedHandoffSites.current.delete(event.result.siteAccountId);
           setLastResult(event.result);
           void loadSites();
           onCollectedRef.current();
@@ -85,6 +100,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
 
   const run = useCallback(async (siteAccountId: string) => {
     setLastResult(undefined);
+    setGuideSiteId(undefined);
     try {
       const result = await window.soroeru.visibility.run(siteAccountId);
       setLastResult(result);
@@ -95,6 +111,41 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
 
   const resume = useCallback(() => void window.soroeru.visibility.resume(), []);
   const abort = useCallback(() => void window.soroeru.visibility.abort(), []);
+  const waitForVisibilityIdle = useCallback(async () => {
+    for (let i = 0; i < 20; i++) {
+      const status = await window.soroeru.visibility.status();
+      if (!status.running) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }, []);
+  const showGuide = useCallback(async (siteAccountId: string) => {
+    await window.soroeru.visibility.abort();
+    await waitForVisibilityIdle();
+    setRunningSiteId(undefined);
+    setHandoff(undefined);
+    setGuideSiteId(siteAccountId);
+    setSavedPageSiteId(siteAccountId);
+  }, [waitForVisibilityIdle]);
+  const markManual = useCallback(
+    async (siteAccountId: string) => {
+      await window.soroeru.visibility.abort();
+      await waitForVisibilityIdle();
+      const result = await window.soroeru.savedPage.markManualCheck(siteAccountId);
+      if (!result.ok) {
+        setLoadError(reasonMessage(result.error));
+        return;
+      }
+      setGuideSiteId(undefined);
+      setSavedPageSiteId(undefined);
+      await loadSites();
+      onCollected();
+    },
+    [loadSites, onCollected, waitForVisibilityIdle],
+  );
+  const openSite = useCallback(async (siteAccountId: string) => {
+    const result = await window.soroeru.savedPage.openSite(siteAccountId);
+    if (!result.ok) setLoadError(reasonMessage(result.error));
+  }, []);
 
   if (loading) return <p className="text-sm text-neutral-500">読み込み中…</p>;
 
@@ -112,12 +163,21 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
 
       {handoff && (
         <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4">
-          <p className="text-sm font-medium text-amber-900">ウォールの解決が必要です</p>
-          <p className="text-xs text-amber-800">{handoff.instruction}</p>
-          <p className="text-xs text-amber-800">
-            表示中のブラウザでウォール（CAPTCHA / 認証コード /
-            確認など）をご自身で解決し、「解決して再開」を押してください。 Soroeru はこれらを突破しません。
+          <p className="text-sm font-medium text-amber-900">
+            {handoff.fallbackSuggested ? "別の方法で取り込めます" : "ウォールの解決が必要です"}
           </p>
+          <p className="text-xs text-amber-800">{handoff.instruction}</p>
+          {handoff.fallbackSuggested ? (
+            <p className="text-xs text-amber-800">
+              このサイトはセキュリティがとても厳重です。Soroeru からの自動ログインを最後まで完了できないことがあります。
+              いつものブラウザでログインして登録情報ページを保存すれば、その内容をローカルで読み取れます。
+            </p>
+          ) : (
+            <p className="text-xs text-amber-800">
+              表示中のブラウザでウォール（CAPTCHA / 認証コード /
+              確認など）をご自身で解決し、「解決して再開」を押してください。 Soroeru はこれらを突破しません。
+            </p>
+          )}
           <div className="flex gap-2">
             <button
               type="button"
@@ -128,6 +188,9 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
             </button>
             <button type="button" onClick={abort} className="text-sm underline">
               中止
+            </button>
+            <button type="button" onClick={() => void showGuide(handoff.siteAccountId)} className="text-sm underline">
+              別の方法でこのサイトの情報を取り込む
             </button>
           </div>
         </div>
@@ -184,14 +247,25 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
                   </span>
                 </div>
                 {savedPageSiteId === site.siteAccountId && (
-                  <SavedPageImportPanel
-                    siteAccountId={site.siteAccountId}
-                    disabled={runningSiteId !== undefined}
-                    onImported={() => {
-                      void loadSites();
-                      onCollected();
-                    }}
-                  />
+                  <div className="flex flex-col gap-2">
+                    {guideSiteId === site.siteAccountId && (
+                      <SavedPageImportGuide
+                        site={site}
+                        disabled={runningSiteId !== undefined}
+                        onOpenSite={() => void openSite(site.siteAccountId)}
+                        onSkip={() => void markManual(site.siteAccountId)}
+                      />
+                    )}
+                    <SavedPageImportPanel
+                      siteAccountId={site.siteAccountId}
+                      disabled={runningSiteId !== undefined}
+                      onImported={() => {
+                        setGuideSiteId(undefined);
+                        void loadSites();
+                        onCollected();
+                      }}
+                    />
+                  </div>
                 )}
               </li>
             );
@@ -199,5 +273,70 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
         </ul>
       )}
     </section>
+  );
+}
+
+function SavedPageImportGuide({
+  site,
+  disabled,
+  onOpenSite,
+  onSkip,
+}: {
+  site: SiteLedgerSummary;
+  disabled: boolean;
+  onOpenSite: () => void;
+  onSkip: () => void;
+}): React.JSX.Element {
+  return (
+    <div className="flex flex-col gap-3 rounded border border-neutral-200 bg-white p-3">
+      <div className="flex flex-col gap-1">
+        <p className="text-sm font-medium">いつものブラウザで保存して取り込む</p>
+        <p className="text-xs text-neutral-600">
+          Chrome で登録情報のページを開き、HTML のみで保存します。実在サイトのスクリーンショットは使わず、
+          この案内はローカルのダミー画面を想定しています。
+        </p>
+      </div>
+      <ol className="grid gap-2 text-xs text-neutral-700 md:grid-cols-4">
+        <li className="rounded border border-neutral-200 p-2">
+          <span className="font-medium">1. サイトを開く</span>
+          <p className="mt-1">既定ブラウザで {site.displayName} を開きます。</p>
+        </li>
+        <li className="rounded border border-neutral-200 p-2">
+          <span className="font-medium">2. 登録情報を表示</span>
+          <p className="mt-1">住所、会員情報、アカウント設定などのページを表示します。</p>
+        </li>
+        <li className="rounded border border-neutral-200 p-2">
+          <span className="font-medium">3. HTML のみで保存</span>
+          <p className="mt-1">右クリックから別名で保存を選び、形式は「ウェブページ、HTML のみ」にします。</p>
+        </li>
+        <li className="rounded border border-neutral-200 p-2">
+          <span className="font-medium">4. ファイルを取り込む</span>
+          <p className="mt-1">下の領域に保存した .html ファイルをドラッグします。</p>
+        </li>
+      </ol>
+      <div className="grid gap-2 md:grid-cols-2">
+        <figure className="overflow-hidden rounded border border-neutral-200 bg-neutral-50">
+          <img src={guideWallImage} alt="ローカルダミーサイトのセキュリティ確認画面" className="w-full" />
+          <figcaption className="px-2 py-1 text-xs text-neutral-500">ローカルダミーサイト: セキュリティ確認</figcaption>
+        </figure>
+        <figure className="overflow-hidden rounded border border-neutral-200 bg-neutral-50">
+          <img src={guideAccountImage} alt="ローカルダミーサイトの登録情報ページ" className="w-full" />
+          <figcaption className="px-2 py-1 text-xs text-neutral-500">ローカルダミーサイト: 登録情報ページ</figcaption>
+        </figure>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onOpenSite}
+          className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:bg-neutral-300"
+        >
+          このサイトを開く
+        </button>
+        <button type="button" onClick={onSkip} className="text-sm underline">
+          今はスキップ（手動確認に印）
+        </button>
+      </div>
+    </div>
   );
 }

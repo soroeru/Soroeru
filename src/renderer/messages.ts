@@ -19,6 +19,9 @@ const REASONS: Record<string, string> = {
   "bad-header": "CSV のヘッダー形式が想定と異なります（name,url,username,password,note）。",
   "bad-file-type": "保存した HTML ファイル（.html / .htm）を選択してください。",
   "import-failed": "取り込みに失敗しました。",
+  "open-failed": "既定ブラウザでサイトを開けませんでした。",
+  "bad-url": "このサイトの URL は既定ブラウザで開けません。",
+  "mark-failed": "手動確認の印を記録できませんでした。",
   // Reveal
   "not-found": "対象が見つかりません。",
   "reveal-not-permitted": "この値は表示できません（最も機微な項目）。",
