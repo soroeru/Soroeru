@@ -201,7 +201,7 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
-├── skills/            # repo-local Codex skills for project workflows
+├── skills/            # repo-local agent skills (workflow + writing-good-tests); .claude/skills/ symlinks these for Claude Code
 ├── scripts/
 │   ├── rename-dmg.mjs
 │   └── setup-hooks.sh
@@ -240,6 +240,11 @@ Update this section when real directories are added or removed.
 - Prefer explicit, user-approved actions for filling and submission (the
   review-and-confirm gate).
 - Use fake data in examples, tests, screenshots, and fixtures.
+- When writing or reviewing tests, use the repo-local **`writing-good-tests`** skill
+  ([`skills/writing-good-tests/SKILL.md`](../skills/writing-good-tests/SKILL.md)) for
+  *how* to write them — behavior over implementation, "not too many, mostly integration",
+  condition-based waiting, and strategic mocking. The test **strategy** (what to test, by
+  layer) stays in [`testing.md`](testing.md) §1–§2.
 - Avoid committed generated output unless the project later documents a reason
   to keep it under version control.
 

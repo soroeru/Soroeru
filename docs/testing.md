@@ -40,6 +40,35 @@ E2E matrix (§8) for end-to-end flows against the local test sites, and the manu
 checklist ([`manual-test.md`](manual-test.md)) for headed-browser UX that needs human
 judgment. Use **fake data only** everywhere (§4).
 
+### 1.1 Writing tests: use the `writing-good-tests` skill
+
+When **writing or reviewing any test** in this repository, agents must use the
+repo-local **`writing-good-tests`** skill
+([`skills/writing-good-tests/SKILL.md`](../skills/writing-good-tests/SKILL.md); also
+exposed to Claude Code via `.claude/skills/writing-good-tests`). It encodes the test
+design principles we want enforced here:
+
+- **"Write tests. Not too many. Mostly integration."** — favor a small number of
+  high-value tests over exhaustive per-function coverage. This is the direct guard
+  against the "too many unit tests" problem this strategy work (#209) addresses.
+- **Test behavior, not implementation** — a test that breaks on a pure refactor
+  (e.g. renaming an internal function) is testing implementation and is a deletion /
+  consolidation candidate.
+- **Condition-based waiting**, not arbitrary `setTimeout`/`sleep` — important for the
+  Playwright flows (dynamic forms, wall hand-off / resume) where timing is non-deterministic.
+- **Mock strategically** — real *managed* dependencies (our own store/vault, local test
+  sites), mocks only for *unmanaged* externals (the AI provider, third-party APIs). This
+  matches our seam design (the AI mapper is tested against a `StubProvider`, §7) and the
+  fake-data-only rule (§4).
+- **One action per test**, Arrange-Act-Assert structure, no test-only methods leaking into
+  production code.
+
+The skill is the source of truth for *how* tests are written; this document remains the
+source of truth for *what* to test and *which layer* (§1, §2.1) under Soroeru's
+risk-focused, never-bypass-walls principles. When the two seem to conflict, prefer fewer,
+behavior-level tests concentrated on the risk-carrying layers (classification, wall
+detection, the gate and three guards, crypto/vault, egress/persistence/bypass).
+
 ## 2. Test Types
 
 | Type | Purpose | Target |
