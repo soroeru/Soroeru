@@ -40,10 +40,12 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
 - Keep all personal data local and **encrypted at rest**; the user owns it.
 - Network egress is limited to **(a) the target sites the user asks the agent to act on**
-  (the agent navigates, fills, and submits there) and **(b) the user's configured AI
-  provider** (form structure / terms text only, never raw personal values). Future
-  user-owned cloud-storage sync may write only encrypted vault bytes to a user-selected
-  location. No telemetry, analytics, crash reporting, or any other destination.
+  (the agent navigates, fills, and submits there), **(b) the user's configured AI
+  provider** (form structure / terms text only, never raw personal values), and **(c) the
+  Digital Agency's デジタル認証アプリ service via Soroeru's identity-auth BFF**, for My Number
+  (JPKI) verification only (see §14). Future user-owned cloud-storage sync may write only
+  encrypted vault bytes to a user-selected location. No telemetry, analytics, crash reporting,
+  or any other destination.
 - **Minimize disclosure to the AI model**: send form structure / terms text, not raw
   personal values. Do not use provider stateful features (prompt caching of PII, stored
   threads, memory).
@@ -599,3 +601,72 @@ For each beta release PR or release note, record only high-level evidence:
 
 Do not paste AI prompts, raw personal values, API keys, vault bytes, support bundles, or
 real-site screenshots into release evidence.
+
+## 14. Identity Verification (My Number / JPKI)
+
+Canonical identity is anchored in the user's own public personal authentication
+(マイナンバーカード / JPKI). Requirement and product rationale: [`requirements.md`](requirements.md)
+§4.2 and Issue #218. This section owns the security, privacy, and legal handling.
+
+**Authentication mechanism — デジタル庁「デジタル認証アプリ」 (認証API).** Soroeru does not read
+the card itself or act as a signature verifier. It integrates as a **relying party** with the
+Digital Agency's **デジタル認証アプリ** service (OIDC / OAuth 2.0 authorization-code flow). The
+card is read on the **user's smartphone** by the Digital Agency app; from the desktop the user
+links via a **QR code (cross-device)**. Soroeru uses the **認証 (authentication) API only** — not
+the 署名 (signature) API. Basic-4 attributes (name, address, DOB, sex) are returned via the
+**UserInfo endpoint + requested scope** (with the 券面事項入力補助 PIN entered in the Digital
+Agency app, never in Soroeru); the ID token carries `sub` = a **PPID (pairwise pseudonymous
+identifier)**.
+
+**Non-negotiable handling rules:**
+
+- **Never store the 12-digit My Number (個人番号).** Basic-4 attributes are obtained through the
+  authentication flow and do not include the number. Storing or retaining the number for
+  identity-management purposes is outside the 番号法's permitted uses and is prohibited.
+- **The card PIN is never seen by Soroeru.** It is entered in the Digital Agency app on the
+  user's phone. Soroeru handles OIDC tokens, not the PIN; tokens and the PPID are never logged.
+- **Store only**: the basic-4 attributes (encrypted at rest, like other Personal Attributes),
+  the PPID, and **verification Evidence** — the Digital Agency verification reference and
+  timestamp. Do not retain raw tokens beyond the flow.
+- **Derived fields** (kana, romaji) are stored as **unverified** and clearly distinguished from
+  the verified basic-4; they are never presented as JPKI-verified.
+- **Phone / email**: ownership is verified by an OTP round-trip; the OTP is never logged. At most
+  3 of each are stored. Removing a verified contact is Soroeru-internal data deletion — the
+  fourth absolute boundary (always confirmed).
+
+**Connection architecture (decided: "A — central, OSS, zero-retention BFF", Issue #218).** The
+デジタル認証アプリ integration **effectively requires a server-side BFF** (registered client ID,
+redirect / back-channel logout URIs, private_key_jwt); a pure local public client is not reliably
+supported. Of the options — (A) a Soroeru-operated registered relying party, (B) each user
+self-hosting (impractical: registration is per-business), (C) a commercial intermediary (a third
+party would see basic-4) — **A** is adopted. This is a **deliberate, narrowly-scoped exception to
+the no-backend principle**, limited to the identity-authentication broker:
+
+- The BFF is **OSS and reproducibly deployable** (inspectable / self-hostable).
+- **Stateless / zero-retention**: basic-4, tokens, PPID, and PIN are **never persisted** by the
+  operator; obtained basic-4 is **forwarded encrypted to the user's device and immediately
+  discarded** server-side.
+- **Egress is to the Digital Agency service only** (plus the return channel to the user's
+  device). No telemetry, analytics, or raw-PII logging.
+- **"No hosted vault" is unchanged**: the canonical encrypted store stays local on the user's
+  device. Only a minimal auth-broker backend is introduced, for the identity layer only.
+
+**Assurance level.** Verification is **mediated by the Digital Agency's 公的個人認証 service** (the
+Digital Agency operates the verifier); Soroeru does not need 署名検証者 status and does not rely on
+local-only signature validation. **No desktop NFC / IC card reader is required** — the card is read
+on the user's smartphone, with QR cross-device linking from the desktop.
+
+**Residual / investigation items (recorded, not resolved):**
+
+- Identity onboarding is **Japan-resident, card-holder-with-smartphone only**; no fallback path in
+  v1. The user must have the Digital Agency app installed.
+- **Operator-trust dependency**: even with zero-retention, basic-4 transits the Soroeru-operated
+  BFF during the flow. The design must minimize and document this; trust rests on the OSS,
+  reproducible deployment.
+- **事業者申請** (relying-party registration with the Digital Agency — client ID, redirect /
+  back-channel logout URIs, private_key_jwt key management) and its eligibility / operational
+  obligations must be completed before launch.
+- The **site-side trust benefit** (relying parties treating Soroeru sign-ups as identity-verified)
+  remains deferred (Issue #218).
+- For regulated industries, Soroeru-mediated verification is **not** a recognized 犯収法 eKYC
+  method; any future site-side claim must be designed to the applicable standard separately.

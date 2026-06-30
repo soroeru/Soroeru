@@ -160,6 +160,33 @@ the user's own account/credentials, a reversibility assessment, and a hard **Evi
 (no record, no action). See [`docs/requirements.md`](docs/requirements.md) §8 and
 [`docs/security.md`](docs/security.md) §7.
 
+## Identity Verification (My Number / JPKI)
+
+Canonical identity is anchored in the user's own public personal authentication
+(マイナンバーカード / JPKI). See [`docs/requirements.md`](docs/requirements.md) §4.2,
+[`docs/security.md`](docs/security.md) §14, and Issue #218.
+
+- First-launch requires My Number Card verification — via the Digital Agency **デジタル認証アプリ**
+  (認証 API only; card read on the user's smartphone, QR cross-device from desktop) — before any
+  use (onboarding slice 0).
+- Basic-4 attributes (legal name, residence address, DOB, sex) come from the authentication
+  result (UserInfo + scope) and are **non-editable**; address updates only via re-reading an
+  updated card. Kana / romaji are editable-but-unverified derived fields.
+- **Never store the 12-digit My Number or the card PIN** (the PIN is entered in the Digital
+  Agency app, never seen by Soroeru). Store only the basic-4 attributes, the PPID (`sub`), and
+  verification Evidence (Digital Agency reference + timestamp). Verification is mediated by the
+  Digital Agency's 公的個人認証 service (no 署名検証者 status, no desktop NFC reader).
+- Integration runs through a **minimal, OSS, zero-retention identity-auth BFF** (decision "A",
+  Issue #218) — a narrowly-scoped exception to the no-backend principle, identity layer only:
+  egress to the Digital Agency only, basic-4 forwarded encrypted to the device and never
+  persisted server-side. The local encrypted vault stays local ("No hosted vault" unchanged).
+- Phone / email require OTP ownership verification; at most 3 of each; removing a verified
+  contact is the fourth absolute boundary (always confirmed).
+- Store **verified real data only** — no fabricated / pseudonymous values. Sovereignty is the
+  user's choice of *which verified attributes to disclose to which site*.
+- Scope is **user-side only**; site-side verifiable-credential issuance / relying-party trust is
+  deferred and must not add a general backend or telemetry beyond the narrow identity-auth broker.
+
 ## Initial Scope
 
 Slice order: **A Visibility → B Bulk Update → C Withdrawal cleanup → D New registration
