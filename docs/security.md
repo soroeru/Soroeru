@@ -10,7 +10,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 > **Direction change (2026-06-25).** The product is re-founded as **Soroeru（揃える）**, a
 > local-first agency engine (canonical direction: [`requirements.md`](requirements.md)).
 > The security/privacy principles below carry over unchanged: full personal data
-> (incl. card data with CVV and per-site credentials) is stored **locally and encrypted**;
+> (incl. user-entered card data with CVV and per-site credentials) is stored **locally and encrypted**;
 > raw PII is never sent to the AI model; egress is local-first; and the hard line remains
 > **never bypass CAPTCHA / MFA / bot detection / access controls**. See the §"Automated
 > access, scraping, and ToS" note below for the Soroeru-specific stance added for the
@@ -33,7 +33,8 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 > - A **detected automation-prohibiting ToS clause** is **surfaced as a Constraint /
 >   high-risk item for the user to decide**, not silently hard-blocked.
 > - The imported CSV (plaintext passwords) is encrypted immediately, never logged, and
->   discarded after processing; collected PII is never egressed.
+>   discarded after processing; collected PII is never egressed and Disclosure values are
+>   stored only inside the encrypted local vault.
 > - Legal nuances (per-site ToS, jurisdiction) warrant deeper review before wider release.
 
 ## 1. Security Principles
@@ -63,7 +64,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
 | Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
-| CVV stored | The "last factor" protecting a stolen card number is lost. | Treat CVV as most sensitive: encrypted, never sent to the model, decrypted only at fill time and discarded, optional master-passphrase re-prompt for card use. |
+| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Visibility collection excludes CVV entirely: never collect, store, display, or reveal it. User-entered canonical CVV remains most-sensitive and is decrypted only at fill time. |
 | Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | Send structure only; fill values locally. Disable stateful features; prefer zero-retention / no-training provider options. |
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
 | Unintended payment obligation | Free trial silently becomes a paid subscription. | Payment-field stop; free-trial→subscription surfaced as high-risk; card filled only on approval. |
@@ -87,13 +88,15 @@ Stored locally, **encrypted** (see RFC-002 §4):
 - **per-site login ID and password**;
 - the AI provider API key;
 - user-defined custom fields;
-- per-site records (references + hashes, not duplicated raw values) and mandates;
+- per-site Disclosure records, including encrypted site-held values, normalized hashes,
+  references, and mandates;
 - local candidate definitions, because they reveal user activity and account-management
   intent even when they do not contain raw personal values.
 
 Never stored:
 
-- raw personal values in per-site records (use references + hashes for diffing);
+- site-collected full card PAN or CVV in Disclosure records; card numbers collected from
+  sites are reduced to the last 4 digits before storage, and CVV is excluded entirely;
 - raw personal values in local candidate definitions, official definitions, shared
   registry submissions, or AI prompts;
 - decrypted values in logs, error messages, or crash reports;

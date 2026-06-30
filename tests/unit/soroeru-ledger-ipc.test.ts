@@ -52,6 +52,14 @@ async function seedLedger(path: string): Promise<{ siteId: string; emailDisclosu
   const cvvDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "card.cvv", siteHeldValue: "CVV-CANARY-LEAK", sourceKind: "billing-page" });
   // unknown / hash-only: no raw value to reveal.
   const addressDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "address.full", normalizedValueHash: "deadbeef", sourceKind: "profile-text" });
+  domain.recordDynamicAttributeCandidate({
+    siteAccountId: site.id,
+    label: "職業",
+    fieldId: "occupation",
+    proposedAttributeKey: "custom.occupation",
+    matchTerms: ["職業"],
+  });
+  domain.addDisclosure({ siteAccountId: site.id, attributeKey: "custom.unknown.occupation", siteHeldValue: "会社員", sourceKind: "form-field" });
 
   domain.addAccountRelationship({ siteAccountId: site.id, kind: "newsletter", state: "active", detail: "newsletter wording" });
   domain.addConstraint({ siteAccountId: site.id, kind: "wall", detail: "MFA wall" });
@@ -109,8 +117,8 @@ test("the composed ledger summary and detail expose stale flags and masked previ
     const [summary] = session.ledgerSites();
     assert.ok(summary);
     assert.equal(summary.collected, true);
-    assert.equal(summary.disclosureCount, 4);
-    assert.deepEqual(summary.stale, { current: 1, stale: 1, unknown: 2 });
+    assert.equal(summary.disclosureCount, 5);
+    assert.deepEqual(summary.stale, { current: 1, stale: 1, unknown: 3 });
     assert.deepEqual(summary.relationshipKinds, ["newsletter"]);
     assert.equal(summary.constraintCount, 1);
 
@@ -126,6 +134,10 @@ test("the composed ledger summary and detail expose stale flags and masked previ
     const cvv = detail.disclosures.find((d) => d.attributeKey === "card.cvv");
     assert.equal(cvv?.sensitivity, "most-sensitive");
     assert.equal(cvv?.revealable, false);
+
+    const dynamic = detail.disclosures.find((d) => d.attributeKey === "custom.unknown.occupation");
+    assert.equal(dynamic?.label, "職業");
+    assert.equal(dynamic?.revealable, true);
 
     // No raw value may appear anywhere in the serialized detail view.
     const serialized = JSON.stringify(detail);

@@ -18,6 +18,7 @@ import {
   type Disclosure,
   type DisclosureSourceKind,
   type Evidence,
+  type LocalDefinition,
   type PersonalAttribute,
   type SiteAccount,
   type Sensitivity,
@@ -26,6 +27,7 @@ import {
 } from "./entities.js";
 import { isSensitiveAttributeKey, MOST_SENSITIVE_ATTRIBUTE_KEY } from "./entities.js";
 import type { VaultV2 } from "../store/vault-v2.js";
+import type { ProfileKey } from "../types.js";
 
 export interface SetPersonalAttributeInput {
   attributeKey: string;
@@ -61,6 +63,35 @@ export interface AddDisclosureInput {
   sourceKind: DisclosureSourceKind;
   confidence?: number;
   evidenceIds?: string[];
+}
+
+export interface DynamicAttributeCandidateView {
+  id: string;
+  status: LocalDefinition["status"];
+  label: string;
+  proposedAttributeKey: ProfileKey;
+  matchTerms: string[];
+  fieldId?: string;
+  sourcePageUrl?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RecordDynamicAttributeCandidateInput {
+  siteAccountId: string;
+  label: string;
+  fieldId: string;
+  sourcePageUrl?: string;
+  proposedAttributeKey: ProfileKey;
+  matchTerms?: string[];
+  now?: () => number;
+}
+
+export interface ConfirmDynamicAttributeCandidateInput {
+  label: string;
+  attributeKey: ProfileKey;
+  matchTerms: string[];
+  now?: () => number;
 }
 
 export class DomainService {
@@ -162,6 +193,7 @@ export class DomainService {
    * canonical attribute; both are recomputed whenever the attribute changes.
    */
   addDisclosure(input: AddDisclosureInput): Disclosure {
+    const storedSiteHeldValue = disclosureStoredValue(input.attributeKey, input.siteHeldValue);
     const disclosure: Disclosure = {
       id: randomUUID(),
       siteAccountId: input.siteAccountId,
@@ -172,11 +204,12 @@ export class DomainService {
       evidenceIds: input.evidenceIds ?? [],
       staleState: "unknown",
     };
-    if (input.siteHeldValue !== undefined) {
-      disclosure.siteHeldValue = input.siteHeldValue;
-      disclosure.normalizedValueHash = normalizedValueHash(input.attributeKey, input.siteHeldValue);
+    if (storedSiteHeldValue !== undefined) {
+      disclosure.siteHeldValue = storedSiteHeldValue;
+      disclosure.normalizedValueHash = normalizedValueHash(input.attributeKey, storedSiteHeldValue);
+    } else if (input.attributeKey !== MOST_SENSITIVE_ATTRIBUTE_KEY && input.normalizedValueHash !== undefined) {
+      disclosure.normalizedValueHash = input.normalizedValueHash;
     }
-    if (input.normalizedValueHash !== undefined) disclosure.normalizedValueHash = input.normalizedValueHash;
     if (input.sourcePageUrl !== undefined) disclosure.sourcePageUrl = input.sourcePageUrl;
     disclosure.staleState = this.deriveStaleState(disclosure);
     this.vault.put("disclosure", disclosure);
@@ -211,7 +244,9 @@ export class DomainService {
     if (!disclosure.normalizedValueHash) return "unknown";
     const canonical = this.getPersonalAttribute(disclosure.attributeKey);
     if (!canonical) return "unknown";
-    const canonicalHash = normalizedValueHash(canonical.attributeKey, canonical.value);
+    const canonicalValue = comparisonValue(canonical.attributeKey, canonical.value);
+    if (canonicalValue === undefined) return "unknown";
+    const canonicalHash = normalizedValueHash(canonical.attributeKey, canonicalValue);
     return disclosure.normalizedValueHash === canonicalHash ? "current" : "stale";
   }
 
@@ -290,6 +325,67 @@ export class DomainService {
 
   listEvidence(): Evidence[] {
     return this.vault.list("evidence");
+  }
+
+  // --- Dynamic attribute candidates (user-confirmed schema growth) ---
+
+  recordDynamicAttributeCandidate(input: RecordDynamicAttributeCandidateInput): DynamicAttributeCandidateView {
+    const now = input.now ?? Date.now;
+    const label = input.label.trim() || input.fieldId;
+    const matchTerms = uniqueTerms(input.matchTerms ?? [label]);
+    const id = dynamicAttributeDefinitionId(input.proposedAttributeKey);
+    const existing = this.vault.get("localDefinition", id);
+    const definition: LocalDefinition = {
+      id,
+      serviceName: label,
+      source: "observation",
+      status: existing?.status ?? "candidate",
+      data: {
+        kind: "dynamic-attribute",
+        label,
+        proposedAttributeKey: input.proposedAttributeKey,
+        matchTerms,
+        fieldId: input.fieldId,
+        siteAccountId: input.siteAccountId,
+        ...(input.sourcePageUrl !== undefined ? { sourcePageUrl: input.sourcePageUrl } : {}),
+      },
+      createdAt: existing?.createdAt ?? now(),
+      updatedAt: now(),
+    };
+    this.vault.put("localDefinition", definition);
+    return dynamicAttributeView(definition)!;
+  }
+
+  confirmDynamicAttributeCandidate(input: ConfirmDynamicAttributeCandidateInput): DynamicAttributeCandidateView {
+    const now = input.now ?? Date.now;
+    const label = input.label.trim() || input.attributeKey;
+    const matchTerms = uniqueTerms(input.matchTerms.length > 0 ? input.matchTerms : [label]);
+    const id = dynamicAttributeDefinitionId(input.attributeKey);
+    const existing = this.vault.get("localDefinition", id);
+    const definition: LocalDefinition = {
+      id,
+      serviceName: label,
+      source: "user",
+      status: "validated",
+      data: {
+        kind: "dynamic-attribute",
+        label,
+        proposedAttributeKey: input.attributeKey,
+        attributeKey: input.attributeKey,
+        matchTerms,
+      },
+      createdAt: existing?.createdAt ?? now(),
+      updatedAt: now(),
+    };
+    this.vault.put("localDefinition", definition);
+    return dynamicAttributeView(definition)!;
+  }
+
+  listDynamicAttributeCandidates(): DynamicAttributeCandidateView[] {
+    return this.vault
+      .list("localDefinition")
+      .map(dynamicAttributeView)
+      .filter((candidate): candidate is DynamicAttributeCandidateView => candidate !== undefined);
   }
 
   // --- Constraints (surfaced, never silently enforced) ---
@@ -382,4 +478,56 @@ export interface SaveCheckpointInput {
 
 function checkpointId(workflow: string, siteAccountId?: string): string {
   return siteAccountId ? `${workflow}:${siteAccountId}` : workflow;
+}
+
+function disclosureStoredValue(attributeKey: string, value: string | undefined): string | undefined {
+  if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return undefined;
+  if (value === undefined) return undefined;
+  return comparisonValue(attributeKey, value);
+}
+
+function comparisonValue(attributeKey: string, value: string): string | undefined {
+  if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return undefined;
+  if (attributeKey === "card.number") {
+    const digits = value.replace(/\D/g, "");
+    return digits.slice(-4);
+  }
+  return value;
+}
+
+function dynamicAttributeDefinitionId(attributeKey: string): string {
+  return `dynamic-attribute:${attributeKey}`;
+}
+
+function dynamicAttributeView(definition: LocalDefinition): DynamicAttributeCandidateView | undefined {
+  const data = definition.data;
+  if (data["kind"] !== "dynamic-attribute") return undefined;
+  const label = stringData(data["label"]);
+  const proposedAttributeKey = stringData(data["attributeKey"]) ?? stringData(data["proposedAttributeKey"]);
+  if (!label || !proposedAttributeKey || !proposedAttributeKey.startsWith("custom.")) return undefined;
+  const matchTerms = Array.isArray(data["matchTerms"])
+    ? data["matchTerms"].filter((term): term is string => typeof term === "string" && term.trim() !== "")
+    : [label];
+  const view: DynamicAttributeCandidateView = {
+    id: definition.id,
+    status: definition.status,
+    label,
+    proposedAttributeKey: proposedAttributeKey as ProfileKey,
+    matchTerms: uniqueTerms(matchTerms),
+    createdAt: definition.createdAt,
+    updatedAt: definition.updatedAt,
+  };
+  const fieldId = stringData(data["fieldId"]);
+  if (fieldId !== undefined) view.fieldId = fieldId;
+  const sourcePageUrl = stringData(data["sourcePageUrl"]);
+  if (sourcePageUrl !== undefined) view.sourcePageUrl = sourcePageUrl;
+  return view;
+}
+
+function stringData(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function uniqueTerms(terms: string[]): string[] {
+  return [...new Set(terms.map((term) => term.trim()).filter((term) => term !== ""))];
 }
