@@ -243,28 +243,33 @@ frequency are clear.
 ## 11. Issue Labels and Priority
 
 Labels exist so the Product Owner and AI agents can scan the backlog and quickly
-judge **what kind** of Issue it is, **how risky** it is, and **when** to do it —
-and so the Issue Implementation Loop (§2) can be handed a sensible order. Keep the
-scheme small: more axes mean more authoring cost per Issue. Soroeru uses **two
-axes only** — *type* and *priority* — plus the existing standard labels.
+judge **what kind** of Issue it is, **how risky** it is (via the `security` label,
+see 11.3), and **when** to do it — and so the Issue Implementation Loop can be
+handed a sensible order. Keep the scheme small: more axes mean more authoring cost
+per Issue. Soroeru uses **two axes only** — *type* and *priority* — plus a few
+stackable modifier labels and the existing GitHub standard labels.
 
 ### 11.1 Type (what kind of Issue) — reuse existing labels
 
 Apply **exactly one** type label to every Issue. No new type labels are
 introduced.
 
-| Label             | Use for                                                              |
-| ----------------- | ------------------------------------------------------------------- |
-| `enhancement`     | New feature or request (default for slice work)                     |
-| `bug`             | Defect in existing behavior                                         |
-| `documentation`   | Docs-only changes                                                   |
-| `security`        | Security / privacy work — **also the high-risk marker** (see 11.3)  |
-| `discussion`      | Direction must be decided through dialogue before implementation    |
-| `acceptance-test` | Surfaced during Product Owner acceptance testing                    |
+| Label           | Use for                                          |
+| --------------- | ------------------------------------------------ |
+| `enhancement`   | New feature or request (default for slice work)  |
+| `bug`           | Defect in existing behavior                      |
+| `documentation` | Docs-only changes                                |
+
+**Modifier labels (stack freely on top of the one type label):**
+
+| Label             | Use for                                                            |
+| ----------------- | ----------------------------------------------------------------- |
+| `security`        | Security / privacy work — **also the high-risk marker** (see 11.3) |
+| `discussion`      | Direction must be decided through dialogue before implementation  |
+| `acceptance-test` | Surfaced during Product Owner acceptance testing                  |
 
 GitHub standard labels (`question`, `duplicate`, `invalid`, `wontfix`,
-`help wanted`, `good first issue`) keep their conventional meaning. `security`,
-`discussion`, and `acceptance-test` combine freely on top of a type label.
+`help wanted`, `good first issue`) keep their conventional meaning.
 
 ### 11.2 Priority (when to do it) — `priority:*`
 
@@ -281,7 +286,7 @@ ordering only*, not how carefully the work must be handled (see 11.3).
 
 We use `priority:P0..P3` rather than `level:L0..L3` deliberately: Soroeru's
 product model already uses **L0/L1/L2** for the Delegation Boundary
-(`docs/requirements.md`), and reusing `L*` for Issue urgency would conflate the
+([`requirements.md`](requirements.md)), and reusing `L*` for Issue urgency would conflate the
 two. Slice order (A Visibility → B Bulk Update → C Withdrawal → D Registration)
 informs priority but does not replace it; the final ordering is the Product
 Owner's call.
