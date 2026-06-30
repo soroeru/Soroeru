@@ -82,6 +82,16 @@ central aggregation (consistent with local-first / no hosted vault / no telemetr
   meaning naturally and chooses it deliberately.
 - **Local-first and user-owned.** Personal data is stored locally and encrypted; the user
   owns it. No hosted vault, no telemetry.
+- **Restore sovereignty, don't break in.** What Soroeru sets out to break is the asymmetry
+  that keeps personal data out of the user's reach — enclosing ToS, dark patterns, and the
+  friction of cancellation / deletion / cross-site reconciliation. It does this from **inside
+  the user's own authenticated sessions, on the user's own accounts**. The boundary is **not**
+  "the ToS forbids automation" (that prohibition is precisely the gray Soroeru contests on the
+  user's behalf, surfaced as a Constraint for the user to decide); the inviolable line is the
+  **circumvention of actively-enforced technical access controls** (CAPTCHA / MFA / bot
+  detection) — the criminal line under unauthorized-access law (Japan 不正アクセス禁止法 /
+  US CFAA). Soroeru never crosses it: it detects and hands off. *We don't break locks; we help
+  you walk out with your own things.*
 
 ## 3. Success Metrics
 
@@ -158,7 +168,10 @@ governance.** Only *toil* (execution) is delegated; *judgment* is not.
      data sharing/sale, content licenses, …);
   2. payment (stop / hand off; the only exception is free-trial→subscription, card filled
      only on explicit approval);
-  3. eligibility / identity attestation (never auto-checked);
+  3. eligibility / identity attestation — statements of *eligibility or identity* ("I am
+     18+", residency, "I am authorized") are never auto-checked; a statement of the user's own
+     *intent to act* (e.g. "I want to cancel"), already approved at the gate, may be
+     auto-checked;
   4. **deletion of data stored inside Soroeru** (an irreversible destruction of the user's
      own source of truth).
 - **Explicitly *not* absolute boundaries**: withdrawing from a site (may execute
@@ -245,6 +258,22 @@ registration (last).**
   - A **detected automation-prohibiting ToS clause** is **not silently hard-blocked**; it is
     surfaced as a Constraint / high-risk item for **the user to decide** (the agency
     principle: inform; the user decides; never bypass active enforcement).
+  - **The boundary line is access control, not the ToS.** A ToS prohibition on automation is
+    a civil matter between the user (a party to that contract) and the site; it is the gray
+    Soroeru contests *on the user's behalf*. The inviolable line is the **circumvention of
+    actively-enforced technical access controls** (CAPTCHA / MFA / bot detection / rate
+    limits) — the criminal line under unauthorized-access law. Logging into the user's own
+    account with the user's own credentials is **not** unauthorized access, even when
+    automated and even when a ToS forbids bots.
+  - **Legitimacy preconditions for contesting ToS-gray.** Any action that proceeds against an
+    automation-prohibiting clause is gated on four hard preconditions: (1) the user's explicit,
+    per-operation-type consent (tied to the Delegation Boundary L0/L1); (2) the user's own
+    credentials acting on the user's own account; (3) an assessment of reversibility
+    (irreversible final actions — a site withdrawal's last step, deletion of Soroeru-internal
+    data — stay gated); and (4) a transparent **Evidence** record. Evidence is a **hard
+    precondition**: an action that cannot be recorded does not fire. The record is both the
+    user's transparency and Soroeru's legitimacy — every action was the user, on the user's own
+    account, recorded and (where possible) reversible.
   - Bulk collection of *others'* data and circumventing access controls are out of scope.
   - Legal nuances are reviewed separately in [`security.md`](security.md).
 
