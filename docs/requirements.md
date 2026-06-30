@@ -170,6 +170,13 @@ is verified real data rather than free-form text. Full requirement and rationale
   accounts fall (the second sense of "揃える") — is **deferred**: delivering a verification the
   site can check requires a verifiable credential plus site adoption, which conflicts with the
   no-hosted-service / local-first principles. Recorded as future direction, not built in the MVP.
+- **Authentication mechanism and connection architecture.** Verification uses the Digital
+  Agency's **デジタル認証アプリ** (認証 API only; card read on the user's smartphone, QR
+  cross-device from desktop; basic-4 via UserInfo + scope; `sub` = PPID). Because the
+  integration effectively requires a server-side BFF, Soroeru runs a **minimal, OSS,
+  zero-retention identity-auth broker** (decision "A", Issue #218) — a narrowly-scoped exception
+  to the no-backend principle, limited to identity authentication. The local encrypted vault
+  stays local ("No hosted vault" is unchanged).
 - **My Number / JPKI handling, assurance level, and legal constraints**: see
   [`security.md`](security.md) §14.
 
@@ -286,21 +293,28 @@ registration (last).**
   - Bulk collection of *others'* data and circumventing access controls are out of scope.
   - Legal nuances are reviewed separately in [`security.md`](security.md).
 - **Identity verification (My Number / JPKI)** — see §4.2 and [`security.md`](security.md) §14:
-  - The **12-digit My Number is never stored**; store only the basic-4 attributes from the
-    signing certificate (which does not contain the number) plus verification Evidence (cert
-    serial/hash, issuer, timestamp). The **card PIN is never stored or logged**.
+  - Verification uses the Digital Agency's **デジタル認証アプリ** (認証 API only). The card is
+    read on the user's smartphone; the desktop links via QR (cross-device). Basic-4 attributes
+    come via the UserInfo endpoint + scope; the ID token carries `sub` = a PPID.
+  - The **12-digit My Number is never stored** (the auth flow does not expose it); store only
+    the basic-4 attributes, the PPID, and verification Evidence (Digital Agency reference +
+    timestamp). The **card PIN is entered in the Digital Agency app and never seen by Soroeru**.
   - Basic-4 attributes are non-editable; phone / email require OTP ownership verification (≤3
     each); removing a verified contact is the fourth absolute boundary.
-  - Assurance is local certificate-signature validation; revocation-checked official
-    verification (署名検証者 status) and an NFC card reader are out of MVP scope and recorded as
-    constraints.
+  - Verification is **mediated by the Digital Agency's 公的個人認証 service** (no 署名検証者
+    status, no desktop NFC reader). Integration effectively requires a server-side BFF, so
+    Soroeru runs a **minimal, OSS, zero-retention identity-auth broker** (decision "A",
+    Issue #218) — a narrowly-scoped exception to the no-backend principle, limited to identity
+    authentication; the local encrypted vault stays local.
 
 ## 9. Out of Scope
 
 - L2 full automation (MVP); multi-locale; checkout / purchase / payment (except the approved
   free-trial→subscription card case); **bypassing** CAPTCHA / MFA / bot detection / rate
   limits / paywalls / access controls; collecting other people's data; hosted vaults,
-  backend API servers, telemetry, analytics, crash reporting; mobile apps and non-macOS
+  backend API servers (**exception**: a minimal, OSS, zero-retention identity-auth BFF for
+  デジタル認証アプリ verification only — §4.2 / [`security.md`](security.md) §14), telemetry,
+  analytics, crash reporting; mobile apps and non-macOS
   platforms (for now); **site-side verifiable-credential (VC) issuance and any
   trust-registry / relying-party integration for "Soroeru-verified" sign-up (future
   direction, Issue #218); identity onboarding for users without a My Number Card or outside
@@ -326,11 +340,12 @@ Tier reflects the slice order (A first). Status is `Planned` pending the archite
 | REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
 | REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only, structure-only disclosure. | A–D | Must |
 | REQ-014 | Treat a detected automation-prohibiting ToS clause as a surfaced Constraint for the user to decide; never silently block, never bypass active controls. | A | Must |
-| REQ-015 | Require My Number Card (JPKI) verification at first launch before any use; take basic-4 attributes (name, residence address, DOB, sex) from the card only, non-editable; update address only by re-reading an updated card. | A | Must |
-| REQ-016 | Never store the 12-digit My Number or the card PIN; store only basic-4 attributes plus verification Evidence (cert serial/hash, issuer, timestamp). | A | Must |
+| REQ-015 | Require My Number Card verification at first launch — via the Digital Agency デジタル認証アプリ (認証 API; smartphone card read, QR cross-device from desktop) — before any use; take basic-4 attributes (name, residence address, DOB, sex) from the authentication result only, non-editable; update address only by re-reading an updated card. | A | Must |
+| REQ-016 | Never store the 12-digit My Number or the card PIN (the PIN is entered in the Digital Agency app, never seen by Soroeru); store only basic-4 attributes, the PPID, and verification Evidence (Digital Agency reference + timestamp). | A | Must |
 | REQ-017 | Allow derived name fields (kana, romaji) as editable-but-unverified, consistency-checked against the verified legal name. | A | Must |
 | REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
 | REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | A | Won't (MVP) |
+| REQ-020 | Run the デジタル認証アプリ integration through a minimal, OSS, zero-retention identity-auth BFF: registered relying party (client ID, redirect / back-channel logout URIs, private_key_jwt), egress to the Digital Agency only, basic-4 forwarded encrypted to the user's device and never persisted server-side. Narrowly-scoped exception to the no-backend principle, identity layer only. | A | Must |
 
 ## 11. Glossary
 
