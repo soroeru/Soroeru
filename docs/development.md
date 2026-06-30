@@ -203,7 +203,7 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
-├── skills/            # repo-local agent skills (issue-implementation-loop + writing-good-tests); .claude/skills/ symlinks these for Claude Code
+├── skills/            # repo-local agent skills (issue-implementation-loop + writing-good-tests)
 ├── scripts/
 │   ├── rename-dmg.mjs
 │   └── setup-hooks.sh
