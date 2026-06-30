@@ -10,9 +10,9 @@ is the source of truth for *how* to write a test.
 > target architecture is [`rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md).
 > The capability slices ship in order **A Visibility → B Bulk Update → C Withdrawal → D
 > Registration**, so test investment follows that order: the Visibility layers
-> (`src/store/vault-v2.ts`, `src/domain/*`, `src/automation/*`, the IPC permission boundary)
-> are the active risk surface, while the registration-first PoC layers (`src/agent/*`,
-> `src/app/*`, the `run/measure.ts` E2E matrix) remain in the tree and under test for the
+> (`store/vault-v2.ts`, `domain/*`, `automation/*`, the IPC permission boundary)
+> are the active risk surface, while the registration-first PoC layers (`agent/*`,
+> `app/*`, the `run/measure.ts` E2E matrix) remain in the tree and under test for the
 > later slices. This document describes the suite that **actually runs today** under
 > `npm test` and CI (§7); it is the current checklist, not a historical reference. As the
 > codebase migrates onto the RFC-002 Electron/React stack, update this strategy in lockstep.
@@ -24,7 +24,11 @@ Out of scope here: the browser-based manual checklist itself (see
 ## 1. Test Strategy
 
 Tests exist to give confidence that the **risk-carrying behavior** works and that the
-**security non-negotiables hold** — not to maximize a coverage number. Concentrate effort on:
+**security non-negotiables hold** — not to maximize a coverage number.
+
+Module paths below are relative to `src/` unless prefixed `electron/`, which is the
+top-level trusted main-process layer (IPC, session, the main-side visibility service).
+Concentrate effort on:
 
 - the encrypted vault, key derivation, recovery key, and migration (`store/vault-v2.ts`,
   `store/crypto.ts`, `store/recovery.ts`);
@@ -41,7 +45,7 @@ Tests exist to give confidence that the **risk-carrying behavior** works and tha
 - CSV import safety and per-site records / mandates (`domain/csv-import.ts`,
   `agent/chrome-csv-importer.ts`, `agent/records.ts`);
 - the network-egress and local-persistence boundaries and the anti-bypass denylist
-  (PRIV-001/002, SEC-002 — `src/dev/{egress,privacy,bypass}-check.ts`).
+  (PRIV-001/002, SEC-002 — `dev/{egress,privacy,bypass}-check.ts`).
 
 Use **unit/integration tests** (§2.1) for deterministic logic, the trusted layer, and the
 IPC boundary; the **Playwright E2E matrix** (§8) for end-to-end registration / bulk-update
@@ -115,7 +119,7 @@ surface; **B/C/D** layers are present for the later slices.
 
 | Layer / seam | Slice | Modules | Tests |
 | --- | --- | --- | --- |
-| VaultService (crypto boundary) | A | `store/vault-v2.ts`, `store/crypto.ts`, `store/store.ts`, `store/recovery.ts` | `soroeru-vault-v2`, `soroeru-poc-crypto`, `soroeru-poc-recovery`, `soroeru-poc-candidates` (encrypted per-vault candidates) |
+| VaultService (crypto boundary) | A | `store/vault-v2.ts`, `store/crypto.ts`, `store/recovery.ts`, `store/store.ts` (v1/legacy store, still in-tree) | `soroeru-vault-v2`, `soroeru-poc-crypto`, `soroeru-poc-recovery`, `soroeru-poc-candidates` (encrypted per-vault candidates) |
 | DomainService (trusted layer: ledger, mandates, policy) | A | `domain/domain-service.ts`, `domain/entities.ts`, `domain/normalize.ts`, `domain/ledger-insights.ts`, `domain/insights-types.ts` | `soroeru-domain-service`, `soroeru-ledger-insights`, `soroeru-visibility-service`, `soroeru-visibility-runner` |
 | IPC permission boundary (renderer ⇄ main) | A | `electron/ipc/*`, domain-service allowlist | `soroeru-ipc-permission`, `soroeru-ledger-ipc` |
 | AutomationService (collect / login / saved-page / walls) | A | `automation/disclosure-collector.ts`, `automation/page-driver.ts`, `automation/saved-page-importer.ts`, `automation/visibility-runner.ts`, `automation/wall-detection.ts`, `agent/scan.ts` | `soroeru-disclosure-collector`, `soroeru-saved-page-importer`, `soroeru-saved-page-guide-fixture`, `soroeru-scan-display-values` |
@@ -132,7 +136,7 @@ surface; **B/C/D** layers are present for the later slices.
 | UI — local web app | all | `app/web-ui.ts` | `soroeru-poc-web-ui`, `soroeru-poc-add-site` |
 | UI — legacy terminal fallback | — | `app/ui.ts` | `soroeru-poc-ui` |
 | Diagnostics / support bundle | all | `app/diagnostics.ts` | `soroeru-poc-diagnostics` |
-| Dev checks (PRIV-001/002, SEC-002) | all | `src/dev/{egress,privacy,bypass}-check.ts` | `soroeru-poc-egress`, `soroeru-poc-privacy`, `soroeru-poc-bypass` |
+| Dev checks (PRIV-001/002, SEC-002) | all | `dev/{egress,privacy,bypass}-check.ts` | `soroeru-poc-egress`, `soroeru-poc-privacy`, `soroeru-poc-bypass` |
 | Measurement / CI gate (E2E) | B/D | `run/measure.ts` | `soroeru-poc-measure` |
 
 Shared test helpers live in `tests/unit/helpers/` (e.g. `web-ui-client.ts` for the in-process
@@ -272,7 +276,7 @@ performance baselines are tracked separately under PERF-001 / #18).
 ## 9. Phase-Timing Measurement (PERF-001 / #18)
 
 Every `runRegistration` / `runUpdate` call reports per-phase elapsed time via
-`AgentDeps.onPhase`, defined in `src/agent/perf.ts`:
+`AgentDeps.onPhase`, defined in `agent/perf.ts`:
 
 | Phase | Covers |
 | --- | --- |
