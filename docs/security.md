@@ -260,6 +260,19 @@ reviewed against this section before it is annotated.
 
 The agent may **detect** a wall and hand off; it must never complete or circumvent it.
 
+**The boundary line is access control, not the ToS.** A ToS clause that prohibits or
+discourages automation is a *civil* matter between the user (a party to that contract) and the
+site; it is surfaced as a Constraint for the user to decide (see
+[`requirements.md`](requirements.md) REQ-014), and acting on it on the user's behalf, inside the
+user's own authenticated session, is within scope. What is **never** crossed is the
+**circumvention of an actively-enforced technical access control** — CAPTCHA, MFA, bot
+detection, rate limits, paywalls — which is the criminal line under unauthorized-access law
+(Japan 不正アクセス禁止法 / US CFAA). Logging into the user's own account with the user's own
+credentials is not unauthorized access even when automated and even when a ToS forbids bots;
+solving or evading a control that actively blocks automation is. This distinction is what lets
+Soroeru contest ToS-gray confidently while keeping the inviolable line principled rather than
+timid.
+
 Do not implement:
 
 - CAPTCHA solving, bypass, hiding, outsourcing, or token reuse;
@@ -300,7 +313,9 @@ regardless of which wall kind `detectWall` reports:
 - Submit only after the user approves the post-analysis review-and-confirm gate.
 - Apply the three guards: high-risk clause escalation; payment-field stop (except
   free-trial→subscription approved by the user); no auto-attestation of eligibility /
-  identity statements.
+  identity statements ("I am 18+", residency, "I am authorized"). A statement of the user's own
+  *intent to act* (e.g. "I want to cancel"), already approved at the gate, may be auto-checked —
+  the guard targets eligibility / identity claims, not the user's own decision.
 - Record a per-registration mandate (references, hashes, terms URL / version) for audit.
 - Withdrawal and account-deletion flows require the same gate discipline. Irreversible
   withdrawal confirmation, eligibility/identity attestation, and any final action blocked
