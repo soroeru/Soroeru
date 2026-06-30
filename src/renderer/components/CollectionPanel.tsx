@@ -111,16 +111,25 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
 
   const resume = useCallback(() => void window.soroeru.visibility.resume(), []);
   const abort = useCallback(() => void window.soroeru.visibility.abort(), []);
+  const waitForVisibilityIdle = useCallback(async () => {
+    for (let i = 0; i < 20; i++) {
+      const status = await window.soroeru.visibility.status();
+      if (!status.running) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }, []);
   const showGuide = useCallback(async (siteAccountId: string) => {
     await window.soroeru.visibility.abort();
+    await waitForVisibilityIdle();
     setRunningSiteId(undefined);
     setHandoff(undefined);
     setGuideSiteId(siteAccountId);
     setSavedPageSiteId(siteAccountId);
-  }, []);
+  }, [waitForVisibilityIdle]);
   const markManual = useCallback(
     async (siteAccountId: string) => {
-      void window.soroeru.visibility.abort();
+      await window.soroeru.visibility.abort();
+      await waitForVisibilityIdle();
       const result = await window.soroeru.savedPage.markManualCheck(siteAccountId);
       if (!result.ok) {
         setLoadError(reasonMessage(result.error));
@@ -131,7 +140,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
       await loadSites();
       onCollected();
     },
-    [loadSites, onCollected],
+    [loadSites, onCollected, waitForVisibilityIdle],
   );
   const openSite = useCallback(async (siteAccountId: string) => {
     const result = await window.soroeru.savedPage.openSite(siteAccountId);

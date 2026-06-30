@@ -327,6 +327,7 @@ export class SoroeruSession {
 
   async markSavedPageManualCheck(siteAccountId: string): Promise<{ ok: boolean; error?: string }> {
     if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    if (this.collectionRunning) return { ok: false, error: "busy" };
     const siteAccount = this.domain.getSiteAccount(siteAccountId);
     if (!siteAccount) return { ok: false, error: "not-found" };
     try {

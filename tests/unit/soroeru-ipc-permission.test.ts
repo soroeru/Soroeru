@@ -392,6 +392,54 @@ test("saved page fallback refuses to open non-web URLs in the default browser", 
   }
 });
 
+test("saved page fallback manual-check is rejected while a visibility run is in progress", async () => {
+  const { dir, path } = await tmpVaultPath();
+  let releaseRun: (() => void) | undefined;
+  try {
+    const runBlocker = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const session = new SoroeruSession(path, {
+      openSession: async () => {
+        await runBlocker;
+        throw new Error("stop run");
+      },
+    });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,secret,",
+    ].join("\n");
+    const importResult = (await bridge[IPC_CHANNELS.csvImport](csv)) as {
+      ok: boolean;
+      summary?: { siteAccountIds: string[] };
+    };
+    assert.equal(importResult.ok, true);
+    const siteAccountId = importResult.summary?.siteAccountIds[0];
+    if (!siteAccountId) throw new Error("expected site account id");
+
+    const runPromise = bridge[IPC_CHANNELS.visibilityRun](siteAccountId);
+    await waitFor(async () => {
+      const status = (await bridge[IPC_CHANNELS.visibilityStatus]()) as { running: boolean };
+      return status.running;
+    });
+
+    const result = (await bridge[IPC_CHANNELS.savedPageMarkManual](siteAccountId)) as {
+      ok: boolean;
+      error?: string;
+    };
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "busy");
+
+    releaseRun?.();
+    await runPromise;
+  } finally {
+    releaseRun?.();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("saved page fallback skip records a manual-check constraint without marking the site collected", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
