@@ -129,7 +129,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
   );
 }
 
-function SiteDetail({
+export function SiteDetail({
   detail,
   onClose,
 }: {
