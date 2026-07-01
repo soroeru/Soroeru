@@ -181,6 +181,42 @@ test("disclosure collector derives the dynamic-attribute key from the label, not
   }
 });
 
+test("disclosure collector keeps distinct labels that share an ASCII gloss as separate candidates", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
+  try {
+    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({
+      domain: "profile.example.test",
+      url: "https://profile.example.test/account",
+      displayName: "Profile",
+    });
+
+    // Two genuinely different, unclassifiable fields that happen to share an
+    // English gloss in parentheses must not collapse onto the same key just
+    // because stripping non-ASCII characters would leave the same "info"
+    // substring for both.
+    const fields = [
+      field("occupation", { required: true, labels: ["職業 (Info)"] }),
+      field("hobby", { required: true, labels: ["趣味 (Info)"] }),
+    ];
+    collectDisclosures({
+      domain,
+      siteAccount: site,
+      snapshot: snapshot(fields),
+      fields,
+      values: { occupation: "会社員", hobby: "読書" },
+      now: () => 1_700_000_000_000,
+    });
+
+    const candidates = domain.listDynamicAttributeCandidates();
+    assert.equal(candidates.length, 2);
+    assert.notEqual(candidates[0]?.proposedAttributeKey, candidates[1]?.proposedAttributeKey);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("disclosure collector reuses confirmed dynamic attributes on later collections", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {

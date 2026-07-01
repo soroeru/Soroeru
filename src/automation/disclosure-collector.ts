@@ -131,15 +131,21 @@ function labelForField(field: FormField): string {
  * time instead of accumulating observations on one candidate (review #228).
  * The label is what a human (and the confirm UI) actually identifies the
  * field by, so it is the stable identity here.
+ *
+ * The hash always covers the *entire* trimmed label, never only its ASCII
+ * portion: two labels that differ only in non-ASCII characters (e.g. a
+ * bilingual gloss "住所 (Address)" vs. "勤務先 (Address)") must not collapse
+ * onto the same key just because they share an English word (review #228
+ * follow-up). The ASCII portion is prepended only for human readability.
  */
 function slugForField(label: string): string {
-  const asciiSlug = label
-    .trim()
+  const trimmed = label.trim();
+  const asciiPrefix = trimmed
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
-  if (/[a-z]/.test(asciiSlug)) return asciiSlug;
-  return `field_${stableHash(label)}`;
+  const hash = stableHash(trimmed);
+  return /[a-z]/.test(asciiPrefix) ? `${asciiPrefix}_${hash}` : `field_${hash}`;
 }
 
 /** Deterministic djb2 hash, base36-encoded, for labels with no ASCII letters. */
