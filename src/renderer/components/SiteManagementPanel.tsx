@@ -5,8 +5,13 @@ import type {
   VisibilityEvent,
 } from "../../../electron/ipc/contract.js";
 import { collectVisibleSelectedSiteIds, runVisibilityBatch, type BatchResultEntry } from "../site-management-batch.js";
+import {
+  buildCollectionResultModalContent,
+  type CollectionResultModalContent,
+} from "../collection-result-summary.js";
 import { reasonMessage, relationshipLabel } from "../messages.js";
 import { CsvImportPanel } from "./CsvImportPanel.js";
+import { Modal } from "./Modal.js";
 import { SavedPageImportPanel } from "./SavedPageImportPanel.js";
 import { SiteDetail } from "./LedgerPanel.js";
 
@@ -59,13 +64,19 @@ export function SiteManagementPanel({
   const [detail, setDetail] = useState<SiteLedgerDetail | undefined>();
   const [detailError, setDetailError] = useState<string | undefined>();
   const [batch, setBatch] = useState<BatchProgress>(emptyProgress);
+  const [resultModal, setResultModal] = useState<CollectionResultModalContent | undefined>();
   const resumedHandoffSites = useRef<Set<string>>(new Set());
   const cancelBatchRef = useRef(false);
   const onCollectedRef = useRef(onCollected);
+  const sitesRef = useRef(sites);
 
   useEffect(() => {
     onCollectedRef.current = onCollected;
   }, [onCollected]);
+
+  useEffect(() => {
+    sitesRef.current = sites;
+  }, [sites]);
 
   const loadSites = useCallback(async () => {
     try {
@@ -142,33 +153,43 @@ export function SiteManagementPanel({
     [loadSites],
   );
 
-  const startBatch = useCallback(async () => {
-    if (selectedVisibleIds.length === 0 || batchBusy) return;
-    const queue = [...selectedVisibleIds];
-    cancelBatchRef.current = false;
-    setLoadError(undefined);
-    setBatch({ phase: "running", queue, currentSiteId: queue[0], completed: 0, results: [] });
-    try {
-      const summary = await runVisibilityBatch(queue, {
-        run: async (siteAccountId) => {
-          setBatch((current) => ({ ...current, phase: "running", currentSiteId: siteAccountId }));
-          return window.soroeru.visibility.run(siteAccountId);
-        },
-        refreshAfterSite,
-        isCanceled: () => cancelBatchRef.current,
-      });
-      setBatch((current) => ({
-        ...current,
-        phase: summary.canceled ? "idle" : "done",
-        currentSiteId: undefined,
-        completed: summary.completed,
-        results: summary.results,
-      }));
-    } catch {
-      setLoadError(reasonMessage(undefined));
-      setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
-    }
-  }, [batchBusy, refreshAfterSite, selectedVisibleIds]);
+  const startBatch = useCallback(
+    async (overrideIds?: string[]) => {
+      const queue = overrideIds ?? [...selectedVisibleIds];
+      if (queue.length === 0 || batchBusy) return;
+      cancelBatchRef.current = false;
+      setLoadError(undefined);
+      setResultModal(undefined);
+      setBatch({ phase: "running", queue, currentSiteId: queue[0], completed: 0, results: [] });
+      try {
+        const summary = await runVisibilityBatch(queue, {
+          run: async (siteAccountId) => {
+            setBatch((current) => ({ ...current, phase: "running", currentSiteId: siteAccountId }));
+            return window.soroeru.visibility.run(siteAccountId);
+          },
+          refreshAfterSite,
+          isCanceled: () => cancelBatchRef.current,
+        });
+        setBatch((current) => ({
+          ...current,
+          phase: summary.canceled ? "idle" : "done",
+          currentSiteId: undefined,
+          completed: summary.completed,
+          results: summary.results,
+        }));
+        if (!summary.canceled) {
+          const content = buildCollectionResultModalContent(summary.results, (siteAccountId) =>
+            sitesRef.current.find((site) => site.siteAccountId === siteAccountId)?.displayName ?? siteAccountId,
+          );
+          if (content) setResultModal(content);
+        }
+      } catch {
+        setLoadError(reasonMessage(undefined));
+        setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
+      }
+    },
+    [batchBusy, refreshAfterSite, selectedVisibleIds],
+  );
 
   const cancelBatch = useCallback(() => {
     cancelBatchRef.current = true;
@@ -227,6 +248,17 @@ export function SiteManagementPanel({
     }
     setDetailError(undefined);
     setDetail(result);
+  }, []);
+  const retrySite = useCallback(
+    (siteAccountId: string) => {
+      setResultModal(undefined);
+      void startBatch([siteAccountId]);
+    },
+    [startBatch],
+  );
+  const importSavedPageFor = useCallback((siteAccountId: string) => {
+    setResultModal(undefined);
+    setSavedPageSiteId(siteAccountId);
   }, []);
 
   const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
@@ -323,6 +355,15 @@ export function SiteManagementPanel({
           </ul>
         )}
       </div>
+
+      {resultModal && (
+        <CollectionResultModal
+          content={resultModal}
+          onClose={() => setResultModal(undefined)}
+          onRetry={retrySite}
+          onImportSavedPage={importSavedPageFor}
+        />
+      )}
     </section>
   );
 }
@@ -384,6 +425,56 @@ function BatchCollectionBar({
           : ""}
       </p>
     </div>
+  );
+}
+
+function CollectionResultModal({
+  content,
+  onClose,
+  onRetry,
+  onImportSavedPage,
+}: {
+  content: CollectionResultModalContent;
+  onClose: () => void;
+  onRetry: (siteAccountId: string) => void;
+  onImportSavedPage: (siteAccountId: string) => void;
+}): React.JSX.Element {
+  return (
+    <Modal title={content.title} onClose={onClose}>
+      <ul className="flex flex-col gap-3">
+        {content.failures.map((failure) => (
+          <li key={failure.siteAccountId} className="flex flex-col gap-1 rounded border border-neutral-200 p-2">
+            <span className="font-medium">{failure.siteName}</span>
+            <span className="text-sm text-neutral-700">{failure.reason}</span>
+            {(failure.canRetry || failure.canImportSavedPage) && (
+              <span className="mt-1 flex flex-wrap gap-2">
+                {failure.canRetry && (
+                  <button type="button" onClick={() => onRetry(failure.siteAccountId)} className="text-sm underline">
+                    再収集
+                  </button>
+                )}
+                {failure.canImportSavedPage && (
+                  <button
+                    type="button"
+                    onClick={() => onImportSavedPage(failure.siteAccountId)}
+                    className="text-sm underline"
+                  >
+                    保存ページを取り込む
+                  </button>
+                )}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        onClick={onClose}
+        className="self-end rounded border border-neutral-300 px-3 py-1.5 text-sm"
+      >
+        閉じる
+      </button>
+    </Modal>
   );
 }
 
