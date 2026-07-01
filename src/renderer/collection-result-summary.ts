@@ -14,8 +14,10 @@ export interface CollectionFailureEntry {
   siteName: string;
   status: VisibilityRunStatus;
   reason: string;
-  /** Whether retry / saved-page-import actions make sense for this status. */
-  actionable: boolean;
+  /** Whether retrying the collection makes sense for this status. */
+  canRetry: boolean;
+  /** Whether offering the saved-page import fallback makes sense for this status. */
+  canImportSavedPage: boolean;
 }
 
 export interface CollectionResultModalContent {
@@ -25,10 +27,16 @@ export interface CollectionResultModalContent {
 }
 
 /** "skipped" means the credential is not a website account (e.g. an app entry
- * imported from the password manager), so neither retrying the collection nor
- * importing a saved page applies. */
-function isActionable(status: VisibilityRunStatus): boolean {
+ * imported from the password manager), so no action applies. "locked" / "busy"
+ * are local/environmental blockers — the run never reached the site itself, so
+ * retrying may help once the blocker clears, but suggesting a saved-page import
+ * would wrongly imply the site was unreachable. */
+function canRetry(status: VisibilityRunStatus): boolean {
   return status !== "skipped";
+}
+
+function canImportSavedPage(status: VisibilityRunStatus): boolean {
+  return status !== "skipped" && status !== "locked" && status !== "busy";
 }
 
 /**
@@ -47,7 +55,8 @@ export function buildCollectionResultModalContent(
       siteName: siteNameOf(entry.siteAccountId),
       status: entry.status,
       reason: visibilityStatusLabel(entry.status),
-      actionable: isActionable(entry.status),
+      canRetry: canRetry(entry.status),
+      canImportSavedPage: canImportSavedPage(entry.status),
     }));
 
   if (failures.length === 0) return undefined;

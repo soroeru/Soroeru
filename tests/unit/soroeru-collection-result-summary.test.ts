@@ -19,7 +19,7 @@ test("buildCollectionResultModalContent returns undefined when every site collec
   assert.equal(content, undefined);
 });
 
-test("buildCollectionResultModalContent treats a terminal handoff (abandoned at a wall) as a failure", () => {
+test("buildCollectionResultModalContent treats a terminal handoff (abandoned at a wall) as a retryable failure", () => {
   // runVisibilityBatch only records a result once a site's run has resolved, so a
   // "handoff" status here always means the user skipped/abandoned the wall, not
   // that it is still paused (that state never reaches `results`).
@@ -28,14 +28,39 @@ test("buildCollectionResultModalContent treats a terminal handoff (abandoned at 
   assert.ok(content);
   assert.equal(content.failures.length, 1);
   assert.equal(content.failures[0]?.status, "handoff");
-  assert.equal(content.failures[0]?.actionable, true);
+  assert.equal(content.failures[0]?.canRetry, true);
+  assert.equal(content.failures[0]?.canImportSavedPage, true);
 });
 
-test("buildCollectionResultModalContent marks a skipped non-website credential as not actionable", () => {
-  const content = buildCollectionResultModalContent([{ siteAccountId: "authenticator-app", status: "skipped" }], nameOf);
+test("buildCollectionResultModalContent offers no actions for a skipped non-website credential", () => {
+  const content = buildCollectionResultModalContent(
+    [{ siteAccountId: "authenticator-app", status: "skipped" }],
+    nameOf,
+  );
 
   assert.ok(content);
-  assert.equal(content.failures[0]?.actionable, false);
+  assert.equal(content.failures[0]?.canRetry, false);
+  assert.equal(content.failures[0]?.canImportSavedPage, false);
+});
+
+test("buildCollectionResultModalContent allows retry but not saved-page import for a local blocker", () => {
+  for (const status of ["locked", "busy"] as const) {
+    const content = buildCollectionResultModalContent([{ siteAccountId: "amazon", status }], nameOf);
+
+    assert.ok(content, `expected modal content for status ${status}`);
+    assert.equal(content.failures[0]?.canRetry, true, `canRetry for ${status}`);
+    assert.equal(content.failures[0]?.canImportSavedPage, false, `canImportSavedPage for ${status}`);
+  }
+});
+
+test("buildCollectionResultModalContent allows both actions for a real site failure", () => {
+  for (const status of ["failed", "unreachable", "login-failed", "no-data"] as const) {
+    const content = buildCollectionResultModalContent([{ siteAccountId: "amazon", status }], nameOf);
+
+    assert.ok(content, `expected modal content for status ${status}`);
+    assert.equal(content.failures[0]?.canRetry, true, `canRetry for ${status}`);
+    assert.equal(content.failures[0]?.canImportSavedPage, true, `canImportSavedPage for ${status}`);
+  }
 });
 
 test("buildCollectionResultModalContent reports a single failed site with its reason and name", () => {

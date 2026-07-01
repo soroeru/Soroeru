@@ -16,6 +16,14 @@ interface ModalProps {
 
 export function Modal({ title, onClose, children }: ModalProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Read through a ref so the mount effect below never needs `onClose` in its
+  // dependency array: depending on it directly would re-run the effect (and
+  // re-capture / restore focus) on every parent re-render while the modal is
+  // open, losing the original pre-open focus target.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -23,7 +31,7 @@ export function Modal({ title, onClose, children }: ModalProps): React.JSX.Eleme
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
@@ -48,7 +56,7 @@ export function Modal({ title, onClose, children }: ModalProps): React.JSX.Eleme
       document.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>

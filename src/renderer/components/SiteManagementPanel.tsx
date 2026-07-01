@@ -446,14 +446,22 @@ function CollectionResultModal({
           <li key={failure.siteAccountId} className="flex flex-col gap-1 rounded border border-neutral-200 p-2">
             <span className="font-medium">{failure.siteName}</span>
             <span className="text-sm text-neutral-700">{failure.reason}</span>
-            {failure.actionable && (
+            {(failure.canRetry || failure.canImportSavedPage) && (
               <span className="mt-1 flex flex-wrap gap-2">
-                <button type="button" onClick={() => onRetry(failure.siteAccountId)} className="text-sm underline">
-                  再収集
-                </button>
-                <button type="button" onClick={() => onImportSavedPage(failure.siteAccountId)} className="text-sm underline">
-                  保存ページを取り込む
-                </button>
+                {failure.canRetry && (
+                  <button type="button" onClick={() => onRetry(failure.siteAccountId)} className="text-sm underline">
+                    再収集
+                  </button>
+                )}
+                {failure.canImportSavedPage && (
+                  <button
+                    type="button"
+                    onClick={() => onImportSavedPage(failure.siteAccountId)}
+                    className="text-sm underline"
+                  >
+                    保存ページを取り込む
+                  </button>
+                )}
               </span>
             )}
           </li>
