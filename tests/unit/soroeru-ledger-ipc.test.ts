@@ -309,3 +309,36 @@ test("two sites independently observing the same unmapped field both keep it pen
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("two sites observing the same candidate under different labels both keep their label in matchTerms", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const siteA = domain.upsertSiteAccount({ domain: "a.example.test", url: "https://a.example.test/", displayName: "A" });
+    const siteB = domain.upsertSiteAccount({ domain: "b.example.test", url: "https://b.example.test/", displayName: "B" });
+
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: siteA.id,
+      label: "職業",
+      fieldId: "occupation",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+    });
+    // Site B's page phrases the same real-world field differently. Recording it
+    // must not overwrite site A's match term — both must remain re-mappable.
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: siteB.id,
+      label: "ご職業",
+      fieldId: "occupation2",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["ご職業"],
+    });
+
+    const candidate = domain.listDynamicAttributeCandidates().find((c) => c.proposedAttributeKey === "custom.occupation");
+    assert.ok(candidate?.matchTerms.includes("職業"));
+    assert.ok(candidate?.matchTerms.includes("ご職業"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

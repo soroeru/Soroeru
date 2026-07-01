@@ -338,14 +338,16 @@ export class DomainService {
   recordDynamicAttributeCandidate(input: RecordDynamicAttributeCandidateInput): DynamicAttributeCandidateView {
     const now = input.now ?? Date.now;
     const label = input.label.trim() || input.fieldId;
-    const matchTerms = uniqueTerms(input.matchTerms ?? [label]);
     const id = dynamicAttributeDefinitionId(input.proposedAttributeKey);
     const existing = this.vault.get("localDefinition", id);
     // Two unrelated sites can independently surface a field with the same
-    // proposed key (e.g. both have an unmapped "職業" field) before either is
-    // confirmed. Accumulate site ids rather than overwriting, so confirming
-    // relevance for one site never makes the candidate vanish from another
-    // site's still-unconfirmed pending list.
+    // proposed key under different labels (e.g. "職業" vs "ご職業") before
+    // either is confirmed. Merge match terms and site ids with whatever was
+    // already stored rather than overwriting, so (a) confirming still lets a
+    // later collection on the *other* site re-map via its own original label,
+    // and (b) confirming relevance for one site never makes the candidate
+    // vanish from another site's still-unconfirmed pending list.
+    const matchTerms = uniqueTerms([...stringArrayData(existing?.data["matchTerms"]), ...(input.matchTerms ?? [label])]);
     const siteAccountIds = uniqueTerms([...stringArrayData(existing?.data["siteAccountIds"]), input.siteAccountId]);
     const definition: LocalDefinition = {
       id,
