@@ -33,7 +33,7 @@ export function collectDisclosures(options: DisclosureCollectionOptions): { disc
       if (value === undefined || value === "") continue;
     }
     const label = labelForField(field);
-    const proposedAttributeKey = `custom.${slugForField(field, label)}` as ProfileKey;
+    const proposedAttributeKey = `custom.${slugForField(label)}` as ProfileKey;
     options.domain.recordDynamicAttributeCandidate({
       siteAccountId: options.siteAccount.id,
       label,
@@ -123,11 +123,38 @@ function labelForField(field: FormField): string {
   return field.labels[0] ?? field.placeholder ?? field.nearbyText ?? field.name ?? field.id ?? field.fieldId;
 }
 
-function slugForField(field: FormField, label: string): string {
-  const source = [field.name, field.id, field.fieldId, label].find((value) => /^[a-zA-Z][a-zA-Z0-9_-]*$/.test(value));
-  if (source) return source.replace(/[^a-zA-Z0-9_-]/g, "_").toLowerCase();
-  const code = Array.from(label).reduce((sum, char) => sum + char.codePointAt(0)!, 0);
-  return `field_${code.toString(36)}`;
+/**
+ * Derive a stable slug from the field's human-readable label, not from
+ * `field.name`/`field.id` — those are frequently framework-generated and can
+ * change between page loads or sessions for the same real-world field, which
+ * would otherwise create a new, distinct dynamic-attribute candidate every
+ * time instead of accumulating observations on one candidate (review #228).
+ * The label is what a human (and the confirm UI) actually identifies the
+ * field by, so it is the stable identity here.
+ *
+ * The hash always covers the *entire* trimmed label, never only its ASCII
+ * portion: two labels that differ only in non-ASCII characters (e.g. a
+ * bilingual gloss "住所 (Address)" vs. "勤務先 (Address)") must not collapse
+ * onto the same key just because they share an English word (review #228
+ * follow-up). The ASCII portion is prepended only for human readability.
+ */
+function slugForField(label: string): string {
+  const trimmed = label.trim();
+  const asciiPrefix = trimmed
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const hash = stableHash(trimmed);
+  return /[a-z]/.test(asciiPrefix) ? `${asciiPrefix}_${hash}` : `field_${hash}`;
+}
+
+/** Deterministic djb2 hash, base36-encoded, for labels with no ASCII letters. */
+function stableHash(value: string): string {
+  let hash = 5381;
+  for (const char of value) {
+    hash = (hash * 33 + char.codePointAt(0)!) >>> 0;
+  }
+  return hash.toString(36);
 }
 
 function sourceKindForField(field: FormField): "form-field" | "billing-page" | "newsletter-setting" {
