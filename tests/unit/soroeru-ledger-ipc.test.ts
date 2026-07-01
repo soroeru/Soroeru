@@ -139,6 +139,9 @@ test("the composed ledger summary and detail expose stale flags and masked previ
     assert.equal(dynamic?.label, "職業");
     assert.equal(dynamic?.revealable, true);
 
+    const pending = detail.pendingAttributeCandidates.find((c) => c.proposedAttributeKey === "custom.occupation");
+    assert.equal(pending?.label, "職業");
+
     // No raw value may appear anywhere in the serialized detail view.
     const serialized = JSON.stringify(detail);
     assert.equal(serialized.includes("old@example.test"), false);
@@ -208,6 +211,43 @@ test("ledger and import refuse to operate while locked", async () => {
     assert.equal(session.ledgerSite("anything"), undefined);
     assert.equal((await session.importCsv(SAMPLE_CSV)).error, "locked");
     assert.equal((await session.revealValue("x", PASSPHRASE)).error, "locked");
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "職業" })).error,
+      "locked",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("confirming a pending dynamic-attribute candidate removes it from the site's pending list", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedLedger(path);
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "not-a-custom-key", label: "職業" })).error,
+      "invalid-request",
+    );
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "  " })).error,
+      "invalid-request",
+    );
+
+    const before = session.ledgerSite(siteId);
+    assert.ok(before?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+
+    const confirmed = await session.confirmDynamicAttributeCandidate({
+      proposedAttributeKey: "custom.occupation",
+      label: "職業",
+    });
+    assert.equal(confirmed.ok, true);
+
+    const after = session.ledgerSite(siteId);
+    assert.equal(after?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

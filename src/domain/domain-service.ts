@@ -73,6 +73,10 @@ export interface DynamicAttributeCandidateView {
   matchTerms: string[];
   fieldId?: string;
   sourcePageUrl?: string;
+  /** The site the candidate was first observed on. Absent once confirmed (a
+   * confirmed attribute is reusable across sites, so it is no longer tied to
+   * the site that happened to surface it first). */
+  siteAccountId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -521,6 +525,8 @@ function dynamicAttributeView(definition: LocalDefinition): DynamicAttributeCand
   if (fieldId !== undefined) view.fieldId = fieldId;
   const sourcePageUrl = stringData(data["sourcePageUrl"]);
   if (sourcePageUrl !== undefined) view.sourcePageUrl = sourcePageUrl;
+  const siteAccountId = stringData(data["siteAccountId"]);
+  if (siteAccountId !== undefined) view.siteAccountId = siteAccountId;
   return view;
 }
 

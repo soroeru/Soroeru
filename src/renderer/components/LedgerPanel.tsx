@@ -8,7 +8,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Label } from "@radix-ui/react-label";
-import type { DisclosureView, SiteLedgerDetail, SiteLedgerSummary } from "../../../electron/ipc/contract.js";
+import type {
+  DisclosureView,
+  PendingAttributeCandidateView,
+  SiteLedgerDetail,
+  SiteLedgerSummary,
+} from "../../../electron/ipc/contract.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 
 interface LedgerPanelProps {
@@ -124,7 +129,9 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
       </ul>
 
       {detailError && <p className="text-sm text-red-600">{detailError}</p>}
-      {detail && <SiteDetail detail={detail} onClose={() => setDetail(undefined)} />}
+      {detail && (
+        <SiteDetail detail={detail} onClose={() => setDetail(undefined)} onReload={() => openSite(detail.siteAccountId)} />
+      )}
     </section>
   );
 }
@@ -132,9 +139,12 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
 export function SiteDetail({
   detail,
   onClose,
+  onReload,
 }: {
   detail: SiteLedgerDetail;
   onClose: () => void;
+  /** Re-fetches this site's detail, e.g. after confirming a pending candidate. */
+  onReload: () => void | Promise<void>;
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3 rounded border border-neutral-200 p-4">
@@ -155,6 +165,17 @@ export function SiteDetail({
         </ul>
       )}
 
+      {detail.pendingAttributeCandidates.length > 0 && (
+        <div className="flex flex-col gap-2 rounded border border-blue-100 bg-blue-50 p-2">
+          <p className="text-xs font-medium text-blue-900">新しい項目が見つかりました</p>
+          <ul className="flex flex-col gap-2">
+            {detail.pendingAttributeCandidates.map((candidate) => (
+              <PendingCandidateRow key={candidate.id} candidate={candidate} onConfirmed={onReload} />
+            ))}
+          </ul>
+        </div>
+      )}
+
       {detail.relationships.length > 0 && (
         <div className="text-xs text-neutral-500">
           関係: {detail.relationships.map((r) => relationshipLabel(r.kind)).join("、")}
@@ -169,6 +190,72 @@ export function SiteDetail({
         </ul>
       )}
     </div>
+  );
+}
+
+function PendingCandidateRow({
+  candidate,
+  onConfirmed,
+}: {
+  candidate: PendingAttributeCandidateView;
+  onConfirmed: () => void | Promise<void>;
+}): React.JSX.Element {
+  const [label, setLabel] = useState(candidate.label);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  const confirm = useCallback(async () => {
+    const trimmed = label.trim();
+    if (trimmed === "") return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await window.soroeru.ledger.confirmDynamicCandidate({
+        proposedAttributeKey: candidate.proposedAttributeKey,
+        label: trimmed,
+        matchTerms: [...candidate.matchTerms, trimmed],
+      });
+      if (!result.ok) {
+        setError(reasonMessage(result.error));
+        return;
+      }
+      await onConfirmed();
+    } catch {
+      setError(reasonMessage(undefined));
+    } finally {
+      setBusy(false);
+    }
+  }, [candidate.matchTerms, candidate.proposedAttributeKey, label, onConfirmed]);
+
+  return (
+    <li className="flex flex-col gap-1 text-sm">
+      <form
+        className="flex items-center gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void confirm();
+        }}
+      >
+        <Label htmlFor={`candidate-${candidate.id}`} className="sr-only">
+          項目名
+        </Label>
+        <input
+          id={`candidate-${candidate.id}`}
+          type="text"
+          value={label}
+          onChange={(event) => setLabel(event.target.value)}
+          className="flex-1 rounded border border-neutral-300 px-2 py-1 text-xs"
+        />
+        <button
+          type="submit"
+          disabled={busy || label.trim() === ""}
+          className="rounded bg-neutral-900 px-2 py-1 text-xs text-white disabled:opacity-50"
+        >
+          この項目として追加する
+        </button>
+      </form>
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </li>
   );
 }
 
