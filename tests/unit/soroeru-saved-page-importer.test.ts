@@ -49,3 +49,37 @@ test("saved page import ignores inline scripts before collecting values", async 
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("saved page import saves a done checkpoint when only a dynamic-attribute candidate is found", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const siteAccount = domain.upsertSiteAccount({
+      domain: "unknownfield.example.test",
+      url: "https://unknownfield.example.test/account",
+      displayName: "UnknownField",
+    });
+    const html = [
+      "<!doctype html><html><body>",
+      '<label for="occupation">職業</label>',
+      '<input id="occupation" name="occupation" required value="会社員">',
+      "</body></html>",
+    ].join("");
+
+    const result = await importSavedPage({
+      domain,
+      siteAccount,
+      fileName: "account.html",
+      data: new TextEncoder().encode(html),
+      now: () => 1_700_000_000_000,
+    });
+
+    assert.equal(result.disclosures, 0);
+    assert.equal(domain.getCheckpoint("visibility", siteAccount.id)?.status, "done");
+    const candidate = domain.listDynamicAttributeCandidates()[0];
+    assert.equal(candidate?.label, "職業");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

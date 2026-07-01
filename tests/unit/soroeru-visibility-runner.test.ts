@@ -420,6 +420,42 @@ test("visibility runner reports no-data (not collected) when the page yields no 
   }
 });
 
+test("visibility runner reports collected (not no-data) when only a dynamic-attribute candidate is found", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "unknownfield.example.test",
+      url: "https://unknownfield.example.test/account",
+      displayName: "UnknownField",
+    });
+    // Already past login (no login fields); the page has one required field the
+    // deterministic classifier cannot map to any known/validated attribute.
+    const page = new FakePageDriver(
+      [
+        snapshot("https://unknownfield.example.test/account", [
+          field("occupation", { required: true, labels: ["職業"] }),
+        ]),
+      ],
+      { occupation: "会社員" },
+    );
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.disclosures, 0);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+    const candidate = service.listDynamicAttributeCandidates()[0];
+    assert.equal(candidate?.label, "職業");
+    assert.equal(candidate?.status, "candidate");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner records an unreachable URL without leaking credentials", async () => {
   const { dir, service } = await openService();
   try {

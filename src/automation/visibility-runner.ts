@@ -97,7 +97,10 @@ export class VisibilityRunner {
       //     (rotated password, an extra step, or a silent failure);
       //   - otherwise → we reached a page but found nothing to collect (the page
       //     may show values as plain text, or it was an unexpected landing page).
-      if (collection.disclosures === 0) {
+      // A page whose only content is a required field the classifier can't map yet
+      // still recorded a dynamic-attribute candidate (review #225) — that is real
+      // progress, not an empty collection, so it must not be misreported as failed.
+      if (collection.disclosures === 0 && collection.dynamicCandidates === 0) {
         if (credential && findLoginField(snapshot.fields, "password")) {
           const loginConstraints = this.recordLoginFailed(siteAccount, snapshot);
           return {
