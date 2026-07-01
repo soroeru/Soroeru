@@ -1,6 +1,6 @@
 import { classifyFieldsWithEvidence, type CustomFieldDef } from "../agent/classifier.js";
 import type { DomainService } from "../domain/domain-service.js";
-import type { DisclosureSourceKind, SiteAccount } from "../domain/entities.js";
+import { MOST_SENSITIVE_ATTRIBUTE_KEY, type DisclosureSourceKind, type SiteAccount } from "../domain/entities.js";
 import type { DisplayValueCandidate, FormField, MappingEntry, PageSnapshot, ProfileKey } from "../types.js";
 import { redactedEvidence } from "./evidence.js";
 
@@ -111,7 +111,7 @@ function recordDisclosure(
 }
 
 function disclosureStoredValue(attributeKey: string, value: string): string | undefined {
-  if (attributeKey === "card.cvv") return undefined;
+  if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return undefined;
   if (attributeKey === "card.number") {
     const digits = value.replace(/\D/g, "");
     return digits.slice(-4);
