@@ -387,7 +387,7 @@ export class SoroeruSession {
       dynamicLabels.set(candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."), candidate.label);
     }
     const pendingAttributeCandidates: PendingAttributeCandidateView[] = dynamicCandidates
-      .filter((candidate) => candidate.status === "candidate" && candidate.siteAccountId === siteAccountId)
+      .filter((candidate) => candidate.status === "candidate" && (candidate.siteAccountIds?.includes(siteAccountId) ?? false))
       .map((candidate) => ({
         id: candidate.id,
         label: candidate.label,
@@ -446,6 +446,10 @@ export class SoroeruSession {
     const proposedAttributeKey = request.proposedAttributeKey.trim();
     const label = request.label.trim();
     if (!proposedAttributeKey.startsWith("custom.") || label === "") return { ok: false, error: "invalid-request" };
+    const isPendingCandidate = this.domain
+      .listDynamicAttributeCandidates()
+      .some((candidate) => candidate.status === "candidate" && candidate.proposedAttributeKey === proposedAttributeKey);
+    if (!isPendingCandidate) return { ok: false, error: "not-found" };
     try {
       this.domain.confirmDynamicAttributeCandidate({
         attributeKey: proposedAttributeKey as `custom.${string}`,

@@ -27,6 +27,9 @@ const REASONS: Record<string, string> = {
   "reveal-not-permitted": "この値は表示できません（最も機微な項目）。",
   "reauth-failed": "パスフレーズが一致しません。",
   "no-raw-value": "表示できる生の値がありません（ハッシュのみ収集済み）。",
+  // Dynamic attribute candidates
+  "invalid-request": "入力内容をご確認ください。",
+  "confirm-failed": "項目の確定に失敗しました。",
 };
 
 const FALLBACK = "操作に失敗しました。時間をおいて再試行してください。";
