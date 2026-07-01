@@ -126,6 +126,7 @@ test("disclosure collector creates a labeled dynamic attribute candidate for unk
     });
 
     assert.equal(result.disclosures, 0);
+    assert.equal(result.dynamicCandidates, 1);
     assert.equal(domain.listDisclosuresForSite(site.id).length, 0);
 
     const candidate = domain.listDynamicAttributeCandidates()[0];

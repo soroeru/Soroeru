@@ -63,7 +63,7 @@ export async function importSavedPage(input: SavedPageImportInput): Promise<Save
       normalizedHash: sourceHash,
       ...(sourceUrl !== undefined ? { pageUrl: sourceUrl } : {}),
     });
-    if (collection.disclosures > 0) {
+    if (collection.disclosures > 0 || collection.dynamicCandidates > 0) {
       input.domain.saveCheckpoint({
         workflow: "visibility",
         siteAccountId: input.siteAccount.id,

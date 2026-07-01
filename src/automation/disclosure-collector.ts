@@ -14,7 +14,7 @@ export interface DisclosureCollectionOptions {
   sourceKind?: DisclosureSourceKind;
 }
 
-export function collectDisclosures(options: DisclosureCollectionOptions): { disclosures: number } {
+export function collectDisclosures(options: DisclosureCollectionOptions): { disclosures: number; dynamicCandidates: number } {
   const classification = classifyFieldsWithEvidence(options.fields, confirmedDynamicCustoms(options.domain));
   let disclosures = 0;
   for (const entry of classification.plan.entries) {
@@ -24,6 +24,7 @@ export function collectDisclosures(options: DisclosureCollectionOptions): { disc
     if (recordDisclosure(options, field, entry, value)) disclosures++;
   }
 
+  let dynamicCandidates = 0;
   for (const fieldId of classification.plan.unmappedRequired) {
     const field = options.fields.find((candidate) => candidate.fieldId === fieldId);
     if (!field) continue;
@@ -42,8 +43,9 @@ export function collectDisclosures(options: DisclosureCollectionOptions): { disc
       matchTerms: [label],
       ...(options.now !== undefined ? { now: options.now } : {}),
     });
+    dynamicCandidates++;
   }
-  return { disclosures };
+  return { disclosures, dynamicCandidates };
 }
 
 export function displayValueToSyntheticField(candidate: DisplayValueCandidate): FormField {

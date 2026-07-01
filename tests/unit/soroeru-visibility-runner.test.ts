@@ -389,6 +389,43 @@ test("visibility runner reports login-failed (not collected) when a password fie
   }
 });
 
+test("visibility runner still reports login-failed when a stuck login page also has an unrelated dynamic-attribute candidate field", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "stuck-with-extra-field.example.test",
+      url: "https://stuck-with-extra-field.example.test/login",
+      displayName: "StuckWithExtraField",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    // Both snapshots are the same login page: the login click never advanced past it.
+    // The page also has an unrelated required field (e.g. a promo/referral code) that
+    // the classifier cannot map — recording a dynamic-attribute candidate must not
+    // mask the fact that login itself never succeeded.
+    const loginSnapshot = snapshot("https://stuck-with-extra-field.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      field("referral", { required: true, labels: ["紹介コード"] }),
+    ]);
+    const page = new FakePageDriver([loginSnapshot, loginSnapshot], { referral: "ABC123" });
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "login-failed");
+    assert.equal(result.disclosures, 0);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 0);
+    assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
+    const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
+    assert.ok(constraint?.detail.startsWith("login-incomplete:"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner reports no-data (not collected) when the page yields no collectable values", async () => {
   const { dir, service } = await openService();
   try {
@@ -415,6 +452,42 @@ test("visibility runner reports no-data (not collected) when the page yields no 
     assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
     const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
     assert.ok(constraint?.detail.startsWith("no-collectable-data:"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner reports collected (not no-data) when only a dynamic-attribute candidate is found", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "unknownfield.example.test",
+      url: "https://unknownfield.example.test/account",
+      displayName: "UnknownField",
+    });
+    // Already past login (no login fields); the page has one required field the
+    // deterministic classifier cannot map to any known/validated attribute.
+    const page = new FakePageDriver(
+      [
+        snapshot("https://unknownfield.example.test/account", [
+          field("occupation", { required: true, labels: ["職業"] }),
+        ]),
+      ],
+      { occupation: "会社員" },
+    );
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.disclosures, 0);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+    const candidate = service.listDynamicAttributeCandidates()[0];
+    assert.equal(candidate?.label, "職業");
+    assert.equal(candidate?.status, "candidate");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
