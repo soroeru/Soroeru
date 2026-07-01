@@ -245,6 +245,17 @@ export class DomainService {
    * - `unknown` when the site-held value or the canonical attribute is missing;
    * - `current` when the normalized hashes match;
    * - `stale` otherwise.
+   *
+   * Known gap (issue #229, tracked as documented tech debt — no user data
+   * predates this yet, so no migration code has been written): `card.number`
+   * disclosures are now hashed against only the last 4 digits
+   * (`comparisonValue`), whereas earlier code hashed the full collected value.
+   * A `card.number` Disclosure recorded before that change would carry an
+   * old-scheme hash that no longer matches this method's last-4-digit
+   * canonical hash, and would misflag as `stale` the next time the canonical
+   * card number is edited (`recomputeStaleStatesForAttribute`) — even though
+   * the underlying card did not change. Revisit once the vault has a schema
+   * versioning / migration mechanism (there is none today, see `VaultV2`).
    */
   deriveStaleState(disclosure: Pick<Disclosure, "attributeKey" | "normalizedValueHash">): StaleState {
     if (!disclosure.normalizedValueHash) return "unknown";
