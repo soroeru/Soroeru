@@ -65,7 +65,8 @@ test("visibility runner logs in, collects redacted evidence, disclosures, relati
     assert.equal(disclosures.length, 2);
     assert.equal(disclosures.find((d) => d.attributeKey === "email")?.staleState, "stale");
     assert.equal(disclosures.find((d) => d.attributeKey === "phone.full")?.staleState, "unknown");
-    assert.ok(disclosures.every((d) => d.siteHeldValue === undefined));
+    assert.equal(disclosures.find((d) => d.attributeKey === "email")?.siteHeldValue, "old@example.test");
+    assert.equal(disclosures.find((d) => d.attributeKey === "phone.full")?.siteHeldValue, "090-1234-5678");
     assert.ok(disclosures.every((d) => d.normalizedValueHash));
 
     const evidence = service.listEvidence();
@@ -313,10 +314,12 @@ test("visibility runner collects read-only display values (text-rendered account
     assert.equal(result.disclosures, 2);
     const disclosures = service.listDisclosuresForSite(site.id);
     assert.equal(disclosures.find((d) => d.attributeKey === "email")?.staleState, "stale");
+    assert.equal(disclosures.find((d) => d.attributeKey === "email")?.siteHeldValue, "old@example.test");
+    assert.equal(disclosures.find((d) => d.attributeKey === "phone.full")?.siteHeldValue, "090-1234-5678");
     assert.ok(disclosures.every((d) => d.normalizedValueHash));
     // The redacted evidence must not contain the raw display value.
-    const serialized = JSON.stringify({ evidence: service.listEvidence(), disclosures });
-    assert.equal(serialized.includes("old@example.test"), false);
+    const evidenceJson = JSON.stringify(service.listEvidence());
+    assert.equal(evidenceJson.includes("old@example.test"), false);
     assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
   } finally {
     await rm(dir, { recursive: true, force: true });

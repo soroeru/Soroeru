@@ -377,6 +377,11 @@ export class SoroeruSession {
     if (!this.domain || !this.vault || this.vault.isLocked) return undefined;
     const summary = this.composeSiteSummary(siteAccountId);
     if (!summary) return undefined;
+    const dynamicLabels = new Map<string, string>();
+    for (const candidate of this.domain.listDynamicAttributeCandidates()) {
+      dynamicLabels.set(candidate.proposedAttributeKey, candidate.label);
+      dynamicLabels.set(candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."), candidate.label);
+    }
     const disclosures: DisclosureView[] = this.domain
       .listDisclosuresForSite(siteAccountId)
       .map((disclosure) => {
@@ -386,7 +391,7 @@ export class SoroeruSession {
         return {
           disclosureId: disclosure.id,
           attributeKey: disclosure.attributeKey,
-          label: canonical?.label ?? disclosure.attributeKey,
+          label: canonical?.label ?? dynamicLabels.get(disclosure.attributeKey) ?? disclosure.attributeKey,
           sensitivity,
           staleState: disclosure.staleState,
           sourceKind: disclosure.sourceKind,

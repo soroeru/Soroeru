@@ -81,6 +81,67 @@ test("disclosure stale-state: current, stale, and unknown", async () => {
   }
 });
 
+test("addDisclosure centralizes collected card and cvv storage policy", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "billing.example.test", displayName: "Billing" });
+
+    const card = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "card.number",
+      siteHeldValue: "4111 1111 1111 1234",
+      sourceKind: "billing-page",
+    });
+    assert.equal(card.siteHeldValue, "1234");
+    assert.equal(card.normalizedValueHash, normalizedValueHash("card.number", "1234"));
+    assert.notEqual(card.normalizedValueHash, normalizedValueHash("card.number", "4111 1111 1111 1234"));
+
+    const cvv = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "card.cvv",
+      siteHeldValue: "999",
+      normalizedValueHash: normalizedValueHash("card.cvv", "999"),
+      sourceKind: "billing-page",
+    });
+    assert.equal(cvv.siteHeldValue, undefined);
+    assert.equal(cvv.normalizedValueHash, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("card disclosure stale-state compares last 4 digits against the canonical card", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "billing.example.test", displayName: "Billing" });
+    service.setPersonalAttribute({
+      attributeKey: "card.number",
+      label: "カード番号",
+      value: "4111111111111234",
+      valueType: "card",
+      sensitivity: "sensitive",
+    });
+
+    const current = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "card.number",
+      siteHeldValue: "4111 1111 1111 1234",
+      sourceKind: "billing-page",
+    });
+    const stale = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "card.number",
+      siteHeldValue: "4111 1111 1111 9999",
+      sourceKind: "billing-page",
+    });
+
+    assert.equal(current.staleState, "current");
+    assert.equal(stale.staleState, "stale");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("changing a canonical attribute recomputes stale-state of its disclosures", async () => {
   const { dir, service } = await openService();
   try {

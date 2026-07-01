@@ -146,11 +146,13 @@ themselves.
   e.g. "phone 🔴 stale / address 🟢 current / card 🔴 stale." The desired per-site view is a
   projection over Disclosures.
 - Detecting "stale" *requires comparing two values* — the canonical Personal Attribute vs.
-  the value a site holds (the Disclosure). Embedding raw values directly in Site Account
-  cannot define "stale" on its own and fights the "hashes, not raw duplication" rule.
+  the value a site holds (the Disclosure). The site-held value belongs in the encrypted
+  Disclosure row, not directly in Site Account; the normalized hash stays available for
+  comparison and audit without displaying the value.
 - Payoffs: (1) sites collect different fields → `(account, attribute, value, as-of)` rows
   stay flexible; (2) bulk update (B) becomes first-class via a cross-site query
-  "attribute = X and value ≠ canonical"; (3) hashing / Evidence concentrate on Disclosure.
+  "attribute = X and value ≠ canonical"; (3) reveal-gated Disclosure values and
+  hash-only Evidence keep user confirmation and audit concerns separate.
 
 ### 4.2 Identity Verification and canonical identity (My Number / JPKI)
 
@@ -358,8 +360,8 @@ Tier reflects the slice order (A first). Status is `Planned` pending the archite
 | REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; CVV treated as most sensitive. Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. | A | Must |
-| REQ-004 | Collect registered personal information per site and build the Disclosure ledger (references + hashes, not duplicated raw values). | A | Must |
-| REQ-005 | Present the per-site view by composing Site Account + its Disclosures, flagging stale values (Disclosure ≠ canonical). | A | Must |
+| REQ-004 | Collect registered personal information per site and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers are reduced to last 4 digits before storage, and CVV is never collected or stored. | A | Must |
+| REQ-005 | Present the per-site view by composing Site Account + its Disclosures, masking values by default, revealing a stored site-held value only after passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing / last-used) and provide filtered lists for these. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
 | REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; four absolute boundaries). | A | Must |

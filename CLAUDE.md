@@ -198,8 +198,11 @@ Slice order: **A Visibility → B Bulk Update → C Withdrawal cleanup → D New
   dynamically added fields.
 - **A — Visibility (first slice)**: import the Google/Chrome Password Manager CSV
   (`name, url, username, password, note`), auto-log in to each site, collect registered
-  personal info, and build the **Disclosure ledger** (references + hashes, not duplicated
-  raw values). Flag stale values (Disclosure ≠ canonical). Track **Account Relationship**
+  personal info, and build the **Disclosure ledger**. Disclosure rows keep the collected
+  site-held value encrypted so the user can confirm it after passphrase re-authentication;
+  Evidence / audit rows stay reference+hash only. Card numbers collected from sites are
+  reduced to the last 4 digits before storage, and CVV is never collected, stored, or
+  displayed. Flag stale values (Disclosure ≠ canonical). Track **Account Relationship**
   (newsletter / recurring billing / last-used) and provide filtered lists.
 - **B — Bulk update**: diff Disclosures against canonical values (cross-site by attribute)
   and update changed fields.
