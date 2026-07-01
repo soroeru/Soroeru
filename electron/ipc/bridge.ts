@@ -36,6 +36,8 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
       session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
     [IPC_CHANNELS.ledgerConfirmDynamicCandidate]: (request: unknown) =>
       session.confirmDynamicAttributeCandidate(toConfirmDynamicCandidateRequest(request)),
+    [IPC_CHANNELS.ledgerDeleteSite]: (request: unknown) =>
+      session.deleteSiteAccount(toDeleteSiteAccountRequest(request)),
     [IPC_CHANNELS.visibilityRun]: (siteAccountId: unknown) =>
       session.runVisibility(String(siteAccountId ?? "")),
     [IPC_CHANNELS.visibilityResume]: () => session.resumeVisibility(),
@@ -64,6 +66,14 @@ function toSavedPageImportRequest(request: unknown): { siteAccountId: string; fi
     siteAccountId: String(input["siteAccountId"] ?? ""),
     fileName: String(input["fileName"] ?? ""),
     data: toBytes(input["data"]),
+  };
+}
+
+function toDeleteSiteAccountRequest(request: unknown): { siteAccountId: string; confirmedFourthBoundary: boolean } {
+  const input = request && typeof request === "object" ? request as Record<string, unknown> : {};
+  return {
+    siteAccountId: String(input["siteAccountId"] ?? ""),
+    confirmedFourthBoundary: input["confirmedFourthBoundary"] === true,
   };
 }
 

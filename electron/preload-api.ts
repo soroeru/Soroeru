@@ -11,6 +11,8 @@ import {
   type ConfirmDynamicAttributeCandidateRequest,
   type ConfirmDynamicAttributeCandidateResult,
   type CsvImportResult,
+  type DeleteSiteAccountRequest,
+  type DeleteSiteAccountResultView,
   type DomainSummary,
   type IpcChannel,
   type LedgerInsights,
@@ -63,6 +65,7 @@ export interface SoroeruApi {
     confirmDynamicCandidate(
       request: ConfirmDynamicAttributeCandidateRequest,
     ): Promise<ConfirmDynamicAttributeCandidateResult>;
+    deleteSite(request: DeleteSiteAccountRequest): Promise<DeleteSiteAccountResultView>;
   };
   visibility: {
     run(siteAccountId: string): Promise<VisibilityRunResultView>;
@@ -111,6 +114,8 @@ export function createSoroeruApi(
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,
       confirmDynamicCandidate: (request) =>
         invoke(IPC_CHANNELS.ledgerConfirmDynamicCandidate, request) as Promise<ConfirmDynamicAttributeCandidateResult>,
+      deleteSite: (request) =>
+        invoke(IPC_CHANNELS.ledgerDeleteSite, request) as Promise<DeleteSiteAccountResultView>,
     },
     visibility: {
       run: (siteAccountId) =>
