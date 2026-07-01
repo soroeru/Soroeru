@@ -99,8 +99,12 @@ export class VisibilityRunner {
       //     may show values as plain text, or it was an unexpected landing page).
       // A page whose only content is a required field the classifier can't map yet
       // still recorded a dynamic-attribute candidate (review #225) — that is real
-      // progress, not an empty collection, so it must not be misreported as failed.
-      if (collection.disclosures === 0 && collection.dynamicCandidates === 0) {
+      // progress, not an empty collection, so it must not be misreported as no-data.
+      // A still-present password field, however, means login itself did not take,
+      // and an unrelated dynamic candidate on that same login page (e.g. a promo or
+      // locale field) must never mask that failure — so this check always takes
+      // precedence over the dynamic-candidate rescue below.
+      if (collection.disclosures === 0) {
         if (credential && findLoginField(snapshot.fields, "password")) {
           const loginConstraints = this.recordLoginFailed(siteAccount, snapshot);
           return {
@@ -111,14 +115,16 @@ export class VisibilityRunner {
             constraints: constraints + loginConstraints,
           };
         }
-        const noDataConstraints = this.recordNoData(siteAccount, snapshot);
-        return {
-          siteAccountId,
-          status: "no-data",
-          disclosures: 0,
-          relationships,
-          constraints: constraints + noDataConstraints,
-        };
+        if (collection.dynamicCandidates === 0) {
+          const noDataConstraints = this.recordNoData(siteAccount, snapshot);
+          return {
+            siteAccountId,
+            status: "no-data",
+            disclosures: 0,
+            relationships,
+            constraints: constraints + noDataConstraints,
+          };
+        }
       }
 
       this.options.domain.saveCheckpoint({
