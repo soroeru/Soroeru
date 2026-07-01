@@ -102,6 +102,19 @@ Never stored:
 - decrypted values in logs, error messages, or crash reports;
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
 
+**Known gap — `card.number` stale-state hash scheme (issue #229, documented tech debt,
+no code change yet)**: `card.number` Disclosures are now compared for staleness against
+only the last 4 digits of the canonical value (`comparisonValue` in
+`src/domain/domain-service.ts`), matching the last-4-digit storage rule above. A
+`card.number` Disclosure recorded before this comparison rule existed would carry a hash
+of the full collected value under the old scheme, and would misflag as **stale** the
+next time the canonical card number is edited, even though the underlying card did not
+change. There is no user data predating this change today, so no migration was written;
+the vault also has no general schema-versioning mechanism for internal record shapes
+(only the top-level store format version, §4 point 6). Revisit this when either a real
+gap in practice appears or vault-schema versioning is built for other reasons — do not
+build a one-off migration for this alone.
+
 **Mask policy (PRIV-002 / #21)**: a single mask module
 (`src/agent/gate.ts`) defines two policies, used everywhere
 a profile value can reach a display or a file:
