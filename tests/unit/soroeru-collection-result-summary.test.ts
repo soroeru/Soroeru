@@ -19,10 +19,23 @@ test("buildCollectionResultModalContent returns undefined when every site collec
   assert.equal(content, undefined);
 });
 
-test("buildCollectionResultModalContent excludes an in-progress handoff from the failure list", () => {
+test("buildCollectionResultModalContent treats a terminal handoff (abandoned at a wall) as a failure", () => {
+  // runVisibilityBatch only records a result once a site's run has resolved, so a
+  // "handoff" status here always means the user skipped/abandoned the wall, not
+  // that it is still paused (that state never reaches `results`).
   const content = buildCollectionResultModalContent([{ siteAccountId: "amazon", status: "handoff" }], nameOf);
 
-  assert.equal(content, undefined);
+  assert.ok(content);
+  assert.equal(content.failures.length, 1);
+  assert.equal(content.failures[0]?.status, "handoff");
+  assert.equal(content.failures[0]?.actionable, true);
+});
+
+test("buildCollectionResultModalContent marks a skipped non-website credential as not actionable", () => {
+  const content = buildCollectionResultModalContent([{ siteAccountId: "authenticator-app", status: "skipped" }], nameOf);
+
+  assert.ok(content);
+  assert.equal(content.failures[0]?.actionable, false);
 });
 
 test("buildCollectionResultModalContent reports a single failed site with its reason and name", () => {

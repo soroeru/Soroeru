@@ -1,7 +1,10 @@
 // Turns raw per-site Visibility run results (issue #189) into the content shown
-// in the collection-result modal. "handoff" is excluded: it has its own
-// dedicated hand-off UX (the amber panel) while the run is paused, so it never
-// doubles up as a failure card here.
+// in the collection-result modal. `results` only ever holds terminal outcomes
+// (the batch loop awaits each site's run to completion), so a "handoff" entry
+// here always means the user skipped/abandoned that site's wall, not that it
+// is still paused — the live pause has its own dedicated amber panel and never
+// reaches `results`. It is therefore treated as a failure needing follow-up,
+// same as any other non-"collected" status.
 
 import type { VisibilityRunStatus } from "../../electron/ipc/contract.js";
 import { visibilityStatusLabel } from "./messages.js";
@@ -11,6 +14,8 @@ export interface CollectionFailureEntry {
   siteName: string;
   status: VisibilityRunStatus;
   reason: string;
+  /** Whether retry / saved-page-import actions make sense for this status. */
+  actionable: boolean;
 }
 
 export interface CollectionResultModalContent {
@@ -19,8 +24,11 @@ export interface CollectionResultModalContent {
   failures: CollectionFailureEntry[];
 }
 
-function isFailureStatus(status: VisibilityRunStatus): boolean {
-  return status !== "collected" && status !== "handoff";
+/** "skipped" means the credential is not a website account (e.g. an app entry
+ * imported from the password manager), so neither retrying the collection nor
+ * importing a saved page applies. */
+function isActionable(status: VisibilityRunStatus): boolean {
+  return status !== "skipped";
 }
 
 /**
@@ -33,12 +41,13 @@ export function buildCollectionResultModalContent(
   siteNameOf: (siteAccountId: string) => string,
 ): CollectionResultModalContent | undefined {
   const failures: CollectionFailureEntry[] = results
-    .filter((entry) => isFailureStatus(entry.status))
+    .filter((entry) => entry.status !== "collected")
     .map((entry) => ({
       siteAccountId: entry.siteAccountId,
       siteName: siteNameOf(entry.siteAccountId),
       status: entry.status,
       reason: visibilityStatusLabel(entry.status),
+      actionable: isActionable(entry.status),
     }));
 
   if (failures.length === 0) return undefined;
