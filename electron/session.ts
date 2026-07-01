@@ -23,10 +23,13 @@ import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-p
 import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
 import type {
   AttributeSummary,
+  ConfirmDynamicAttributeCandidateRequest,
+  ConfirmDynamicAttributeCandidateResult,
   CsvImportResult,
   DisclosureView,
   DomainSummary,
   LedgerInsights,
+  PendingAttributeCandidateView,
   RecoveryKeyResult,
   RevealResult,
   SavedPageImportRequest,
@@ -377,11 +380,21 @@ export class SoroeruSession {
     if (!this.domain || !this.vault || this.vault.isLocked) return undefined;
     const summary = this.composeSiteSummary(siteAccountId);
     if (!summary) return undefined;
+    const dynamicCandidates = this.domain.listDynamicAttributeCandidates();
     const dynamicLabels = new Map<string, string>();
-    for (const candidate of this.domain.listDynamicAttributeCandidates()) {
+    for (const candidate of dynamicCandidates) {
       dynamicLabels.set(candidate.proposedAttributeKey, candidate.label);
       dynamicLabels.set(candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."), candidate.label);
     }
+    const pendingAttributeCandidates: PendingAttributeCandidateView[] = dynamicCandidates
+      .filter((candidate) => candidate.status === "candidate" && (candidate.siteAccountIds?.includes(siteAccountId) ?? false))
+      .map((candidate) => ({
+        id: candidate.id,
+        label: candidate.label,
+        proposedAttributeKey: candidate.proposedAttributeKey,
+        matchTerms: candidate.matchTerms,
+        observedAt: candidate.updatedAt,
+      }));
     const disclosures: DisclosureView[] = this.domain
       .listDisclosuresForSite(siteAccountId)
       .map((disclosure) => {
@@ -417,7 +430,37 @@ export class SoroeruSession {
         ...(c.resolution !== undefined ? { resolution: c.resolution } : {}),
         observedAt: c.observedAt,
       }));
-    return { ...summary, disclosures, relationships, constraints };
+    return { ...summary, disclosures, relationships, constraints, pendingAttributeCandidates };
+  }
+
+  /**
+   * Confirm a pending dynamic-attribute candidate as a reusable typed attribute
+   * (dynamic schema growth, RFC-002 §7). This is the explicit user-confirmation
+   * step CLAUDE.md requires before a newly observed field becomes a reusable
+   * attribute — it is never inferred or promoted automatically.
+   */
+  async confirmDynamicAttributeCandidate(
+    request: ConfirmDynamicAttributeCandidateRequest,
+  ): Promise<ConfirmDynamicAttributeCandidateResult> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    const proposedAttributeKey = request.proposedAttributeKey.trim();
+    const label = request.label.trim();
+    if (!proposedAttributeKey.startsWith("custom.") || label === "") return { ok: false, error: "invalid-request" };
+    const isPendingCandidate = this.domain
+      .listDynamicAttributeCandidates()
+      .some((candidate) => candidate.status === "candidate" && candidate.proposedAttributeKey === proposedAttributeKey);
+    if (!isPendingCandidate) return { ok: false, error: "not-found" };
+    try {
+      this.domain.confirmDynamicAttributeCandidate({
+        attributeKey: proposedAttributeKey as `custom.${string}`,
+        label,
+        matchTerms: request.matchTerms?.map((term) => term.trim()).filter((term) => term !== "") ?? [label],
+      });
+      await this.vault.save();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "confirm-failed" };
+    }
   }
 
   /**

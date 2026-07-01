@@ -51,6 +51,7 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.ledger.site("x");
   await api.ledger.insights();
   await api.ledger.reveal("x", "y");
+  await api.ledger.confirmDynamicCandidate({ proposedAttributeKey: "custom.x", label: "x" });
   await api.visibility.run("x");
   await api.visibility.resume();
   await api.visibility.abort();

@@ -139,6 +139,9 @@ test("the composed ledger summary and detail expose stale flags and masked previ
     assert.equal(dynamic?.label, "職業");
     assert.equal(dynamic?.revealable, true);
 
+    const pending = detail.pendingAttributeCandidates.find((c) => c.proposedAttributeKey === "custom.occupation");
+    assert.equal(pending?.label, "職業");
+
     // No raw value may appear anywhere in the serialized detail view.
     const serialized = JSON.stringify(detail);
     assert.equal(serialized.includes("old@example.test"), false);
@@ -208,6 +211,172 @@ test("ledger and import refuse to operate while locked", async () => {
     assert.equal(session.ledgerSite("anything"), undefined);
     assert.equal((await session.importCsv(SAMPLE_CSV)).error, "locked");
     assert.equal((await session.revealValue("x", PASSPHRASE)).error, "locked");
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "職業" })).error,
+      "locked",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("confirming a pending dynamic-attribute candidate removes it from the site's pending list", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedLedger(path);
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "not-a-custom-key", label: "職業" })).error,
+      "invalid-request",
+    );
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "  " })).error,
+      "invalid-request",
+    );
+    assert.equal(
+      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.never-observed", label: "x" })).error,
+      "not-found",
+    );
+
+    const before = session.ledgerSite(siteId);
+    assert.ok(before?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+
+    const confirmed = await session.confirmDynamicAttributeCandidate({
+      proposedAttributeKey: "custom.occupation",
+      label: "職業",
+    });
+    assert.equal(confirmed.ok, true);
+
+    const after = session.ledgerSite(siteId);
+    assert.equal(after?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("two sites independently observing the same unmapped field both keep it pending until confirmed", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const siteA = domain.upsertSiteAccount({ domain: "a.example.test", url: "https://a.example.test/", displayName: "A" });
+    const siteB = domain.upsertSiteAccount({ domain: "b.example.test", url: "https://b.example.test/", displayName: "B" });
+    // Both sites independently surface an unmapped field that slugs to the same
+    // proposed key — the underlying candidate record is shared (keyed by
+    // proposedAttributeKey), so confirming site B's observation must not make
+    // the candidate disappear from site A's still-unconfirmed pending list.
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: siteA.id,
+      label: "職業",
+      fieldId: "occupation",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+    });
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: siteB.id,
+      label: "職業",
+      fieldId: "occupation",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+
+    const beforeA = session.ledgerSite(siteA.id);
+    const beforeB = session.ledgerSite(siteB.id);
+    assert.ok(beforeA?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+    assert.ok(beforeB?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+
+    // Once confirmed (from either site's perspective), it becomes a reusable
+    // global attribute and must stop appearing as "pending" everywhere.
+    const confirmed = await session.confirmDynamicAttributeCandidate({
+      proposedAttributeKey: "custom.occupation",
+      label: "職業",
+    });
+    assert.equal(confirmed.ok, true);
+
+    const afterA = session.ledgerSite(siteA.id);
+    const afterB = session.ledgerSite(siteB.id);
+    assert.equal(afterA?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
+    assert.equal(afterB?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("two sites observing the same candidate under different labels both keep their label in matchTerms", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const siteA = domain.upsertSiteAccount({ domain: "a.example.test", url: "https://a.example.test/", displayName: "A" });
+    const siteB = domain.upsertSiteAccount({ domain: "b.example.test", url: "https://b.example.test/", displayName: "B" });
+
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: siteA.id,
+      label: "職業",
+      fieldId: "occupation",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+    });
+    // Site B's page phrases the same real-world field differently. Recording it
+    // must not overwrite site A's match term — both must remain re-mappable.
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: siteB.id,
+      label: "ご職業",
+      fieldId: "occupation2",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["ご職業"],
+    });
+
+    const candidate = domain.listDynamicAttributeCandidates().find((c) => c.proposedAttributeKey === "custom.occupation");
+    assert.ok(candidate?.matchTerms.includes("職業"));
+    assert.ok(candidate?.matchTerms.includes("ご職業"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a candidate persisted under the pre-siteAccountIds shape still appears in the site's pending list", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "legacy.example.test", url: "https://legacy.example.test/", displayName: "Legacy" });
+
+    // Simulate a candidate written by the earlier shape that tracked a single
+    // `siteAccountId` field rather than an array, to guard against a schema
+    // rename silently losing already-persisted candidates.
+    vault.put("localDefinition", {
+      id: "dynamic-attribute:custom.occupation",
+      serviceName: "職業",
+      source: "observation",
+      status: "candidate",
+      data: {
+        kind: "dynamic-attribute",
+        label: "職業",
+        proposedAttributeKey: "custom.occupation",
+        matchTerms: ["職業"],
+        fieldId: "occupation",
+        siteAccountId: site.id,
+      },
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+
+    const detail = session.ledgerSite(site.id);
+    assert.ok(detail?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -73,6 +73,12 @@ export interface DynamicAttributeCandidateView {
   matchTerms: string[];
   fieldId?: string;
   sourcePageUrl?: string;
+  /** Every site the candidate has been observed on so far. A field with the
+   * same proposed key can be independently observed, unconfirmed, on more than
+   * one site — each site's pending list must keep showing it until confirmed.
+   * Absent once confirmed (a confirmed attribute is reusable across sites, so
+   * it is no longer tied to the sites that happened to surface it). */
+  siteAccountIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -332,9 +338,20 @@ export class DomainService {
   recordDynamicAttributeCandidate(input: RecordDynamicAttributeCandidateInput): DynamicAttributeCandidateView {
     const now = input.now ?? Date.now;
     const label = input.label.trim() || input.fieldId;
-    const matchTerms = uniqueTerms(input.matchTerms ?? [label]);
     const id = dynamicAttributeDefinitionId(input.proposedAttributeKey);
     const existing = this.vault.get("localDefinition", id);
+    // Two unrelated sites can independently surface a field with the same
+    // proposed key under different labels (e.g. "職業" vs "ご職業") before
+    // either is confirmed. Merge match terms and site ids with whatever was
+    // already stored rather than overwriting, so (a) confirming still lets a
+    // later collection on the *other* site re-map via its own original label,
+    // and (b) confirming relevance for one site never makes the candidate
+    // vanish from another site's still-unconfirmed pending list.
+    const matchTerms = uniqueTerms([...stringArrayData(existing?.data["matchTerms"]), ...(input.matchTerms ?? [label])]);
+    const siteAccountIds = uniqueTerms([
+      ...legacyCompatibleSiteAccountIds(existing?.data ?? {}),
+      input.siteAccountId,
+    ]);
     const definition: LocalDefinition = {
       id,
       serviceName: label,
@@ -346,7 +363,7 @@ export class DomainService {
         proposedAttributeKey: input.proposedAttributeKey,
         matchTerms,
         fieldId: input.fieldId,
-        siteAccountId: input.siteAccountId,
+        siteAccountIds,
         ...(input.sourcePageUrl !== undefined ? { sourcePageUrl: input.sourcePageUrl } : {}),
       },
       createdAt: existing?.createdAt ?? now(),
@@ -521,11 +538,29 @@ function dynamicAttributeView(definition: LocalDefinition): DynamicAttributeCand
   if (fieldId !== undefined) view.fieldId = fieldId;
   const sourcePageUrl = stringData(data["sourcePageUrl"]);
   if (sourcePageUrl !== undefined) view.sourcePageUrl = sourcePageUrl;
+  const siteAccountIds = legacyCompatibleSiteAccountIds(data);
+  if (siteAccountIds.length > 0) view.siteAccountIds = siteAccountIds;
   return view;
 }
 
 function stringData(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
+function stringArrayData(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+}
+
+/**
+ * Reads the record's site ids under the current array shape (`siteAccountIds`),
+ * folding in the singular `siteAccountId` shape a record may still carry from
+ * before candidates tracked every observing site. Without this fallback, a
+ * candidate already persisted under the old shape would silently stop
+ * appearing in any site's pending list.
+ */
+function legacyCompatibleSiteAccountIds(data: Record<string, unknown>): string[] {
+  const legacySingular = stringData(data["siteAccountId"]);
+  return uniqueTerms([...stringArrayData(data["siteAccountIds"]), ...(legacySingular ? [legacySingular] : [])]);
 }
 
 function uniqueTerms(terms: string[]): string[] {

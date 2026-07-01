@@ -34,11 +34,27 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),
     [IPC_CHANNELS.revealValue]: (disclosureId: unknown, passphrase: unknown) =>
       session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
+    [IPC_CHANNELS.ledgerConfirmDynamicCandidate]: (request: unknown) =>
+      session.confirmDynamicAttributeCandidate(toConfirmDynamicCandidateRequest(request)),
     [IPC_CHANNELS.visibilityRun]: (siteAccountId: unknown) =>
       session.runVisibility(String(siteAccountId ?? "")),
     [IPC_CHANNELS.visibilityResume]: () => session.resumeVisibility(),
     [IPC_CHANNELS.visibilityAbort]: () => session.abortVisibility(),
     [IPC_CHANNELS.visibilityStatus]: () => session.visibilityStatus(),
+  };
+}
+
+function toConfirmDynamicCandidateRequest(
+  request: unknown,
+): { proposedAttributeKey: string; label: string; matchTerms?: string[] } {
+  const input = request && typeof request === "object" ? (request as Record<string, unknown>) : {};
+  const matchTerms = Array.isArray(input["matchTerms"])
+    ? input["matchTerms"].filter((term): term is string => typeof term === "string")
+    : undefined;
+  return {
+    proposedAttributeKey: String(input["proposedAttributeKey"] ?? ""),
+    label: String(input["label"] ?? ""),
+    ...(matchTerms !== undefined ? { matchTerms } : {}),
   };
 }
 

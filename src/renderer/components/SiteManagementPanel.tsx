@@ -317,6 +317,7 @@ export function SiteManagementPanel({
                 }}
                 onOpenDetail={() => void openDetail(site.siteAccountId)}
                 onCloseDetail={() => setDetail(undefined)}
+                onReloadDetail={() => openDetail(site.siteAccountId)}
               />
             ))}
           </ul>
@@ -443,6 +444,7 @@ function SiteRow({
   onSavedPageImported,
   onOpenDetail,
   onCloseDetail,
+  onReloadDetail,
 }: {
   site: SiteLedgerSummary;
   checked: boolean;
@@ -459,6 +461,7 @@ function SiteRow({
   onSavedPageImported: () => void;
   onOpenDetail: () => void;
   onCloseDetail: () => void;
+  onReloadDetail: () => void | Promise<void>;
 }): React.JSX.Element {
   return (
     <li className="flex flex-col gap-2 py-3">
@@ -524,7 +527,7 @@ function SiteRow({
 
       {detailOpen && detail && (
         <div className="pl-7">
-          <SiteDetail detail={detail} onClose={onCloseDetail} />
+          <SiteDetail detail={detail} onClose={onCloseDetail} onReload={onReloadDetail} />
         </div>
       )}
     </li>

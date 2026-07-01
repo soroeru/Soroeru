@@ -8,6 +8,8 @@
 
 import {
   IPC_CHANNELS,
+  type ConfirmDynamicAttributeCandidateRequest,
+  type ConfirmDynamicAttributeCandidateResult,
   type CsvImportResult,
   type DomainSummary,
   type IpcChannel,
@@ -58,6 +60,9 @@ export interface SoroeruApi {
     site(siteAccountId: string): Promise<SiteLedgerDetail | undefined>;
     insights(): Promise<LedgerInsights>;
     reveal(disclosureId: string, passphrase: string): Promise<RevealResult>;
+    confirmDynamicCandidate(
+      request: ConfirmDynamicAttributeCandidateRequest,
+    ): Promise<ConfirmDynamicAttributeCandidateResult>;
   };
   visibility: {
     run(siteAccountId: string): Promise<VisibilityRunResultView>;
@@ -104,6 +109,8 @@ export function createSoroeruApi(
       insights: () => invoke(IPC_CHANNELS.ledgerInsights) as Promise<LedgerInsights>,
       reveal: (disclosureId, passphrase) =>
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,
+      confirmDynamicCandidate: (request) =>
+        invoke(IPC_CHANNELS.ledgerConfirmDynamicCandidate, request) as Promise<ConfirmDynamicAttributeCandidateResult>,
     },
     visibility: {
       run: (siteAccountId) =>

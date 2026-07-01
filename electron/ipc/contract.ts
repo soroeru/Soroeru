@@ -51,6 +51,7 @@ export const IPC_CHANNELS = {
   ledgerSite: "soroeru:ledger:site",
   ledgerInsights: "soroeru:ledger:insights",
   revealValue: "soroeru:ledger:reveal",
+  ledgerConfirmDynamicCandidate: "soroeru:ledger:confirm-dynamic-candidate",
   visibilityRun: "soroeru:visibility:run",
   visibilityResume: "soroeru:visibility:resume",
   visibilityAbort: "soroeru:visibility:abort",
@@ -258,11 +259,27 @@ export interface ConstraintView {
   observedAt: number;
 }
 
+/**
+ * A field the deterministic classifier could not map to a known or already
+ * confirmed attribute, observed with its label so the user can review and
+ * confirm it as a reusable attribute (dynamic schema growth, RFC-002 §7).
+ * Carries no raw collected value — only the field's label/identity.
+ */
+export interface PendingAttributeCandidateView {
+  id: string;
+  label: string;
+  proposedAttributeKey: string;
+  matchTerms: string[];
+  observedAt: number;
+}
+
 /** The per-site composed ledger view: the summary plus its masked detail rows. */
 export interface SiteLedgerDetail extends SiteLedgerSummary {
   disclosures: DisclosureView[];
   relationships: RelationshipView[];
   constraints: ConstraintView[];
+  /** Unconfirmed dynamic-attribute candidates observed on this site. */
+  pendingAttributeCandidates: PendingAttributeCandidateView[];
 }
 
 /**
@@ -274,6 +291,18 @@ export interface SiteLedgerDetail extends SiteLedgerSummary {
 export interface RevealResult {
   ok: boolean;
   value?: string;
+  error?: string;
+}
+
+/** Confirm a pending dynamic-attribute candidate as a reusable typed attribute. */
+export interface ConfirmDynamicAttributeCandidateRequest {
+  proposedAttributeKey: string;
+  label: string;
+  matchTerms?: string[];
+}
+
+export interface ConfirmDynamicAttributeCandidateResult {
+  ok: boolean;
   error?: string;
 }
 
