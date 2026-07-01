@@ -348,7 +348,10 @@ export class DomainService {
     // and (b) confirming relevance for one site never makes the candidate
     // vanish from another site's still-unconfirmed pending list.
     const matchTerms = uniqueTerms([...stringArrayData(existing?.data["matchTerms"]), ...(input.matchTerms ?? [label])]);
-    const siteAccountIds = uniqueTerms([...stringArrayData(existing?.data["siteAccountIds"]), input.siteAccountId]);
+    const siteAccountIds = uniqueTerms([
+      ...legacyCompatibleSiteAccountIds(existing?.data ?? {}),
+      input.siteAccountId,
+    ]);
     const definition: LocalDefinition = {
       id,
       serviceName: label,
@@ -535,7 +538,7 @@ function dynamicAttributeView(definition: LocalDefinition): DynamicAttributeCand
   if (fieldId !== undefined) view.fieldId = fieldId;
   const sourcePageUrl = stringData(data["sourcePageUrl"]);
   if (sourcePageUrl !== undefined) view.sourcePageUrl = sourcePageUrl;
-  const siteAccountIds = stringArrayData(data["siteAccountIds"]);
+  const siteAccountIds = legacyCompatibleSiteAccountIds(data);
   if (siteAccountIds.length > 0) view.siteAccountIds = siteAccountIds;
   return view;
 }
@@ -546,6 +549,18 @@ function stringData(value: unknown): string | undefined {
 
 function stringArrayData(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+}
+
+/**
+ * Reads the record's site ids under the current array shape (`siteAccountIds`),
+ * folding in the singular `siteAccountId` shape a record may still carry from
+ * before candidates tracked every observing site. Without this fallback, a
+ * candidate already persisted under the old shape would silently stop
+ * appearing in any site's pending list.
+ */
+function legacyCompatibleSiteAccountIds(data: Record<string, unknown>): string[] {
+  const legacySingular = stringData(data["siteAccountId"]);
+  return uniqueTerms([...stringArrayData(data["siteAccountIds"]), ...(legacySingular ? [legacySingular] : [])]);
 }
 
 function uniqueTerms(terms: string[]): string[] {

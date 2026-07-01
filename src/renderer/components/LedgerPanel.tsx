@@ -209,22 +209,26 @@ function PendingCandidateRow({
     if (trimmed === "") return;
     setBusy(true);
     setError(undefined);
+    let confirmedOk = false;
     try {
       const result = await window.soroeru.ledger.confirmDynamicCandidate({
         proposedAttributeKey: candidate.proposedAttributeKey,
         label: trimmed,
         matchTerms: [...candidate.matchTerms, trimmed],
       });
+      confirmedOk = result.ok;
       if (!result.ok) {
         setError(reasonMessage(result.error));
-        return;
       }
-      await onConfirmed();
     } catch {
       setError(reasonMessage(undefined));
     } finally {
       setBusy(false);
     }
+    // The reload is best-effort: the confirm already persisted, so a failure
+    // here (e.g. the vault locked mid-request) must not be reported as if the
+    // confirm itself had failed.
+    if (confirmedOk) await onConfirmed();
   }, [candidate.matchTerms, candidate.proposedAttributeKey, label, onConfirmed]);
 
   return (

@@ -342,3 +342,42 @@ test("two sites observing the same candidate under different labels both keep th
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a candidate persisted under the pre-siteAccountIds shape still appears in the site's pending list", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "legacy.example.test", url: "https://legacy.example.test/", displayName: "Legacy" });
+
+    // Simulate a candidate written by the earlier shape that tracked a single
+    // `siteAccountId` field rather than an array, to guard against a schema
+    // rename silently losing already-persisted candidates.
+    vault.put("localDefinition", {
+      id: "dynamic-attribute:custom.occupation",
+      serviceName: "職業",
+      source: "observation",
+      status: "candidate",
+      data: {
+        kind: "dynamic-attribute",
+        label: "職業",
+        proposedAttributeKey: "custom.occupation",
+        matchTerms: ["職業"],
+        fieldId: "occupation",
+        siteAccountId: site.id,
+      },
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+
+    const detail = session.ledgerSite(site.id);
+    assert.ok(detail?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
