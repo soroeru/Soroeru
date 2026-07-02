@@ -76,6 +76,8 @@ export function visibilityStatusLabel(status: string): string {
       return "ログインが完了しませんでした（パスワードの変更や追加手順の可能性）。要確認に記録しました。";
     case "no-data":
       return "ページには到達しましたが、収集できる情報が見つかりませんでした（手動確認を推奨）。";
+    case "canceled":
+      return "収集を中止しました。";
     case "locked":
       return "ボールトが施錠されています。";
     case "busy":

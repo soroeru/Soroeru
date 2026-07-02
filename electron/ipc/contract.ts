@@ -339,6 +339,7 @@ export type VisibilityRunStatus =
   | "skipped"
   | "login-failed"
   | "no-data"
+  | "canceled"
   | "locked"
   | "busy";
 
@@ -361,10 +362,10 @@ export interface VisibilityStatusView {
   instruction?: string;
 }
 
-/** Acknowledgement of a resume/abort request against the active hand-off. */
+/** Acknowledgement of a resume/abort request against the active Visibility run. */
 export interface VisibilityHandoffAck {
   ok: boolean;
-  /** A non-sensitive reason when `ok` is false (e.g. "no-active-handoff"). */
+  /** A non-sensitive reason when `ok` is false (e.g. "no-active-run"). */
   error?: string;
 }
 

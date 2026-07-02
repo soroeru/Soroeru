@@ -16,13 +16,14 @@ export interface VisibilityRunnerOptions {
   domain: DomainService;
   openSession: (siteAccount: SiteAccount) => Promise<SiteSession>;
   handoff?: VisibilityHandoff;
+  isCanceled?: () => boolean;
   maxHandoffs?: number;
   now?: () => number;
 }
 
 export interface VisibilityRunResult {
   siteAccountId: string;
-  status: "collected" | "handoff" | "failed" | "unreachable" | "skipped" | "login-failed" | "no-data";
+  status: "collected" | "handoff" | "failed" | "unreachable" | "skipped" | "login-failed" | "no-data" | "canceled";
   disclosures: number;
   relationships: number;
   constraints: number;
@@ -59,25 +60,37 @@ export class VisibilityRunner {
 
     let session: SiteSession | undefined;
     try {
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       session = await this.options.openSession(siteAccount);
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       // egress: target-site — navigate only to the site account the user imported/selected.
       await session.page.goto(targetUrl);
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       await session.page.waitForReady();
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       let snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "initial", credential);
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       if (!snapshot) return this.handoffResult(siteAccountId);
 
       if (credential) {
         snapshot = await this.ensureLoginPage(siteAccount, session, snapshot);
+        if (this.isCanceled()) return this.canceledResult(siteAccountId);
         snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page", credential);
+        if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
         await this.login(session, credential, snapshot);
+        if (this.isCanceled()) return this.canceledResult(siteAccountId);
         await session.page.waitForReady();
+        if (this.isCanceled()) return this.canceledResult(siteAccountId);
         snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "after-login", credential);
+        if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
       }
 
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       const values = await session.page.readValues();
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       // Also collect read-only display values (account pages that render registered
       // info as text, not editable fields). Synthetic fields run through the same
       // deterministic classifier; the raw values stay local and are redacted/hashed.
@@ -94,6 +107,7 @@ export class VisibilityRunner {
         now: this.now,
       });
       const relationships = this.recordRelationships(siteAccount, snapshot);
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
 
       // Honest completion (review #177 P1): zero disclosures is never reported as
       // "collected" — that would be a false-positive completion the Product Owner
@@ -153,6 +167,7 @@ export class VisibilityRunner {
         constraints,
       };
     } catch (err) {
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       const unreachableReason = unreachableReasonFor(err);
       this.options.domain.saveCheckpoint({
         workflow: "visibility",
@@ -171,6 +186,14 @@ export class VisibilityRunner {
     } finally {
       await session?.close();
     }
+  }
+
+  private isCanceled(): boolean {
+    return this.options.isCanceled?.() ?? false;
+  }
+
+  private canceledResult(siteAccountId: string): VisibilityRunResult {
+    return { siteAccountId, status: "canceled", disclosures: 0, relationships: 0, constraints: 0 };
   }
 
   private async ensureLoginPage(

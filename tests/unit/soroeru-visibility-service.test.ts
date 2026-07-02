@@ -139,6 +139,29 @@ test("refuses a concurrent run while one is paused at a hand-off", async () => {
   }
 });
 
+test("abort stops an in-flight run even before a wall hand-off", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({ domain: "slow.test", url: "https://slow.test/account", displayName: "Slow" });
+    const page = new BlockingPageDriver();
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
+    service.setDomain(domain);
+
+    const runPromise = service.runSite(site.id);
+    await waitFor(() => service.isRunning);
+
+    assert.equal(service.abortRun(), true);
+    const result = await runPromise;
+
+    assert.equal(result.status, "canceled");
+    assert.equal(page.closed, true);
+    assert.equal(service.isRunning, false);
+    assert.equal(service.status().awaitingHandoff, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("reports locked when no vault is bound", async () => {
   const service = new VisibilityService({ openSession: () => Promise.reject(new Error("should not open")) });
   const result = await service.runSite("any");
@@ -151,9 +174,10 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 class FakeSession implements SiteSession {
-  constructor(readonly page: FakePageDriver) {}
+  constructor(readonly page: FakePageDriver | BlockingPageDriver) {}
   async close(): Promise<void> {
     this.page.closed = true;
+    if (this.page instanceof BlockingPageDriver) this.page.close();
   }
 }
 
@@ -185,6 +209,33 @@ class FakePageDriver implements PageDriver {
   }
   async click(selector: string): Promise<void> {
     this.clicked.push(selector);
+  }
+}
+
+class BlockingPageDriver implements PageDriver {
+  closed = false;
+  private unblock: (() => void) | undefined;
+  async goto(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      this.unblock = resolve;
+      if (this.closed) resolve();
+    });
+  }
+  async waitForReady(): Promise<void> {}
+  currentUrl(): string {
+    return "https://slow.test/account";
+  }
+  async snapshot(): Promise<PageSnapshot> {
+    return snapshot("https://slow.test/account", []);
+  }
+  async readValues(): Promise<Record<string, string>> {
+    return {};
+  }
+  async fillField(): Promise<void> {}
+  async click(): Promise<void> {}
+  close(): void {
+    this.closed = true;
+    this.unblock?.();
   }
 }
 
