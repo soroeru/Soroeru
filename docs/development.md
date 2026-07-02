@@ -1,24 +1,14 @@
 # Development
 
-> **⚠️ IN FLUX / partially superseded (2026-06-25).** The product is re-founded as
-> **Soroeru（揃える）** (canonical direction: [`requirements.md`](requirements.md)). Target
-> architecture / technology selection is now owned by
-> [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md). The setup,
-> layout, commands, and packaging below describe the **previous Catashiro** codebase. They
-> remain usable for the existing code, but the target stack, build, and packaging are
-> updated by future RFC-002 implementation work; do not assume the details below are final.
-> The repository identifier stays `soroeru`.
+> **⚠️ IN FLUX.** Target architecture / technology selection is owned by
+> [`architecture.md`](architecture.md); the setup, layout, commands, and packaging below are
+> updated by future `architecture.md`-driven implementation work, so do not assume the
+> details below are final.
 
 This document owns **local development workflow, repository layout,
 implementation conventions, and the canonical quality gate list** for `Soroeru`.
 
-> **Direction change (2026-06-12).** The project pivoted to `Catashiro`, a local-first
-> autonomous agent (Playwright-based; see [`requirements.md`](requirements.md)).
-> The MV3-extension build / layout / command details that used to live below have been
-> removed along with that code (#68; history remains in git). This document now
-> describes the `Soroeru` agent's setup, layout, and commands.
-
-Out of scope here: application architecture (see [`extension.md`](extension.md)),
+Out of scope here: application architecture (see [`architecture.md`](architecture.md)),
 product requirements (see [`requirements.md`](requirements.md)), test strategy
 (see [`testing.md`](testing.md)), and GitHub workflow rules (see
 [`github-operations.md`](github-operations.md)).
@@ -91,10 +81,9 @@ npm run release:check              # beta privacy/security release gate (typeche
 
 Each `npm run poc ...` invocation runs `npm run build` first. State (the
 encrypted store, measurement JSON) is written under `state/soroeru-poc/` and
-must not be committed. See [`verification-results.md`](verification-results.md)
-for full command reference and verification results.
+must not be committed.
 
-### 3.2 Soroeru desktop app (RFC-002 scaffold, #158)
+### 3.2 Soroeru desktop app (architecture.md §1 scaffold, #158)
 
 The Soroeru Electron app (main / preload / renderer) lives alongside the PoC
 during the migration:
@@ -120,7 +109,7 @@ is not committed.
 ## 3.1 Mac Beta Packaging
 
 The Soroeru private-beta packaging path is an unsigned macOS DMG built with
-Electron Forge and `@electron-forge/maker-dmg` (RFC-002 §2.6). It packages the
+Electron Forge and `@electron-forge/maker-dmg` (architecture.md §2). It packages the
 Electron app, Vite renderer, compiled main/preload code, installed npm
 dependencies, and a hermetic Playwright Chromium browser so beta users do not
 need a system Node.js install.
@@ -343,13 +332,75 @@ For code changes, run the available gates:
 Only report checks as run when the command actually exists and has been
 executed. If a command is not available yet, state that plainly in the PR.
 
-## 9. Local AI Review
+## 9. Review
+
+### 9.1 Code Review
+
+Code review (human or AI) prioritizes, in this order:
+
+1. **correctness** — bugs, off-by-one, null / empty handling, race conditions,
+   error paths that swallow failures
+2. **regressions** — behavior changes that break existing callers, tests, or
+   documented contracts
+3. **security** — input validation, auth, secrets in logs, command injection,
+   path traversal, permission bits on state files
+4. **missing tests** — new behavior or new branches that have no test coverage
+
+This mirrors the local AI review's code-review criteria
+(`.githooks/prompts/local-review-claude.md` / `local-review-codex.md`); keep the two in
+sync if either changes.
+
+### 9.2 Requirements Review
+
+Requirements review checks:
+
+1. requirements are at an implementable granularity
+2. acceptance criteria are verifiable
+3. no ambiguous wording remains
+4. out-of-scope is stated explicitly
+5. failure / exception behavior is specified
+6. non-functional requirements are not missing
+7. user value and functional requirements are not conflated
+
+### 9.3 Design Doc Review
+
+Design doc review checks:
+
+1. traceability to requirements
+2. component responsibilities
+3. API / interface contracts
+4. data model
+5. state transitions
+6. error handling
+7. test strategy
+8. migration / rollback
+9. backward compatibility
+10. alternatives considered and the rationale for the chosen approach
+
+### 9.4 Architecture Review
+
+Architecture review checks:
+
+1. system boundaries
+2. dependencies
+3. scalability
+4. availability
+5. latency
+6. security
+7. observability
+8. operability
+9. cost
+10. failure modes
+11. data consistency
+12. whether the decision can be recorded as an ADR
+
+### 9.5 Local AI Review
 
 Setup, behavior, and troubleshooting for the local AI review hook live in
 [`local-ai-review.md`](local-ai-review.md). The setup command is repeated
 once in §2 above as part of environment setup; do not duplicate it elsewhere.
 
-### 9.1 Issue Implementation Loop
+## 10. Issue Implementation Loop
 
 This section defines the repository-local Issue implementation loop. The
 matching Codex Skill lives in
@@ -381,7 +432,7 @@ if later Issues depend on earlier changes, merge or otherwise integrate those
 changes before starting the dependent Issue. Step 6 has no fixed retry count,
 but the session-limit check and normal blocker handling still apply.
 
-## 10. Operational Notes
+## 11. Operational Notes
 
 - `state/` is local state and must not be committed.
 - `state/ai-reviews/` contains local AI review artifacts.

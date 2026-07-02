@@ -6,21 +6,18 @@ It mirrors the shared sections from `AGENTS.md` and replaces the Codex-specific
 section with Claude Code-specific guidance. When the shared sections in
 `AGENTS.md` change, update this file to match.
 
-> **Direction change (2026-06-25).** The product is renamed and re-founded from
-> `Catashiro` to **Soroeru（揃える）**: a local-first **agency engine** for the domain of
-> personal information, online accounts, and online contracts. Soroeru is *not* framed as
-> an "autonomous form-filling agent"; its purpose is to help the user **acquire and grow
-> their own agency (free will)** in this domain — turning formally-possible choices into
+> **Soroeru（揃える）** is a local-first **agency engine** for the domain of personal
+> information, online accounts, and online contracts. It is *not* an "autonomous
+> form-filling agent"; its purpose is to help the user **acquire and grow their own agency
+> (free will)** in this domain — turning formally-possible choices into
 > practically-exercisable ones. The canonical product direction is
-> [`docs/requirements.md`](docs/requirements.md), which fully supersedes the prior
-> Catashiro direction (history in git).
+> [`docs/requirements.md`](docs/requirements.md).
 >
-> The **repository / codebase identifier is now `soroeru`** (renamed from `catashiro`);
-> **Soroeru** is the product name. Target architecture / technology selection is owned by
-> [`docs/rfc/rfc-002-soroeru-architecture.md`](docs/rfc/rfc-002-soroeru-architecture.md).
-> The first capability slice is **Visibility (building the disclosure ledger)**, not
-> registration; the slice order is A Visibility → B Bulk Update → C Withdrawal → D
-> Registration.
+> The **repository / codebase identifier is `soroeru`**; **Soroeru** is the product name.
+> Target architecture / technology selection is owned by
+> [`docs/architecture.md`](docs/architecture.md). The first capability slice is
+> **Visibility (building the disclosure ledger)**, not registration; the slice order is
+> A Visibility → B Bulk Update → C Withdrawal → D Registration.
 
 ---
 
@@ -44,7 +41,7 @@ The first capability is **Visibility**: import the user's Google/Chrome Password
 CSV, auto-log in to each site, collect what is registered there, and build a **disclosure
 ledger** so the user can see "what was given, where, and when," with stale values flagged.
 Browser automation uses **Playwright** (browser-engine independence) in the target
-architecture selected by RFC-002.
+architecture selected in `docs/architecture.md`.
 
 ## Product Ownership and AI Responsibilities
 
@@ -58,7 +55,7 @@ the implementation-side roles needed to realize the Product Owner's intent, incl
 - **Product management support**: turn the Product Owner's intent into Issues, scope,
   acceptance criteria, risks, and release-readiness checks.
 - **Software design / architecture**: propose and implement designs aligned with
-  RFC-002, security requirements, and the local-first agency principles.
+  `docs/architecture.md`, security requirements, and the local-first agency principles.
 - **Programming**: make coherent code and documentation changes, keeping them small,
   reviewable, and consistent with repository patterns.
 - **QA / release verification**: design and run automated and manual checks, review PRs
@@ -240,8 +237,7 @@ Do not implement these unless the user explicitly changes the scope:
 
 ## Tech Stack
 
-Target stack is defined in
-[`docs/rfc/rfc-002-soroeru-architecture.md`](docs/rfc/rfc-002-soroeru-architecture.md):
+Target stack is defined in [`docs/architecture.md`](docs/architecture.md) §2:
 
 - Electron desktop app, TypeScript / Node.js, React + Vite renderer.
 - Playwright Library for headed browser automation, run behind a narrow automation service.
@@ -252,14 +248,15 @@ Target stack is defined in
 - Unsigned macOS DMG for MVP; signing/notarization and auto-update are later.
 
 Do not introduce a framework, build tool, package manager, test runner, or backend service
-outside RFC-002's target stack without a new Issue/RFC explaining the requirements reason.
+outside `docs/architecture.md`'s target stack without a new Issue/RFC explaining the
+requirements reason.
 
 ## Expected Architecture
 
-Target architecture is RFC-002. [`docs/extension.md`](docs/extension.md) and
-[`docs/development.md`](docs/development.md) still describe the *previous* Soroeru
-architecture/workflow and are retained only as reference until implementation docs are
-rewritten.
+Target architecture is [`docs/architecture.md`](docs/architecture.md).
+[`docs/development.md`](docs/development.md) still describes some *previous* Soroeru
+workflow/commands and is retained only as reference until implementation docs are fully
+rewritten (see `docs/architecture.md` §12 for the canonical quality-gate pointer).
 
 Conceptually and architecturally, Soroeru separates: a **store/vault service** of canonical
 Personal Attributes, Site Accounts, Disclosures, Account Relationships, Mandates, Evidence,
@@ -272,7 +269,7 @@ Boundary, settings).
 
 ## Field Detection Strategy
 
-Two variants are built and compared (see RFC-002 §7):
+Two variants are built and compared (see `docs/architecture.md` §11):
 
 1. **Deterministic**: reuse the scanner (`src/agent/scan.ts`) and rule-based classifier
    (`src/agent/classifier.ts`) to map fields (`autocomplete`, `name`, `id`,
@@ -334,15 +331,17 @@ Use these documents when present:
 - `README.md`: user-facing product overview, usage, limitations, and security notes
 - `docs/README.md`: documentation index and ownership guide
 - `docs/requirements.md`: **canonical product direction** and product requirements (Soroeru)
-- `docs/rfc/rfc-002-soroeru-architecture.md`: target Soroeru architecture and technology selection
-- `docs/extension.md`: previous Catashiro architecture (**superseded**, reference only)
-- `docs/development.md`: setup, commands, and workflow (previous Catashiro; **in flux** until RFC-002 implementation docs land)
+- `docs/architecture.md`: canonical target Soroeru architecture and technology selection
+- `docs/development.md`: setup, commands, and workflow (**in flux** until `docs/architecture.md`-driven implementation docs land)
 - `docs/testing.md`: testing strategy
 - `docs/security.md`: security review notes
 - `docs/manual-test.md`: manual test checklist
 - `docs/github-operations.md`: GitHub workflow rules
 - `docs/local-ai-review.md`: local AI review hook documentation
 - `.github/ISSUE_TEMPLATE/implementation-plan.md`: GitHub Issue implementation plan template
+- `docs/design/*.md`: per-Issue detailed design docs from Plan mode, session-scoped
+  (see [`docs/github-operations.md`](docs/github-operations.md) §3) — read only the
+  one for the Issue being implemented, not the whole directory
 
 Update docs when behavior, setup, commands, architecture, or security assumptions change.
 
@@ -411,9 +410,10 @@ Primary responsibilities:
 
 - read `README.md` and `AGENTS.md` before non-trivial edits
 - translate Product Owner intent into concrete scope, acceptance criteria, and risks
-- propose and implement designs aligned with RFC-002 and the shared product principles
+- propose and implement designs aligned with `docs/architecture.md` and the shared product
+  principles
 - make small, coherent code changes aligned with the shared instructions above and
-  RFC-002
+  `docs/architecture.md`
 - update documentation when behavior, commands, architecture, or security
   assumptions change
 - run available quality gates and perform QA/review when feasible, reporting results

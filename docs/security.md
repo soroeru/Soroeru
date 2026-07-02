@@ -7,36 +7,6 @@ DOM input safety, and dependency policy.
 Canonical product direction is [`requirements.md`](requirements.md).
 Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
-> **Direction change (2026-06-25).** The product is re-founded as **Soroeru（揃える）**, a
-> local-first agency engine (canonical direction: [`requirements.md`](requirements.md)).
-> The security/privacy principles below carry over unchanged: full personal data
-> (incl. user-entered card data with CVV and per-site credentials) is stored **locally and encrypted**;
-> raw PII is never sent to the AI model; egress is local-first; and the hard line remains
-> **never bypass CAPTCHA / MFA / bot detection / access controls**. See the §"Automated
-> access, scraping, and ToS" note below for the Soroeru-specific stance added for the
-> Visibility slice (CSV import, auto-login, collection). The repository identifier stays
-> `soroeru`.
-
-> **Automated access, scraping, and ToS (Soroeru, added 2026-06-25).** The first slice
-> (Visibility) imports the user's Google/Chrome Password Manager CSV, auto-logs in to each
-> site with the user's own credentials, and collects what the user registered. To avoid the
-> bootstrap problem (you must read terms to know terms; manually vetting 300+ sites is
-> infeasible), the activities are separated:
->
-> - **Reading public terms pages automatically is allowed** (public content; the means by
->   which automation-prohibiting clauses are even detected).
-> - **Logging into the user's own account with the user's own credentials to read the
->   user's own data is treated as agent-assisted self-access**, distinct from third-party
->   scraping or bulk harvesting of others' data (which is out of scope).
-> - **Hard line**: access controls a site *actively enforces* (CAPTCHA / MFA / bot
->   detection) are **never bypassed** — detect and hand off in the same session.
-> - A **detected automation-prohibiting ToS clause** is **surfaced as a Constraint /
->   high-risk item for the user to decide**, not silently hard-blocked.
-> - The imported CSV (plaintext passwords) is encrypted immediately, never logged, and
->   discarded after processing; collected PII is never egressed and Disclosure values are
->   stored only inside the encrypted local vault.
-> - Legal nuances (per-site ToS, jurisdiction) warrant deeper review before wider release.
-
 ## 1. Security Principles
 
 - Keep all personal data local and **encrypted at rest**; the user owns it.
@@ -79,7 +49,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
 ## 3. Sensitive Data Handling
 
-Stored locally, **encrypted** (see RFC-002 §4):
+Stored locally, **encrypted** (see [`architecture.md`](architecture.md) §3):
 
 - name (incl. phonetic / romanized), email, phone;
 - postal code and addresses (home / work / shipping / billing);
@@ -160,8 +130,8 @@ artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
 
 ## 4. Encryption (canonical)
 
-Per [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md) §2.4 and
-§6. Use only widely vetted algorithms; do not roll custom crypto.
+Per [`architecture.md`](architecture.md) §2 and §10. Use only widely vetted algorithms; do
+not roll custom crypto.
 
 1. **Master passphrase** — entered by the user at unlock; never stored.
 2. **Key derivation** — Argon2id (memory-hard) from passphrase + a stored 16-byte random

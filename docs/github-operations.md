@@ -126,6 +126,31 @@ Keep implementation plans in the GitHub Issue for issue-driven work. If a PR
 changes the plan materially, update the Issue or explain the change in the PR
 description.
 
+### Issue-level design vs. implementation-session design docs
+
+Design lives at two levels, scoped differently:
+
+- **Issue-level (always, in the Issue itself)**: when filing a new Issue, record
+  only the design detail needed to *start* implementation — goal, scope,
+  non-scope, approach, and open questions, per the `implementation-plan.md`
+  template above. This stays in the Issue body/comments, not in a committed
+  file.
+- **Implementation-session-level (`docs/design/`, only when the design is
+  non-trivial)**: when beginning implementation of an Issue, run Plan mode
+  first; if the resulting plan is substantial enough to warrant a detailed
+  design (multiple components, non-obvious interactions, several review
+  rounds expected), write it to `docs/design/<slug>.md` with an `Issue: #<n>`
+  reference near the top. This file is the detailed design record for that
+  Issue's implementation and stays in the repo afterward as history — do not
+  delete it once the Issue is done.
+
+Detailed design docs under `docs/design/` are **session-scoped reading**, not
+background context to preload: when implementing a given Issue, do not read
+other Issues' `docs/design/*.md` files — doing so wastes context window on
+unrelated detail. The one exception is when implementation is stuck on a
+design or debugging problem; in that case, searching past `docs/design/`
+files for applicable prior art is fine.
+
 ## 4. Implementation Size
 
 - Keep each PR small enough to explain the goal, main changes, and risks.

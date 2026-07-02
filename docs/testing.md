@@ -5,17 +5,15 @@ how aggressively, and how the suites map to the architecture. It is the source o
 *what* to test; the [`writing-good-tests`](../skills/writing-good-tests/SKILL.md) skill (§1.1)
 is the source of truth for *how* to write a test.
 
-> **Current direction (rewritten 2026-06-30, #209).** Soroeru is a local-first **agency
-> engine**; the canonical product direction is [`requirements.md`](requirements.md) and the
-> target architecture is [`rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md).
-> The capability slices ship in order **A Visibility → B Bulk Update → C Withdrawal → D
-> Registration**, so test investment follows that order: the Visibility layers
-> (`store/vault-v2.ts`, `domain/*`, `automation/*`, the IPC permission boundary)
-> are the active risk surface, while the registration-first PoC layers (`agent/*`,
-> `app/*`, the `run/measure.ts` E2E matrix) remain in the tree and under test for the
-> later slices. This document describes the suite that **actually runs today** under
-> `npm test` and CI (§7); it is the current checklist, not a historical reference. As the
-> codebase migrates onto the RFC-002 Electron/React stack, update this strategy in lockstep.
+> Soroeru is a local-first **agency engine**; the canonical product direction is
+> [`requirements.md`](requirements.md) and the target architecture is
+> [`architecture.md`](architecture.md). The capability slices ship in order **A Visibility →
+> B Bulk Update → C Withdrawal → D Registration**, so test investment follows that order:
+> the Visibility layers (`store/vault-v2.ts`, `domain/*`, `automation/*`, the IPC permission
+> boundary) are the active risk surface, while the registration-first PoC layers (`agent/*`,
+> `app/*`, the `run/measure.ts` E2E matrix) remain in the tree and under test for the later
+> slices. This document describes the suite that **actually runs today** under `npm test`
+> and CI (§7); keep it updated in lockstep as the codebase changes.
 
 Out of scope here: the browser-based manual checklist itself (see
 [`manual-test.md`](manual-test.md)) and the canonical command list (see
@@ -82,14 +80,13 @@ a convention in [`development.md`](development.md) §5. It encodes the principle
 
 The skill illustrates these principles with `vitest` / React Testing Library examples; this
 repo's runner is Node's built-in `node --test` over `tests/unit/*.test.ts` (§3, §5), so
-**adapt the example syntax to `node --test` while keeping the principles** (revisit when the
-RFC-002 React renderer lands).
+**adapt the example syntax to `node --test` while keeping the principles** (revisit as the
+`architecture.md` React renderer matures).
 
 ### 1.2 Keep vs. reduce (the test-inventory criteria)
 
-This table is the **input to test-inventory / consolidation work** (#213 applied it as the
-first such pass). Apply it per test, not per file: a single file can hold both keep-tier and
-reduce-tier cases.
+This table is the **input to test-inventory / consolidation work**. Apply it per test, not
+per file: a single file can hold both keep-tier and reduce-tier cases.
 
 | Tier | Applies to | Action |
 | --- | --- | --- |
@@ -113,8 +110,8 @@ makes the assertion unreadable, keep it inline.
 
 ### 2.1 Layer → test mapping (MAINT-001)
 
-Layers follow the RFC-002 target architecture
-([`rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md) §3). "Slice"
+Layers follow the target architecture
+([`architecture.md`](architecture.md) §1). "Slice"
 indicates the capability slice the layer primarily serves — **A** (Visibility) is the active
 surface; **B/C/D** layers are present for the later slices.
 
@@ -307,19 +304,18 @@ not look like the agent is stuck. `soroeru-poc-perf` covers `emptyPhaseTimings` 
 `slowPhaseNote` (threshold behavior, per-phase labels, and that the note contains only the
 phase label and a duration).
 
-Baseline numbers for the ordinary (`01-basic`), wizard (`06-wizard`), and dynamic
-(`07-dynamic`) fixtures are recorded in
-[`verification-results.md`](verification-results.md). A CI-mandatory performance gate, remote
-telemetry, and a full benchmark dashboard are non-scope for this issue.
+A CI-mandatory performance gate, remote telemetry, and a full benchmark dashboard are
+out of scope.
 
-## 10. Strategy Decisions (#209)
+## 10. Strategy Decisions
 
-Decisions taken when this strategy was rewritten (Product Owner may revisit any in review):
+Standing decisions for this strategy (Product Owner may revisit any in review):
 
 - **Deliverable form** — this strategy lives in `docs/testing.md`, the repo's existing
   canonical testing doc. No separate testing RFC file is introduced (designs/specs are
-  captured in Issues, not new spec files); RFC-002 §8 remains the architecture-level source
-  for the test approach and this document is its day-to-day expansion.
+  captured in Issues, not new spec files); `architecture.md` §12 remains the
+  architecture-level source for the test approach and this document is its day-to-day
+  expansion.
 - **Coverage target** — **qualitative, risk-focused (§1, §1.2), no numeric coverage-percentage
   gate.** Coverage numbers reward exhaustive low-value tests, which is the opposite of the
   "not too many" goal. The CI gates that matter are the security static checks

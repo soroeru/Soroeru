@@ -9,7 +9,7 @@
 > 使い、本物の認証情報・カード・個人情報はこのチェックリストのどこにも入力しないでください。ボールト
 > ファイル・`state/` の出力・秘密情報を含むスクリーンショットを Issue / PR に添付しないでください。
 
-スライスの範囲（RFC-002 §5・[`requirements.md`](requirements.md)）: **A Visibility のみ。** 一括更新
+スライスの範囲（[`architecture.md`](architecture.md) §5・[`requirements.md`](requirements.md)）: **A Visibility のみ。** 一括更新
 （B）・退会整理（C）・新規登録ゲート（D）は後続スライスであり、ここでは対象外です。コマンド一覧の
 正典は [`development.md`](development.md)、テスト種別のマトリクスは [`testing.md`](testing.md) です。
 
@@ -217,7 +217,3 @@ CATASHIRO_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visib
 - [ ] フィールド検出は現在 **日本語のみ**
 - [ ] AI プロバイダモードは任意で、ユーザー設定の鍵を使い、受け取るのはフォーム構造 / 規約テキストのみ。
       生の個人情報は決して受け取らない
-
-> 旧 Catashiro の登録優先の手動チェックリスト（サイト追加 / 登録ゲート / 三つのガード / `npm run poc --
-> register|ui` での一括更新）はスライス A により **置き換えられ**、本ドキュメントからは削除されています。
-> Git 履歴には参照用として残っています。
