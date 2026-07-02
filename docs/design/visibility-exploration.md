@@ -126,17 +126,25 @@ interface DecisionContext {
   field?: FormField;
 }
 
-interface DecisionResult {
+// 注意（実装時）：以下は設計上の擬似コード。resultはkindに対応する型に
+// ならないと型チェックが通らないため、実装ではkindをキーにしたマップ型
+// （下のDecisionResultMap）とジェネリクスで結果型をDecisionKindに紐付けること。
+// 本ドキュメント内の `decision.result.links` のような直接アクセスは、
+// `decide<K>` がkindに応じた型を返す前提で読む。
+interface DecisionResultMap {
+  "find-login-page":    { links: LinkCandidate[] };
+  "find-profile-links": { links: LinkCandidate[] };
+  "detect-login-form":  { form: LoginFormDetection | null };
+  "judge-login-result": { success: boolean; reason: string };
+  "classify-field":     { classification: FieldClassification | null };
+  "should-continue":    { continue: boolean };
+  "name-new-attribute": { attributeKey: string; label: string };
+}
+
+interface DecisionResult<K extends DecisionKind = DecisionKind> {
   source: "rule" | "ai";
   confidence: number;
-  // kind別の結果
-  result:
-    | { links: LinkCandidate[] }           // find-login-page, find-profile-links
-    | { form: LoginFormDetection | null }  // detect-login-form
-    | { success: boolean; reason: string } // judge-login-result
-    | { classification: FieldClassification | null } // classify-field
-    | { continue: boolean } // should-continue
-    | { attributeKey: string; label: string };  // name-new-attribute
+  result: DecisionResultMap[K];  // kindに対応する結果型
 }
 
 class DecisionEngine {
@@ -145,7 +153,9 @@ class DecisionEngine {
     private aiProvider?: AIProvider  // optional
   ) {}
 
-  async decide(request: DecisionRequest): Promise<DecisionResult> {
+  async decide<K extends DecisionKind>(
+    request: DecisionRequest & { kind: K }
+  ): Promise<DecisionResult<K>> {
     // 1. まずルールベースで試行
     const ruleResult = this.ruleEngine.evaluate(request);
 
@@ -173,6 +183,15 @@ class DecisionEngine {
 
   /**
    * AIなしでルールも失敗した場合の安全なデフォルト値
+   *
+   * 「unconfidentでも部分結果を使ってよいか」はkindごとに性質が異なる（意図的な非対称）:
+   * - find-login-page / find-profile-links: 結果はナビゲーション候補にすぎず、
+   *   外れても無関係な同一ドメインページを訪問するだけで害がない。
+   *   低スコア候補でも試す価値があるため、unconfidentな部分結果をそのまま使う。
+   * - judge-login-result: 誤って「成功」と判定すると未認証セッションから
+   *   収集を始めてしまうため、RuleEngine側がambiguous時にresultを返さない
+   *   （→下のswitchで失敗扱いのデフォルトが適用される）。
+   * 状態の断定を伴うkindでは、RuleEngineはunconfidentな部分結果を返さないこと。
    */
   private getDefaultResult(kind: DecisionKind, ruleResult: unknown): DecisionResult["result"] {
     // ルールが部分的に結果を返した場合はそれを使用
@@ -404,6 +423,10 @@ import { normalizeUrl } from "./url-utils";
 interface ExplorationState {
   siteAccountId: string;
   domain: string;
+  // 探索対象のページ（ログイン済みセッション）。
+  // Orchestratorがサイトごとに新しいpageDriverを作るため、コンストラクタ注入では
+  // 2サイト目以降が古いページを参照してしまう。exploreの引数で受け取り状態に持つ。
+  pageDriver: PageDriver;
   visitedUrls: Set<string>;
   pendingUrls: string[];  // 探索待ちURL
   deferredUrls: string[]; // 壁検出でスキップされ、ハンドオフ後に再訪問するURL
@@ -416,7 +439,6 @@ class PageExplorer {
   private currentState: ExplorationState | null = null;
 
   constructor(
-    private pageDriver: PageDriver,
     private decisionEngine: DecisionEngine,
     private wallDetector: WallDetector
   ) {}
@@ -436,13 +458,16 @@ class PageExplorer {
   }
 
   async *explore(
+    pageDriver: PageDriver,
     startUrl: string,
     siteAccount: SiteAccount
   ): AsyncGenerator<ExplorationEvent> {
     // 状態をインスタンス変数として保持（resume用）
+    // pageDriverも状態の一部（resume時は同一セッションで続行する必要がある）
     this.currentState = {
       siteAccountId: siteAccount.id,
       domain: siteAccount.domain,
+      pageDriver,
       visitedUrls: new Set(),
       pendingUrls: [startUrl],
       deferredUrls: [],
@@ -458,6 +483,7 @@ class PageExplorer {
    */
   private async *continueExploration(): AsyncGenerator<ExplorationEvent> {
     const state = this.currentState!;
+    const pageDriver = state.pageDriver;
 
     while (state.pendingUrls.length > 0) {
       const url = state.pendingUrls.shift()!;
@@ -468,11 +494,11 @@ class PageExplorer {
 
       yield { kind: "navigating", url: normalizedUrl };
 
-      await this.pageDriver.goto(normalizedUrl);
-      await this.pageDriver.waitForReady();
+      await pageDriver.goto(normalizedUrl);
+      await pageDriver.waitForReady();
 
       // 壁チェック
-      const wall = await this.wallDetector.detect(await this.pageDriver.snapshot());
+      const wall = await this.wallDetector.detect(await pageDriver.snapshot());
       if (wall) {
         state.walls.push(wall);
         // 壁を検出した場合、このURLをdeferredUrlsに追加してハンドオフ
@@ -499,7 +525,7 @@ class PageExplorer {
       state.visitedUrls.add(normalizedUrl);
 
       // ページ収集
-      const snapshot = await this.pageDriver.snapshot();
+      const snapshot = await pageDriver.snapshot();
       yield { kind: "page-snapshot", url, snapshot };
 
       // 次に訪問すべきリンクを判断
@@ -558,8 +584,9 @@ interface CollectedField {
 }
 
 class FieldCollector {
+  // pageDriverはコンストラクタ注入しない（Orchestratorがサイトごとに
+  // 新しいpageDriverを作るため、collectFromPageの引数で毎回受け取る）
   constructor(
-    private pageDriver: PageDriver,
     private decisionEngine: DecisionEngine,
     private domainService: DomainService
   ) {}
@@ -608,6 +635,7 @@ class FieldCollector {
   }
 
   async collectFromPage(
+    pageDriver: PageDriver,
     siteAccount: SiteAccount,
     snapshot: PageSnapshot
   ): Promise<CollectionResult> {
@@ -615,7 +643,7 @@ class FieldCollector {
     const dynamicCandidates: DynamicAttributeCandidate[] = [];
 
     // フォームフィールドを処理
-    const fieldValues = await this.pageDriver.readValues();
+    const fieldValues = await pageDriver.readValues();
 
     for (const field of snapshot.fields) {
       const value = fieldValues[field.fieldId];
@@ -668,7 +696,7 @@ class FieldCollector {
 
     // 表示要素を処理
     if (snapshot.displayValues) {
-      const displayValues = await this.pageDriver.readDisplayValues();
+      const displayValues = await pageDriver.readDisplayValues();
 
       for (const display of snapshot.displayValues) {
         const value = displayValues[display.valueId];
@@ -858,6 +886,7 @@ class VisibilityOrchestrator {
 
       if (event.kind === "page-snapshot") {
         const collectionResult = await this.fieldCollector.collectFromPage(
+          this.currentPageDriver!,
           siteAccount,
           event.snapshot
         );
@@ -939,6 +968,7 @@ class VisibilityOrchestrator {
       let wallDetectedDuringExplore = false;
 
       for await (const event of this.pageExplorer.explore(
+        pageDriver,
         pageDriver.currentUrl(),
         siteAccount
       )) {
@@ -956,6 +986,7 @@ class VisibilityOrchestrator {
         if (event.kind === "page-snapshot") {
           // Phase 3: 各ページで情報収集
           const collectionResult = await this.fieldCollector.collectFromPage(
+            pageDriver,
             siteAccount,
             event.snapshot
           );
