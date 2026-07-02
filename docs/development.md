@@ -372,18 +372,22 @@ changes.
 
 ### 9.3 Design Doc Review
 
-Design doc review checks:
+Design doc review targets `docs/design/*.md` implementation-session design
+docs and checks, in priority order:
 
-1. traceability to requirements
-2. component responsibilities
-3. API / interface contracts
-4. data model
-5. state transitions
-6. error handling
-7. test strategy
-8. migration / rollback
-9. backward compatibility
-10. alternatives considered and the rationale for the chosen approach
+1. **traceability** — design elements map to requirements / Issue acceptance
+   criteria, with no orphan elements and no uncovered requirements
+2. **contracts and responsibilities** — component responsibilities, API /
+   interface contracts, and the data model are implementable without guessing
+3. **failure handling and state transitions** — error paths, wall hand-off,
+   interruption / resume, and state transitions are designed, not just the
+   happy path
+4. **alternatives considered** — rejected options and the rationale for the
+   chosen approach are recorded
+5. **test strategy** — how the design's behavior will be verified is stated
+
+The criteria mirror `skills/design-doc-review/SKILL.md`; keep the two in sync
+if either changes.
 
 ### 9.4 Architecture Review
 
