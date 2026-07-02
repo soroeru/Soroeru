@@ -29,11 +29,11 @@ LOCAL_AI_REVIEW_BASE_REF="origin/main"
 # Files outside these paths are excluded from the diff fed to the
 # reviewer. Paths are matched as git pathspecs (relative to repo
 # root). Bash 3.2 indexed array.
+#
+# Documentation (README.md, AGENTS.md, CLAUDE.md, docs/) is
+# intentionally excluded: the local AI review hook targets code
+# changes only. Documentation-only commits skip review.
 LOCAL_AI_REVIEW_TARGET_PATHS=(
-  "README.md"
-  "AGENTS.md"
-  "CLAUDE.md"
-  "docs/"
   "scripts/"
   ".githooks/"
   ".github/"
