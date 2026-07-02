@@ -444,6 +444,37 @@ This is a session-workflow convention scoped to this repository's Claude Code se
 does not change product scope, architecture, or the safety boundaries defined elsewhere in
 this file.
 
+## Fable 5 Session Conventions
+
+Condensed from Anthropic's [Fable 5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5).
+These apply to whichever model orchestrates a session here.
+
+- **Act decisively.** When you have enough information to act, act. Don't re-derive
+  settled facts, re-litigate the user's decisions, or narrate options you won't pursue.
+  When weighing choices, give a recommendation, not a survey.
+- **Do only what the task requires.** No unrequested refactors, cleanup, speculative
+  abstractions, or validation for scenarios that cannot happen.
+- **Pause only when the work genuinely requires the user**: a destructive or irreversible
+  action, a real scope change, or input only they can provide. Ask and end the turn;
+  don't end on a promise. When the user is describing a problem rather than requesting a
+  change, report your assessment and stop.
+- **Ground progress claims in tool results.** Report only work you can point to evidence
+  for. If tests fail, say so with the output. If a step was skipped, say so.
+- **Write readable final messages.** Lead with the outcome, then supporting detail. Drop
+  working shorthand, arrow chains, and invented labels; write complete sentences. Choose
+  clear over short.
+
+Tooling:
+
+- **send-to-user**: launch sessions with `claude --brief` to enable the `SendUserMessage`
+  tool (there is no `settings.json` equivalent). Use it only for content the user must
+  see verbatim mid-task, never for narration or reasoning.
+- **Memory**: use Claude Code's built-in auto-memory (the project-scoped `memory/`
+  directory) for cross-session lessons. Do not create a separate ad hoc notes file.
+
+Local AI review and the `issue-implementation-loop` skill remain in force regardless of
+which model orchestrates; subagent/Codex review does not replace them.
+
 ## Claude Code Operating Rules
 
 - Do not assume Codex-specific automation runs in Claude Code sessions.
