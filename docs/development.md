@@ -352,15 +352,23 @@ sync if either changes.
 
 ### 9.2 Requirements Review
 
-Requirements review checks:
+Requirements review targets diffs to `docs/requirements.md` and checks, in
+priority order:
 
-1. requirements are at an implementable granularity
-2. acceptance criteria are verifiable
-3. no ambiguous wording remains
-4. out-of-scope is stated explicitly
-5. failure / exception behavior is specified
-6. non-functional requirements are not missing
-7. user value and functional requirements are not conflated
+1. **unambiguous** — each changed statement allows exactly one interpretation
+   (no vague qualifiers, undefined terms, or inconsistent naming)
+2. **verifiable** — fulfillment can be objectively checked by test,
+   inspection, or measurement
+3. **consistent** — no contradiction with the rest of `docs/requirements.md`
+   or the product principles (agency, never bypass walls, local-first)
+4. **failure paths specified** — errors, walls, cancellation, and partial
+   completion are stated, not just the happy path
+5. **scope explicit** — out-of-scope and unstated assumptions are surfaced
+
+The criteria derive from ISO/IEC/IEEE 29148 requirement quality
+characteristics, prioritized by defect impact. They mirror
+`skills/requirements-review/SKILL.md`; keep the two in sync if either
+changes.
 
 ### 9.3 Design Doc Review
 
