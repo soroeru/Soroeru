@@ -29,7 +29,7 @@ owns the relevant topic.
 | [`testing.md`](testing.md) | **Current testing strategy (Soroeru)**: what to test per layer, the keep-vs-reduce inventory criteria, test data policy, fixtures, commands, CI expectations, and the registration/bulk-update E2E matrix. |
 | [`manual-test.md`](manual-test.md) | Manual test checklist. §0 owns the Soroeru unsigned DMG smoke; older registration-first checks remain as historical/reference coverage until rewritten. |
 | [`verification-results.md`](verification-results.md) | Local 10-site verification results for registration, bulk update, gate/guards, encrypted store, local web UI, Issue #33 (**previous Catashiro; superseded** — historical record). |
-| [`user-manual.md`](user-manual.md) | User-facing manual for the Mac private beta (**previous Catashiro; superseded** — registration-first / local web UI / ZIP beta, pending a Soroeru manual). |
+| [`user-manual.md`](user-manual.md) | User-facing manual for the current Soroeru Mac private beta: DMG install, vault setup, CSV import, Visibility collection, disclosure ledger, insights, wall hand-off, and privacy boundaries. |
 | [`beta-feedback.md`](beta-feedback.md) | Beta feedback guide (**previous Catashiro; superseded** — beta scope to be redefined by the Soroeru RFC and slice plan). |
 | [`github-operations.md`](github-operations.md) | Issue, branch, label/priority, commit, pull request, review, and merge workflow rules. |
 | [`local-ai-review.md`](local-ai-review.md) | Local AI review hook setup, behavior, outputs, and troubleshooting. |
