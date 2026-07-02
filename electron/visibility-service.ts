@@ -12,8 +12,13 @@
 import { VisibilityRunner, type VisibilityRunResult } from "../src/automation/visibility-runner.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
 import type { DomainService } from "../src/domain/domain-service.js";
-import type { SiteAccount } from "../src/domain/entities.js";
-import type { VisibilityEvent, VisibilityRunResultView, VisibilityStatusView } from "./ipc/contract.js";
+import type { Credential, SiteAccount } from "../src/domain/entities.js";
+import type {
+  VisibilityEvent,
+  VisibilityHandoffCredentialView,
+  VisibilityRunResultView,
+  VisibilityStatusView,
+} from "./ipc/contract.js";
 
 export interface VisibilityServiceOptions {
   /** Opens a fresh ephemeral browser session for a site (the real BrowserEngine in production). */
@@ -117,12 +122,15 @@ export class VisibilityService {
     siteAccount: SiteAccount;
     instruction: string;
     evidence: string;
+    credential?: Credential;
   }): Promise<"resolved" | "abort"> {
+    const credential = input.credential ? toHandoffCredentialView(input.credential) : undefined;
     this.emit({
       type: "handoff",
       siteAccountId: input.siteAccount.id,
       instruction: input.instruction,
       evidence: input.evidence,
+      ...(credential ? { credential } : {}),
     });
     return new Promise<"resolved" | "abort">((resolve) => {
       this.pendingHandoff = {
@@ -136,6 +144,13 @@ export class VisibilityService {
   private emit(event: VisibilityEvent): void {
     this.options.emit?.(event);
   }
+}
+
+function toHandoffCredentialView(credential: Credential): VisibilityHandoffCredentialView {
+  return {
+    username: credential.username,
+    password: credential.password,
+  };
 }
 
 function toView(result: VisibilityRunResult): VisibilityRunResultView {

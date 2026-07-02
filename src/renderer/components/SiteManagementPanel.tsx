@@ -3,6 +3,7 @@ import type {
   SiteLedgerDetail,
   SiteLedgerSummary,
   VisibilityEvent,
+  VisibilityHandoffCredentialView,
 } from "../../../electron/ipc/contract.js";
 import { collectVisibleSelectedSiteIds, runVisibilityBatch, type BatchResultEntry } from "../site-management-batch.js";
 import {
@@ -17,6 +18,7 @@ import { SiteDetail } from "./LedgerPanel.js";
 
 const guideWallImage = new URL("../assets/saved-page-guide-wall.png", import.meta.url).href;
 const guideAccountImage = new URL("../assets/saved-page-guide-account.png", import.meta.url).href;
+const CREDENTIAL_CLIPBOARD_CLEAR_MS = 30_000;
 
 interface SiteManagementPanelProps {
   reloadToken: number;
@@ -28,6 +30,7 @@ interface HandoffState {
   siteAccountId: string;
   instruction: string;
   fallbackSuggested: boolean;
+  credential: VisibilityHandoffCredentialView | undefined;
 }
 
 type BatchPhase = "idle" | "running" | "paused" | "canceling" | "done";
@@ -117,6 +120,7 @@ export function SiteManagementPanel({
             siteAccountId: event.siteAccountId,
             instruction: event.instruction,
             fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
+            credential: event.credential,
           });
           if (resumedHandoffSites.current.has(event.siteAccountId)) setGuideSiteId(event.siteAccountId);
           break;
@@ -547,15 +551,17 @@ function HandoffPanel({
   onShowGuide: () => void;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-4">
-      <p className="text-sm font-medium text-amber-900">
-        {handoff.fallbackSuggested ? "別の方法で取り込めます" : "ウォールの解決が必要です"}
-      </p>
-      <p className="text-xs text-amber-800">{handoff.instruction}</p>
-      <p className="text-xs text-amber-800">
+    <Modal
+      title={handoff.fallbackSuggested ? "別の方法で取り込めます" : "ウォールの解決が必要です"}
+      onClose={() => undefined}
+      dismissible={false}
+    >
+      <p className="text-sm text-amber-800">{handoff.instruction}</p>
+      <p className="text-sm text-neutral-700">
         表示中のブラウザでウォール（CAPTCHA / 認証コード / 確認など）をご自身で解決してください。
         このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
       </p>
+      <HandoffCredentialPanel credential={handoff.credential} />
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={onResume} className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white">
           解決して再開
@@ -568,6 +574,90 @@ function HandoffPanel({
         </button>
         <button type="button" onClick={onShowGuide} className="text-sm underline">
           別の方法でこのサイトの情報を取り込む
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function HandoffCredentialPanel({
+  credential,
+}: {
+  credential: VisibilityHandoffCredentialView | undefined;
+}): React.JSX.Element {
+  if (!credential) {
+    return (
+      <p className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600">
+        このサイトのログイン ID / パスワードは保存されていません。
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded border border-neutral-200 bg-neutral-50 p-3">
+      <p className="text-sm font-medium text-neutral-900">ログイン補助</p>
+      <CopyableCredential label="ログイン ID（メールアドレス）" value={credential.username} />
+      <CopyableCredential label="パスワード" value={credential.password} />
+    </div>
+  );
+}
+
+function CopyableCredential({ label, value }: { label: string; value: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const copiedValueRef = useRef<string | undefined>(undefined);
+  const clearTimerRef = useRef<number | undefined>(undefined);
+  const copiedLabelTimerRef = useRef<number | undefined>(undefined);
+
+  const clearCopiedValue = useCallback(async (expectedValue: string) => {
+    try {
+      if (typeof navigator.clipboard.readText === "function") {
+        const current = await navigator.clipboard.readText();
+        if (current !== expectedValue) return;
+      }
+      await navigator.clipboard.writeText("");
+    } catch {
+      // Clipboard permissions differ by platform; failing closed here must not block the hand-off.
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (clearTimerRef.current !== undefined) window.clearTimeout(clearTimerRef.current);
+      if (copiedLabelTimerRef.current !== undefined) window.clearTimeout(copiedLabelTimerRef.current);
+      const copiedValue = copiedValueRef.current;
+      if (copiedValue !== undefined) void clearCopiedValue(copiedValue);
+    };
+  }, [clearCopiedValue]);
+
+  const copy = useCallback(async () => {
+    try {
+      if (clearTimerRef.current !== undefined) window.clearTimeout(clearTimerRef.current);
+      if (copiedLabelTimerRef.current !== undefined) window.clearTimeout(copiedLabelTimerRef.current);
+      await navigator.clipboard.writeText(value);
+      copiedValueRef.current = value;
+      setCopied(true);
+      copiedLabelTimerRef.current = window.setTimeout(() => {
+        copiedLabelTimerRef.current = undefined;
+        setCopied(false);
+      }, 2000);
+      clearTimerRef.current = window.setTimeout(() => {
+        clearTimerRef.current = undefined;
+        void clearCopiedValue(value).finally(() => {
+          if (copiedValueRef.current === value) copiedValueRef.current = undefined;
+        });
+      }, CREDENTIAL_CLIPBOARD_CLEAR_MS);
+    } catch {
+      setCopied(false);
+    }
+  }, [clearCopiedValue, value]);
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-xs font-medium text-neutral-600">{label}</span>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <code className="min-w-0 flex-1 select-all break-all rounded bg-white px-2 py-1 font-mono text-sm">
+          {value}
+        </code>
+        <button type="button" onClick={() => void copy()} className="rounded border border-neutral-300 px-3 py-1.5 text-sm">
+          {copied ? "コピーしました" : "コピー"}
         </button>
       </div>
     </div>

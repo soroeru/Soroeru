@@ -6,9 +6,10 @@
 //   - the request/response shapes crossing the boundary.
 //
 // It is deliberately framework-free (no electron / react imports) so both
-// processes and the unit tests can import it. The renderer never receives raw
-// personal values through these types: the domain summary carries masked
-// previews only (full-value reveal is a later, separately gated capability).
+// processes and the unit tests can import it. Raw values are only allowed on
+// explicitly gated flows: one-value ledger reveal after re-authentication, and
+// the active wall hand-off credential copy helper. Ordinary summaries carry
+// masked previews only.
 
 import type {
   AccountRelationship,
@@ -85,7 +86,7 @@ export function isIpcChannel(value: unknown): value is IpcChannel {
   return typeof value === "string" && (IPC_CHANNEL_LIST as readonly string[]).includes(value);
 }
 
-// --- Payload shapes (sanitized; no raw personal values) ---
+// --- Payload shapes ---
 
 export interface VaultStatus {
   /** A vault file already exists on disk (so the user should unlock, not set up). */
@@ -367,13 +368,31 @@ export interface VisibilityHandoffAck {
   error?: string;
 }
 
+/** Login credential shown only during an active wall hand-off so the user can
+ * complete the login/MFA step in the headed browser. This is an explicit UI
+ * exception to the normal masked renderer contract: it is not persisted by the
+ * renderer and is only emitted while the vault is unlocked and the run is
+ * waiting for the user. */
+export interface VisibilityHandoffCredentialView {
+  username: string;
+  password: string;
+}
+
 /**
  * A one-way Visibility event pushed to the renderer over
- * `VISIBILITY_EVENT_CHANNEL`. Carries only references / counts / masked
- * hand-off wording — never a raw collected value.
+ * `VISIBILITY_EVENT_CHANNEL`. Normal ledger events carry only references /
+ * counts / masked hand-off wording. A `handoff` event may additionally carry
+ * the site's login credential for local copy assistance while the headed
+ * browser is paused at a wall.
  */
 export type VisibilityEvent =
   | { type: "run-started"; siteAccountId: string }
-  | { type: "handoff"; siteAccountId: string; instruction: string; evidence: string }
+  | {
+      type: "handoff";
+      siteAccountId: string;
+      instruction: string;
+      evidence: string;
+      credential?: VisibilityHandoffCredentialView;
+    }
   | { type: "resumed"; siteAccountId: string }
   | { type: "run-finished"; result: VisibilityRunResultView };

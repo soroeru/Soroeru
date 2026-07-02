@@ -87,6 +87,37 @@ test("pauses at a wall, exposes the hand-off, and resumes on request", async () 
   }
 });
 
+test("handoff event includes the site's login credential for local copy assistance", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({ domain: "mfa.test", url: "https://mfa.test/login", displayName: "MFA" });
+    domain.addCredential({
+      siteAccountId: site.id,
+      username: "acceptance-user@example.test",
+      password: "AcceptancePassw0rd!",
+      source: "csv-import",
+    });
+    const page = new FakePageDriver([
+      snapshot("https://mfa.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
+    ]);
+    const events: VisibilityEvent[] = [];
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)), emit: (e) => events.push(e) });
+    service.setDomain(domain);
+
+    const runPromise = service.runSite(site.id);
+    await waitFor(() => service.status().awaitingHandoff);
+
+    const handoff = events.find((event) => event.type === "handoff");
+    assert.equal(handoff?.credential?.username, "acceptance-user@example.test");
+    assert.equal(handoff?.credential?.password, "AcceptancePassw0rd!");
+
+    service.abortHandoff();
+    await runPromise;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("refuses a concurrent run while one is paused at a hand-off", async () => {
   const { dir, domain } = await openDomain();
   try {

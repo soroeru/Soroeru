@@ -5,7 +5,12 @@ import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-c
 import type { SiteSession } from "./page-driver.js";
 import { WallDetectionService } from "./wall-detection.js";
 
-export type VisibilityHandoff = (input: { siteAccount: SiteAccount; instruction: string; evidence: string }) => Promise<"resolved" | "abort">;
+export type VisibilityHandoff = (input: {
+  siteAccount: SiteAccount;
+  instruction: string;
+  evidence: string;
+  credential?: Credential;
+}) => Promise<"resolved" | "abort">;
 
 export interface VisibilityRunnerOptions {
   domain: DomainService;
@@ -58,16 +63,16 @@ export class VisibilityRunner {
       // egress: target-site — navigate only to the site account the user imported/selected.
       await session.page.goto(targetUrl);
       await session.page.waitForReady();
-      let snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "initial");
+      let snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "initial", credential);
       if (!snapshot) return this.handoffResult(siteAccountId);
 
       if (credential) {
         snapshot = await this.ensureLoginPage(siteAccount, session, snapshot);
-        snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page");
+        snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page", credential);
         if (!snapshot) return this.handoffResult(siteAccountId);
         await this.login(session, credential, snapshot);
         await session.page.waitForReady();
-        snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "after-login");
+        snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "after-login", credential);
         if (!snapshot) return this.handoffResult(siteAccountId);
       }
 
@@ -210,6 +215,7 @@ export class VisibilityRunner {
     session: SiteSession,
     snapshot: PageSnapshot,
     step: string,
+    credential: Credential | undefined,
   ): Promise<PageSnapshot | undefined> {
     const maxHandoffs = this.options.maxHandoffs ?? 3;
     let current = snapshot;
@@ -243,6 +249,7 @@ export class VisibilityRunner {
         siteAccount,
         instruction: this.wallDetection.instructionFor(wall),
         evidence: wall.evidence,
+        ...(credential ? { credential } : {}),
       });
       if (outcome !== "resolved") return undefined;
       this.options.domain.saveCheckpoint({
