@@ -596,23 +596,38 @@ function HandoffCredentialPanel({
     <div className="flex flex-col gap-2 rounded border border-neutral-200 bg-neutral-50 p-3">
       <p className="text-sm font-medium text-neutral-900">ログイン補助</p>
       <CopyableCredential label="ログイン ID（メールアドレス）" value={credential.username} />
-      <CopyableCredential label="パスワード" value={credential.password} />
+      <CopyableCredential label="パスワード" value={credential.password} concealed />
     </div>
   );
 }
 
-function CopyableCredential({ label, value }: { label: string; value: string }): React.JSX.Element {
+function CopyableCredential({
+  label,
+  value,
+  concealed = false,
+}: {
+  label: string;
+  value: string;
+  concealed?: boolean;
+}): React.JSX.Element {
   const [copied, setCopied] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const copiedValueRef = useRef<string | undefined>(undefined);
   const clearTimerRef = useRef<number | undefined>(undefined);
   const copiedLabelTimerRef = useRef<number | undefined>(undefined);
+  const displayValue = concealed && !revealed ? "••••••••••••" : value;
 
   const clearCopiedValue = useCallback(async (expectedValue: string) => {
+    let shouldClear = false;
     try {
-      if (typeof navigator.clipboard.readText === "function") {
-        const current = await navigator.clipboard.readText();
-        if (current !== expectedValue) return;
-      }
+      if (typeof navigator.clipboard.readText !== "function") return;
+      const current = await navigator.clipboard.readText();
+      shouldClear = current === expectedValue;
+    } catch {
+      shouldClear = false;
+    }
+    if (!shouldClear) return;
+    try {
       await navigator.clipboard.writeText("");
     } catch {
       // Clipboard permissions differ by platform; failing closed here must not block the hand-off.
@@ -654,8 +669,17 @@ function CopyableCredential({ label, value }: { label: string; value: string }):
       <span className="text-xs font-medium text-neutral-600">{label}</span>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <code className="min-w-0 flex-1 select-all break-all rounded bg-white px-2 py-1 font-mono text-sm">
-          {value}
+          {displayValue}
         </code>
+        {concealed && (
+          <button
+            type="button"
+            onClick={() => setRevealed((current) => !current)}
+            className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
+          >
+            {revealed ? "隠す" : "表示"}
+          </button>
+        )}
         <button type="button" onClick={() => void copy()} className="rounded border border-neutral-300 px-3 py-1.5 text-sm">
           {copied ? "コピーしました" : "コピー"}
         </button>

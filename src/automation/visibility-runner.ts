@@ -95,6 +95,7 @@ export class VisibilityRunner {
       // info as text, not editable fields). Synthetic fields run through the same
       // deterministic classifier; the raw values stay local and are redacted/hashed.
       const displayValues = (await session.page.readDisplayValues?.()) ?? {};
+      if (this.isCanceled()) return this.canceledResult(siteAccountId);
       const displayFields = (snapshot.displayValues ?? []).map(displayValueToSyntheticField);
       const combinedFields = [...snapshot.fields, ...displayFields];
       const combinedValues = { ...values, ...displayValues };
@@ -193,6 +194,13 @@ export class VisibilityRunner {
   }
 
   private canceledResult(siteAccountId: string): VisibilityRunResult {
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId,
+      step: "canceled",
+      status: "failed",
+      resumeData: { reason: "user-canceled" },
+    });
     return { siteAccountId, status: "canceled", disclosures: 0, relationships: 0, constraints: 0 };
   }
 
@@ -272,7 +280,7 @@ export class VisibilityRunner {
         siteAccount,
         instruction: this.wallDetection.instructionFor(wall),
         evidence: wall.evidence,
-        ...(credential ? { credential } : {}),
+        ...(credential && shouldOfferHandoffCredential(step, current, wall.kind) ? { credential } : {}),
       });
       if (outcome !== "resolved") return undefined;
       this.options.domain.saveCheckpoint({
@@ -443,6 +451,10 @@ function hasLoginFields(snapshot: PageSnapshot): boolean {
     findLoginField(snapshot.fields, "password") !== undefined &&
     findLoginField(snapshot.fields, "username") !== undefined
   );
+}
+
+function shouldOfferHandoffCredential(step: string, snapshot: PageSnapshot, wallKind: string): boolean {
+  return step === "login-page" || hasLoginFields(snapshot) || wallKind === "mfa";
 }
 
 function findLoginLink(snapshot: PageSnapshot, siteAccount: SiteAccount): string | undefined {

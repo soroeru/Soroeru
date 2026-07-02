@@ -118,6 +118,43 @@ test("handoff event includes the site's login credential for local copy assistan
   }
 });
 
+test("handoff event omits credentials for a post-login non-MFA wall", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({ domain: "captcha.test", url: "https://captcha.test/login", displayName: "Captcha" });
+    domain.addCredential({
+      siteAccountId: site.id,
+      username: "acceptance-user@example.test",
+      password: "AcceptancePassw0rd!",
+      source: "csv-import",
+    });
+    const afterLoginCaptcha = snapshot("https://captcha.test/account", [], "captcha required");
+    afterLoginCaptcha.wallMarkers = ["recaptcha"];
+    const page = new FakePageDriver([
+      snapshot("https://captcha.test/login", [
+        field("email", { autocomplete: "username", labels: ["ID"] }),
+        field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      ]),
+      afterLoginCaptcha,
+    ]);
+    const events: VisibilityEvent[] = [];
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)), emit: (e) => events.push(e) });
+    service.setDomain(domain);
+
+    const runPromise = service.runSite(site.id);
+    await waitFor(() => service.status().awaitingHandoff);
+
+    const handoff = events.find((event) => event.type === "handoff");
+    assert.equal(handoff?.type, "handoff");
+    assert.equal(handoff?.credential, undefined);
+
+    service.abortHandoff();
+    await runPromise;
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("refuses a concurrent run while one is paused at a hand-off", async () => {
   const { dir, domain } = await openDomain();
   try {
@@ -162,6 +199,33 @@ test("abort stops an in-flight run even before a wall hand-off", async () => {
   }
 });
 
+test("abort before display-value collection prevents persisted disclosures and records canceled checkpoint", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({ domain: "slow.test", url: "https://slow.test/account", displayName: "Slow" });
+    const page = new BlockingDisplayPageDriver(
+      [snapshot("https://slow.test/account", [field("email", { autocomplete: "email", labels: ["メールアドレス"] })])],
+      { email: "user@example.test" },
+    );
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
+    service.setDomain(domain);
+
+    const runPromise = service.runSite(site.id);
+    await waitFor(() => page.readDisplayStarted);
+
+    assert.equal(service.abortRun(), true);
+    const result = await runPromise;
+
+    assert.equal(result.status, "canceled");
+    assert.equal(domain.listDisclosuresForSite(site.id).length, 0);
+    const checkpoint = domain.getCheckpoint("visibility", site.id);
+    assert.equal(checkpoint?.step, "canceled");
+    assert.equal(checkpoint?.status, "failed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("reports locked when no vault is bound", async () => {
   const service = new VisibilityService({ openSession: () => Promise.reject(new Error("should not open")) });
   const result = await service.runSite("any");
@@ -174,10 +238,10 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 class FakeSession implements SiteSession {
-  constructor(readonly page: FakePageDriver | BlockingPageDriver) {}
+  constructor(readonly page: FakePageDriver | BlockingPageDriver | BlockingDisplayPageDriver) {}
   async close(): Promise<void> {
     this.page.closed = true;
-    if (this.page instanceof BlockingPageDriver) this.page.close();
+    if ("close" in this.page) this.page.close();
   }
 }
 
@@ -233,6 +297,23 @@ class BlockingPageDriver implements PageDriver {
   }
   async fillField(): Promise<void> {}
   async click(): Promise<void> {}
+  close(): void {
+    this.closed = true;
+    this.unblock?.();
+  }
+}
+
+class BlockingDisplayPageDriver extends FakePageDriver {
+  readDisplayStarted = false;
+  private unblock: (() => void) | undefined;
+  async readDisplayValues(): Promise<Record<string, string>> {
+    this.readDisplayStarted = true;
+    await new Promise<void>((resolve) => {
+      this.unblock = resolve;
+      if (this.closed) resolve();
+    });
+    return {};
+  }
   close(): void {
     this.closed = true;
     this.unblock?.();
