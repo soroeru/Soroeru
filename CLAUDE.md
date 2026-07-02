@@ -444,6 +444,62 @@ This is a session-workflow convention scoped to this repository's Claude Code se
 does not change product scope, architecture, or the safety boundaries defined elsewhere in
 this file.
 
+## Fable 5 Session Conventions
+
+Condensed from Anthropic's [Fable 5 prompting guide](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-fable-5)
+(Issue #242), merged where the source's separate prompts overlapped. These target Fable 5's
+known behavioral shifts (over-planning and unrequested cleanup at high effort, verbose
+narration, checkpoint-happy pausing); they apply to whichever model is orchestrating a
+session here, not only Fable.
+
+- **Act decisively; match effort to the task.** When you have enough information to act,
+  act — don't re-derive settled facts, re-litigate decisions the user already made, or
+  narrate options you won't pursue; give a recommendation, not a survey. At higher effort,
+  resist doing more than the task requires: no unrequested refactors, cleanup, speculative
+  abstractions, or defensive validation for scenarios that can't happen.
+- **Pause only when the work genuinely requires it.** A destructive/irreversible action, a
+  real scope change, or input only the user can provide — then end the turn on that
+  question, not on a promise to do it later. When the user is describing a problem or
+  thinking out loud rather than requesting a change, the deliverable is your assessment:
+  report findings and stop, don't apply a fix unprompted. Before a command that changes
+  system state, confirm the evidence actually supports that specific action.
+- **Ground progress claims in tool results.** Before reporting progress, audit each claim
+  against an actual tool result from this session. Report only what you can point to
+  evidence for; say explicitly when something isn't yet verified. If tests fail, report
+  the failure and the output; if a step was skipped, say so.
+- **Final-message readability.** Lead with the outcome — the one sentence a reader would
+  want if they said "just give me the TL;DR" — then supporting detail. Terse shorthand
+  between tool calls is fine, but the final summary is for a reader who saw none of that:
+  drop working shorthand, spell out identifiers, avoid arrow chains and invented labels,
+  write complete sentences. Choose clear over short when they conflict.
+
+Mandatory setup (per Issue #242):
+
+- **send-to-user tool.** Claude Code's equivalent of the guide's `send_to_user` tool is the
+  built-in `SendUserMessage` tool, enabled via the `--brief` CLI flag ("Enable
+  SendUserMessage tool for agent-to-user communication") — no persistent `settings.json`
+  equivalent exists, so launch Fable sessions in this repo with `claude --brief`. Use it
+  only for content the user must see verbatim mid-task (a partial deliverable, a direct
+  answer to a question asked mid-loop); do not route narration or reasoning through it.
+- **Memory system.** Already satisfied by Claude Code's built-in auto-memory system
+  (project-scoped `memory/` directory documented in the harness system prompt) — it
+  already exceeds the guide's generic "one lesson per file" suggestion, with typed records
+  (user/feedback/project/reference), a `MEMORY.md` index, and explicit rules for when to
+  write, update, or avoid duplicating. Use it as-is for cross-session lessons about this
+  repo; do not create a separate ad hoc notes file.
+
+Deliberately not adopted (per Issue #242): the guide's "rare early stopping" and "rare
+context-budget concern" reassurance prompts, and its "give the reason, not only the
+request" framing — skipped at the Product Owner's direction.
+
+**Local AI review and `issue-implementation-loop` were evaluated and kept unchanged** for
+Fable-orchestrated sessions (Issue #242): Fable's subagent/Codex review (see Orchestration
+Workflow above) is optional and judgment-based, invoked only for decisions Fable itself
+flags as high-stakes — it is not a substitute for the forced, independent per-commit review
+gate, and the loop skill's explicit guardrails (bounded review retries, `Closes #` linkage,
+CI-green-before-complete, session-limit stop) matter more, not less, for a highly
+autonomous orchestrator.
+
 ## Claude Code Operating Rules
 
 - Do not assume Codex-specific automation runs in Claude Code sessions.
