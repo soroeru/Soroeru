@@ -119,7 +119,7 @@ class DecisionEngine {
     // 1. まずルールベースで試行
     const ruleResult = this.ruleEngine.evaluate(request);
 
-    if (ruleResult.confident) {
+    if (ruleResult.confident && ruleResult.result !== undefined) {
       return {
         source: "rule",
         confidence: 1.0,
@@ -129,16 +129,42 @@ class DecisionEngine {
 
     // 2. ルールで判断できない場合、AIにフォールバック
     if (this.aiProvider) {
-      const aiResult = await this.consultAI(request);
-      return { source: "ai", ...aiResult };
+      // consultAIは完全なDecisionResultを返すのでそのまま返す
+      return await this.consultAI(request);
     }
 
-    // 3. AIなしで判断できない場合は低信頼度で返す
+    // 3. AIなしで判断できない場合は安全なデフォルト値を返す
     return {
       source: "rule",
       confidence: 0.3,
-      result: ruleResult.result
+      result: this.getDefaultResult(request.kind, ruleResult.result)
     };
+  }
+
+  /**
+   * AIなしでルールも失敗した場合の安全なデフォルト値
+   */
+  private getDefaultResult(kind: DecisionKind, ruleResult: unknown): DecisionResult["result"] {
+    // ルールが部分的に結果を返した場合はそれを使用
+    if (ruleResult !== undefined) {
+      return ruleResult as DecisionResult["result"];
+    }
+    // 完全に結果がない場合は安全なデフォルト
+    switch (kind) {
+      case "find-login-page":
+      case "find-profile-links":
+        return { links: [] };  // 空のリンクリスト
+      case "detect-login-form":
+        return { form: null };  // フォームなし
+      case "judge-login-result":
+        return { success: false, reason: "no-decision" };  // 失敗扱い
+      case "classify-field":
+        return { classification: null };  // 分類不能
+      case "should-continue":
+        return { continue: false, nextLinks: [] };  // 探索終了
+      case "name-new-attribute":
+        return { attributeKey: "unknown", label: "Unknown" };  // 仮の名前
+    }
   }
 
   private async consultAI(request: DecisionRequest): Promise<DecisionResult> {
@@ -361,6 +387,26 @@ class PageExplorer {
     yield* this.continueExploration();
   }
 
+  /**
+   * URL正規化（重複訪問防止用）
+   * - フラグメント（#...）を除去
+   * - 末尾スラッシュを統一
+   */
+  private normalizeUrl(url: string): string {
+    try {
+      const parsed = new URL(url);
+      parsed.hash = "";  // フラグメント除去
+      let normalized = parsed.toString();
+      // 末尾スラッシュを削除（パスがルートでない場合）
+      if (normalized.endsWith("/") && parsed.pathname !== "/") {
+        normalized = normalized.slice(0, -1);
+      }
+      return normalized;
+    } catch {
+      return url;  // パース失敗時は元のURLを返す
+    }
+  }
+
   async *explore(
     startUrl: string,
     siteAccount: SiteAccount
@@ -388,12 +434,13 @@ class PageExplorer {
     while (state.pendingUrls.length > 0) {
       const url = state.pendingUrls.shift()!;
 
-      if (state.visitedUrls.has(url)) continue;
-      state.visitedUrls.add(url);
+      // URL正規化（フラグメント除去、末尾スラッシュ統一）
+      const normalizedUrl = this.normalizeUrl(url);
+      if (state.visitedUrls.has(normalizedUrl)) continue;
 
-      yield { kind: "navigating", url };
+      yield { kind: "navigating", url: normalizedUrl };
 
-      await this.pageDriver.goto(url);
+      await this.pageDriver.goto(normalizedUrl);
       await this.pageDriver.waitForReady();
 
       // 壁チェック
@@ -401,12 +448,12 @@ class PageExplorer {
       if (wall) {
         state.walls.push(wall);
         // 壁を検出した場合、このURLをdeferredUrlsに追加してハンドオフ
-        // ユーザーが同一ブラウザセッションで壁を解決後、resumeで再開
-        state.deferredUrls.push(url);
+        // 注：visitedUrlsには追加しない（resume時に再訪問するため）
+        state.deferredUrls.push(normalizedUrl);
         yield {
           kind: "wall-detected",
           wall,
-          url,
+          url: normalizedUrl,
           // ハンドオフイベント：ユーザーに制御を渡す
           handoff: {
             reason: wall.kind,
@@ -419,6 +466,9 @@ class PageExplorer {
         // 状態はthis.currentStateに保持されているのでresumeで継続可能
         return;
       }
+
+      // 壁がなければ訪問済みとしてマーク（壁検出後はマークしない）
+      state.visitedUrls.add(normalizedUrl);
 
       // ページ収集
       const snapshot = await this.pageDriver.snapshot();
@@ -548,6 +598,14 @@ class FieldCollector {
         // CVVの場合はnullが返るのでスキップ
         if (sanitizedValue === null) continue;
 
+        // 分類ミス対策：card.*以外に分類されてもカード形状ならドロップ
+        // （例：CVVが誤ってphone等に分類された場合の保護）
+        if (!classification.attributeKey.startsWith("card.") &&
+            this.looksLikeCardData(value)) {
+          // カードデータっぽいのにcard.*ではない → 分類ミスの可能性、安全のためスキップ
+          continue;
+        }
+
         results.push({
           fieldId: field.fieldId,
           attributeKey: classification.attributeKey,
@@ -594,6 +652,12 @@ class FieldCollector {
           );
           // CVVの場合はnullが返るのでスキップ
           if (sanitizedValue === null) continue;
+
+          // 分類ミス対策：card.*以外に分類されてもカード形状ならドロップ
+          if (!classification.attributeKey.startsWith("card.") &&
+              this.looksLikeCardData(value)) {
+            continue;
+          }
 
           results.push({
             fieldId: display.valueId,
@@ -717,6 +781,12 @@ class DomainService {
 
 ```typescript
 class VisibilityOrchestrator {
+  // 壁ハンドオフ時の中断状態を保持
+  private currentSiteAccount: SiteAccount | null = null;
+  private currentPageDriver: PageDriver | null = null;
+  private pendingCollectedFields: CollectedField[] = [];
+  private pendingDynamicCandidates: DynamicAttributeCandidate[] = [];
+
   constructor(
     private browserEngine: BrowserEngine,
     private loginHandler: LoginHandler,
@@ -726,12 +796,69 @@ class VisibilityOrchestrator {
     private decisionEngine: DecisionEngine
   ) {}
 
-  async runForSite(
+  /**
+   * 壁解決後に探索を再開
+   * ユーザーが同一ブラウザセッションで壁を解決した後に呼び出す
+   */
+  async *resumeForSite(): AsyncGenerator<VisibilityEvent> {
+    if (!this.currentSiteAccount || !this.currentPageDriver) {
+      throw new Error("No exploration state to resume");
+    }
+
+    const siteAccount = this.currentSiteAccount;
+    const allCollectedFields = this.pendingCollectedFields;
+    const allDynamicCandidates = this.pendingDynamicCandidates;
+    let wallDetectedDuringExplore = false;
+
+    // PageExplorerのresumeを呼んで探索を続行
+    for await (const event of this.pageExplorer.resume()) {
+      yield { phase: "explore", ...event };
+
+      if (event.kind === "wall-detected") {
+        wallDetectedDuringExplore = true;
+        break;
+      }
+
+      if (event.kind === "page-snapshot") {
+        const collectionResult = await this.fieldCollector.collectFromPage(
+          siteAccount.id,
+          event.snapshot
+        );
+
+        allCollectedFields.push(...collectionResult.fields);
+        allDynamicCandidates.push(...collectionResult.dynamicCandidates);
+
+        yield {
+          phase: "collect",
+          url: event.url,
+          fieldsCollected: collectionResult.fields.length,
+          candidatesFound: collectionResult.dynamicCandidates.length
+        };
+      }
+    }
+
+    if (wallDetectedDuringExplore) {
+      this.pendingCollectedFields = allCollectedFields;
+      this.pendingDynamicCandidates = allDynamicCandidates;
+      return;
+    }
+
+    // 探索完了、保存処理へ
+    yield* this.saveAndComplete(siteAccount, allCollectedFields, allDynamicCandidates);
+  }
+
+  async *runForSite(
     siteAccount: SiteAccount,
     credential: Credential
   ): AsyncGenerator<VisibilityEvent> {
     const page = await this.browserEngine.newPage();
     const pageDriver = new PlaywrightPageDriver(page);
+
+    // 状態を保存（resume用）
+    this.currentSiteAccount = siteAccount;
+    this.currentPageDriver = pageDriver;
+    this.pendingCollectedFields = [];
+    this.pendingDynamicCandidates = [];
 
     try {
       // Phase 1: ログイン
@@ -772,12 +899,22 @@ class VisibilityOrchestrator {
 
       const allCollectedFields: CollectedField[] = [];
       const allDynamicCandidates: DynamicAttributeCandidate[] = [];
+      let wallDetectedDuringExplore = false;
 
       for await (const event of this.pageExplorer.explore(
         pageDriver.currentUrl(),
         siteAccount
       )) {
         yield { phase: "explore", ...event };
+
+        // 壁検出時は探索を中断してハンドオフ
+        if (event.kind === "wall-detected") {
+          wallDetectedDuringExplore = true;
+          // 壁イベントは既にyieldされている
+          // 呼び出し側がresumeForSiteを呼ぶまで待機
+          // 部分的に収集したデータは保持（resume時に続きから）
+          break;
+        }
 
         if (event.kind === "page-snapshot") {
           // Phase 3: 各ページで情報収集
@@ -798,41 +935,67 @@ class VisibilityOrchestrator {
         }
       }
 
-      // Phase 4: Disclosureとして記録
-      yield { phase: "save", status: "starting" };
-
-      const visitedPages = new Set<string>();
-      for (const field of allCollectedFields) {
-        visitedPages.add(field.sourcePageUrl);
-        await this.domainService.addDisclosure(
-          siteAccount.id,
-          field.attributeKey!,
-          field.value,
-          {
-            sourcePageUrl: field.sourcePageUrl,
-            confidence: field.confidence,
-            classificationSource: field.classificationSource
-          }
-        );
+      // 壁検出時は保存せずに中断（resume時に続きを行う）
+      if (wallDetectedDuringExplore) {
+        // 部分結果をインスタンス変数に保存（resume用）
+        this.pendingCollectedFields = allCollectedFields;
+        this.pendingDynamicCandidates = allDynamicCandidates;
+        return;
       }
 
-      // 動的属性候補を記録
-      for (const candidate of allDynamicCandidates) {
-        await this.domainService.recordDynamicCandidate(candidate);
-      }
-
-      yield {
-        phase: "complete",
-        summary: {
-          pagesVisited: visitedPages.size,
-          disclosuresCollected: allCollectedFields.length,
-          dynamicCandidates: allDynamicCandidates.length
-        }
-      };
+      // 探索完了、保存処理へ
+      yield* this.saveAndComplete(siteAccount, allCollectedFields, allDynamicCandidates);
 
     } finally {
-      await page.close();
+      // 完了後は状態をクリア（ただしページは開いたまま）
+      // page.close()は呼び出し側の責任（複数サイト処理時の制御のため）
     }
+  }
+
+  /**
+   * Phase 4: 収集データの保存と完了処理
+   */
+  private async *saveAndComplete(
+    siteAccount: SiteAccount,
+    allCollectedFields: CollectedField[],
+    allDynamicCandidates: DynamicAttributeCandidate[]
+  ): AsyncGenerator<VisibilityEvent> {
+    yield { phase: "save", status: "starting" };
+
+    const visitedPages = new Set<string>();
+    for (const field of allCollectedFields) {
+      visitedPages.add(field.sourcePageUrl);
+      await this.domainService.addDisclosure(
+        siteAccount.id,
+        field.attributeKey!,
+        field.value,
+        {
+          sourcePageUrl: field.sourcePageUrl,
+          confidence: field.confidence,
+          classificationSource: field.classificationSource
+        }
+      );
+    }
+
+    // 動的属性候補を記録
+    for (const candidate of allDynamicCandidates) {
+      await this.domainService.recordDynamicCandidate(candidate);
+    }
+
+    // 状態をクリア
+    this.currentSiteAccount = null;
+    this.currentPageDriver = null;
+    this.pendingCollectedFields = [];
+    this.pendingDynamicCandidates = [];
+
+    yield {
+      phase: "complete",
+      summary: {
+        pagesVisited: visitedPages.size,
+        disclosuresCollected: allCollectedFields.length,
+        dynamicCandidates: allDynamicCandidates.length
+      }
+    };
   }
 }
 ```
