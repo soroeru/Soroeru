@@ -578,10 +578,11 @@ class FieldCollector {
     if (attributeKey === "card.number") {
       // カード番号は下4桁のみ保存
       const digits = value.replace(/\D/g, "");
-      // 実在のカード番号は13〜19桁。それ未満（3〜4桁など）は
-      // classify-fieldがCVVフィールドをcard.numberに誤分類した疑いがあり、
-      // slice(-4)では全桁がそのまま残ってしまうため、保存せず破棄する。
-      if (digits.length < 13) {
+      // 実在のカード番号は13〜19桁（looksLikeCardDataと同じ範囲）。
+      // 範囲外（3〜4桁のCVVや、OCR/連結で長すぎる数字列など）は
+      // classify-fieldの誤分類が疑われ、slice(-4)では元の桁がそのまま
+      // 残ってしまう場合もあるため、保存せず破棄する。
+      if (digits.length < 13 || digits.length > 19) {
         return null;
       }
       return `****${digits.slice(-4)}`;
@@ -607,7 +608,7 @@ class FieldCollector {
   }
 
   async collectFromPage(
-    siteAccountId: string,
+    siteAccount: SiteAccount,
     snapshot: PageSnapshot
   ): Promise<CollectionResult> {
     const results: CollectedField[] = [];
@@ -621,7 +622,7 @@ class FieldCollector {
       if (!value || value.trim() === "") continue;
 
       // 分類を試みる
-      const classification = await this.classifyField(field, snapshot);
+      const classification = await this.classifyField(field, snapshot, siteAccount);
 
       if (classification.attributeKey) {
         // カード情報のサニタイズ（CVV除外、番号は下4桁のみ）
@@ -722,7 +723,8 @@ class FieldCollector {
 
   private async classifyField(
     field: FormField,
-    snapshot: PageSnapshot
+    snapshot: PageSnapshot,
+    siteAccount: SiteAccount
   ): Promise<FieldClassification> {
     // 1. autocomplete属性（最優先）
     if (field.autocomplete) {
@@ -738,15 +740,16 @@ class FieldCollector {
       return { ...ruleResult, source: "rule" };
     }
 
-    // 3. AIフォールバック
-    const aiResult = await this.decisionEngine.decide({
+    // 3. DecisionEngineに委ねる（RuleEngine.classifyFieldのラベル/周辺テキストに
+    //    よる追加ルール判定 → 曖昧ならAIフォールバック、の順で試行される）
+    const decided = await this.decisionEngine.decide({
       kind: "classify-field",
       snapshot,
-      context: { field }
+      context: { field, siteAccount: { domain: siteAccount.domain, displayName: siteAccount.displayName } }
     });
 
-    if (aiResult.source === "ai" && aiResult.result.classification) {
-      return { ...aiResult.result.classification, source: "ai" };
+    if (decided.result.classification) {
+      return decided.result.classification;
     }
 
     // 4. 分類不能
@@ -855,7 +858,7 @@ class VisibilityOrchestrator {
 
       if (event.kind === "page-snapshot") {
         const collectionResult = await this.fieldCollector.collectFromPage(
-          siteAccount.id,
+          siteAccount,
           event.snapshot
         );
 
@@ -953,7 +956,7 @@ class VisibilityOrchestrator {
         if (event.kind === "page-snapshot") {
           // Phase 3: 各ページで情報収集
           const collectionResult = await this.fieldCollector.collectFromPage(
-            siteAccount.id,
+            siteAccount,
             event.snapshot
           );
 
@@ -1189,6 +1192,10 @@ class LoginHandler {
 
 3. **URL正規化の限界**: フラグメントと末尾スラッシュのみ正規化。クエリパラメータの順序やエンコーディングの違いは考慮しない。
 
-4. **ヘルパー関数の未定義**: `isSameDomain`, `maskValue`, `scoreLoginLink`, `mapAutocomplete`, `classifyByRules`, `buildContext`, `PageSnapshot`型などは設計段階では未定義。実装時に定義が必要。
+4. **ヘルパー関数の未定義**: `isSameDomain`, `maskValue`, `scoreLoginLink`, `mapAutocomplete`, `classifyByRules`, `buildContext`, `PageSnapshot`型, `FieldCollector.classifyDisplayValue`（`classifyField`と同様のautocomplete/ルール/DecisionEngine委譲の構造を持つ想定）などは設計段階では未定義。実装時に定義が必要。
+
+   以下の2つは他の未定義ヘルパーより設計上の比重が大きいため、意図する契約を明記しておく:
+   - `RuleEngine.classifyField(request)`: `FieldCollector.classifyField`が試みた`mapAutocomplete`/`classifyByRules`で分類できなかったフィールドに対し、ラベルテキストや周辺テキストのパターンマッチ等、追加のルールベース判断を試みる。確信が持てなければ`{ confident: false }`を返し、`DecisionEngine`がAIフォールバックまたは安全なデフォルト（分類不能）に委ねる。
+   - `RuleEngine.shouldContinue(context)`: `PageExplorer`の探索ループが際限なく続かないようにする終了条件（訪問ページ数の上限、`pendingUrls`が尽きた、既知の全カテゴリを収集済み等）を判断する。`PageExplorer`にとって唯一のループ終端安全弁となるため、実装時は明示的な上限（最大ページ数など）を必ず持たせる。
 
 5. **resume時の壁再発リスク**: `resume()`は`continueExploration()`を経由して同じURLに`goto()`し直す。サイトの壁（CAPTCHA/認証確認等）がセッションではなくリクエスト単位で発生する場合、ユーザーが一度解決しても再訪問時に同じ壁が再度現れうる。現状は壁検出・ハンドオフの仕組みが再度そのまま働くため機能面での破綻はないが、ユーザー体験としてのループは実装時に監視が必要。
