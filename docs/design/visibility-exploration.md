@@ -105,7 +105,7 @@ interface DecisionResult {
     | { form: LoginFormDetection | null }  // detect-login-form
     | { success: boolean; reason: string } // judge-login-result
     | { classification: FieldClassification | null } // classify-field
-    | { continue: boolean; nextLinks: LinkCandidate[] } // should-continue
+    | { continue: boolean } // should-continue
     | { attributeKey: string; label: string };  // name-new-attribute
 }
 
@@ -161,7 +161,7 @@ class DecisionEngine {
       case "classify-field":
         return { classification: null };  // 分類不能
       case "should-continue":
-        return { continue: false, nextLinks: [] };  // 探索終了
+        return { continue: false };  // 探索終了
       case "name-new-attribute":
         return { attributeKey: "unknown", label: "Unknown" };  // 仮の名前
     }
@@ -249,11 +249,20 @@ class RuleEngine {
       /ログイン|サインイン|sign\s*in|log\s*in|submit|送信/i.test(b.text)
     ) ?? snapshot.buttons.find(b => b.selector.includes("[type='submit']"));
 
+    // ユーザー名フィールドが見つからない場合は form: null を返す
+    // （confident: false で部分的な form を返すと undefined フィールドで fillField が呼ばれる）
+    if (!usernameField) {
+      return {
+        confident: false,
+        result: { form: null }
+      };
+    }
+
     return {
-      confident: usernameField != null,
+      confident: true,
       result: {
         form: {
-          usernameFieldId: usernameField?.fieldId,
+          usernameFieldId: usernameField.fieldId,
           passwordFieldId: passwordFields[0].fieldId,
           submitSelector: submitButton?.selector
         }
@@ -272,7 +281,8 @@ class RuleEngine {
       // 「マイページ」リンクの存在
       snapshot.links.some(l => /マイページ|my\s*page|dashboard/i.test(l.text)),
       // URL変化（ログインページから離れた）
-      !(context.currentUrl?.includes("login") ?? false)
+      // 注：currentUrlがundefinedの場合は中立（カウントしない）
+      context.currentUrl != null && !context.currentUrl.includes("login")
     ];
 
     // 失敗の兆候
@@ -483,8 +493,11 @@ class PageExplorer {
 
       if (decision.result.links) {
         for (const link of decision.result.links) {
-          if (!state.visitedUrls.has(link.href)) {
-            state.pendingUrls.push(link.href);
+          // 正規化してから重複チェック（visitedUrlsは正規化済みURLを保持）
+          const normalizedHref = this.normalizeUrl(link.href);
+          if (!state.visitedUrls.has(normalizedHref) &&
+              !state.pendingUrls.includes(normalizedHref)) {
+            state.pendingUrls.push(normalizedHref);
           }
         }
       }
@@ -1143,3 +1156,16 @@ class LoginHandler {
 | **構造のみAI送信** | 値はローカルで読み取り、AIには構造情報のみ |
 | **壁検出・ハンドオフ** | CAPTCHA/MFA検出時は同一セッションでユーザーに引き継ぎ、解決後にresume |
 | **カード情報保護** | card.numberは下4桁のみ保存、CVVは収集・保存・表示しない |
+| **シーケンシャル処理** | 1サイトずつ順次処理（並列処理は非対応、resume状態が上書きされるため） |
+
+---
+
+## 制約と既知のトレードオフ
+
+1. **シーケンシャル処理制約**: `VisibilityOrchestrator`と`PageExplorer`はシングルスロットのresume状態を持つため、1サイトずつ順次処理する必要がある。壁ハンドオフ中に別サイトの処理を開始すると状態が上書きされる。
+
+2. **カード検出の偽陽性**: `looksLikeCardData()`は13-19桁の数字列をカード番号候補としてドロップする。正当な会員番号や注文番号も誤検出される可能性があるが、セキュリティ優先の保守的な判断。
+
+3. **URL正規化の限界**: フラグメントと末尾スラッシュのみ正規化。クエリパラメータの順序やエンコーディングの違いは考慮しない。
+
+4. **ヘルパー関数の未定義**: `isSameDomain`, `maskValue`, `scoreLoginLink`, `mapAutocomplete`, `classifyByRules`, `buildContext`, `PageSnapshot`型などは設計段階では未定義。実装時に定義が必要。
