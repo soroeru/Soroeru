@@ -420,6 +420,25 @@ Primary responsibilities:
   honestly
 - clearly state what was changed, what was verified, and what was not
 
+## Orchestration Workflow
+
+In this repository, the main Claude Code model is the orchestrator: plan, decompose, and
+synthesize rather than doing every step itself.
+
+- Reasoning-heavy phases (architecture, complex debugging, algorithm design) → dispatch
+  to the `deep-reasoner` subagent (pinned to Opus).
+- Mechanical work (boilerplate, formatting, simple/repetitive edits, straightforward
+  tests) → dispatch to the `fast-worker` subagent (pinned to Sonnet).
+- Codex (`/codex:rescue --background`) is a cracked engineer on par with `deep-reasoner`,
+  from a different perspective. Treat it as a peer, not a reviewer.
+- For high-stakes decisions: task Opus and Codex on the same problem in parallel, then
+  synthesize the best of both yourself, without showing either one the other's answer.
+  Keep your own context lean.
+
+This is a session-workflow convention scoped to this repository's Claude Code sessions; it
+does not change product scope, architecture, or the safety boundaries defined elsewhere in
+this file.
+
 ## Claude Code Operating Rules
 
 - Do not assume Codex-specific automation runs in Claude Code sessions.
