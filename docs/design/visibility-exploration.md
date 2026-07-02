@@ -65,6 +65,36 @@ Visibility機能（Slice A）において、サイトの個人情報を収集す
 
 ---
 
+## 0. 共通ユーティリティ
+
+### ファイル: `src/automation/url-utils.ts`
+
+`RuleEngine`と`PageExplorer`の両方がURL重複判定に使うため、正規化ロジックは共通関数として一箇所に置く（`PageExplorer`が保持する`visitedUrls`は正規化済みURLの集合なので、比較する側も同じ正規化を通す必要がある）。
+
+```typescript
+/**
+ * URL正規化（重複訪問防止用）
+ * - フラグメント（#...）を除去
+ * - 末尾スラッシュを統一
+ */
+export function normalizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";  // フラグメント除去
+    let normalized = parsed.toString();
+    // 末尾スラッシュを削除（パスがルートでない場合）
+    if (normalized.endsWith("/") && parsed.pathname !== "/") {
+      normalized = normalized.slice(0, -1);
+    }
+    return normalized;
+  } catch {
+    return url;  // パース失敗時は元のURLを返す
+  }
+}
+```
+
+---
+
 ## 1. DecisionEngine（判断エンジン）
 
 ルールベース判断とAIフォールバックを統一的に扱う。
@@ -183,6 +213,8 @@ class DecisionEngine {
 ### ファイル: `src/automation/rule-engine.ts`
 
 ```typescript
+import { normalizeUrl } from "./url-utils";
+
 class RuleEngine {
   evaluate(request: DecisionRequest): RuleResult {
     switch (request.kind) {
@@ -303,8 +335,10 @@ class RuleEngine {
       return { confident: true, result: { success: false, reason: "failure-indicators" } };
     }
 
-    // 判断が難しい
-    return { confident: false, result: { success: successScore > failureScore, reason: "ambiguous" } };
+    // 判断が難しい場合はresultを返さない
+    // （ヒューリスティックな多数決を「判定結果」として確定させず、
+    //   DecisionEngine.getDefaultResultの安全なデフォルト＝失敗扱いに委ねる）
+    return { confident: false };
   }
 
   private findProfileLinks(
@@ -328,7 +362,9 @@ class RuleEngine {
 
     for (const link of snapshot.links) {
       // 既に訪問済みはスキップ
-      if (context.visitedUrls?.includes(link.href)) continue;
+      // （context.visitedUrlsはPageExplorerが正規化済みURLで保持しているため、
+      //   比較する側のhrefも同じnormalizeUrlを通してから比較する）
+      if (context.visitedUrls?.includes(normalizeUrl(link.href))) continue;
       // 外部リンクはスキップ
       if (!this.isSameDomain(link.href, context.siteAccount.domain)) continue;
 
@@ -363,6 +399,8 @@ class RuleEngine {
 ### ファイル: `src/automation/page-explorer.ts`
 
 ```typescript
+import { normalizeUrl } from "./url-utils";
+
 interface ExplorationState {
   siteAccountId: string;
   domain: string;
@@ -397,26 +435,6 @@ class PageExplorer {
     yield* this.continueExploration();
   }
 
-  /**
-   * URL正規化（重複訪問防止用）
-   * - フラグメント（#...）を除去
-   * - 末尾スラッシュを統一
-   */
-  private normalizeUrl(url: string): string {
-    try {
-      const parsed = new URL(url);
-      parsed.hash = "";  // フラグメント除去
-      let normalized = parsed.toString();
-      // 末尾スラッシュを削除（パスがルートでない場合）
-      if (normalized.endsWith("/") && parsed.pathname !== "/") {
-        normalized = normalized.slice(0, -1);
-      }
-      return normalized;
-    } catch {
-      return url;  // パース失敗時は元のURLを返す
-    }
-  }
-
   async *explore(
     startUrl: string,
     siteAccount: SiteAccount
@@ -445,7 +463,7 @@ class PageExplorer {
       const url = state.pendingUrls.shift()!;
 
       // URL正規化（フラグメント除去、末尾スラッシュ統一）
-      const normalizedUrl = this.normalizeUrl(url);
+      const normalizedUrl = normalizeUrl(url);
       if (state.visitedUrls.has(normalizedUrl)) continue;
 
       yield { kind: "navigating", url: normalizedUrl };
@@ -494,7 +512,7 @@ class PageExplorer {
       if (decision.result.links) {
         for (const link of decision.result.links) {
           // 正規化してから重複チェック（visitedUrlsは正規化済みURLを保持）
-          const normalizedHref = this.normalizeUrl(link.href);
+          const normalizedHref = normalizeUrl(link.href);
           if (!state.visitedUrls.has(normalizedHref) &&
               !state.pendingUrls.includes(normalizedHref)) {
             state.pendingUrls.push(normalizedHref);
@@ -560,10 +578,13 @@ class FieldCollector {
     if (attributeKey === "card.number") {
       // カード番号は下4桁のみ保存
       const digits = value.replace(/\D/g, "");
-      if (digits.length >= 4) {
-        return `****${digits.slice(-4)}`;
+      // 実在のカード番号は13〜19桁。それ未満（3〜4桁など）は
+      // classify-fieldがCVVフィールドをcard.numberに誤分類した疑いがあり、
+      // slice(-4)では全桁がそのまま残ってしまうため、保存せず破棄する。
+      if (digits.length < 13) {
+        return null;
       }
-      return null; // 4桁未満は無効
+      return `****${digits.slice(-4)}`;
     }
     return value;
   }
@@ -1169,3 +1190,5 @@ class LoginHandler {
 3. **URL正規化の限界**: フラグメントと末尾スラッシュのみ正規化。クエリパラメータの順序やエンコーディングの違いは考慮しない。
 
 4. **ヘルパー関数の未定義**: `isSameDomain`, `maskValue`, `scoreLoginLink`, `mapAutocomplete`, `classifyByRules`, `buildContext`, `PageSnapshot`型などは設計段階では未定義。実装時に定義が必要。
+
+5. **resume時の壁再発リスク**: `resume()`は`continueExploration()`を経由して同じURLに`goto()`し直す。サイトの壁（CAPTCHA/認証確認等）がセッションではなくリクエスト単位で発生する場合、ユーザーが一度解決しても再訪問時に同じ壁が再度現れうる。現状は壁検出・ハンドオフの仕組みが再度そのまま働くため機能面での破綻はないが、ユーザー体験としてのループは実装時に監視が必要。
