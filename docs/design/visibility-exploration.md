@@ -88,10 +88,12 @@ interface DecisionRequest {
 }
 
 interface DecisionContext {
-  currentUrl: string;
-  visitedUrls: string[];
-  collectedAttributes: string[];  // 既に収集した属性キー
+  currentUrl?: string;
+  visitedUrls?: string[];
+  collectedAttributes?: string[];  // 既に収集した属性キー
   siteAccount: { domain: string; displayName: string };
+  // classify-field用の追加コンテキスト
+  field?: FormField;
 }
 
 interface DecisionResult {
@@ -118,7 +120,11 @@ class DecisionEngine {
     const ruleResult = this.ruleEngine.evaluate(request);
 
     if (ruleResult.confident) {
-      return { source: "rule", ...ruleResult };
+      return {
+        source: "rule",
+        confidence: 1.0,
+        result: ruleResult.result
+      };
     }
 
     // 2. ルールで判断できない場合、AIにフォールバック
@@ -128,7 +134,11 @@ class DecisionEngine {
     }
 
     // 3. AIなしで判断できない場合は低信頼度で返す
-    return { source: "rule", confidence: 0.3, ...ruleResult };
+    return {
+      source: "rule",
+      confidence: 0.3,
+      result: ruleResult.result
+    };
   }
 
   private async consultAI(request: DecisionRequest): Promise<DecisionResult> {
@@ -322,6 +332,7 @@ interface ExplorationState {
   domain: string;
   visitedUrls: Set<string>;
   pendingUrls: string[];  // 探索待ちURL
+  deferredUrls: string[]; // 壁検出でスキップされ、ハンドオフ後に再訪問するURL
   collectedPages: PageCollectionResult[];
   walls: WallDetection[];
 }
@@ -342,6 +353,7 @@ class PageExplorer {
       domain: siteAccount.domain,
       visitedUrls: new Set(),
       pendingUrls: [startUrl],
+      deferredUrls: [],
       collectedPages: [],
       walls: []
     };
@@ -361,9 +373,23 @@ class PageExplorer {
       const wall = await this.wallDetector.detect(await this.pageDriver.snapshot());
       if (wall) {
         state.walls.push(wall);
-        yield { kind: "wall-detected", wall, url };
-        // ハンドオフ待ち（この設計では一旦スキップして続行）
-        continue;
+        // 壁を検出した場合、このURLをdeferredUrlsに追加してハンドオフ
+        // ユーザーが同一ブラウザセッションで壁を解決後、resumeで再開
+        state.deferredUrls.push(url);
+        yield {
+          kind: "wall-detected",
+          wall,
+          url,
+          // ハンドオフイベント：ユーザーに制御を渡す
+          handoff: {
+            reason: wall.kind,
+            evidence: wall.evidence,
+            resumable: true
+          }
+        };
+        // 壁を解決するまで探索を一時停止
+        // （呼び出し側がresumeを呼ぶまで待機）
+        return;
       }
 
       // ページ収集
@@ -426,6 +452,28 @@ class FieldCollector {
     private domainService: DomainService
   ) {}
 
+  /**
+   * セキュリティ要件：カード情報の取り扱い
+   * - card.number: 下4桁のみ保存（例: "****1234"）
+   * - card.cvv: 収集・保存・表示しない（完全に除外）
+   * 参照: docs/requirements.md, docs/security.md
+   */
+  private sanitizeCardValue(attributeKey: string, value: string): string | null {
+    if (attributeKey === "card.cvv" || attributeKey === "card.security-code") {
+      // CVVは絶対に収集しない
+      return null;
+    }
+    if (attributeKey === "card.number") {
+      // カード番号は下4桁のみ保存
+      const digits = value.replace(/\D/g, "");
+      if (digits.length >= 4) {
+        return `****${digits.slice(-4)}`;
+      }
+      return null; // 4桁未満は無効
+    }
+    return value;
+  }
+
   async collectFromPage(
     siteAccountId: string,
     snapshot: PageSnapshot
@@ -444,11 +492,19 @@ class FieldCollector {
       const classification = await this.classifyField(field, snapshot);
 
       if (classification.attributeKey) {
+        // カード情報のサニタイズ（CVV除外、番号は下4桁のみ）
+        const sanitizedValue = this.sanitizeCardValue(
+          classification.attributeKey,
+          value
+        );
+        // CVVの場合はnullが返るのでスキップ
+        if (sanitizedValue === null) continue;
+
         results.push({
           fieldId: field.fieldId,
           attributeKey: classification.attributeKey,
           labelText: field.labels.join(" ") || field.nearbyText,
-          value,
+          value: sanitizedValue,
           classificationSource: classification.source,
           confidence: classification.confidence
         });
@@ -477,11 +533,19 @@ class FieldCollector {
         );
 
         if (classification.attributeKey) {
+          // カード情報のサニタイズ（CVV除外、番号は下4桁のみ）
+          const sanitizedValue = this.sanitizeCardValue(
+            classification.attributeKey,
+            value
+          );
+          // CVVの場合はnullが返るのでスキップ
+          if (sanitizedValue === null) continue;
+
           results.push({
             fieldId: display.valueId,
             attributeKey: classification.attributeKey,
             labelText: display.labelText,
-            value,
+            value: sanitizedValue,
             classificationSource: classification.source,
             confidence: classification.confidence
           });
@@ -841,4 +905,5 @@ class LoginHandler {
 | **ハイブリッド判断** | ルールベース優先、失敗時にAIフォールバック |
 | **動的スキーマ** | 未知フィールドを候補として記録、ユーザー確認後に採用 |
 | **構造のみAI送信** | 値はローカルで読み取り、AIには構造情報のみ |
-| **壁検出・ハンドオフ** | CAPTCHA/MFA検出時は同一セッションでユーザーに引き継ぎ |
+| **壁検出・ハンドオフ** | CAPTCHA/MFA検出時は同一セッションでユーザーに引き継ぎ、解決後にresume |
+| **カード情報保護** | card.numberは下4桁のみ保存、CVVは収集・保存・表示しない |
