@@ -586,9 +586,12 @@ function HandoffCredentialPanel({
   credential: VisibilityHandoffCredentialView | undefined;
 }): React.JSX.Element {
   if (!credential) {
+    // `credential` is omitted both when no credential is stored for this site and when one
+    // exists but isn't relevant to the current wall (e.g. a post-login CAPTCHA) — the runner
+    // does not tell us which. Avoid asserting "not saved" here since that can be false.
     return (
       <p className="rounded border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-600">
-        このサイトのログイン ID / パスワードは保存されていません。
+        このステップで表示できるログイン情報はありません。
       </p>
     );
   }
