@@ -65,6 +65,9 @@ export function SiteManagementPanel({
   const [detailError, setDetailError] = useState<string | undefined>();
   const [batch, setBatch] = useState<BatchProgress>(emptyProgress);
   const [resultModal, setResultModal] = useState<CollectionResultModalContent | undefined>();
+  const [deleteTarget, setDeleteTarget] = useState<SiteLedgerSummary | undefined>();
+  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
+  const [deletingSite, setDeletingSite] = useState(false);
   const resumedHandoffSites = useRef<Set<string>>(new Set());
   const cancelBatchRef = useRef(false);
   const onCollectedRef = useRef(onCollected);
@@ -260,6 +263,47 @@ export function SiteManagementPanel({
     setResultModal(undefined);
     setSavedPageSiteId(siteAccountId);
   }, []);
+  const requestDelete = useCallback((site: SiteLedgerSummary) => {
+    setLoadError(undefined);
+    setDeleteAcknowledged(false);
+    setDeleteTarget(site);
+  }, []);
+  const closeDeleteModal = useCallback(() => {
+    if (deletingSite) return;
+    setDeleteTarget(undefined);
+    setDeleteAcknowledged(false);
+  }, [deletingSite]);
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget || !deleteAcknowledged || deletingSite) return;
+    setDeletingSite(true);
+    try {
+      const siteAccountId = deleteTarget.siteAccountId;
+      const result = await window.soroeru.ledger.deleteSite({
+        siteAccountId,
+        confirmedFourthBoundary: true,
+      });
+      if (!result.ok) {
+        setLoadError(reasonMessage(result.error));
+        return;
+      }
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(siteAccountId);
+        return next;
+      });
+      setDetail((current) => (current?.siteAccountId === siteAccountId ? undefined : current));
+      setSavedPageSiteId((current) => (current === siteAccountId ? undefined : current));
+      setGuideSiteId((current) => (current === siteAccountId ? undefined : current));
+      setDeleteTarget(undefined);
+      setDeleteAcknowledged(false);
+      await loadSites();
+      onCollectedRef.current();
+    } catch {
+      setLoadError(reasonMessage("delete-failed"));
+    } finally {
+      setDeletingSite(false);
+    }
+  }, [deleteAcknowledged, deleteTarget, deletingSite, loadSites]);
 
   const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
     setSelected((current) => {
@@ -350,6 +394,7 @@ export function SiteManagementPanel({
                 onOpenDetail={() => void openDetail(site.siteAccountId)}
                 onCloseDetail={() => setDetail(undefined)}
                 onReloadDetail={() => openDetail(site.siteAccountId)}
+                onRequestDelete={() => requestDelete(site)}
               />
             ))}
           </ul>
@@ -362,6 +407,16 @@ export function SiteManagementPanel({
           onClose={() => setResultModal(undefined)}
           onRetry={retrySite}
           onImportSavedPage={importSavedPageFor}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteSiteModal
+          site={deleteTarget}
+          acknowledged={deleteAcknowledged}
+          deleting={deletingSite}
+          onAcknowledgedChange={setDeleteAcknowledged}
+          onCancel={closeDeleteModal}
+          onConfirm={() => void confirmDelete()}
         />
       )}
     </section>
@@ -536,6 +591,7 @@ function SiteRow({
   onOpenDetail,
   onCloseDetail,
   onReloadDetail,
+  onRequestDelete,
 }: {
   site: SiteLedgerSummary;
   checked: boolean;
@@ -553,6 +609,7 @@ function SiteRow({
   onOpenDetail: () => void;
   onCloseDetail: () => void;
   onReloadDetail: () => void | Promise<void>;
+  onRequestDelete: () => void;
 }): React.JSX.Element {
   return (
     <li className="flex flex-col gap-2 py-3">
@@ -604,6 +661,16 @@ function SiteRow({
           >
             保存ページを取り込む
           </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onRequestDelete}
+            title={`${site.displayName} の情報を削除`}
+            aria-label={`${site.displayName} の情報を削除`}
+            className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            削除
+          </button>
         </span>
       </div>
 
@@ -622,6 +689,64 @@ function SiteRow({
         </div>
       )}
     </li>
+  );
+}
+
+function DeleteSiteModal({
+  site,
+  acknowledged,
+  deleting,
+  onAcknowledgedChange,
+  onCancel,
+  onConfirm,
+}: {
+  site: SiteLedgerSummary;
+  acknowledged: boolean;
+  deleting: boolean;
+  onAcknowledgedChange: (checked: boolean) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}): React.JSX.Element {
+  return (
+    <Modal title="サイト情報の削除" onClose={onCancel}>
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-neutral-800">
+          「{site.displayName}」の情報を Soroeru から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、
+          取り消せません。
+        </p>
+        <p className="text-sm text-red-700">
+          これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。
+        </p>
+        <label className="flex items-start gap-2 text-sm text-neutral-700">
+          <input
+            type="checkbox"
+            checked={acknowledged}
+            disabled={deleting}
+            onChange={(event) => onAcknowledgedChange(event.target.checked)}
+            className="mt-1"
+          />
+          <span>取り消せない削除であることを確認しました。</span>
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={onCancel}
+            className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            disabled={!acknowledged || deleting}
+            onClick={onConfirm}
+            className="rounded bg-red-700 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:bg-neutral-300"
+          >
+            {deleting ? "削除中…" : "削除する"}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

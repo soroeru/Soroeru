@@ -63,6 +63,7 @@ async function seedLedger(path: string): Promise<{ siteId: string; emailDisclosu
 
   domain.addAccountRelationship({ siteAccountId: site.id, kind: "newsletter", state: "active", detail: "newsletter wording" });
   domain.addConstraint({ siteAccountId: site.id, kind: "wall", detail: "MFA wall" });
+  vault.put("mandate", { id: "site-mandate", siteAccountId: site.id, operation: "collection", authorizedAt: 1 });
 
   await vault.save();
   vault.lock();
@@ -215,6 +216,43 @@ test("ledger and import refuse to operate while locked", async () => {
       (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "職業" })).error,
       "locked",
     );
+    assert.equal((await session.deleteSiteAccount({ siteAccountId: "anything", confirmedFourthBoundary: true })).error, "locked");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("deleteSiteAccount persists the cascade and refreshes composed ledger data", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedLedger(path);
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+    assert.equal(session.ledgerSites().length, 1);
+    assert.ok(session.ledgerSite(siteId));
+
+    const missingConfirmation = await session.deleteSiteAccount({ siteAccountId: siteId, confirmedFourthBoundary: false });
+    assert.equal(missingConfirmation.ok, false);
+    assert.equal(missingConfirmation.error, "confirmation-required");
+    assert.equal(session.ledgerSites().length, 1);
+
+    const deleted = await session.deleteSiteAccount({ siteAccountId: siteId, confirmedFourthBoundary: true });
+    assert.equal(deleted.ok, true);
+    assert.equal(deleted.deleted?.siteAccounts, 1);
+    assert.equal(deleted.deleted?.credentials, 1);
+    assert.equal(deleted.deleted?.disclosures, 5);
+    assert.equal(deleted.deleted?.accountRelationships, 1);
+    assert.equal(deleted.deleted?.constraints, 1);
+    assert.equal(deleted.deleted?.evidence, 1);
+    assert.equal(deleted.deleted?.mandates, 1);
+    assert.deepEqual(session.ledgerSites(), []);
+    assert.equal(session.ledgerSite(siteId), undefined);
+
+    const reopened = new SoroeruSession(path);
+    await reopened.unlock(PASSPHRASE);
+    assert.deepEqual(reopened.ledgerSites(), []);
+    assert.equal(reopened.ledgerSite(siteId), undefined);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

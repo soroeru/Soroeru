@@ -26,6 +26,8 @@ import type {
   ConfirmDynamicAttributeCandidateRequest,
   ConfirmDynamicAttributeCandidateResult,
   CsvImportResult,
+  DeleteSiteAccountRequest,
+  DeleteSiteAccountResultView,
   DisclosureView,
   DomainSummary,
   LedgerInsights,
@@ -460,6 +462,19 @@ export class SoroeruSession {
       return { ok: true };
     } catch {
       return { ok: false, error: "confirm-failed" };
+    }
+  }
+
+  async deleteSiteAccount(request: DeleteSiteAccountRequest): Promise<DeleteSiteAccountResultView> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    if (!request.confirmedFourthBoundary) return { ok: false, error: "confirmation-required" };
+    try {
+      const result = this.domain.deleteSiteAccount(request.siteAccountId);
+      if (!result.ok) return result;
+      await this.vault.save();
+      return result;
+    } catch {
+      return { ok: false, error: "delete-failed" };
     }
   }
 

@@ -30,6 +30,8 @@ const REASONS: Record<string, string> = {
   // Dynamic attribute candidates
   "invalid-request": "入力内容をご確認ください。",
   "confirm-failed": "項目の確定に失敗しました。",
+  "confirmation-required": "確認が必要です。",
+  "delete-failed": "削除に失敗しました。",
 };
 
 const FALLBACK = "操作に失敗しました。時間をおいて再試行してください。";

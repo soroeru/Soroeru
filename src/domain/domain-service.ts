@@ -45,6 +45,20 @@ export interface UpsertSiteAccountInput {
   relationshipSummary?: string;
 }
 
+export interface DeleteSiteAccountResult {
+  ok: boolean;
+  error?: "not-found";
+  deleted?: {
+    siteAccounts: number;
+    credentials: number;
+    disclosures: number;
+    evidence: number;
+    accountRelationships: number;
+    constraints: number;
+    mandates: number;
+  };
+}
+
 export interface AddCredentialInput {
   siteAccountId: string;
   username: string;
@@ -169,6 +183,71 @@ export class DomainService {
 
   listSiteAccounts(): SiteAccount[] {
     return this.vault.list("siteAccount");
+  }
+
+  /**
+   * Permanently remove a Site Account and its Soroeru-internal records. This is
+   * the fourth absolute boundary at the UI/session layer; once called, the
+   * vault entries are actually removed rather than hidden.
+   */
+  deleteSiteAccount(siteAccountId: string): DeleteSiteAccountResult {
+    if (!this.getSiteAccount(siteAccountId)) return { ok: false, error: "not-found" };
+
+    const credentials = this.listCredentialsForSite(siteAccountId);
+    const disclosures = this.listDisclosuresForSite(siteAccountId);
+    const relationships = this.listAccountRelationshipsForSite(siteAccountId);
+    const constraints = this.listConstraints().filter((constraint) => constraint.siteAccountId === siteAccountId);
+    const mandates = this.vault.list("mandate").filter((mandate) => mandate.siteAccountId === siteAccountId);
+    const evidenceIds = new Set<string>();
+    for (const evidence of this.listEvidence()) {
+      if (evidence.siteAccountId === siteAccountId) evidenceIds.add(evidence.id);
+    }
+    for (const record of [...disclosures, ...relationships, ...constraints]) {
+      for (const evidenceId of record.evidenceIds) evidenceIds.add(evidenceId);
+    }
+
+    let deletedCredentials = 0;
+    let deletedDisclosures = 0;
+    let deletedRelationships = 0;
+    let deletedConstraints = 0;
+    let deletedMandates = 0;
+    for (const credential of credentials) {
+      if (this.vault.delete("credential", credential.id)) deletedCredentials++;
+    }
+    for (const disclosure of disclosures) {
+      if (this.vault.delete("disclosure", disclosure.id)) deletedDisclosures++;
+    }
+    for (const relationship of relationships) {
+      if (this.vault.delete("accountRelationship", relationship.id)) deletedRelationships++;
+    }
+    for (const constraint of constraints) {
+      if (this.vault.delete("constraint", constraint.id)) deletedConstraints++;
+    }
+    for (const mandate of mandates) {
+      if (this.vault.delete("mandate", mandate.id)) deletedMandates++;
+    }
+
+    let deletedEvidence = 0;
+    for (const evidenceId of evidenceIds) {
+      if (this.isEvidenceStillReferenced(evidenceId, siteAccountId)) continue;
+      if (this.vault.delete("evidence", evidenceId)) deletedEvidence++;
+    }
+
+    this.deleteSiteWorkflowCheckpoints(siteAccountId);
+    this.removeSiteFromDynamicAttributeCandidates(siteAccountId);
+    const deletedSiteAccounts = this.vault.delete("siteAccount", siteAccountId) ? 1 : 0;
+    return {
+      ok: true,
+      deleted: {
+        siteAccounts: deletedSiteAccounts,
+        credentials: deletedCredentials,
+        disclosures: deletedDisclosures,
+        evidence: deletedEvidence,
+        accountRelationships: deletedRelationships,
+        constraints: deletedConstraints,
+        mandates: deletedMandates,
+      },
+    };
   }
 
   // --- Credentials ---
@@ -342,6 +421,42 @@ export class DomainService {
 
   listEvidence(): Evidence[] {
     return this.vault.list("evidence");
+  }
+
+  private isEvidenceStillReferenced(evidenceId: string, deletedSiteAccountId: string): boolean {
+    const evidence = this.vault.get("evidence", evidenceId);
+    if (evidence?.siteAccountId !== undefined && evidence.siteAccountId !== deletedSiteAccountId) return true;
+    for (const disclosure of this.listDisclosures()) {
+      if (disclosure.evidenceIds.includes(evidenceId)) return true;
+    }
+    for (const relationship of this.listAccountRelationships()) {
+      if (relationship.evidenceIds.includes(evidenceId)) return true;
+    }
+    for (const constraint of this.listConstraints()) {
+      if (constraint.evidenceIds.includes(evidenceId)) return true;
+    }
+    return false;
+  }
+
+  private deleteSiteWorkflowCheckpoints(siteAccountId: string): void {
+    for (const checkpoint of this.listCheckpoints()) {
+      if (checkpoint.siteAccountId === siteAccountId) this.vault.delete("workflowCheckpoint", checkpoint.id);
+    }
+  }
+
+  private removeSiteFromDynamicAttributeCandidates(siteAccountId: string): void {
+    for (const definition of this.vault.list("localDefinition")) {
+      const siteAccountIds = legacyCompatibleSiteAccountIds(definition.data);
+      if (!siteAccountIds.includes(siteAccountId)) continue;
+      const nextSiteAccountIds = siteAccountIds.filter((id) => id !== siteAccountId);
+      if (definition.status === "candidate" && nextSiteAccountIds.length === 0) {
+        this.vault.delete("localDefinition", definition.id);
+        continue;
+      }
+      const data: Record<string, unknown> = { ...definition.data, siteAccountIds: nextSiteAccountIds };
+      delete data["siteAccountId"];
+      this.vault.put("localDefinition", { ...definition, data, updatedAt: Date.now() });
+    }
   }
 
   // --- Dynamic attribute candidates (user-confirmed schema growth) ---

@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
   ledgerInsights: "soroeru:ledger:insights",
   revealValue: "soroeru:ledger:reveal",
   ledgerConfirmDynamicCandidate: "soroeru:ledger:confirm-dynamic-candidate",
+  ledgerDeleteSite: "soroeru:ledger:delete-site",
   visibilityRun: "soroeru:visibility:run",
   visibilityResume: "soroeru:visibility:resume",
   visibilityAbort: "soroeru:visibility:abort",
@@ -304,6 +305,26 @@ export interface ConfirmDynamicAttributeCandidateRequest {
 export interface ConfirmDynamicAttributeCandidateResult {
   ok: boolean;
   error?: string;
+}
+
+export interface DeleteSiteAccountRequest {
+  siteAccountId: string;
+  /** Fourth absolute boundary: Soroeru-internal deletion is irreversible and must be explicitly confirmed. */
+  confirmedFourthBoundary: boolean;
+}
+
+export interface DeleteSiteAccountResultView {
+  ok: boolean;
+  error?: "locked" | "not-found" | "confirmation-required" | "delete-failed";
+  deleted?: {
+    siteAccounts: number;
+    credentials: number;
+    disclosures: number;
+    evidence: number;
+    accountRelationships: number;
+    constraints: number;
+    mandates: number;
+  };
 }
 
 // --- Visibility run (auto-login / collection, RFC-002 §5.1 / §5.2) ---
