@@ -201,9 +201,9 @@ export class SoroeruSession {
     return this.visibility.resumeHandoff() ? { ok: true } : { ok: false, error: "no-active-handoff" };
   }
 
-  /** Abandon the active wall hand-off; the run stops without bypassing the wall. */
+  /** Cancel the active Visibility run; it never bypasses a wall. */
   abortVisibility(): VisibilityHandoffAck {
-    return this.visibility.abortHandoff() ? { ok: true } : { ok: false, error: "no-active-handoff" };
+    return this.visibility.abortRun() ? { ok: true } : { ok: false, error: "no-active-run" };
   }
 
   visibilityStatus(): VisibilityStatusView {
@@ -216,7 +216,7 @@ export class SoroeruSession {
    * the vault (drop the derived key and decrypted records from memory).
    */
   async shutdown(): Promise<void> {
-    this.visibility.abortHandoff();
+    this.visibility.abortRun();
     if (this.engine) {
       await this.engine.closeAll();
       this.engine = undefined;

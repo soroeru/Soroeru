@@ -12,8 +12,13 @@
 import { VisibilityRunner, type VisibilityRunResult } from "../src/automation/visibility-runner.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
 import type { DomainService } from "../src/domain/domain-service.js";
-import type { SiteAccount } from "../src/domain/entities.js";
-import type { VisibilityEvent, VisibilityRunResultView, VisibilityStatusView } from "./ipc/contract.js";
+import type { Credential, SiteAccount } from "../src/domain/entities.js";
+import type {
+  VisibilityEvent,
+  VisibilityHandoffCredentialView,
+  VisibilityRunResultView,
+  VisibilityStatusView,
+} from "./ipc/contract.js";
 
 export interface VisibilityServiceOptions {
   /** Opens a fresh ephemeral browser session for a site (the real BrowserEngine in production). */
@@ -34,6 +39,8 @@ export class VisibilityService {
   private domain: DomainService | undefined;
   private running = false;
   private activeSiteId: string | undefined;
+  private activeSession: SiteSession | undefined;
+  private cancelRequested = false;
   private pendingHandoff: PendingHandoff | undefined;
 
   constructor(private readonly options: VisibilityServiceOptions) {}
@@ -43,9 +50,9 @@ export class VisibilityService {
     this.domain = domain;
   }
 
-  /** Unbind on lock; abort any paused hand-off so an in-flight run can unwind. */
+  /** Unbind on lock; abort any active run so an in-flight task can unwind. */
   clearDomain(): void {
-    this.abortHandoff();
+    this.abortRun();
     this.domain = undefined;
   }
 
@@ -79,8 +86,9 @@ export class VisibilityService {
     try {
       const runner = new VisibilityRunner({
         domain: this.domain,
-        openSession: this.options.openSession,
+        openSession: (site) => this.openTrackedSession(site),
         handoff: (input) => this.onHandoff(input),
+        isCanceled: () => this.cancelRequested,
         ...(this.options.maxHandoffs !== undefined ? { maxHandoffs: this.options.maxHandoffs } : {}),
       });
       this.emit({ type: "run-started", siteAccountId });
@@ -90,6 +98,8 @@ export class VisibilityService {
     } finally {
       this.running = false;
       this.activeSiteId = undefined;
+      this.activeSession = undefined;
+      this.cancelRequested = false;
       this.pendingHandoff = undefined;
     }
   }
@@ -113,16 +123,39 @@ export class VisibilityService {
     return true;
   }
 
+  /** Request cancellation of the active Visibility run, including non-handoff browser work. */
+  abortRun(): boolean {
+    if (!this.running) return false;
+    this.cancelRequested = true;
+    this.abortHandoff();
+    if (this.activeSession) void this.activeSession.close();
+    return true;
+  }
+
+  private async openTrackedSession(site: SiteAccount): Promise<SiteSession> {
+    if (this.cancelRequested) throw new Error("visibility run canceled");
+    const session = await this.options.openSession(site);
+    this.activeSession = session;
+    if (this.cancelRequested) {
+      await session.close();
+      throw new Error("visibility run canceled");
+    }
+    return session;
+  }
+
   private onHandoff(input: {
     siteAccount: SiteAccount;
     instruction: string;
     evidence: string;
+    credential?: Credential;
   }): Promise<"resolved" | "abort"> {
+    const credential = input.credential ? toHandoffCredentialView(input.credential) : undefined;
     this.emit({
       type: "handoff",
       siteAccountId: input.siteAccount.id,
       instruction: input.instruction,
       evidence: input.evidence,
+      ...(credential ? { credential } : {}),
     });
     return new Promise<"resolved" | "abort">((resolve) => {
       this.pendingHandoff = {
@@ -136,6 +169,13 @@ export class VisibilityService {
   private emit(event: VisibilityEvent): void {
     this.options.emit?.(event);
   }
+}
+
+function toHandoffCredentialView(credential: Credential): VisibilityHandoffCredentialView {
+  return {
+    username: credential.username,
+    password: credential.password,
+  };
 }
 
 function toView(result: VisibilityRunResult): VisibilityRunResultView {
