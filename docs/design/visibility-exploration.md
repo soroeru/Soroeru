@@ -246,7 +246,7 @@ class RuleEngine {
       // 「マイページ」リンクの存在
       snapshot.links.some(l => /マイページ|my\s*page|dashboard/i.test(l.text)),
       // URL変化（ログインページから離れた）
-      !context.currentUrl.includes("login")
+      !(context.currentUrl?.includes("login") ?? false)
     ];
 
     // 失敗の兆候
@@ -292,7 +292,7 @@ class RuleEngine {
 
     for (const link of snapshot.links) {
       // 既に訪問済みはスキップ
-      if (context.visitedUrls.includes(link.href)) continue;
+      if (context.visitedUrls?.includes(link.href)) continue;
       // 外部リンクはスキップ
       if (!this.isSameDomain(link.href, context.siteAccount.domain)) continue;
 
@@ -338,17 +338,35 @@ interface ExplorationState {
 }
 
 class PageExplorer {
+  // 探索状態をインスタンス変数として保持（壁ハンドオフ後のresume用）
+  private currentState: ExplorationState | null = null;
+
   constructor(
     private pageDriver: PageDriver,
     private decisionEngine: DecisionEngine,
     private wallDetector: WallDetector
   ) {}
 
-  async explore(
+  /**
+   * 壁解決後に探索を再開
+   * ユーザーが同一ブラウザセッションで壁（CAPTCHA/MFA等）を解決した後に呼び出す
+   */
+  async *resume(): AsyncGenerator<ExplorationEvent> {
+    if (!this.currentState) {
+      throw new Error("No exploration state to resume");
+    }
+    // deferredUrlsをpendingUrlsに戻して探索再開
+    this.currentState.pendingUrls.push(...this.currentState.deferredUrls);
+    this.currentState.deferredUrls = [];
+    yield* this.continueExploration();
+  }
+
+  async *explore(
     startUrl: string,
     siteAccount: SiteAccount
   ): AsyncGenerator<ExplorationEvent> {
-    const state: ExplorationState = {
+    // 状態をインスタンス変数として保持（resume用）
+    this.currentState = {
       siteAccountId: siteAccount.id,
       domain: siteAccount.domain,
       visitedUrls: new Set(),
@@ -357,6 +375,15 @@ class PageExplorer {
       collectedPages: [],
       walls: []
     };
+
+    yield* this.continueExploration();
+  }
+
+  /**
+   * 探索の実際のループ処理（exploreとresumeで共有）
+   */
+  private async *continueExploration(): AsyncGenerator<ExplorationEvent> {
+    const state = this.currentState!;
 
     while (state.pendingUrls.length > 0) {
       const url = state.pendingUrls.shift()!;
@@ -389,6 +416,7 @@ class PageExplorer {
         };
         // 壁を解決するまで探索を一時停止
         // （呼び出し側がresumeを呼ぶまで待機）
+        // 状態はthis.currentStateに保持されているのでresumeで継続可能
         return;
       }
 
@@ -419,11 +447,13 @@ class PageExplorer {
       });
 
       if (!continueDecision.result.continue) {
+        this.currentState = null;  // 探索完了、状態クリア
         yield { kind: "exploration-complete", reason: "decision-engine" };
-        break;
+        return;
       }
     }
 
+    this.currentState = null;  // 探索完了、状態クリア
     yield { kind: "exploration-complete", reason: "no-more-urls" };
   }
 }
@@ -440,7 +470,8 @@ interface CollectedField {
   fieldId: string;
   attributeKey: string | null;  // 分類できた場合
   labelText: string;
-  value: string;  // ローカルで読み取った値
+  value: string;  // ローカルで読み取った値（カード情報はサニタイズ済み）
+  sourcePageUrl: string;  // 収集元ページURL（Disclosure記録用）
   classificationSource: "rule" | "ai" | "unclassified";
   confidence: number;
 }
@@ -474,6 +505,23 @@ class FieldCollector {
     return value;
   }
 
+  /**
+   * 未分類フィールドの値がカード情報っぽいかを検出
+   * 分類ミスによるCVV/カード番号の漏洩を防ぐ防御的ヒューリスティック
+   */
+  private looksLikeCardData(value: string): boolean {
+    const digits = value.replace(/\D/g, "");
+    // 3-4桁の数字のみ → CVV候補
+    if (/^\d{3,4}$/.test(value.trim())) {
+      return true;
+    }
+    // 13-19桁の数字 → カード番号候補（Luhnチェックは実装で追加可能）
+    if (digits.length >= 13 && digits.length <= 19) {
+      return true;
+    }
+    return false;
+  }
+
   async collectFromPage(
     siteAccountId: string,
     snapshot: PageSnapshot
@@ -505,11 +553,17 @@ class FieldCollector {
           attributeKey: classification.attributeKey,
           labelText: field.labels.join(" ") || field.nearbyText,
           value: sanitizedValue,
+          sourcePageUrl: snapshot.url,
           classificationSource: classification.source,
           confidence: classification.confidence
         });
       } else {
         // 分類できなかった場合、動的属性の候補として提案
+        // ただし、カード情報っぽい値は安全のためドロップ
+        if (this.looksLikeCardData(value)) {
+          // CVV/カード番号の可能性があるため候補に含めない
+          continue;
+        }
         dynamicCandidates.push({
           fieldId: field.fieldId,
           suggestedLabel: field.labels[0] || field.nearbyText || field.name,
@@ -546,10 +600,15 @@ class FieldCollector {
             attributeKey: classification.attributeKey,
             labelText: display.labelText,
             value: sanitizedValue,
+            sourcePageUrl: snapshot.url,
             classificationSource: classification.source,
             confidence: classification.confidence
           });
         } else {
+          // カード情報っぽい値は安全のためドロップ
+          if (this.looksLikeCardData(value)) {
+            continue;
+          }
           dynamicCandidates.push({
             fieldId: display.valueId,
             suggestedLabel: display.labelText || display.nearbyText,
@@ -686,8 +745,20 @@ class VisibilityOrchestrator {
 
       if (!loginResult.success) {
         if (loginResult.wall) {
-          yield { phase: "login", status: "wall", wall: loginResult.wall };
-          // ハンドオフ待ち...
+          yield {
+            phase: "login",
+            status: "wall",
+            wall: loginResult.wall,
+            // ハンドオフイベント：ユーザーに制御を渡す
+            handoff: {
+              reason: loginResult.wall.kind,
+              evidence: loginResult.wall.evidence,
+              resumable: true
+            }
+          };
+          // ハンドオフ待ち - 呼び出し側が壁解決後にresumeを呼ぶ
+          // ここでは一旦終了し、resumeForSiteで再開
+          return;
         } else {
           yield { phase: "login", status: "failed", error: loginResult.error };
           return;
@@ -730,13 +801,15 @@ class VisibilityOrchestrator {
       // Phase 4: Disclosureとして記録
       yield { phase: "save", status: "starting" };
 
+      const visitedPages = new Set<string>();
       for (const field of allCollectedFields) {
+        visitedPages.add(field.sourcePageUrl);
         await this.domainService.addDisclosure(
           siteAccount.id,
           field.attributeKey!,
           field.value,
           {
-            sourcePageUrl: /* from context */,
+            sourcePageUrl: field.sourcePageUrl,
             confidence: field.confidence,
             classificationSource: field.classificationSource
           }
@@ -751,7 +824,7 @@ class VisibilityOrchestrator {
       yield {
         phase: "complete",
         summary: {
-          pagesVisited: /* count */,
+          pagesVisited: visitedPages.size,
           disclosuresCollected: allCollectedFields.length,
           dynamicCandidates: allDynamicCandidates.length
         }
