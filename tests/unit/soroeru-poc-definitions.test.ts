@@ -1,5 +1,5 @@
 // Shared site/form/field/wall/withdrawal definition model (#80, RFC-001 v3
-// §8, extension.md §3.2). Fake data only (docs/testing.md).
+// §8, architecture.md §7.1). Fake data only (docs/testing.md).
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

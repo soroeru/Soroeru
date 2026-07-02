@@ -6,23 +6,17 @@ non-negotiable requirements.
 
 This document is the **canonical product direction**.
 Out of scope here: application architecture and technology selection (see
-[`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md)), security
-rationale (see [`security.md`](security.md)), and agent operating rules (see `../AGENTS.md`
-and `../CLAUDE.md`).
+[`architecture.md`](architecture.md)), security rationale (see [`security.md`](security.md)),
+and agent operating rules (see `../AGENTS.md` and `../CLAUDE.md`).
 
-> **Direction change (2026-06-25).** The product is renamed and re-founded from
-> `Catashiro` to **Soroeru（揃える）**. It is no longer framed as an "autonomous form-filling
-> agent" or a "desktop-wrapped web app." Soroeru is a **local-first agency engine**: a tool
-> through which a user *acquires their own free will* (agency) in the domain of personal
-> information, online accounts, and online contractual relationships. This document fully
-> **supersedes** the previous Catashiro requirements; the prior direction lives in git.
+> **Soroeru（揃える）** is a **local-first agency engine**: a tool through which a user
+> *acquires their own free will* (agency) in the domain of personal information, online
+> accounts, and online contractual relationships. It is not an "autonomous form-filling
+> agent" or a "desktop-wrapped web app."
 >
-> The **repository / codebase identifier remains `soroeru`** for now (code is not
-> renamed); **Soroeru** is the product name. Technology selection is deliberately **not**
-> fixed here — it is decided ground-up, requirements-first, in
-> [`rfc/rfc-002-soroeru-architecture.md`](rfc/rfc-002-soroeru-architecture.md). The existing
-> Electron epic (#156–#162) and the control-plane RFC (#163) are revisited there
-> (rebaseline / replace / close).
+> The **repository / codebase identifier is `soroeru`**; **Soroeru** is the product name.
+> Technology selection is deliberately **not** fixed here — it is decided ground-up,
+> requirements-first, in [`architecture.md`](architecture.md).
 
 ## 1. Background & North Star
 
@@ -182,13 +176,10 @@ is verified real data rather than free-form text. Full requirement and rationale
   accounts fall (the second sense of "揃える") — is **deferred**: delivering a verification the
   site can check requires a verifiable credential plus site adoption, which conflicts with the
   no-hosted-service / local-first principles. Recorded as future direction, not built in the MVP.
-- **Authentication mechanism and connection architecture.** Verification uses the Digital
-  Agency's **デジタル認証アプリ** (認証 API only; card read on the user's smartphone, QR
-  cross-device from desktop; basic-4 via UserInfo + scope; `sub` = PPID). Because the
-  integration effectively requires a server-side BFF, Soroeru runs a **minimal, OSS,
-  zero-retention identity-auth broker** (decision "A", Issue #218) — a narrowly-scoped exception
-  to the no-backend principle, limited to identity authentication. The local encrypted vault
-  stays local ("No hosted vault" is unchanged).
+- **Authentication mechanism.** Verification is mediated by the Digital Agency's
+  デジタル認証アプリ, via a narrowly-scoped identity-auth broker that is a scoped exception to
+  the no-backend principle (see [`architecture.md`](architecture.md) §9 for the integration
+  mechanism and connection architecture).
 - **My Number / JPKI handling, assurance level, and legal constraints**: see
   [`security.md`](security.md) §14.
 
@@ -268,6 +259,10 @@ registration (last).**
   precondition for agency, and the ledger has substance from the start (CSV + collection)
   rather than being empty.
 - Auto-login is expected to hit MFA / CAPTCHA walls (detect → hand off; never bypass).
+- **Delegation**: default **L0** for the first collection run; **L1** may be opened for
+  "collect registered information from imported sites" once the user understands what is
+  collected and where it is stored (per the general Delegation Boundary model, §5). L1
+  never bypasses walls or silently proceeds past an automation-prohibiting ToS Constraint.
 
 ### 7.2 Locale
 
@@ -282,17 +277,37 @@ registration (last).**
 ## 8. Non-Negotiable Requirements (Security / Privacy / Safety)
 
 - Local-first / locally encrypted, user-owned / no hosted vault / no telemetry.
-- AES-256-GCM with a memory-hard KDF (Argon2id; PBKDF2-HMAC-SHA-512 as a Web-Crypto-only
-  fallback). The derived key stays in memory only. CVV is the most sensitive field.
+- **Network egress is limited to**: (1) the target sites the user acts on, (2) the user's
+  own configured AI provider, and (3), later, user-owned encrypted-vault cloud storage as
+  encrypted bytes only. No other external destination, and no telemetry / analytics / crash
+  reporting.
+- Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
+  derived key must never persist outside memory. Treat CVV as the most sensitive field,
+  requiring the strictest handling. Algorithm / KDF selection: see
+  [`architecture.md`](architecture.md) §2 and §10.
 - Never send raw personal values to the AI model — structure only. Only the user's
   configured provider; no provider stateful features (PII prompt-caching, stored threads,
   memory).
+- No raw browser session state (profile, cookies) is retained outside the encrypted vault;
+  browser automation sessions are ephemeral by default. Mechanism: see
+  [`architecture.md`](architecture.md) §2.
+- **Evidence / audit records are content-minimized.** They never store screenshot pixels,
+  full page HTML, cookies, or tokens — only references, hashes, timestamps, field
+  labels/types, and masked snippets: enough to make a decision inspectable without
+  creating a second data leak.
+- **Prefer "unknown" over a confident wrong answer.** An ambiguous or unclear value —
+  whether from deterministic collection or AI-assisted structure analysis — becomes an
+  explicit "unknown" state or a review task, never a guessed or fabricated value. The same
+  rule applies to AI-proposed field mappings and Constraint findings.
 - The review-and-confirm gate and the three guards (plus the fourth absolute boundary:
   deleting data inside Soroeru is always confirmed).
 - No payment (free-trial→subscription exception only, on explicit approval).
 - The imported CSV (which contains plaintext passwords) is encrypted immediately, never
   logged, and safely discarded after import. Collected PII is never egressed and is stored
-  locally encrypted only.
+  locally encrypted only. Validate the CSV's size and row count before processing (reject
+  unreasonably large or malformed files rather than parsing them blindly). After a
+  successful import, prompt the user to delete the original exported CSV file, but never
+  silently delete a user-selected file outside Soroeru's own vault.
 - **Automated access / scraping** — to resolve the bootstrap problem (you must read terms to
   know terms; manually vetting 300+ sites is infeasible), separate the activities:
   - **Reading public terms pages automatically is allowed** (public content; the means by
@@ -323,20 +338,14 @@ registration (last).**
     account, recorded and (where possible) reversible.
   - Bulk collection of *others'* data and circumventing access controls are out of scope.
   - Legal nuances are reviewed separately in [`security.md`](security.md).
-- **Identity verification (My Number / JPKI)** — see §4.2 and [`security.md`](security.md) §14:
-  - Verification uses the Digital Agency's **デジタル認証アプリ** (認証 API only). The card is
-    read on the user's smartphone; the desktop links via QR (cross-device). Basic-4 attributes
-    come via the UserInfo endpoint + scope; the ID token carries `sub` = a PPID.
+- **Identity verification (My Number / JPKI)** — see §4.2,
+  [`architecture.md`](architecture.md) §9 (integration mechanism), and
+  [`security.md`](security.md) §14:
   - The **12-digit My Number is never stored** (the auth flow does not expose it); store only
     the basic-4 attributes, the PPID, and verification Evidence (Digital Agency reference +
     timestamp). The **card PIN is entered in the Digital Agency app and never seen by Soroeru**.
   - Basic-4 attributes are non-editable; phone / email require OTP ownership verification (≤3
     each); removing a verified contact is the fourth absolute boundary.
-  - Verification is **mediated by the Digital Agency's 公的個人認証 service** (no 署名検証者
-    status, no desktop NFC reader). Integration effectively requires a server-side BFF, so
-    Soroeru runs a **minimal, OSS, zero-retention identity-auth broker** (decision "A",
-    Issue #218) — a narrowly-scoped exception to the no-backend principle, limited to identity
-    authentication; the local encrypted vault stays local.
 
 ## 9. Out of Scope
 
@@ -349,11 +358,17 @@ registration (last).**
   platforms (for now); **site-side verifiable-credential (VC) issuance and any
   trust-registry / relying-party integration for "Soroeru-verified" sign-up (future
   direction, Issue #218); identity onboarding for users without a My Number Card or outside
-  Japan (v1 is Japan-resident, card-holder only).**
+  Japan (v1 is Japan-resident, card-holder only).** MCP server support in the MVP: a strictly
+  permissioned local MCP server may be added later for advanced users, exposing only
+  read-only / planning-oriented tools (inventory summaries, stale-site discovery, page
+  structure inspection, candidate proposals, task creation for later review); it must never
+  expose raw personal values, credentials, card numbers, CVV, decrypted vault exports, direct
+  browser control, or a submit/withdraw action that skips the review-and-confirm gate.
 
 ## 10. Functional Requirements
 
-Tier reflects the slice order (A first). Status is `Planned` pending the architecture RFC.
+Tier reflects the slice order (A first). Status is `Planned`; target architecture is
+[`architecture.md`](architecture.md).
 
 | ID | Requirement | Slice | Priority |
 | --- | --- | --- | --- |
@@ -362,7 +377,7 @@ Tier reflects the slice order (A first). Status is `Planned` pending the archite
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. | A | Must |
 | REQ-004 | Collect registered personal information per site and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers are reduced to last 4 digits before storage, and CVV is never collected or stored. | A | Must |
 | REQ-005 | Present the per-site view by composing Site Account + its Disclosures, masking values by default, revealing a stored site-held value only after passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
-| REQ-006 | Track Account Relationship (newsletter / recurring billing / last-used) and provide filtered lists for these. | A | Must |
+| REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall or an unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
 | REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; four absolute boundaries). | A | Must |
 | REQ-009 | Form Policy/Preference from ledger reactions: suggest after 3 consistent observations (≤1/day), promote to Policy only on explicit user confirmation; thresholds are configurable defaults. | A | Must |
@@ -396,14 +411,3 @@ Tier reflects the slice order (A first). Status is `Planned` pending the archite
 | Mandate | A record of what the user authorized (collection or action). |
 | Three guards | High-risk-clause escalation, payment stop (free-trial exception), no auto-attestation. |
 | Wall | A step that must not be automated: CAPTCHA, MFA, identity / email / SMS verification. |
-
-## 12. Relationship to prior Catashiro work
-
-- This document **fully supersedes** the previous `Catashiro` requirements; the old direction
-  remains in git history.
-- **Technology selection is deferred** to a later, ground-up architecture RFC (language,
-  shell, automation, storage). The existing Electron epic (#156–#162) and the
-  control-plane RFC (#163) are revisited there and **rebaselined, replaced, or closed**.
-- Items deferred to the architecture RFC include: the vault schema normalizing Personal
-  Attribute / Disclosure / Account Relationship, the auto-login + hand-off execution model,
-  and the safe CSV-import design.

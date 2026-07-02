@@ -1,6 +1,6 @@
 // Shared site/form/field/wall/withdrawal definition matching, field-rule
 // application, and local-candidate validation (#80, RFC-001 v3 §8,
-// extension.md §3.2). Definitions (official and local-candidate) share one
+// architecture.md §7.1). Definitions (official and local-candidate) share one
 // schema (src/types.ts); this module is the matching/validation logic used by
 // both deterministic mode and AI mode.
 
@@ -39,7 +39,7 @@ export interface DefinitionMatch<T extends SiteDefinition = SiteDefinition> {
 }
 
 /**
- * Score how well `definition` matches the current page (extension.md §3.2
+ * Score how well `definition` matches the current page (architecture.md §7.1
  * step 2: domain, URL pattern, form signature, headings/buttons, wall
  * signals). Returns `undefined` if neither `match.domains` nor
  * `match.urlPatterns` matches — a definition must positively identify the
@@ -108,7 +108,7 @@ export function matchDefinitions<T extends SiteDefinition>(snapshot: PageSnapsho
 
 /**
  * Resolve the best definitions for the current page from checked-in official
- * definitions and this vault's local candidates (extension.md §3.2 steps
+ * definitions and this vault's local candidates (architecture.md §7.1 steps
  * 1-4), best first. Candidates marked `rejected` are excluded.
  */
 export function resolveDefinitions(
