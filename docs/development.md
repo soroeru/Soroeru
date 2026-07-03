@@ -391,20 +391,25 @@ if either changes.
 
 ### 9.4 Architecture Review
 
-Architecture review checks:
+Architecture review targets `docs/architecture.md` and checks, in priority
+order, judged against Soroeru's context (single-user, local-first Electron
+desktop app):
 
-1. system boundaries
-2. dependencies
-3. scalability
-4. availability
-5. latency
-6. security
-7. observability
-8. operability
-9. cost
-10. failure modes
-11. data consistency
-12. whether the decision can be recorded as an ADR
+1. **requirements and constraint fit** — choices satisfy the non-negotiables
+   and prioritized quality attributes, with trade-off points explicit
+2. **system boundaries and data flow** — trust boundaries, where personal
+   data may exist in what form, and every egress point
+3. **dependencies** — justified, maintained, license-compatible, security
+   surface understood, stack within the doc's own decisions
+4. **failure modes and data integrity** — vault durability under crash /
+   interruption, schema versioning / migration, local diagnosability
+5. **decision records** — significant decisions captured ADR-style with
+   alternatives, rationale, and reconsideration triggers
+
+A criterion that genuinely does not apply is answered "not applicable" with
+a reason, not forced. The criteria mirror
+`skills/architecture-review/SKILL.md`; keep the two in sync if either
+changes.
 
 ### 9.5 Local AI Review
 
