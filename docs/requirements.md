@@ -206,11 +206,14 @@ governance.** Only *toil* (execution) is delegated; *judgment* is not.
     concrete operation being expanded (for example, "collect registered information from
     imported sites" or "update selected stale addresses") and the exact scope that would run
     without the per-run L0 gate.
-  - The user must answer, by selecting or briefly restating, both:
+  - In the MVP, the user must answer with fixed selectable options whose correct option IDs
+    are defined by the check-content version. The options must cover both:
     1. **what becomes automatic** at L1 for this operation type; and
     2. **what still stops for confirmation**: deviations from Policy, unknowns, high-risk
        items / Constraints, walls (CAPTCHA / MFA / verification), the absolute boundaries, and
        any action outside the named operation range.
+    Free-text restatement is out of scope for the MVP; if added later, it must not enable L1
+    unless a deterministic rubric or explicit human confirmation defines the pass/fail result.
   - The user must also be shown that reduction back to L0 is immediate and unconditional.
   - Passing requires correct answers to the "automatic" and "still confirmed" parts. If either
     answer is wrong or skipped, L1 is not enabled; Soroeru shows the missed point in plain
@@ -220,9 +223,12 @@ governance.** Only *toil* (execution) is delegated; *judgment* is not.
     gate next time" checkbox. Checking it is only a user-initiated request to start this
     understanding check; it does not enable L1 until the check is passed.
   - Soroeru records the passed check-content version, operation type, scope, timestamp, and the
-    user's selected answers as Evidence. The pass is invalidated and the check is required again
-    if any item changes in what becomes automatic, what still stops for confirmation, the named
-    operation range, or the absolute-boundary wording.
+    selected answer option IDs (or hashes of answer IDs) as Evidence, preserving the
+    reference+hash-only Evidence rule. Any later retained free-text answer content must be stored
+    only as encrypted vault content and referenced from Evidence by hash.
+  - The pass is invalidated and the check is required again if any item changes in what becomes
+    automatic, what still stops for confirmation, the named operation range, or the
+    absolute-boundary wording.
 - **Absolute boundaries (always confirmed, even at L1)**:
   1. high-risk clauses (auto-renewing subscription, mandatory arbitration, third-party
      data sharing/sale, content licenses, …);
