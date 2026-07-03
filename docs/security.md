@@ -517,10 +517,18 @@ site-activity summaries can reveal sensitive behavior. They must not contain raw
 values, API keys, passphrases, recovery keys, AI prompts, cookies, browser sessions,
 screenshots, Playwright traces, or decrypted vault bytes.
 
+Plain operational logs are allowed only for startup/build/runtime failures that may happen
+before the vault is unlocked. They live under the app-support diagnostics directory
+(`~/Library/Application Support/Soroeru/logs/` on macOS, or the `SOROERU_STATE_ROOT`
+override in development), carry sanitized operational categories rather than user activity,
+and rotate by size/count (MVP target: 1 MiB per file, 5 retained files). Activity-level
+site diagnostics stay in encrypted `DiagnosticEvent` records, not plaintext logs.
+
 Support bundles are generated only after explicit user confirmation in the local Web UI.
 `exportSupportBundleJson()` returns a redacted JSON summary with app version, OS/runtime
-versions, and recent sanitized diagnostic events. It is never uploaded automatically and
-must not be pasted into public issues if it contains sensitive site/activity context.
+versions, recent sanitized diagnostic events, and optional sanitized operational-log
+excerpts. It is never uploaded automatically and must not be pasted into public issues if
+it contains sensitive site/activity context.
 
 ## 13. Security Checklist
 
