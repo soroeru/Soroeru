@@ -1248,6 +1248,13 @@ class AiEngine {
 `DecisionEngine`との関係: コンストラクタに`aiEngine?: AiEngine`を受け取り（§1）、
 ルール失敗時に`consult`へ委譲する。`consult`がnullを返したら`getDefaultResult`。
 
+インスタンスと予算のライフサイクル: `AiEngine`は**1 run（`VisibilityOrchestrator`
+による一連の複数サイト処理）につき1インスタンス**を、Orchestratorを組み立てる側
+（CLI/アプリ）が生成して注入する。`maxCallsPerSite`のカウンタは
+`request.context.siteAccount.domain`をキーにインスタンス内に保持し、
+`maxConsecutiveFailures`のブレーカはrun全体（インスタンス）スコープ。
+いずれもインスタンス破棄（=次のrun）でリセットされる。
+
 ### プロンプト契約（kind別）
 
 `completeJson`のJSONスキーマは§1の`DecisionResultMap`と同形の応答を要求する
@@ -1260,7 +1267,7 @@ class AiEngine {
 | judge-login-result | `fields`の型情報、`links`、`buttons`、title、URL（**visibleTextは送らない** — 下記） | `{ success: boolean; reason: string }` | なし |
 | classify-field | 対象フィールドの構造（既存`ai-mapper.ts`と同じ基準: labels / nearbyText / placeholder / name / id / type / autocomplete）+ 既知属性キー一覧のガイド | `{ classification: FieldClassification \| null }` | attributeKeyは既知キーまたは動的候補フォーマットに限定 |
 | should-continue | 訪問済み/未訪問リンクのカテゴリ要約、`collectedAttributes`（属性**キー**のみ） | `{ continue: boolean }` | なし |
-| name-new-attribute | suggestedLabel / labelText / nearbyText（**sampleValueはマスク済みでも送らない**） | `{ attributeKey: string; label: string }` | キーは`[a-z0-9.-]`に正規化。`card.`プレフィックスは提案禁止（カード系は既知キーのみ） |
+| name-new-attribute | フォームフィールド由来の候補: labels / placeholder / nearbyText。表示要素（displayValues）由来の候補: **labelTextのみ**（§4の`suggestedLabel`は`display.nearbyText`へのフォールバックを含むため、display由来ではsuggestedLabelをそのまま送らず`labelText`に差し替える）。いずれも**sampleValueはマスク済みでも送らない** | `{ attributeKey: string; label: string }` | キーは`[a-z0-9.-]`に正規化。`card.`プレフィックスは提案禁止（カード系は既知キーのみ） |
 
 ### 送信データのサニタイズ（`toAiPayload`）
 
@@ -1276,9 +1283,16 @@ class AiEngine {
   （既存`ai-mapper.ts`と同じ基準: フォーム構造の一部でありユーザーの値ではない）。
   ただし**表示要素（displayValues）のnearbyTextは送らない**（`<dt>氏名</dt>
   <dd>山田太郎</dd>`のように値が混ざるため。labelTextのみ）。
+- **リンクテキスト・ボタンテキスト・titleはローカル照合でレダクションしてから
+  送る**: ログイン後ページでは「ようこそ 山田太郎 様」のようにユーザーの値が
+  リンク/見出し/タイトルに埋まる。`toAiPayload`は、このrunで収集済みの値と
+  正準Personal Attributesの値に部分一致するテキスト片を送信前にローカルで
+  伏せ字化する（照合はローカルで完結するため追加開示は生じない）。未収集の
+  値が埋まっているケースは残余リスクとして制約6に記録する。
 - 検証はテストで担保する: 番兵値（実在しないダミーの個人情報値）を
-  スナップショットとreadValues結果に仕込み、生成されたsystem / userプロンプト
-  文字列に含まれないことをユニットテストで保証する。
+  スナップショット・readValues結果・**displayValues由来のname-new-attribute
+  経路・リンク/ボタンテキスト・title**に仕込み、生成されたsystem / user
+  プロンプト文字列に含まれないことをユニットテストで保証する。
 
 judge-login-resultでvisibleTextを送らない結果、AIはエラーメッセージ本文を
 読めず判定精度が下がるが、これは意図したトレードオフ（値の漏洩防止が優先。
@@ -1304,6 +1318,9 @@ judge-login-resultでvisibleTextを送らない結果、AIはエラーメッセ�
 
 - `AiConsultationLog`を`onLog`コールバックで`ExplorationEvent`系に流す
   （UI/CLIの進捗と、runサマリの`aiCalls` / `aiFallbackUsed` / `aiFailures`）。
+  `onLog`の接続はAiEngineを生成するOrchestrator組み立て側の責務。§6の
+  `complete`イベントのsummary型へのこれらのフィールド追加は、本設計では
+  要求のみ規定し、型の拡張は実装Issueで行う。
 - プロンプト・応答の本文は保存しない（構造のみとはいえ開示最小化）。
   `DecisionResult.source: "ai"`と`confidence`はCollectedFieldに既に伝搬する
   設計（§4）なので、どの収集がAI由来かは台帳側で追跡できる。
@@ -1383,4 +1400,4 @@ judge-login-resultでvisibleTextを送らない結果、AIはエラーメッセ�
 
 5. **resume時の壁再発リスク**: `resume()`は`continueExploration()`を経由して同じURLに`goto()`し直す。サイトの壁（CAPTCHA/認証確認等）がセッションではなくリクエスト単位で発生する場合、ユーザーが一度解決しても再訪問時に同じ壁が再度現れうる。現状は壁検出・ハンドオフの仕組みが再度そのまま働くため機能面での破綻はないが、ユーザー体験としてのループは実装時に監視が必要。
 
-6. **AIフォールバックの精度上限**（§8）: AIには`visibleText`もフィールド値も送らないため、judge-login-resultのAI判定はエラーメッセージ本文を読めず、構造シグナルだけで判断する。精度より値の非開示を優先する意図的なトレードオフ。また`maxCallsPerSite`予算を使い切ったサイトでは以後ルールのみで進むため、サイト内で収集網羅性が不均一になりうる（`classificationSource`と`AiConsultationLog`で追跡可能）。
+6. **AIフォールバックの精度上限と残余リスク**（§8）: AIには`visibleText`もフィールド値も送らないため、judge-login-resultのAI判定はエラーメッセージ本文を読めず、構造シグナルだけで判断する。精度より値の非開示を優先する意図的なトレードオフ。また`maxCallsPerSite`予算を使い切ったサイトでは以後ルールのみで進むため、サイト内で収集網羅性が不均一になりうる（`classificationSource`と`AiConsultationLog`で追跡可能）。リンク/ボタンテキスト・titleのレダクションは「収集済みの値・正準値との照合」ベースであるため、**未収集かつ正準にもない値**（例: サイト側だけが持つ旧姓・ニックネーム）がリンクテキストに埋まっている場合は伏せ字化できず送信されうる。これが許容できない場合の代替はリンクテキストを一切送らないことだが、find-login-page / find-profile-links のAIフォールバックがほぼ機能しなくなるため採らない（残余リスクとして受容）。

@@ -109,6 +109,16 @@ assert_unit_prompt() {
   grep -qF "$needle" "$file" || fail_msg "output for unit=$unit missing prompt marker: $needle"
 }
 
+assert_prompt_first_line() {
+  local unit=$1 expected=$2 file first
+  file=$(output_for_unit "$unit")
+  [ -n "$file" ] || fail_msg "no review output for unit=$unit"
+  # The stub echoes the prompt head after "## Prompt head" and a blank
+  # line; the line after those two is the payload's first line.
+  first=$(awk '/^## Prompt head$/ { getline; getline; print; exit }' "$file")
+  [ "$first" = "$expected" ] || fail_msg "unit=$unit payload first line is '$first', expected '$expected'"
+}
+
 # --- 1. untargeted docs only: no review --------------------------
 printf 'readme change\n' >> README.md
 git commit -qam "docs: readme only"
@@ -125,9 +135,9 @@ assert_output_count 1
 assert_unit_prompt requirements "name: requirements-review"
 # Regression guard: the payload is passed to the reviewer CLI as an
 # argument, so it must never start with "-" (a SKILL.md frontmatter
-# fence would be parsed as a CLI option). The stub echoes the prompt
-# head; the heading must be present as its first line.
-assert_unit_prompt requirements "# Local AI review payload (unit=requirements)"
+# fence would be parsed as a CLI option). Assert the heading is the
+# payload's FIRST line, not merely present somewhere.
+assert_prompt_first_line requirements "# Local AI review payload (unit=requirements)"
 
 # --- 3. excluded doc: no new review, unchanged units skipped -----
 printf 'security change\n' >> docs/security.md
