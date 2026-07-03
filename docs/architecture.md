@@ -117,6 +117,30 @@ bypass); and local-first (no hosted vault, telemetry, analytics, or crash report
 | Browser E2E | **Playwright Test** | Reuses the product's own automation library for new Soroeru E2E and packaging smoke. |
 | Formatting / linting | **Prettier + ESLint** | Standard, low-friction baseline once React/Electron source exists. |
 
+### 2.1 Decision alternatives and reconsideration triggers
+
+The table above records the current target stack. The following load-bearing decisions have
+known alternatives and concrete triggers for reconsideration:
+
+- **Electron desktop app**: lighter desktop shells (Tauri, native Swift/AppKit, or a
+  browser-extension-only surface) were considered but not selected for the MVP because the
+  trusted main process needs to own Vault v2, headed Playwright automation, typed IPC, and
+  provider SDK integration in one inspectable Node/TypeScript runtime. Reconsider if the
+  private-beta app exceeds an explicit package-size or idle-memory budget, or if Electron's
+  sandbox/process model prevents a required macOS security or distribution constraint.
+- **Packaged browser engine defaults to Chromium**: bundling all Playwright engines was
+  considered but deferred to keep the first DMG smaller and reduce packaging failure modes.
+  Firefox/WebKit remain compatibility targets behind `BrowserEngine`, so this is a
+  distribution choice rather than a product-level Chromium lock-in. Reconsider if Visibility
+  runs repeatedly fail on real user sites because Chromium is the wrong engine, or if beta
+  support requires a second bundled engine to satisfy the browser-engine independence goal.
+- **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
+  distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
+  matches the small private beta while making Gatekeeper friction explicit and avoiding
+  release infrastructure that is not yet required. Reconsider when distribution moves beyond
+  invited beta users, when manual upgrade friction blocks validation, or when Developer ID
+  signing/notarization credentials become available for a release issue.
+
 ## 3. Domain Model And Persistence Mapping
 
 ### 3.1 Entities and encrypted payload kinds
