@@ -99,7 +99,7 @@ test("without AI and without any rule result, every kind gets its safe default",
     "judge-login-result": { success: false, reason: "no-decision" },
     "classify-field": { classification: null },
     "should-continue": { continue: false },
-    "name-new-attribute": { attributeKey: "unknown", label: "Unknown" },
+    "name-new-attribute": null,
   };
 
   for (const kind of Object.keys(expected) as DecisionKind[]) {

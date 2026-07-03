@@ -154,7 +154,7 @@ test("shouldContinue always has an explicit default cap", () => {
   assert.deepEqual(result.result, { continue: false });
 });
 
-test("login / classification kinds defer to existing implementations (no result)", () => {
+test("kinds without a rule implementation return unconfident with no result", () => {
   const engine = new RuleEngine();
   for (const kind of ["find-login-page", "detect-login-form", "judge-login-result", "classify-field", "name-new-attribute"] as const) {
     const result = engine.evaluate({ kind, snapshot: snapshot({}), context: context() });

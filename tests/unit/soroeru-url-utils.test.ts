@@ -17,6 +17,11 @@ test("normalizeUrl keeps query strings as-is", () => {
   assert.equal(normalizeUrl("https://example.com/page?b=2&a=1#f"), "https://example.com/page?b=2&a=1");
 });
 
+test("normalizeUrl drops a trailing slash before a query string too", () => {
+  assert.equal(normalizeUrl("https://example.com/page/?a=1"), "https://example.com/page?a=1");
+  assert.equal(normalizeUrl("https://example.com/?a=1"), "https://example.com/?a=1");
+});
+
 test("normalizeUrl returns unparseable input unchanged", () => {
   assert.equal(normalizeUrl("not a url"), "not a url");
   assert.equal(normalizeUrl("/relative/path#x"), "/relative/path#x");

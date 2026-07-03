@@ -6,7 +6,7 @@
 /**
  * Normalize a URL for duplicate-visit detection:
  * - strip the fragment (#...)
- * - drop a trailing slash on non-root paths
+ * - drop a trailing slash on non-root paths (also before a query string)
  * Query strings are kept as-is (parameter order / encoding differences are an
  * accepted limitation). Unparseable input is returned unchanged.
  */
@@ -14,11 +14,10 @@ export function normalizeUrl(url: string): string {
   try {
     const parsed = new URL(url);
     parsed.hash = "";
-    let normalized = parsed.toString();
-    if (normalized.endsWith("/") && parsed.pathname !== "/") {
-      normalized = normalized.slice(0, -1);
+    if (parsed.pathname !== "/" && parsed.pathname.endsWith("/")) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
     }
-    return normalized;
+    return parsed.toString();
   } catch {
     return url;
   }
@@ -40,7 +39,9 @@ export function isSameSite(href: string, domain: string): boolean {
 /**
  * Resolve a possibly-relative href against the page it was found on, so the
  * explorer can navigate to it. Returns undefined when no absolute URL can be
- * formed (e.g. `javascript:` pseudo-links with an unparseable base).
+ * formed (a relative href combined with an unparseable base). Note that hrefs
+ * carrying their own scheme (e.g. `javascript:`) resolve successfully and are
+ * filtered later by isSameSite, whose hostname check they fail.
  */
 export function resolveHref(href: string, baseUrl: string): string | undefined {
   try {

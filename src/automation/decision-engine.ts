@@ -75,7 +75,8 @@ export interface DecisionResultMap {
   "judge-login-result": { success: boolean; reason: string };
   "classify-field": { classification: FieldClassification | null };
   "should-continue": { continue: boolean };
-  "name-new-attribute": { attributeKey: string; label: string };
+  /** null = no name proposed (the field stays an unnamed dynamic candidate). */
+  "name-new-attribute": { attributeKey: string; label: string } | null;
 }
 
 export interface DecisionResult<K extends DecisionKind = DecisionKind> {
@@ -85,7 +86,11 @@ export interface DecisionResult<K extends DecisionKind = DecisionKind> {
 }
 
 export interface RuleResult<K extends DecisionKind = DecisionKind> {
-  /** True when the rule's answer should be used without consulting the AI. */
+  /**
+   * True when the rule's answer should be used without consulting the AI.
+   * Confident without a result is treated as unconfident (falls through to
+   * the AI / safe default); a confident answer must always carry its result.
+   */
   confident: boolean;
   /**
    * The rule's (possibly partial) answer. An unconfident partial result is
@@ -113,7 +118,7 @@ export interface AiEngine {
 /**
  * Safe defaults when neither rules nor AI can decide. Every default is the
  * "do less" option: no links to follow, no form, login treated as failed,
- * field left unclassified, exploration ended.
+ * field left unclassified, exploration ended, no attribute name proposed.
  */
 const SAFE_DEFAULTS: { [K in DecisionKind]: () => DecisionResultMap[K] } = {
   "find-login-page": () => ({ links: [] }),
@@ -122,7 +127,7 @@ const SAFE_DEFAULTS: { [K in DecisionKind]: () => DecisionResultMap[K] } = {
   "judge-login-result": () => ({ success: false, reason: "no-decision" }),
   "classify-field": () => ({ classification: null }),
   "should-continue": () => ({ continue: false }),
-  "name-new-attribute": () => ({ attributeKey: "unknown", label: "Unknown" }),
+  "name-new-attribute": () => null,
 };
 
 export class DecisionEngine {
