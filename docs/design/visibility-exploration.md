@@ -1275,16 +1275,18 @@ class AiEngine {
 ### プロンプト契約（kind別）
 
 `completeJson`のJSONスキーマは§1の`DecisionResultMap`と同形の応答を要求する
-（`confidence: number`を各応答に追加。`source`は常に`"ai"`をエンジン側で付与）。
+（`confidence: number`を各応答に追加。スキーマで`minimum: 0, maximum: 1`を
+制約し、エンジン側でも[0, 1]にクランプする — ルール経路の固定値1.0 / 0.3と
+台帳側で比較可能に保つ。`source`は常に`"ai"`をエンジン側で付与）。
 
 | kind | AIに送る構造 | 応答（DecisionResultMap準拠） | 応答の追加検証 |
 |------|--------------|------------------------------|----------------|
 | find-login-page / find-profile-links | `links`（text + サニタイズ済みhref）、title、URL | `{ links: LinkCandidate[] }` | hrefがスナップショットに**実在するリンクのみ**採用（AIが捏造したURLへは遷移しない） |
 | detect-login-form | `fields`（fieldId / name / id / type / autocomplete / labels / placeholder / nearbyText）、`buttons` | `{ form: LoginFormDetection \| null }` | fieldId / submitSelectorの実在検証 |
 | judge-login-result | `fields`の型情報、`links`、`buttons`、title、URL（**visibleTextは送らない** — 下記） | `{ success: boolean; reason: string }` | なし |
-| classify-field | 対象フィールドの構造（既存`ai-mapper.ts`と同じ基準: labels / nearbyText / placeholder / name / id / type / autocomplete）+ 既知属性キー一覧のガイド | `{ classification: FieldClassification \| null }` | attributeKeyは既知キーまたは動的候補フォーマットに限定 |
+| classify-field | 対象フィールドの構造（既存`ai-mapper.ts`と同じ基準: labels / nearbyText / placeholder / name / id / type / autocomplete）+ 既知属性キー一覧のガイド | `{ classification: FieldClassification \| null }` | attributeKeyは既知キーまたは動的候補フォーマット（name-new-attributeと同じ`[a-z0-9._-]`規則）に限定 |
 | should-continue | 訪問済み/未訪問リンクのカテゴリ要約、`collectedAttributes`（属性**キー**のみ） | `{ continue: boolean }` | なし |
-| name-new-attribute | フォームフィールド由来の候補: labels / placeholder / nearbyText。表示要素（displayValues）由来の候補: **labelTextのみ**（§4の`suggestedLabel`は`display.nearbyText`へのフォールバックを含むため、display由来ではsuggestedLabelをそのまま送らず`labelText`に差し替える）。いずれも**sampleValueはマスク済みでも送らない** | `{ attributeKey: string; label: string }` | キーは`[a-z0-9.-]`に正規化。`card.`プレフィックスは提案禁止（カード系は既知キーのみ） |
+| name-new-attribute | フォームフィールド由来の候補: labels / placeholder / nearbyText。表示要素（displayValues）由来の候補: **labelTextのみ**（§4の`suggestedLabel`は`display.nearbyText`へのフォールバックを含むため、display由来ではsuggestedLabelをそのまま送らず`labelText`に差し替える）。いずれも**sampleValueはマスク済みでも送らない** | `{ attributeKey: string; label: string }` | キーは`[a-z0-9._-]`に正規化（§5の例`rakuten.point_number`と同形式）。`card.`プレフィックスは提案禁止（カード系は既知キーのみ） |
 
 ### 送信データのサニタイズ（`toAiPayload`）
 
@@ -1332,6 +1334,9 @@ judge-login-resultでvisibleTextを送らない結果、AIはエラーメッセ�
 - `maxCallsPerSite`超過: 以後の`consult`は即`null`（outcome:
   "budget-exceeded"）。`maxConsecutiveFailures`連続失敗: このrunの残りは
   AI無効（プロバイダ障害時に全サイトでタイムアウト待ちが連鎖するのを防ぐ）。
+  カウンタの規則: `provider-error` / `timeout` / `invalid-response`が加算、
+  `used`でリセット、**`budget-exceeded`は数えない**（1サイトの予算消化で
+  run全体のブレーカが落ちると、サイト単位の封じ込めという予算の目的に反する）。
 - 応答検証（上の表の右列）に失敗したものはinvalid-response扱い → `null`。
   特にhref / fieldIdの実在検証は、AIの捏造したセレクタ/URLで操作・遷移する
   事故を構造的に防ぐ。
