@@ -65,7 +65,13 @@ git commit -qm "base"
 git checkout -q -b claude/smoke-doc-units
 
 BRANCH="claude/smoke-doc-units"
-STATE_GLOB="state/ai-reviews"
+# Read the state dir from the copied config so the assertions stay
+# coupled to the real setting.
+STATE_GLOB=$(
+  # shellcheck source=/dev/null
+  . "$WORK/.githooks/config" && printf '%s' "$LOCAL_AI_REVIEW_STATE_DIR"
+)
+[ -n "$STATE_GLOB" ] || { printf 'LOCAL_AI_REVIEW_STATE_DIR not set in config\n' >&2; exit 1; }
 
 run_review() {
   LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh claude "$BRANCH" HEAD
@@ -87,7 +93,7 @@ count_outputs() {
 output_for_unit() {
   # Newest review output for a unit; empty when none exists.
   # shellcheck disable=SC2012
-  ls -t "$STATE_GLOB"/*-claude-"$1".md 2>/dev/null | head -n 1
+  ls -t "$STATE_GLOB"/*-claude-"$1"-*.md 2>/dev/null | head -n 1
 }
 
 assert_output_count() {

@@ -245,7 +245,16 @@ done
 # The reviewer may run for several minutes per unit, so a multi-unit
 # run can outlive LOCAL_AI_REVIEW_LOCK_TIMEOUT_SEC. Refresh the lock
 # before each unit so a concurrent hook does not treat us as stale.
+# Only rewrite while the stored token is still ours: after a
+# stale-lock takeover the successor owns the file, and clobbering its
+# token would let our exit trap delete the successor's lock.
 refresh_lock() {
+  local stored
+  stored=$(cat "$LOCK_FILE" 2>/dev/null || true)
+  if [ "$stored" != "$LOCK_TOKEN" ]; then
+    warn "lock takeover detected during refresh; keeping successor's lock"
+    return 0
+  fi
   NOW_EPOCH=$(date +%s)
   LOCK_TOKEN="$$:$NOW_EPOCH"
   printf '%s\n' "$LOCK_TOKEN" > "$LOCK_FILE"
@@ -273,7 +282,7 @@ ANY_REVIEWER_FAILED=0
 for UNIT in "${UNIT_ORDER[@]}"; do
   # --- Compute the unit's diff ----------------------------------
   set_phase "diff unit=$UNIT"
-  unit_pathspecs "$UNIT" || { fail "unknown review unit: $UNIT"; continue; }
+  unit_pathspecs "$UNIT" || { fail "unknown review unit: $UNIT"; ANY_REVIEWER_FAILED=1; continue; }
 
   git diff "$MERGE_BASE" "$COMMIT_SHA" -- "${UNIT_PATHSPECS[@]}" > "$DIFF_FILE"
   DIFF_SIZE=$(wc -c < "$DIFF_FILE" | tr -d ' ')
@@ -328,8 +337,10 @@ for UNIT in "${UNIT_ORDER[@]}"; do
   # --- Run reviewer with watchdog timeout (bash 3.2-safe) ---------
   set_phase "reviewer-start unit=$UNIT"
   refresh_lock
+  # $$ suffix keeps two runs of the same unit within one second (e.g.
+  # under the smoke test's instant stub reviewer) from colliding.
   TS=$(date +%Y%m%d-%H%M%S)
-  OUTPUT="$STATE_DIR/${TS}-${REVIEWER}-${UNIT}.md"
+  OUTPUT="$STATE_DIR/${TS}-${REVIEWER}-${UNIT}-$$.md"
 
   (run_reviewer > "$REVIEWER_OUT" 2> "$REVIEWER_ERR") &
   REVIEWER_PID=$!

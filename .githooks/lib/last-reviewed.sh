@@ -49,8 +49,13 @@ last_reviewed_save() {
   f=$(last_reviewed_path)
   units='{}'
   if [ -f "$f" ]; then
+    # Carry the existing units forward; seed from the legacy
+    # single-sha field so the code unit's skip survives the first
+    # per-unit save after upgrading.
     units=$(jq -c --arg branch "$branch" --arg base "$merge_base" \
-      'if (.branch // "") == $branch and (.merge_base // "") == $base then (.units // {}) else {} end' \
+      'if (.branch // "") == $branch and (.merge_base // "") == $base
+       then (.units // (if (.last_diff_sha256 // "") != "" then {code: .last_diff_sha256} else {} end))
+       else {} end' \
       "$f" 2>/dev/null) || units='{}'
     [ -n "$units" ] || units='{}'
   fi

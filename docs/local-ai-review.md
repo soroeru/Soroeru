@@ -220,8 +220,8 @@ This directory should stay out of Git.
 
 Useful files:
 
-- `<timestamp>-claude-<unit>.md`
-- `<timestamp>-codex-<unit>.md`
+- `<timestamp>-claude-<unit>-<pid>.md`
+- `<timestamp>-codex-<unit>-<pid>.md`
 - `last-run.log`
 - `last-error.log`
 - `last-reviewed.json` (per-unit diff hashes under `units`)
