@@ -368,7 +368,9 @@ priority order:
 The criteria derive from ISO/IEC/IEEE 29148 requirement quality
 characteristics, prioritized by defect impact. They mirror
 `skills/requirements-review/SKILL.md`; keep the two in sync if either
-changes.
+changes. The local AI review hook applies the skill automatically to commits
+touching `docs/requirements.md` (see
+[`local-ai-review.md`](local-ai-review.md) §5).
 
 ### 9.3 Design Doc Review
 
@@ -387,7 +389,9 @@ docs and checks, in priority order:
 5. **test strategy** — how the design's behavior will be verified is stated
 
 The criteria mirror `skills/design-doc-review/SKILL.md`; keep the two in sync
-if either changes.
+if either changes. The local AI review hook applies the skill automatically
+to commits touching `docs/design/` (see
+[`local-ai-review.md`](local-ai-review.md) §5).
 
 ### 9.4 Architecture Review
 
@@ -409,7 +413,9 @@ desktop app):
 A criterion that genuinely does not apply is answered "not applicable" with
 a reason, not forced. The criteria mirror
 `skills/architecture-review/SKILL.md`; keep the two in sync if either
-changes.
+changes. The local AI review hook applies the skill automatically to commits
+touching `docs/architecture.md` (see
+[`local-ai-review.md`](local-ai-review.md) §5).
 
 ### 9.5 Local AI Review
 
