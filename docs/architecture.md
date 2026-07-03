@@ -224,6 +224,36 @@ file) are canonical in [`requirements.md`](requirements.md) §8 and REQ-002;
 `recommendSourceDeletion` in the IPC result (§4) is how that prompt is surfaced to the
 renderer.
 
+### 3.5 Local diagnostics and support bundles
+
+Soroeru has no telemetry, analytics, or crash-reporting service, so failure investigation
+is local and user-controlled. The durable diagnostic model is the encrypted `diagnostic`
+entity (§3.1), not a remote event stream and not a plaintext shadow copy of the vault.
+Diagnostics may record app version, OS/runtime versions, component names, operation ids,
+state transitions, error categories, wall hand-off categories, counts, timestamps, and
+masked references needed to reproduce a failure. They must never record decrypted profile
+values, credentials, card data, CVV, API keys, passphrases, recovery keys, raw AI prompts,
+cookies, browser sessions, screenshots, Playwright traces, full HTML, raw CSV contents, or
+decrypted vault bytes.
+
+Plain operational logs, when needed for startup/build/runtime failures before the vault is
+unlocked, live under the app-support diagnostics directory (macOS:
+`~/Library/Application Support/Soroeru/logs/`; `SOROERU_STATE_ROOT` may redirect this in
+development). They are sanitized by the same rules, are not treated as evidence of user
+activity, and rotate by size/count so local troubleshooting does not grow without bound
+(MVP target: 1 MiB per file, 5 retained files). Activity-level diagnostics that could reveal
+which sites the user manages are stored only as encrypted `diagnostic` records in Vault v2.
+
+`redacted` for a `diagnostic` payload means: no raw value fields; no secrets/tokens; site
+URLs reduced to origin or hash when a full URL may contain identifiers; page text reduced
+to a classification or masked snippet; file paths reduced to basename or app-relative
+category; errors reduced to code/category plus a sanitized message. Support bundles are
+generated only from a local UI action after explicit confirmation. The export is a redacted
+JSON summary (app/OS/runtime versions, recent sanitized diagnostic events, and optional
+sanitized operational-log excerpts), written only to a user-selected destination and never
+uploaded automatically. The detailed security policy and release checklist are owned by
+[`security.md`](security.md) §12.2 and §13.
+
 ## 4. IPC And Trust Boundary
 
 The renderer and main process share exactly one typed contract:
@@ -472,6 +502,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Raw PII never to AI | The agent/AI layer accepts structure-only requests; provider adapters validate redaction. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
+| Local diagnosability without telemetry | Encrypted `diagnostic` records plus sanitized rotating operational logs and user-initiated support-bundle export (§3.5); no automatic upload. |
 | No active-control bypass | Wall detection (§6) is separate from classification; detected walls stop or hand off. |
 | Review gate / three guards / fourth boundary | Domain/Policy services decide (later slices, §8); the renderer only renders the gate. |
 | ToS automation prohibition | Constraint record + high-risk UI; user decides; active controls still never bypassed. |
