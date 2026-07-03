@@ -19,6 +19,11 @@ finding. The non-negotiables in `docs/requirements.md` §8 are fixed inputs —
 review whether the architecture *satisfies* them, never whether they are
 right.
 
+When the document names repository files, APIs, or implemented behavior,
+verify those claims against the current code before judging — a confirmed
+gap outranks a speculative one — and cite the code where it changes a
+finding.
+
 ## Review criteria (priority order)
 
 1. **Requirements and constraint fit** — every architectural choice satisfies
@@ -49,12 +54,16 @@ right.
 Every criterion is judged: detailed findings go in the findings list (a few
 strong ones over many shallow ones), and the closing `## Criterion coverage`
 section states, for all five criteria, which findings violate it, or that it
-is satisfied, or that it is not applicable and why.
+is satisfied (optionally "satisfied except finding N (minor)" when only
+minor/nit findings touch it), or that it is not applicable and why.
 
 ## Output format
 
 Follow the local AI review conventions
-(`.githooks/prompts/local-review-claude.md`):
+(`.githooks/prompts/local-review-claude.md`). When reviewing the whole
+document rather than a diff, take only the output format and severity
+conventions from that file — its diff-scope restrictions do not apply, and
+citing repository code that confirms a finding is in scope.
 
 ```
 verdict: PASS | NEEDS_CHANGES | NIT_ONLY
@@ -66,14 +75,16 @@ verdict: PASS | NEEDS_CHANGES | NIT_ONLY
 
 ## Criterion coverage
 
-- **Requirements and constraint fit** — <"violated: findings N, M" / "satisfied" / "not applicable: reason">
+- **Requirements and constraint fit** — <"violated: findings N, M" / "satisfied" / "satisfied except finding N (minor)" / "not applicable: reason">
 - ... (all five criteria)
 ```
 
 Severity (this list is controlling for architecture review): `blocker`
-(violates a non-negotiable or risks the user's data) · `major` (a real risk
-or unrecorded load-bearing decision likely to force rework) · `minor`
-(clarity, small gaps) · `nit` (wording, optional). Verdict mapping: any
+(the document's chosen design violates a non-negotiable or would lose or
+expose the user's data) · `major` (a real risk left undesigned, or an
+unrecorded load-bearing decision, likely to force rework — an *omission* is
+at most `major`; `blocker` is reserved for what the document affirmatively
+chooses) · `minor` (clarity, small gaps) · `nit` (wording, optional). Verdict mapping: any
 `blocker`/`major` → `NEEDS_CHANGES`; only `minor`/`nit` → `NIT_ONLY`; no
 findings → `verdict: PASS` with a one-line reason. Cite doc line numbers (or
 post-image diff lines when reviewing a diff). Do not review embedded sample
