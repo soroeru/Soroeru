@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { atomicWriteEncryptedStoreFile } from "../../src/store/atomic-write.js";
 import { PocStore } from "../../src/store/store.js";
 import {
   RECORD_SCHEMA_VERSION,
@@ -51,6 +52,40 @@ test("create, persist, and reopen a v2 record vault", async () => {
     assert.equal(reopened.get("siteAccount", "acct-1")?.domain, "example.com");
     assert.equal(reopened.get("personalAttribute", "email")?.value, "user@example.test");
     assert.equal(reopened.list("siteAccount").length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("atomic UTF-8 writes keep the previous file if replacement is interrupted before rename", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    await writeFile(path, "old-vault", "utf8");
+    await assert.rejects(
+      () =>
+        atomicWriteEncryptedStoreFile(path, "new-vault", {
+          beforeRename: async () => {
+            throw new Error("simulated interruption");
+          },
+        }),
+      /simulated interruption/,
+    );
+
+    assert.equal(await readFile(path, "utf8"), "old-vault");
+    assert.deepEqual(
+      (await readdir(dir)).filter((name) => name.includes(".tmp-")),
+      [],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("corrupt partial vault JSON is reported instead of opening an empty vault", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    await writeFile(path, '{"vaultVersion":2,"records":[', "utf8");
+    await assert.rejects(() => VaultV2.open(path, PASSPHRASE), VaultCorruptError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

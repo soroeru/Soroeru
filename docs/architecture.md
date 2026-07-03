@@ -155,6 +155,22 @@ All raw values are inside encrypted payloads. Soroeru may store keyed hashes/fin
 inside encrypted payloads for comparison and audit. Anything readable before unlock (the
 file header) must be non-sensitive and minimal; if unsure, encrypt it.
 
+Vault v2 durability:
+
+- save and encrypted-import writes replace the vault with same-directory atomic replacement:
+  write a temporary file, fsync it, rename it over the target path, then best-effort fsync the
+  vault directory. Temp-file write/fsync failures abort the save before replacement; for the
+  macOS MVP, a failed directory fsync after a successful rename is not surfaced because the
+  previous file was never truncated or partially overwritten;
+- the target path is never overwritten with a partial JSON document; if a crash or write
+  interruption happens before rename, the previous vault file remains the readable source of
+  truth;
+- unreadable, truncated, or unparseable vault files fail closed with a corruption error that
+  can be reported to the user. Soroeru must not silently create an empty vault in that path;
+- no automatic `.bak` generation is part of the MVP. Atomic replacement protects the
+  in-place source of truth, while explicit encrypted export/recovery workflows cover user-
+  chosen backups without creating extra local files that may confuse ownership or retention.
+
 ### 3.2 Disclosure row shape
 
 Logical Disclosure row:
