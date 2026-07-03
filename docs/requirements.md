@@ -100,19 +100,20 @@ are computed only from local vault / Evidence events and shown only to the user;
 does not send usage events to telemetry or external analytics. Goals that cannot be
 observed locally are excluded from this table rather than approximated. In particular,
 Soroeru does not infer "subjective agency" or "approval without understanding" as automated
-metrics.
+metrics. Unless a row states otherwise, counts and rates are evaluated per local user over
+the six-month target window.
 
 | Metric | Local observation definition | Direction |
 | --- | --- | --- |
-| High-risk-clause caution signal | At new registration, when Soroeru surfaces one or more high-risk clauses, count each case where the user chooses not to register after seeing the high-risk summary or details. Three stopped registrations after such presentations indicate success. | ↑ |
-| High-risk-clause detail engagement | High-risk clauses are first shown as short summaries, with a `Details` button beside each clause explaining when it becomes dangerous. More than five local `Details` clicks indicate success. | ↑ |
+| High-risk-clause caution signal | Count distinct new-registration gates where Soroeru surfaced one or more high-risk clauses and the user chose `do not register` after seeing the high-risk summary or details. Three or more stopped registrations indicate success. | ↑ |
+| High-risk-clause detail engagement | High-risk clauses are first shown as short summaries, with a `Details` button beside each clause. Count local `Details` click events; repeated clicks are counted because the specified signal is click count. More than five clicks indicate success. Each detail view explains the concrete risk trigger, such as an auto-renewal date, arbitration waiver, third-party sharing, or content-license scope. | ↑ |
 | Default self-selection rate | For Policy options shown to the user, count the share the user explicitly re-chooses or changes from the safe default, using local Policy / Preference events. | ↑ |
 | Practical choosability rate | For locally recorded intended decisions (withdraw / update / refuse), count the share that reaches completion or an explicit user-chosen stop, rather than being blocked by missing data, site errors, walls, or unknown flows. | ↑ |
 | Disclosure visibility coverage | For imported Site Accounts, count the share that has either collected Disclosure rows or an explicit `not collected` reason in the ledger, so unknown holdings are not silently treated as checked. | ↑ |
 
-Six-month target state: at new registration the user understands what to watch for in
-terms, uses Soroeru's high-risk summaries and details to choose register/refuse, and
-naturally understands each Policy option and selects it themselves.
+Six-month target state: the high-risk-clause caution signal and detail engagement thresholds
+are reached, and Policy options show an increased explicit re-choice / change rate from
+safe defaults.
 
 ## 4. Domain Ontology
 
