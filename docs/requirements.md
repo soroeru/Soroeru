@@ -240,9 +240,12 @@ governance.** Only *toil* (execution) is delegated; *judgment* is not.
      auto-checked;
   4. **deletion of data stored inside Soroeru** (an irreversible destruction of the user's
      own source of truth).
-- **Explicitly *not* absolute boundaries**: withdrawing from a site (may execute
-  immediately within the delegated range); a first-seen site (the three guards suffice; it
-  is an automation target).
+- **Explicitly *not* absolute boundaries**: withdrawing from a site (the flow itself —
+  navigating to the cancellation page, filling the form — may run immediately within the
+  delegated range); a first-seen site (the three guards suffice; it is an automation
+  target). **Exception inside this non-boundary**: a site withdrawal's final, irreversible
+  confirmation step is always shown at the gate for explicit approval, regardless of the
+  site's ToS-automation stance — it cannot be undone once submitted.
 
 ## 6. The Agency Loop
 
@@ -359,8 +362,9 @@ registration (last).**
     automation-prohibiting clause is gated on four hard preconditions: (1) the user's explicit,
     per-operation-type consent (tied to the Delegation Boundary L0/L1); (2) the user's own
     credentials acting on the user's own account; (3) an assessment of reversibility
-    (irreversible final actions — a site withdrawal's last step, deletion of Soroeru-internal
-    data — stay gated); and (4) a transparent **Evidence** record. Evidence is a **hard
+    (deletion of Soroeru-internal data is an absolute boundary per §5; a site withdrawal's
+    final step is always gated per §5, regardless of ToS status — not only when contesting
+    ToS-gray); and (4) a transparent **Evidence** record. Evidence is a **hard
     precondition**: an action that cannot be recorded does not fire. The record is both the
     user's transparency and Soroeru's legitimacy — every action was the user, on the user's own
     account, recorded and (where possible) reversible.
@@ -410,7 +414,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; light understanding check pass required before L1 expansion; four absolute boundaries). | A | Must |
 | REQ-009 | Form Policy/Preference from ledger reactions: suggest after 3 consistent observations (≤1/day), promote to Policy only on explicit user confirmation; thresholds are configurable defaults. | A | Must |
 | REQ-010 | Bulk-update selected sites by diffing Disclosures against canonical Personal Attributes (cross-site by attribute). | B | Must |
-| REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; site withdrawal may execute within the delegated range; deletion of Soroeru's own data is always confirmed. | C | Should |
+| REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; the withdrawal flow may execute within the delegated range but its final irreversible confirmation step is always gated (§5), regardless of ToS status; deletion of Soroeru's own data is always confirmed. | C | Should |
 | REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
 | REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only, structure-only disclosure. | A–D | Must |
 | REQ-014 | Treat a detected automation-prohibiting ToS clause as a surfaced Constraint for the user to decide; never silently block, never bypass active controls. | A | Must |
