@@ -1,6 +1,6 @@
 # Visibility探索ベースアーキテクチャ設計
 
-Issue: #239
+Issue: #239（§8 AIエンジン設計の追加: #272）
 
 ## 概要
 
@@ -150,7 +150,7 @@ interface DecisionResult<K extends DecisionKind = DecisionKind> {
 class DecisionEngine {
   constructor(
     private ruleEngine: RuleEngine,
-    private aiProvider?: AIProvider  // optional
+    private aiEngine?: AiEngine  // optional（§8。ユーザーのAIプロバイダ設定がある場合のみ）
   ) {}
 
   async decide<K extends DecisionKind>(
@@ -167,13 +167,15 @@ class DecisionEngine {
       };
     }
 
-    // 2. ルールで判断できない場合、AIにフォールバック
-    if (this.aiProvider) {
-      // consultAIは完全なDecisionResultを返すのでそのまま返す
-      return await this.consultAI(request);
+    // 2. ルールで判断できない場合、AIにフォールバック（§8 AIEngine）
+    if (this.aiEngine) {
+      const aiResult = await this.aiEngine.consult(request);
+      // AIが判断を返せなかった場合（プロバイダエラー・タイムアウト・
+      // 予算超過・応答検証失敗）はnullが返り、下の安全なデフォルトに落ちる
+      if (aiResult) return aiResult;
     }
 
-    // 3. AIなしで判断できない場合は安全なデフォルト値を返す
+    // 3. AIなし/AI失敗で判断できない場合は安全なデフォルト値を返す
     return {
       source: "rule",
       confidence: 0.3,
@@ -216,12 +218,7 @@ class DecisionEngine {
     }
   }
 
-  private async consultAI(request: DecisionRequest): Promise<DecisionResult> {
-    // 構造情報のみをAIに送信（値は絶対に送らない）
-    const prompt = this.buildPrompt(request);
-    const response = await this.aiProvider.complete(prompt);
-    return this.parseAIResponse(request.kind, response);
-  }
+  // AIへの諮問（プロンプト構築・応答検証・予算管理）はAiEngineが所有する（§8）
 }
 ```
 
@@ -1186,6 +1183,204 @@ class LoginHandler {
 
 ---
 
+## 8. AIEngine（AIフォールバックエンジン）
+
+Issue: #272。`DecisionEngine`のルールベース判断が`confident: false`を返したときに
+使うAIフォールバックの実体を設計する（AIエンジンの実装自体は#272の非スコープ。
+実装は別Issueで行う）。
+
+### 位置づけと原則
+
+- **決定論が既定、AIはオプション強化**（REQ-013）。AIプロバイダ未設定でも全フローは
+  動作し、ルール失敗時は`getDefaultResult`の安全なデフォルトに落ちる。AIの有無で
+  変わるのは収集の網羅性だけで、安全性の性質は変わらない。
+- **構造のみ送信、値は送らない**（docs/requirements.md §8、docs/security.md）。
+  何を送ってよいかは下の「送信データのサニタイズ」が唯一の基準。
+- **プロバイダ層は新設しない**。既存の`src/agent/ai/provider.ts`
+  （`AiProvider.completeJson({ system, user, schema })`、`AnthropicProvider` /
+  `OpenAiProvider`、stateless（キャッシュ・スレッド・保存なし）、`AiProviderError`）
+  をそのまま再利用する。
+- **APIキーの供給**: PoC/探索フェーズは`.env`の`OPENAI_API_KEY`
+  （`npm run poc`が`node --env-file-if-exists=.env`で読み込む。既存の
+  `aiProviderFromEnv()`はOPENAI優先・`ANTHROPIC_API_KEY`代替）。アプリ本体では
+  暗号化設定ストアの`ProviderConfig` → `createProvider()`。キーはログ・Evidence・
+  保存物に決して書かない。
+
+### ファイル: `src/automation/ai-engine.ts`
+
+```typescript
+import type { AiProvider } from "../agent/ai/provider";  // 既存契約を再利用
+
+interface AiEngineOptions {
+  timeoutMs?: number;              // 1呼び出しの上限。既定 30_000
+  maxCallsPerSite?: number;        // サイトごとの呼び出し予算。既定 20
+  maxConsecutiveFailures?: number; // 連続失敗でこのrunの残りをAI無効化。既定 3
+}
+
+/** AI諮問1回分の観測ログ（本文は含めない） */
+interface AiConsultationLog {
+  kind: DecisionKind;
+  // AI送信時と同じ規則でクエリ/フラグメントを除去したorigin+pathのみ
+  // （セッショントークン等を進捗表示にも出さない）。context.currentUrl
+  // 由来で、未設定のkindでは空文字。
+  url: string;
+  providerId: string;   // 例 "openai:gpt-5.4"
+  latencyMs: number;
+  outcome: "used" | "provider-error" | "timeout" | "invalid-response" | "budget-exceeded";
+}
+
+/**
+ * レダクション用のローカル値ソース（下の「送信データのサニタイズ」）。
+ * このrunで収集済みの値と、正準Personal Attributesの復号値を、送信前の
+ * ローカル照合のためだけにメモリ上で提供する。復号値は照合にのみ使い、
+ * ログ・プロンプト・保存物には決して出さない。組み立て（Orchestratorの
+ * pendingCollectedFieldsとDomainService/vaultからの供給）は、onLogと同じく
+ * Orchestratorを組み立てる側の責務。
+ */
+interface RedactionValueSource {
+  /** 照合対象の値一覧（復号済み、メモリ上のみ）。呼び出し時点の最新を返す。 */
+  currentValues(): readonly string[];
+}
+
+class AiEngine {
+  constructor(
+    private provider: AiProvider,
+    private redactionSource: RedactionValueSource,
+    private options?: AiEngineOptions,
+    private onLog?: (entry: AiConsultationLog) => void
+  ) {}
+
+  /**
+   * ルールが判断できなかったDecisionRequestをAIに諮る。
+   * 判断を返せない場合（プロバイダエラー・タイムアウト・応答検証失敗・
+   * 予算超過）はnullを返し、DecisionEngineが安全なデフォルトに落とす。
+   * リトライはしない（同一入力は同一失敗になりやすく、探索全体を遅くするだけ）。
+   */
+  async consult<K extends DecisionKind>(
+    request: DecisionRequest & { kind: K }
+  ): Promise<DecisionResult<K> | null>;
+}
+```
+
+`DecisionEngine`との関係: コンストラクタに`aiEngine?: AiEngine`を受け取り（§1）、
+ルール失敗時に`consult`へ委譲する。`consult`がnullを返したら`getDefaultResult`。
+
+インスタンスと予算のライフサイクル: `AiEngine`は**1 run（`VisibilityOrchestrator`
+による一連の複数サイト処理）につき1インスタンス**を、Orchestratorを組み立てる側
+（CLI/アプリ）が生成して注入する。`maxCallsPerSite`のカウンタは
+`request.context.siteAccount.domain`をキーにインスタンス内に保持し、
+`maxConsecutiveFailures`のブレーカはrun全体（インスタンス）スコープ。
+いずれもインスタンス破棄（=次のrun）でリセットされる。
+
+### プロンプト契約（kind別）
+
+`completeJson`のJSONスキーマは§1の`DecisionResultMap`と同形の応答を要求する
+（`confidence: number`を各応答に追加。スキーマで`minimum: 0, maximum: 1`を
+制約し、エンジン側でも[0, 1]にクランプする — ルール経路の固定値1.0 / 0.3と
+台帳側で比較可能に保つ。`source`は常に`"ai"`をエンジン側で付与）。
+
+| kind | AIに送る構造 | 応答（DecisionResultMap準拠） | 応答の追加検証 |
+|------|--------------|------------------------------|----------------|
+| find-login-page / find-profile-links | `links`（text + サニタイズ済みhref）、title、URL | `{ links: LinkCandidate[] }` | hrefがスナップショットに**実在するリンクのみ**採用（AIが捏造したURLへは遷移しない） |
+| detect-login-form | `fields`（fieldId / name / id / type / autocomplete / labels / placeholder / nearbyText）、`buttons` | `{ form: LoginFormDetection \| null }` | fieldId / submitSelectorの実在検証 |
+| judge-login-result | `fields`の型情報、`links`、`buttons`、title、URL（**visibleTextは送らない** — 下記） | `{ success: boolean; reason: string }` | なし |
+| classify-field | 対象フィールドの構造（既存`ai-mapper.ts`と同じ基準: labels / nearbyText / placeholder / name / id / type / autocomplete）+ 既知属性キー一覧のガイド | `{ classification: FieldClassification \| null }` | attributeKeyは既知キーまたは動的候補フォーマット（name-new-attributeと同じ`[a-z0-9._-]`規則）に限定 |
+| should-continue | 訪問済み/未訪問リンクのカテゴリ要約、`collectedAttributes`（属性**キー**のみ） | `{ continue: boolean }` | なし |
+| name-new-attribute | フォームフィールド由来の候補: labels / placeholder / nearbyText。表示要素（displayValues）由来の候補: **labelTextのみ**（§4の`suggestedLabel`は`display.nearbyText`へのフォールバックを含むため、display由来ではsuggestedLabelをそのまま送らず`labelText`に差し替える）。いずれも**sampleValueはマスク済みでも送らない** | `{ attributeKey: string; label: string }` | キーは`[a-z0-9._-]`に正規化（§5の例`rakuten.point_number`と同形式）。`card.`プレフィックスは提案禁止（カード系は既知キーのみ） |
+
+### 送信データのサニタイズ（`toAiPayload`）
+
+`PageSnapshot`をそのままAIに渡してはならない。送信前に必ず`toAiPayload`を通す:
+
+- **常に除外**: フィールド値（`snapshot()`は構造のみだが、`readValues()` /
+  `readDisplayValues()`の結果を混ぜない）、`visibleText`（ログイン後ページでは
+  氏名・住所等の個人情報の値そのものを含むため）、`displayValues`の値
+  （labelTextのみ可）、credential、`iframeSrcs`のクエリ部分。
+- **URL / hrefはクエリ文字列とフラグメントを除去**（セッショントークンや
+  メールアドレス入りクエリの漏洩防止）。オリジン+パスのみ送る。
+- **フォームフィールドのlabels / nearbyText / placeholderは送信可**
+  （既存`ai-mapper.ts`と同じ基準: フォーム構造の一部でありユーザーの値ではない）。
+  ただし**表示要素（displayValues）のnearbyTextは送らない**（`<dt>氏名</dt>
+  <dd>山田太郎</dd>`のように値が混ざるため。labelTextのみ）。
+- **リンクテキスト・ボタンテキスト・titleはローカル照合でレダクションしてから
+  送る**: ログイン後ページでは「ようこそ 山田太郎 様」のようにユーザーの値が
+  リンク/見出し/タイトルに埋まる。`toAiPayload`は、`RedactionValueSource`
+  （上記。このrunで収集済みの値+正準Personal Attributesの復号値を照合専用に
+  供給する注入契約）の値に部分一致するテキスト片を送信前にローカルで
+  伏せ字化する（照合はメモリ上でローカルに完結するため追加開示は生じない）。
+  未収集の値が埋まっているケースは残余リスクとして制約6に記録する。
+- 検証はテストで担保する: 番兵値（実在しないダミーの個人情報値）を
+  スナップショット・readValues結果・**displayValues由来のname-new-attribute
+  経路・リンク/ボタンテキスト・title**に仕込み、生成されたsystem / user
+  プロンプト文字列に含まれないことをユニットテストで保証する。
+
+judge-login-resultでvisibleTextを送らない結果、AIはエラーメッセージ本文を
+読めず判定精度が下がるが、これは意図したトレードオフ（値の漏洩防止が優先。
+エラーメッセージ検出自体は§2のルール側キーワードが担う）。
+
+### 失敗処理と予算
+
+- 1呼び出しに`timeoutMs`。`AiProviderError`（request-failed / refusal /
+  empty-response / invalid-json）・タイムアウト・スキーマ/実在検証失敗 →
+  `null`を返し安全なデフォルトへ。**探索は止めない**。
+- `AiProvider.completeJson`には中断機構がない（既存契約を変更しない方針）ため、
+  タイムアウトは進行中の呼び出しを**放棄**する方式で実装する: 遅れて届いた
+  応答は破棄し、outcomeは`"timeout"`のまま（二重計上しない）、
+  `maxConsecutiveFailures`に1回として数える。
+- 既存`ai-mapper.ts`の「stop without fallback」既定との違いは意図的な非対称:
+  登録フロー（Slice D）は誤ったプランで**世界に作用する**ため停止が安全側だが、
+  Visibility探索は読み取り専用で、フォールバック先が「収集しない/探索を終える」
+  という安全なデフォルトであるため**継続が安全側**。
+- `maxCallsPerSite`超過: 以後の`consult`は即`null`（outcome:
+  "budget-exceeded"）。`maxConsecutiveFailures`連続失敗: このrunの残りは
+  AI無効（プロバイダ障害時に全サイトでタイムアウト待ちが連鎖するのを防ぐ）。
+  カウンタの規則: `provider-error` / `timeout` / `invalid-response`が加算、
+  `used`でリセット、**`budget-exceeded`は数えない**（1サイトの予算消化で
+  run全体のブレーカが落ちると、サイト単位の封じ込めという予算の目的に反する）。
+- 応答検証（上の表の右列）に失敗したものはinvalid-response扱い → `null`。
+  特にhref / fieldIdの実在検証は、AIの捏造したセレクタ/URLで操作・遷移する
+  事故を構造的に防ぐ。
+
+### 可観測性
+
+- `AiConsultationLog`を`onLog`コールバックで`ExplorationEvent`系に流す
+  （UI/CLIの進捗と、runサマリの`aiCalls` / `aiFallbackUsed` / `aiFailures`）。
+  `onLog`の接続はAiEngineを生成するOrchestrator組み立て側の責務。§6の
+  `complete`イベントのsummary型へのこれらのフィールド追加は、本設計では
+  要求のみ規定し、型の拡張は実装Issueで行う。
+- プロンプト・応答の本文は保存しない（構造のみとはいえ開示最小化）。
+  `DecisionResult.source: "ai"`と`confidence`はCollectedFieldに既に伝搬する
+  設計（§4）なので、どの収集がAI由来かは台帳側で追跡できる。
+
+### テスト戦略
+
+- 単体（AIモックで決定論的に）: `AiProvider`はインターフェースなのでFake実装を
+  注入。`OpenAiProvider`自体も`fetchImpl`注入でオフラインテスト可能（既存設計）。
+  1. ルール`confident: false` → `consult`が呼ばれ、応答が`source: "ai"`で採用される
+  2. `AiProviderError`各種 / タイムアウト → `null` → `getDefaultResult`に落ちる
+  3. `maxCallsPerSite` / `maxConsecutiveFailures`のブレーカ動作
+  4. サニタイズ番兵テスト（値・visibleText・クエリ付きURLがプロンプトに出ない）
+  5. 実在検証（捏造fieldId / hrefを含む応答の拒否）
+- E2E: 既定の決定論構成は現行のまま（AIなし）。FakeAiProviderを結線した
+  AIフォールバック経路のE2Eを1本追加。
+- 実プロバイダの手動確認: `.env`に`OPENAI_API_KEY`を設定し、ローカルテスト
+  サイトの未知ラベルフィールドでAIフォールバックが発火することを確認
+  （docs/manual-test.mdへの追記は実装Issueで行う）。
+
+### 検討した代替案
+
+- **常時AI（ルールベース廃止）**: コスト・レイテンシ・プライバシー・決定論既定
+  （REQ-013）に反する → 不採用。
+- **RuleEngine内の各判断に個別にAI呼び出しを埋め込む**: egress箇所が分散し
+  「構造のみ送信」不変条件の監査が難しくなる → `AiEngine`に集約し、
+  サニタイズと検証を一箇所で持つ。
+- **新しいプロバイダ抽象の新設**: `src/agent/ai/provider.ts`が既にstateless・
+  構造化出力・エラー分類を備える → 再利用。
+- **AI失敗時に探索を停止（ai-mapperと同じ既定）**: 上記「失敗処理と予算」の
+  とおりVisibilityでは継続が安全側 → 不採用。
+
+---
+
 ## 実装フェーズ
 
 | Phase | 内容 | 依存関係 |
@@ -1198,6 +1393,7 @@ class LoginHandler {
 | 6 | VisibilityOrchestrator統合 | Phase 3, 4, 5 |
 | 7 | 動的属性スキーマ実装 | Phase 5, 6 |
 | 8 | E2Eテスト | Phase 6, 7 |
+| 9 | AIEngine実装（§8。ルール失敗時のAIフォールバック、Fakeプロバイダ単体テスト含む） | Phase 2（DecisionEngineへの結線。Phase 3–8はAIなしで先行可） |
 
 ---
 
@@ -1230,3 +1426,5 @@ class LoginHandler {
    - `RuleEngine.shouldContinue(context)`: `PageExplorer`の探索ループが際限なく続かないようにする終了条件（訪問ページ数の上限、`pendingUrls`が尽きた、既知の全カテゴリを収集済み等）を判断する。`PageExplorer`にとって唯一のループ終端安全弁となるため、実装時は明示的な上限（最大ページ数など）を必ず持たせる。
 
 5. **resume時の壁再発リスク**: `resume()`は`continueExploration()`を経由して同じURLに`goto()`し直す。サイトの壁（CAPTCHA/認証確認等）がセッションではなくリクエスト単位で発生する場合、ユーザーが一度解決しても再訪問時に同じ壁が再度現れうる。現状は壁検出・ハンドオフの仕組みが再度そのまま働くため機能面での破綻はないが、ユーザー体験としてのループは実装時に監視が必要。
+
+6. **AIフォールバックの精度上限と残余リスク**（§8）: AIには`visibleText`もフィールド値も送らないため、judge-login-resultのAI判定はエラーメッセージ本文を読めず、構造シグナルだけで判断する。精度より値の非開示を優先する意図的なトレードオフ。また`maxCallsPerSite`予算を使い切ったサイトでは以後ルールのみで進むため、サイト内で収集網羅性が不均一になりうる（`classificationSource`と`AiConsultationLog`で追跡可能）。リンク/ボタンテキスト・titleのレダクションは「収集済みの値・正準値との照合」ベースであるため、**未収集かつ正準にもない値**（例: サイト側だけが持つ旧姓・ニックネーム）がリンクテキストに埋まっている場合は伏せ字化できず送信されうる。これが許容できない場合の代替はリンクテキストを一切送らないことだが、find-login-page / find-profile-links のAIフォールバックがほぼ機能しなくなるため採らない（残余リスクとして受容）。

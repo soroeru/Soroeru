@@ -320,6 +320,10 @@ for UNIT in "${UNIT_ORDER[@]}"; do
   CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" "$COMMIT_SHA" -- "${UNIT_PATHSPECS[@]}")
 
   {
+    # The payload is passed to the reviewer CLI as a single argument;
+    # a payload starting with "-" (e.g. a SKILL.md frontmatter fence)
+    # would be parsed as a CLI option. Always start with a heading.
+    printf '# Local AI review payload (unit=%s)\n\n' "$UNIT"
     cat "$PROMPT_FILE"
     printf '\n\n---\n\n## Context\n\n'
     printf -- "- review unit: \`%s\`\n" "$UNIT"
