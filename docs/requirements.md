@@ -201,6 +201,28 @@ governance.** Only *toil* (execution) is delegated; *judgment* is not.
 - **Asymmetry**: expansion (L0 → L1) is **user-initiated and gated by a light understanding
   check**; reduction is **unconditional and immediate** (the right to disengage is always
   guaranteed). No implicit expansion from "enough successful runs."
+- **Light understanding check for L0 → L1 expansion**:
+  - The check is shown per operation type and range before L1 is enabled. It must name the
+    concrete operation being expanded (for example, "collect registered information from
+    imported sites" or "update selected stale addresses") and the exact scope that would run
+    without the per-run L0 gate.
+  - The user must answer, by selecting or briefly restating, both:
+    1. **what becomes automatic** at L1 for this operation type; and
+    2. **what still stops for confirmation**: deviations from Policy, unknowns, high-risk
+       items / Constraints, walls (CAPTCHA / MFA / verification), the absolute boundaries, and
+       any action outside the named operation range.
+  - The user must also be shown that reduction back to L0 is immediate and unconditional.
+  - Passing requires correct answers to the "automatic" and "still confirmed" parts. If either
+    answer is wrong or skipped, L1 is not enabled; Soroeru shows the missed point in plain
+    language and lets the user retry from L0. Failed attempts are not treated as consent.
+  - After the same L0 gate for the same operation type has been approved at least five times
+    without hitting any "still stops for confirmation" condition, Soroeru may offer a "skip this
+    gate next time" checkbox. Checking it is only a user-initiated request to start this
+    understanding check; it does not enable L1 until the check is passed.
+  - Soroeru records the passed check-content version, operation type, scope, timestamp, and the
+    user's selected answers as Evidence. The pass is invalidated and the check is required again
+    if any item changes in what becomes automatic, what still stops for confirmation, the named
+    operation range, or the absolute-boundary wording.
 - **Absolute boundaries (always confirmed, even at L1)**:
   1. high-risk clauses (auto-renewing subscription, mandatory arbitration, third-party
      data sharing/sale, content licenses, …);
@@ -379,7 +401,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-005 | Present the per-site view by composing Site Account + its Disclosures, masking values by default, revealing a stored site-held value only after passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall or an unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
-| REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; four absolute boundaries). | A | Must |
+| REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; light understanding check pass required before L1 expansion; four absolute boundaries). | A | Must |
 | REQ-009 | Form Policy/Preference from ledger reactions: suggest after 3 consistent observations (≤1/day), promote to Policy only on explicit user confirmation; thresholds are configurable defaults. | A | Must |
 | REQ-010 | Bulk-update selected sites by diffing Disclosures against canonical Personal Attributes (cross-site by attribute). | B | Must |
 | REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; site withdrawal may execute within the delegated range; deletion of Soroeru's own data is always confirmed. | C | Should |
@@ -406,6 +428,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | Policy | An articulated norm the user wants/refuses; drives judgment and automation. |
 | Preference | A pre-norm situational tendency; material for suggestions; promotes to Policy through repetition. |
 | Delegation Boundary | The configuration of which judgments are delegated, to which understanding tier, and how far ahead (L0/L1; absolute boundaries). |
+| Light understanding check | The per-operation L0 → L1 gate where the user must correctly identify what becomes automatic and what still requires confirmation; it is required before L1 expansion and is not satisfied by repeated approvals alone. |
 | Reflection | The post-state record through which the user learns (initial footprint + per-action change). |
 | Constraint | A site / terms / technical limit recorded as it is discovered. |
 | Mandate | A record of what the user authorized (collection or action). |
