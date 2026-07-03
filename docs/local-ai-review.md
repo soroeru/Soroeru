@@ -142,9 +142,15 @@ The hook skips when:
 - (per unit) the same branch / merge-base / diff hash has already been
   reviewed for that unit
 
-`LOCAL_AI_REVIEW_RUNNING=1` is reserved for hook recursion prevention. Do not
-use it manually to suppress review for ordinary commits; use `[skip-review]`
-when the skip should be visible in Git history.
+`LOCAL_AI_REVIEW_RUNNING=1` is normally reserved for hook recursion prevention.
+Do not use it manually to suppress review for ordinary commits; use
+`[skip-review]` when the skip should be visible in Git history.
+
+The repository's single-Issue implementation workflow is the narrow exception:
+after one local AI review has run and one follow-up fix pass has been applied,
+commit that follow-up with `LOCAL_AI_REVIEW_RUNNING=1` so the hook does not
+start a second local review. Record the review status, findings, and fixes in
+the PR body instead of starting an open-ended review loop.
 
 ### Temporarily disabling the hook (e.g. during acceptance testing)
 
