@@ -123,6 +123,11 @@ git commit -qam "docs: requirements"
 run_review
 assert_output_count 1
 assert_unit_prompt requirements "name: requirements-review"
+# Regression guard: the payload is passed to the reviewer CLI as an
+# argument, so it must never start with "-" (a SKILL.md frontmatter
+# fence would be parsed as a CLI option). The stub echoes the prompt
+# head; the heading must be present as its first line.
+assert_unit_prompt requirements "# Local AI review payload (unit=requirements)"
 
 # --- 3. excluded doc: no new review, unchanged units skipped -----
 printf 'security change\n' >> docs/security.md
