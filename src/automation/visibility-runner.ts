@@ -3,6 +3,7 @@ import type { Credential, SiteAccount } from "../domain/entities.js";
 import type { FormField, PageSnapshot } from "../types.js";
 import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
 import type { SiteSession } from "./page-driver.js";
+import { isSameSite } from "./url-utils.js";
 import { WallDetectionService } from "./wall-detection.js";
 
 export type VisibilityHandoff = (input: {
@@ -477,15 +478,6 @@ function loginLinkScore(text: string, href: string): number {
   if (/account|member|auth|session|mypage/i.test(href)) score += 1;
   if (/logout|sign[\s_-]?out|登録|register|signup|sign[\s_-]?up/i.test(haystack)) score -= 5;
   return score;
-}
-
-function isSameSite(href: string, domain: string): boolean {
-  try {
-    const host = new URL(href).hostname.toLowerCase().replace(/^www\./, "");
-    return host === domain || host.endsWith(`.${domain}`);
-  } catch {
-    return href.startsWith("/") || href.startsWith("./") || href.startsWith("../");
-  }
 }
 
 function absoluteHref(href: string, origin: string | undefined): string | undefined {
