@@ -140,8 +140,14 @@ When delegating terms acceptance and final submit, the agent applies:
 A **fourth absolute boundary** (always confirmed, even at L1): **deleting data stored inside
 Soroeru** — an irreversible destruction of the user's own source of truth.
 
-Explicitly *not* absolute boundaries: **withdrawing from a site** (may execute within the
-delegated range) and a **first-seen site** (the three guards suffice).
+A **fifth absolute boundary**: **a site withdrawal's final, irreversible confirmation
+step** — shown at the gate for explicit approval regardless of the site's ToS-automation
+stance, because it cannot be undone once submitted.
+
+Explicitly *not* absolute boundaries: **withdrawing from a site** (the flow itself —
+navigating to the cancellation page, filling the form — may execute within the delegated
+range, up to but excluding the fifth boundary above) and a **first-seen site** (the three
+guards suffice).
 
 **Sites whose terms prohibit automated account creation**: a detected automation-prohibiting
 clause is **surfaced as a Constraint / high-risk item for the user to decide** — not silently
