@@ -1220,15 +1220,32 @@ interface AiEngineOptions {
 /** AI諮問1回分の観測ログ（本文は含めない） */
 interface AiConsultationLog {
   kind: DecisionKind;
-  url: string;          // normalizeUrl済み
+  // AI送信時と同じ規則でクエリ/フラグメントを除去したorigin+pathのみ
+  // （セッショントークン等を進捗表示にも出さない）。context.currentUrl
+  // 由来で、未設定のkindでは空文字。
+  url: string;
   providerId: string;   // 例 "openai:gpt-5.4"
   latencyMs: number;
   outcome: "used" | "provider-error" | "timeout" | "invalid-response" | "budget-exceeded";
 }
 
+/**
+ * レダクション用のローカル値ソース（下の「送信データのサニタイズ」）。
+ * このrunで収集済みの値と、正準Personal Attributesの復号値を、送信前の
+ * ローカル照合のためだけにメモリ上で提供する。復号値は照合にのみ使い、
+ * ログ・プロンプト・保存物には決して出さない。組み立て（Orchestratorの
+ * pendingCollectedFieldsとDomainService/vaultからの供給）は、onLogと同じく
+ * Orchestratorを組み立てる側の責務。
+ */
+interface RedactionValueSource {
+  /** 照合対象の値一覧（復号済み、メモリ上のみ）。呼び出し時点の最新を返す。 */
+  currentValues(): readonly string[];
+}
+
 class AiEngine {
   constructor(
     private provider: AiProvider,
+    private redactionSource: RedactionValueSource,
     private options?: AiEngineOptions,
     private onLog?: (entry: AiConsultationLog) => void
   ) {}
@@ -1285,10 +1302,11 @@ class AiEngine {
   <dd>山田太郎</dd>`のように値が混ざるため。labelTextのみ）。
 - **リンクテキスト・ボタンテキスト・titleはローカル照合でレダクションしてから
   送る**: ログイン後ページでは「ようこそ 山田太郎 様」のようにユーザーの値が
-  リンク/見出し/タイトルに埋まる。`toAiPayload`は、このrunで収集済みの値と
-  正準Personal Attributesの値に部分一致するテキスト片を送信前にローカルで
-  伏せ字化する（照合はローカルで完結するため追加開示は生じない）。未収集の
-  値が埋まっているケースは残余リスクとして制約6に記録する。
+  リンク/見出し/タイトルに埋まる。`toAiPayload`は、`RedactionValueSource`
+  （上記。このrunで収集済みの値+正準Personal Attributesの復号値を照合専用に
+  供給する注入契約）の値に部分一致するテキスト片を送信前にローカルで
+  伏せ字化する（照合はメモリ上でローカルに完結するため追加開示は生じない）。
+  未収集の値が埋まっているケースは残余リスクとして制約6に記録する。
 - 検証はテストで担保する: 番兵値（実在しないダミーの個人情報値）を
   スナップショット・readValues結果・**displayValues由来のname-new-attribute
   経路・リンク/ボタンテキスト・title**に仕込み、生成されたsystem / user
@@ -1303,6 +1321,10 @@ judge-login-resultでvisibleTextを送らない結果、AIはエラーメッセ�
 - 1呼び出しに`timeoutMs`。`AiProviderError`（request-failed / refusal /
   empty-response / invalid-json）・タイムアウト・スキーマ/実在検証失敗 →
   `null`を返し安全なデフォルトへ。**探索は止めない**。
+- `AiProvider.completeJson`には中断機構がない（既存契約を変更しない方針）ため、
+  タイムアウトは進行中の呼び出しを**放棄**する方式で実装する: 遅れて届いた
+  応答は破棄し、outcomeは`"timeout"`のまま（二重計上しない）、
+  `maxConsecutiveFailures`に1回として数える。
 - 既存`ai-mapper.ts`の「stop without fallback」既定との違いは意図的な非対称:
   登録フロー（Slice D）は誤ったプランで**世界に作用する**ため停止が安全側だが、
   Visibility探索は読み取り専用で、フォールバック先が「収集しない/探索を終える」
