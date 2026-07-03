@@ -12,9 +12,9 @@
 // wrapper) is non-sensitive by design.
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import { ENTITY_KINDS, type DomainRecord, type EntityKind, type EntityPayloadMap } from "../domain/entities.js";
+import { atomicWriteEncryptedStoreFile } from "./atomic-write.js";
 import {
   decryptRecord,
   deriveKey,
@@ -393,10 +393,9 @@ export class VaultV2 {
   /** Persist everything; every record gets a fresh random IV. */
   async save(): Promise<void> {
     const file = await this.serialize();
-    await mkdir(dirname(this.filePath), { recursive: true });
     // Owner-only perms: contents are encrypted, but a PII-bearing state file should not be world-readable.
     // persist: encrypted-store — AES-256-GCM encrypted record vault only (docs/security.md §4)
-    await writeFile(this.filePath, JSON.stringify(file), { encoding: "utf8", mode: 0o600 });
+    await atomicWriteEncryptedStoreFile(this.filePath, JSON.stringify(file), { mode: 0o600 });
   }
 
   /** Same encrypted JSON shape as on disk, for the user to copy elsewhere as a backup. */
@@ -434,9 +433,8 @@ export class VaultV2 {
         throw new Error(`refusing to overwrite existing vault at ${filePath} (pass { overwrite: true } to replace it)`);
       }
     }
-    await mkdir(dirname(filePath), { recursive: true });
     // persist: encrypted-store — restoring an encrypted export writes the same encrypted shape (§4)
-    await writeFile(filePath, JSON.stringify(parsed), { encoding: "utf8", mode: 0o600 });
+    await atomicWriteEncryptedStoreFile(filePath, JSON.stringify(parsed), { mode: 0o600 });
     return VaultV2.open(filePath, passphrase);
   }
 
