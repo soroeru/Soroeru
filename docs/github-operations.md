@@ -49,9 +49,9 @@ Rules:
 
 ### Parallel multi-agent development (worktrees)
 
-Claude and Codex can run the Issue Implementation Loop at the same time. The
-loop defers branch creation to this section, so the recipe above is all the loop
-needs; the loop skill itself is not modified.
+Claude and Codex can run Issue implementation work at the same time. The
+repository-local Issue implementation skill defers branch creation to this
+section, so the recipe above is all the skill needs.
 
 Give each agent its own working tree with `git worktree` so branch switches and
 working-tree state never collide:
@@ -66,8 +66,8 @@ git worktree add .worktrees/claude origin/main
 Each worktree starts in detached HEAD at `origin/main` (Git prints a "detached
 HEAD" notice — this is expected); the §2 recipe then creates the per-Issue
 branch inside that worktree. The worktree is a persistent home for the agent
-across many Issues, so it is not pinned to any single Issue branch — for the
-next Issue, re-run the §2 recipe (`git fetch origin && git switch -c <new-branch>
+across Issues, so it is not pinned to any single Issue branch — for another
+Issue, re-run the §2 recipe (`git fetch origin && git switch -c <new-branch>
 origin/main`) from the same worktree.
 
 Keep the Codex worktree inside the repository root, for example
@@ -85,9 +85,8 @@ misconfigure against the sandbox and force avoidable approval requests.
   commit is reviewed by the matching reviewer automatically.
 
 Partition the backlog into **lanes with no cross-lane dependencies**, and hand
-each loop an ordered, dependency-respecting Issue list. The loop integrates a
-dependency before starting a dependent Issue, so a cross-lane dependency would
-serialize the two agents — zero cross-lane dependencies is what keeps them truly
+each agent a single Issue from its lane. A cross-lane dependency would serialize
+the two agents — zero cross-lane dependencies is what keeps them truly
 parallel. Use the Issues' `blocked_by` relationships to find disjoint lanes; the
 dependency-ordered list within a lane is then safe because each blocker merges
 before its dependent.
@@ -269,8 +268,8 @@ frequency are clear.
 
 Labels exist so the Product Owner and AI agents can scan the backlog and quickly
 judge **what kind** of Issue it is, **how risky** it is (via the `security` label,
-see 11.3), and **when** to do it — and so the Issue Implementation Loop can be
-handed a sensible order. Keep the scheme small: more axes mean more authoring cost
+see 11.3), and **when** to do it — and so agents can choose sensible Issue
+order. Keep the scheme small: more axes mean more authoring cost
 per Issue. Soroeru uses **two ordering axes** — *type* and *priority* — plus a
 `security` risk marker (§11.3), a few other stackable modifier labels, and the
 existing GitHub standard labels. The modifier labels (`security`, `discussion`,

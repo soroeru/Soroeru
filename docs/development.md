@@ -192,7 +192,7 @@ Current repository shape:
 │   └── workflows/
 ├── .githooks/
 ├── docs/
-├── skills/            # repo-local agent skills (issue-implementation-loop + writing-good-tests)
+├── skills/            # repo-local agent skills (issue-implementation + writing-good-tests)
 ├── scripts/
 │   ├── rename-dmg.mjs
 │   └── setup-hooks.sh
@@ -423,37 +423,30 @@ Setup, behavior, and troubleshooting for the local AI review hook live in
 [`local-ai-review.md`](local-ai-review.md). The setup command is repeated
 once in §2 above as part of environment setup; do not duplicate it elsewhere.
 
-## 10. Issue Implementation Loop
+## 10. Issue Implementation
 
-This section defines the repository-local Issue implementation loop. The
+This section defines the repository-local single-Issue implementation workflow. The
 matching Codex Skill lives in
-[`skills/issue-implementation-loop/SKILL.md`](../skills/issue-implementation-loop/SKILL.md).
+[`skills/issue-implementation/SKILL.md`](../skills/issue-implementation/SKILL.md).
 
-When the user asks an agent to implement one or more GitHub Issues in order,
-use this loop for each Issue unless the user explicitly changes the workflow:
+When the user asks an agent to implement one GitHub Issue, use this workflow
+unless the user explicitly changes it:
 
 1. Fetch the latest `main` branch.
 2. Create a new branch named for the Issue content.
 3. Implement the Issue.
-4. After committing, wait for local AI review and fix findings until the review
-   status is `NIT_ONLY` or `PASS`; repeat at most three times.
+4. After committing, wait for one local AI review result when the hook is
+   configured. Apply at most one fix pass for actionable findings. When
+   committing that follow-up fix, set `LOCAL_AI_REVIEW_RUNNING=1` for the
+   commit command so the post-commit hook does not start a second review.
 5. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged.
-6. If PR CI fails, fetch the error logs, fix the failure, push again, and repeat
-   until CI succeeds.
-7. After CI succeeds, complete the PR according to the requested workflow and
-   merge policy; if the requested workflow says to close the PR, close it
-   instead of merging.
-8. Repeat steps 1-7 for the next requested Issue without asking whether to
-   start the next Issue, while still respecting sandbox, destructive-action,
-   merge, and other approval requirements.
+   when the PR is merged. Also include the local AI review status, actionable
+   findings, and what was fixed. If review did not run or residual risk remains
+   after the single fix pass, state that clearly.
 
-This loop intentionally closes PRs instead of merging them. Use it only when
-the requested Issues can be implemented independently from the latest `main`;
-if later Issues depend on earlier changes, merge or otherwise integrate those
-changes before starting the dependent Issue. Step 6 has no fixed retry count,
-but the session-limit check and normal blocker handling still apply.
+The workflow intentionally avoids an open-ended review loop. If the user gives
+multiple Issue numbers, ask which single Issue to implement first.
 
 ## 11. Operational Notes
 

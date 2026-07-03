@@ -472,7 +472,7 @@ Tooling:
 - **Memory**: use Claude Code's built-in auto-memory (the project-scoped `memory/`
   directory) for cross-session lessons. Do not create a separate ad hoc notes file.
 
-Local AI review and the `issue-implementation-loop` skill remain in force regardless of
+Local AI review and the `issue-implementation` skill remain in force regardless of
 which model orchestrates; subagent/Codex review does not replace them.
 
 ## Claude Code Operating Rules
