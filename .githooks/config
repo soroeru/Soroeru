@@ -25,14 +25,16 @@ LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX="codex/"
 # latest commit.
 LOCAL_AI_REVIEW_BASE_REF="origin/main"
 
-# --- Review target paths ---------------------------------------
-# Files outside these paths are excluded from the diff fed to the
-# reviewer. Paths are matched as git pathspecs (relative to repo
-# root). Bash 3.2 indexed array.
+# --- Review target paths (code review unit) ---------------------
+# Files under these paths are reviewed as the "code" unit with the
+# reviewer-specific prompt in .githooks/prompts/. Paths are matched
+# as git pathspecs (relative to repo root). Bash 3.2 indexed array.
 #
 # Documentation (README.md, AGENTS.md, CLAUDE.md, docs/) is
-# intentionally excluded: the local AI review hook targets code
-# changes only. Documentation-only commits skip review.
+# intentionally excluded here: general documentation is not
+# reviewed. The three canonical documents listed in
+# LOCAL_AI_REVIEW_DOC_UNITS below are reviewed separately with
+# their dedicated review skills.
 LOCAL_AI_REVIEW_TARGET_PATHS=(
   "scripts/"
   ".githooks/"
@@ -47,6 +49,24 @@ LOCAL_AI_REVIEW_TARGET_PATHS=(
   # "test/"      # Enable for Node.js / Java-style test directories.
   # ".claude/"   # Enable if shared Claude Code settings are tracked.
   # ".Codex/"    # Enable if shared Codex settings are tracked.
+)
+
+# --- Documentation review units ---------------------------------
+# Documents reviewed with a dedicated review skill instead of the
+# generic code-review prompt. Each entry is
+# "<unit>|<pathspec>|<prompt path>": the unit name (used in log
+# lines, output filenames, and last-reviewed.json), the git pathspec
+# whose diff the unit reviews (a file, or a directory ending in
+# "/"), and the prompt file fed to the reviewer (the skill's
+# SKILL.md, shared by both reviewers; relative to repo root).
+#
+# A commit touching several units triggers one reviewer run per
+# unit, sequentially, in the order listed (after the "code" unit).
+# Other documentation stays out of local AI review.
+LOCAL_AI_REVIEW_DOC_UNITS=(
+  "requirements|docs/requirements.md|skills/requirements-review/SKILL.md"
+  "architecture|docs/architecture.md|skills/architecture-review/SKILL.md"
+  "design|docs/design/|skills/design-doc-review/SKILL.md"
 )
 
 # --- State directory --------------------------------------------

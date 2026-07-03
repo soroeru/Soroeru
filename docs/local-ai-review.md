@@ -65,7 +65,10 @@ Important settings:
 - `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX`: branch prefix for Codex-authored work;
 - `LOCAL_AI_REVIEW_BASE_REF`: base ref used to compute the branch-wide diff,
   usually `origin/main`;
-- `LOCAL_AI_REVIEW_TARGET_PATHS`: pathspecs included in the review diff;
+- `LOCAL_AI_REVIEW_TARGET_PATHS`: pathspecs reviewed as the `code` unit with
+  the reviewer-specific prompt;
+- `LOCAL_AI_REVIEW_DOC_UNITS`: documents reviewed as their own unit with a
+  dedicated review skill (`"<unit>|<pathspec>|<prompt path>"` entries);
 - `LOCAL_AI_REVIEW_STATE_DIR`: local output and bookkeeping directory;
 - `LOCAL_AI_REVIEW_LOCK_TIMEOUT_SEC`: stale lock timeout;
 - `LOCAL_AI_REVIEW_REVIEWER_TIMEOUT_SEC`: reviewer CLI timeout;
@@ -89,22 +92,41 @@ Default reviewer mapping:
 - `claude/*` branches trigger Claude review
 - other branches are skipped
 
-This mapping keeps the branch agent prefix and reviewer CLI aligned. Prompt
-files remain reviewer-specific: `local-review-codex.md` is used for Codex
-review and `local-review-claude.md` is used for Claude review.
+This mapping keeps the branch agent prefix and reviewer CLI aligned. For the
+`code` unit, prompt files remain reviewer-specific: `local-review-codex.md`
+is used for Codex review and `local-review-claude.md` is used for Claude
+review. Documentation units use their review skill's `SKILL.md` as the
+prompt, shared by both reviewers.
 
 ## 5. Review Target
 
-The reviewer sees a branch-wide diff:
+The review is split into **units**, each covering its own pathspecs with its
+own prompt:
+
+| Unit | Pathspecs | Prompt |
+| --- | --- | --- |
+| `code` | `LOCAL_AI_REVIEW_TARGET_PATHS` (code paths) | `.githooks/prompts/local-review-<reviewer>.md` |
+| `requirements` | `docs/requirements.md` | `skills/requirements-review/SKILL.md` |
+| `architecture` | `docs/architecture.md` | `skills/architecture-review/SKILL.md` |
+| `design` | `docs/design/` | `skills/design-doc-review/SKILL.md` |
+
+Each unit reviews the branch-wide diff of its pathspecs:
 
 ```bash
-git diff "$(git merge-base origin/main HEAD)" HEAD -- <target-paths>
+git diff "$(git merge-base origin/main HEAD)" HEAD -- <unit-paths>
 ```
 
-Target paths are configured in `.githooks/config`.
+Units are configured in `.githooks/config`. Documentation outside the three
+doc units (for example `docs/security.md` or `README.md`) is not reviewed.
+
+A commit touching several units triggers one reviewer run per unit,
+sequentially under the same lock: `code` first, then the doc units in config
+order. Units whose diff is empty, or whose diff already matches
+`last-reviewed.json`, are skipped individually — so a docs-only commit does
+not re-run the code review and vice versa.
 
 Branch-wide review keeps follow-up commits in context. If only files outside
-the configured target paths changed, the hook skips review.
+every unit's pathspecs changed, the hook skips review.
 
 ## 6. Skip Conditions
 
@@ -115,9 +137,10 @@ The hook skips when:
 - the commit is a merge commit
 - rebase or cherry-pick is in progress
 - commit message contains `[skip-review]`
-- target path diff is empty
+- every unit's pathspec diff is empty
 - merge-base cannot be resolved
-- the same branch / merge-base / diff hash has already been reviewed
+- (per unit) the same branch / merge-base / diff hash has already been
+  reviewed for that unit
 
 `LOCAL_AI_REVIEW_RUNNING=1` is reserved for hook recursion prevention. Do not
 use it manually to suppress review for ordinary commits; use `[skip-review]`
@@ -197,11 +220,11 @@ This directory should stay out of Git.
 
 Useful files:
 
-- `<timestamp>-claude.md`
-- `<timestamp>-codex.md`
+- `<timestamp>-claude-<unit>-<pid>.md`
+- `<timestamp>-codex-<unit>-<pid>.md`
 - `last-run.log`
 - `last-error.log`
-- `last-reviewed.json`
+- `last-reviewed.json` (per-unit diff hashes under `units`)
 
 Review artifacts are local state and should not be committed.
 
@@ -223,6 +246,17 @@ bash scripts/smoke-local-ai-review-branch-mapping.sh
 
 This checks the shared reviewer-selection helper without launching reviewer
 CLIs.
+
+For review-unit dispatch changes (which document triggers which review
+skill), run:
+
+```bash
+bash scripts/smoke-local-ai-review-doc-units.sh
+```
+
+This runs the orchestrator in a throwaway repository with a stubbed reviewer
+and asserts unit selection, prompt selection, per-unit idempotency, and the
+multi-unit-per-commit behavior.
 
 ## 11. Optional GitHub Actions Fallback
 
