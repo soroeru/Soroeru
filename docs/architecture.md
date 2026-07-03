@@ -470,7 +470,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
 | CVV most sensitive | Stored encrypted; reveal is refused outright (§4); fill requires a dedicated accessor. |
 | Raw PII never to AI | The agent/AI layer accepts structure-only requests; provider adapters validate redaction. |
-| Egress limited | Network calls are categorized as target-site or ai-provider; no telemetry dependencies. |
+| Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
 | No active-control bypass | Wall detection (§6) is separate from classification; detected walls stop or hand off. |
 | Review gate / three guards / fourth boundary | Domain/Policy services decide (later slices, §8); the renderer only renders the gate. |
