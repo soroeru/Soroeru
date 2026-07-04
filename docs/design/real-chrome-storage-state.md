@@ -18,7 +18,12 @@ Issue: #293（関連: #291）
 - `chromium`エンジン以外（`firefox` / `webkit`）では`channel`は無視される
   （Playwright上、`channel`はChromium系のみのオプションのため）。
 - 実Chrome未インストール時のフォールバック: `channel: "chrome"`での起動が失敗した
-  場合、同梱Chromiumで再起動する（`channel`指定以外の起動失敗はそのまま伝播する）。
+  場合、同梱Chromiumで再起動する。フォールバック対象はPlaywrightが実際に返す
+  「channel未インストール」形状のエラーのみに絞り込み（`isMissingBrowserChannelError`）、
+  それ以外の起動失敗（権限エラー、破損したプロファイル、リソース枯渇等）はそのまま
+  伝播させ、フォールバックによる握りつぶしを防ぐ。フォールバック起動自体も失敗した
+  場合は、元のエラーを`cause`として連結した新しいエラーを送出し、どちらの失敗か
+  診断できるようにする。
 - `buildLaunchOptions`という純粋関数に起動オプション組み立てを切り出し、実ブラウザ
   起動なしに単体テスト可能にした。`BrowserEngineOptions.launch`というテスト専用の
   注入ポイントを追加し、フォールバック分岐を実ブラウザなしで検証できるようにした。

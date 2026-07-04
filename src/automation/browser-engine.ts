@@ -57,6 +57,22 @@ export function buildLaunchOptions(
   return { headless };
 }
 
+/**
+ * Narrow match for Playwright's actual "channel not installed" launch failure
+ * (playwright-core's `browserType.launch` throws `Chromium distribution '<channel>'
+ * is not found...` or `...is not supported on <platform>`). Only these trigger the
+ * bundled-Chromium fallback, so unrelated failures (permissions, a corrupted
+ * profile, sandbox/resource exhaustion) are not silently masked by a second launch
+ * attempt with different options.
+ */
+function isMissingBrowserChannelError(err: unknown, channel: string): boolean {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.message.includes(`Chromium distribution '${channel}' is not found`) ||
+    err.message.includes(`Chromium distribution '${channel}' is not supported on`)
+  );
+}
+
 /** A `PageDriver` over a real Playwright `Page`, keyed by the scanner's data-af-id stamps. */
 class PlaywrightPageDriver implements PageDriver {
   constructor(private readonly page: Page) {}
@@ -184,10 +200,17 @@ export class BrowserEngine {
     try {
       this.browser = await launch(launchOptions);
     } catch (err) {
-      if (!launchOptions.channel) throw err;
+      if (!launchOptions.channel || !isMissingBrowserChannelError(err, launchOptions.channel)) throw err;
       // Real Chrome is not installed locally (unsigned DMG cannot assume it is);
       // fall back to the bundled Chromium build rather than failing the run.
-      this.browser = await launch({ headless: launchOptions.headless });
+      try {
+        this.browser = await launch(buildLaunchOptions(engineName, { headless: launchOptions.headless }));
+      } catch (fallbackErr) {
+        throw new Error(
+          `channel "${launchOptions.channel}" was unavailable and the bundled Chromium fallback also failed to launch`,
+          { cause: fallbackErr },
+        );
+      }
     }
     return this.browser;
   }

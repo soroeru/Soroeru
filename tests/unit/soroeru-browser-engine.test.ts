@@ -45,7 +45,7 @@ test("openSession launches with the requested channel when no fallback is needed
   await engine.closeAll();
 });
 
-test("openSession falls back to the bundled Chromium build when real Chrome is unavailable", async () => {
+test("openSession falls back to the bundled Chromium build when real Chrome is not installed", async () => {
   const calls: Array<{ headless: boolean; channel?: "chrome" }> = [];
   let attempt = 0;
   const engine = new BrowserEngine({
@@ -53,7 +53,8 @@ test("openSession falls back to the bundled Chromium build when real Chrome is u
     launch: async (opts) => {
       calls.push(opts);
       attempt += 1;
-      if (attempt === 1) throw new Error("channel 'chrome' is not installed");
+      // The exact message playwright-core's browserType.launch throws for a missing channel.
+      if (attempt === 1) throw new Error("Chromium distribution 'chrome' is not found at ...");
       return fakeBrowser();
     },
   });
@@ -75,4 +76,39 @@ test("openSession does not swallow launch failures unrelated to the channel fall
   });
 
   await assert.rejects(() => engine.openSession(), /no display available/);
+});
+
+test("openSession does not fall back on a channel launch error unrelated to a missing install", async () => {
+  const calls: Array<{ headless: boolean; channel?: "chrome" }> = [];
+  const engine = new BrowserEngine({
+    channel: "chrome",
+    launch: async (opts) => {
+      calls.push(opts);
+      throw new Error("EACCES: permission denied opening browser executable");
+    },
+  });
+
+  await assert.rejects(() => engine.openSession(), /EACCES/);
+  // Only the single (failed) channel attempt happened — no silent retry.
+  assert.deepEqual(calls, [{ headless: false, channel: "chrome" }]);
+});
+
+test("openSession chains the original error when the fallback launch also fails", async () => {
+  let attempt = 0;
+  const engine = new BrowserEngine({
+    channel: "chrome",
+    launch: async () => {
+      attempt += 1;
+      if (attempt === 1) throw new Error("Chromium distribution 'chrome' is not found at ...");
+      throw new Error("bundled Chromium failed to launch too");
+    },
+  });
+
+  await assert.rejects(() => engine.openSession(), (err: unknown) => {
+    assert.ok(err instanceof Error);
+    assert.match(err.message, /fallback also failed to launch/);
+    assert.ok(err.cause instanceof Error);
+    assert.match((err.cause as Error).message, /bundled Chromium failed to launch too/);
+    return true;
+  });
 });
