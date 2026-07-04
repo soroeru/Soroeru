@@ -241,6 +241,23 @@ test("detectLoginForm returns the form confidently when username, password, and 
   });
 });
 
+test("detectLoginForm without a submit button returns the field pair unconfidently (AI may find the button)", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "detect-login-form",
+    snapshot: snapshot({
+      fields: [
+        loginField("f-user", { type: "email", autocomplete: "username" }),
+        loginField("f-pass", { type: "password", autocomplete: "current-password" }),
+      ],
+    }),
+    context: context(),
+  });
+
+  assert.equal(result.confident, false);
+  assert.deepEqual(result.result?.form, { usernameFieldId: "f-user", passwordFieldId: "f-pass" });
+});
+
 test("detectLoginForm without a password field is confidently no form", () => {
   const engine = new RuleEngine();
   const result = engine.evaluate({

@@ -17,7 +17,12 @@ import type { PageDriver } from "./page-driver.js";
 import { isSameSite, resolveHref } from "./url-utils.js";
 import type { WallDetectionService } from "./wall-detection.js";
 
-export type LoginFailureReason = "login-page-not-found" | "login-form-not-found" | "login-failed";
+export type LoginFailureReason =
+  | "login-page-not-found"
+  | "login-form-not-found"
+  /** A form was found but had no recognizable submit control; nothing was attempted. */
+  | "login-not-submitted"
+  | "login-failed";
 
 export interface LoginResult {
   success: boolean;
@@ -63,12 +68,17 @@ export class LoginHandler {
     }
     const form = detection.result.form;
     if (!form) return { success: false, error: "login-form-not-found" };
+    // Without a submit control nothing would ever be submitted; filling and
+    // then judging the unchanged page would record a credential rejection
+    // that never happened, so report the distinct reason before touching
+    // any field.
+    if (!form.submitSelector) return { success: false, error: "login-not-submitted" };
 
     // Step 4: fill and submit. Credential values are filled locally into the
     // page and never appear in a snapshot or an AI request.
     await page.fillField(form.usernameFieldId, credential.username);
     await page.fillField(form.passwordFieldId, credential.password);
-    if (form.submitSelector) await page.click(form.submitSelector);
+    await page.click(form.submitSelector);
     await page.waitForReady();
 
     // Step 5: judge the result; a post-login wall (MFA / OTP) hands off first.

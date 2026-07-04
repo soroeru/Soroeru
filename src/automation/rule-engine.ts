@@ -109,7 +109,10 @@ export class RuleEngine implements RuleEvaluator {
 
     const submit = findLoginSubmitButton(snapshot.buttons);
     return {
-      confident: true,
+      // Without a recognizable submit button the field pair is still
+      // returned, but unconfidently, so a configured AI gets the chance to
+      // find the button; the partial form remains the no-AI fallback.
+      confident: submit !== undefined,
       result: {
         form: {
           usernameFieldId: username.fieldId,

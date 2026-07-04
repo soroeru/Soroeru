@@ -1,6 +1,6 @@
 import type { DomainService } from "../domain/domain-service.js";
 import type { Credential, SiteAccount } from "../domain/entities.js";
-import type { FormField, PageSnapshot } from "../types.js";
+import type { PageSnapshot } from "../types.js";
 import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
 import { findLoginField, findLoginLink, findLoginSubmitButton, hasLoginFields } from "./login-handler.js";
 import type { SiteSession } from "./page-driver.js";

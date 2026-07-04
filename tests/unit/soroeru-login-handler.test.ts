@@ -204,6 +204,22 @@ test("login hands off on a post-login MFA wall", async () => {
   assert.equal(page.filled["f-pass"], "fake-pass");
 });
 
+test("login reports login-not-submitted without filling when the form has no submit control", async () => {
+  const buttonlessLoginPage = snapshot("https://example.test/login", {
+    fields: [
+      field("f-user", { type: "email", autocomplete: "username" }),
+      field("f-pass", { type: "password", autocomplete: "current-password" }),
+    ],
+  });
+  const page = new FakePageDriver([buttonlessLoginPage]);
+
+  const result = await handler().login(page, credential(), siteAccount());
+
+  assert.deepEqual(result, { success: false, error: "login-not-submitted" });
+  assert.deepEqual(page.filled, {});
+  assert.deepEqual(page.clicked, []);
+});
+
 test("login reports login-failed when the password field is still present after submit", async () => {
   const page = new FakePageDriver([loginPage(), loginPage()]);
 
