@@ -36,6 +36,9 @@ import type {
   RevealResult,
   SavedPageImportRequest,
   SavedPageImportResult,
+  SessionPersistenceMutationResult,
+  SessionPersistenceView,
+  SetSessionPersistenceRequest,
   SiteLedgerDetail,
   SiteLedgerSummary,
   StaleTally,
@@ -47,10 +50,23 @@ import type {
   VisibilityStatusView,
 } from "./ipc/contract.js";
 
+/** The minimal BrowserEngine surface `defaultOpenSession` depends on. */
+export interface SessionEngine {
+  openSession: (site: SiteAccount, options?: { storageState?: string }) => Promise<SiteSession>;
+  closeAll: () => Promise<void>;
+}
+
 /** Construction-time hooks; production defaults to a lazily-created headed BrowserEngine. */
 export interface SoroeruSessionOptions {
   /** Override how a per-site browser session is opened (tests / scripted E2E). */
   openSession?: (site: SiteAccount) => Promise<SiteSession>;
+  /**
+   * Inject a fake `SessionEngine` in place of the real (lazily-created)
+   * BrowserEngine, so tests can exercise the default persistence-aware opener
+   * (`defaultOpenSession` / `wrapSessionForPersistence`, Issue #294) without
+   * driving real Playwright. Ignored when `openSession` is also provided.
+   */
+  engine?: SessionEngine;
   /** Tear down an injected engine on shutdown (paired with a custom `openSession`). */
   closeEngine?: () => Promise<void>;
   /** Open a URL in the user's default browser (injected by Electron main). */
@@ -76,10 +92,8 @@ export class SoroeruSession {
   private vault: VaultV2 | undefined;
   private domain: DomainService | undefined;
   private readonly visibility: VisibilityService;
-  /** Lazily-created real engine (only when production `openSession` is used). */
-  private engine:
-    | { openSession: (site: SiteAccount) => Promise<SiteSession>; closeAll: () => Promise<void> }
-    | undefined;
+  /** Lazily-created real engine in production; a test-injected `SessionEngine` otherwise. */
+  private engine: SessionEngine | undefined;
   private readonly closeInjectedEngine: (() => Promise<void>) | undefined;
   private readonly openExternal: ((url: string) => Promise<void>) | undefined;
   private eventSink: ((event: VisibilityEvent) => void) | undefined;
@@ -89,6 +103,7 @@ export class SoroeruSession {
     private readonly vaultPath: string,
     options: SoroeruSessionOptions = {},
   ) {
+    this.engine = options.engine;
     this.closeInjectedEngine = options.closeEngine;
     this.openExternal = options.openExternal;
     const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
@@ -111,7 +126,46 @@ export class SoroeruSession {
       const { BrowserEngine } = await import("../src/automation/browser-engine.js");
       this.engine = new BrowserEngine();
     }
-    return this.engine.openSession(site);
+    const persisted = site.persistSessionEnabled ? this.domain?.getPersistedSessionState(site.id) : undefined;
+    // getPersistedSessionState() discards an expired record in-memory as a side
+    // effect; flush that discard now so a stale encrypted session blob does not
+    // keep living on disk past its documented expiry until some unrelated save.
+    if (site.persistSessionEnabled) await this.vault?.save();
+    const session = await this.engine.openSession(
+      site,
+      persisted ? { storageState: persisted.storageState } : undefined,
+    );
+    return this.wrapSessionForPersistence(site, session);
+  }
+
+  /**
+   * Wrap a session's `close()` so that, when the site has opted into session
+   * persistence (Issue #294), the current `storageState` is exported and saved
+   * to the vault *before* the underlying context is disposed. Best-effort: an
+   * export/save failure must never block session teardown, so it is swallowed
+   * here rather than propagated.
+   */
+  private wrapSessionForPersistence(site: SiteAccount, session: SiteSession): SiteSession {
+    return {
+      page: session.page,
+      // A class instance (the real PlaywrightSiteSession) declares these as
+      // prototype methods, not own properties, so a plain `{ ...session }`
+      // spread would silently drop them from the wrapper. Bind explicitly.
+      ...(session.exportStorageState ? { exportStorageState: session.exportStorageState.bind(session) } : {}),
+      close: async () => {
+        try {
+          if (this.domain?.getSiteAccount(site.id)?.persistSessionEnabled && session.exportStorageState) {
+            const storageState = await session.exportStorageState();
+            this.domain.savePersistedSessionState({ siteAccountId: site.id, storageState });
+            await this.vault?.save();
+          }
+        } catch {
+          // Best-effort persistence: never let an export/save failure block teardown.
+        } finally {
+          await session.close();
+        }
+      },
+    };
   }
 
   async status(): Promise<VaultStatus> {
@@ -217,6 +271,9 @@ export class SoroeruSession {
    */
   async shutdown(): Promise<void> {
     this.visibility.abortRun();
+    // Let an in-flight persisted-session export finish before the engine (and
+    // its browser process) is torn down out from under it (Issue #294).
+    await this.visibility.waitForActiveSessionClose();
     if (this.engine) {
       await this.engine.closeAll();
       this.engine = undefined;
@@ -432,7 +489,14 @@ export class SoroeruSession {
         ...(c.resolution !== undefined ? { resolution: c.resolution } : {}),
         observedAt: c.observedAt,
       }));
-    return { ...summary, disclosures, relationships, constraints, pendingAttributeCandidates };
+    return {
+      ...summary,
+      disclosures,
+      relationships,
+      constraints,
+      pendingAttributeCandidates,
+      sessionPersistence: this.sessionPersistenceView(siteAccountId),
+    };
   }
 
   /**
@@ -476,6 +540,38 @@ export class SoroeruSession {
     } catch {
       return { ok: false, error: "delete-failed" };
     }
+  }
+
+  // --- Session persistence (opt-in encrypted storageState, Issue #294) ---
+
+  /** Toggle the per-site opt-in; disabling clears any persisted storageState immediately. */
+  async setSessionPersistence(request: SetSessionPersistenceRequest): Promise<SessionPersistenceMutationResult> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    const site = this.domain.setSessionPersistenceEnabled(request.siteAccountId, request.enabled);
+    if (!site) return { ok: false, error: "not-found" };
+    await this.vault.save();
+    return { ok: true, state: this.sessionPersistenceView(request.siteAccountId) };
+  }
+
+  /** Explicit "clear now" while persistence stays enabled — the next run starts a fresh session. */
+  async clearSessionPersistence(siteAccountId: string): Promise<SessionPersistenceMutationResult> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    if (!this.domain.getSiteAccount(siteAccountId)) return { ok: false, error: "not-found" };
+    this.domain.clearPersistedSessionState(siteAccountId);
+    await this.vault.save();
+    return { ok: true, state: this.sessionPersistenceView(siteAccountId) };
+  }
+
+  private sessionPersistenceView(siteAccountId: string): SessionPersistenceView {
+    const site = this.domain?.getSiteAccount(siteAccountId);
+    // Non-mutating read: this view backs a pure read path (`ledgerSite`), which
+    // must not silently delete an expired session as a side effect of display.
+    const state = this.domain?.peekPersistedSessionState(siteAccountId);
+    return {
+      enabled: site?.persistSessionEnabled ?? false,
+      hasPersistedSession: state !== undefined,
+      ...(state ? { updatedAt: state.updatedAt, expiresAt: state.expiresAt } : {}),
+    };
   }
 
   /**

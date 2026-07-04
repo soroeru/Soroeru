@@ -36,4 +36,12 @@ export interface PageDriver {
 export interface SiteSession {
   readonly page: PageDriver;
   close(): Promise<void>;
+  /**
+   * Export the current Playwright `storageState` as a JSON string, for opt-in
+   * encrypted persistence (Issue #294). Must be called before `close()` disposes
+   * the underlying context. Optional so scripted fakes (unit tests, the
+   * runner's login/collection logic) need not implement it; only the real
+   * Playwright adapter (`../automation/browser-engine.ts`) does.
+   */
+  exportStorageState?(): Promise<string>;
 }

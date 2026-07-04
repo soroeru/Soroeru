@@ -27,6 +27,7 @@ export const ENTITY_KINDS = [
   "providerSettings",
   "localDefinition",
   "diagnostic",
+  "sessionState",
 ] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];
@@ -60,6 +61,14 @@ export interface SiteAccount extends DomainRecord {
   displayName: string;
   /** Short human-readable relationship summary; never raw PII. */
   relationshipSummary?: string;
+  /**
+   * Opt-in per-site permission (Issue #294) to persist a browser session
+   * (`SessionState.storageState`) across Visibility runs instead of starting
+   * every run from an ephemeral context. Default false/absent. Disabling this
+   * is unconditional and immediate (mirrors Delegation Boundary reduction):
+   * the caller must also clear any existing `SessionState` for the site.
+   */
+  persistSessionEnabled?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -240,6 +249,25 @@ export interface LocalDefinition extends DomainRecord {
   updatedAt: number;
 }
 
+/**
+ * An encrypted, exported Playwright `storageState` for one Site Account
+ * (Issue #294, follow-up to #293). Opt-in only (`SiteAccount.persistSessionEnabled`)
+ * for sites where a fresh ephemeral context is treated as more automation-suspicious
+ * than a reused session. `id` equals `siteAccountId` (at most one persisted state
+ * per site). Encrypted the same way as every other vault record — the raw
+ * cookies/localStorage payload never touches disk unencrypted or a log line.
+ */
+export interface SessionState extends DomainRecord {
+  siteAccountId: string;
+  /** Playwright's `storageState` export, serialized as JSON. Secret; encrypted at rest. */
+  storageState: string;
+  createdAt: number;
+  /** Refreshed (sliding) on every successful re-export, which also pushes out `expiresAt`. */
+  updatedAt: number;
+  /** Fixed 30-day expiry from `updatedAt` (Issue #294 decision); read paths treat an expired record as absent. */
+  expiresAt: number;
+}
+
 /** Local support diagnostic (RFC-002 §4.1). Sanitized metadata only. */
 export interface Diagnostic extends DomainRecord {
   at: number;
@@ -268,6 +296,7 @@ export interface EntityPayloadMap {
   providerSettings: ProviderSettings;
   localDefinition: LocalDefinition;
   diagnostic: Diagnostic;
+  sessionState: SessionState;
 }
 
 /** Attribute keys whose values must never be displayed unmasked or logged. */

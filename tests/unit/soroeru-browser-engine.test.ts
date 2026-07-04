@@ -93,6 +93,67 @@ test("openSession does not fall back on a channel launch error unrelated to a mi
   assert.deepEqual(calls, [{ headless: false, channel: "chrome" }]);
 });
 
+test("openSession passes a persisted storageState through to newContext, parsed as an object (Issue #294)", async () => {
+  const contextCalls: unknown[] = [];
+  const fakePage = { evaluate: async () => ({}) };
+  const fakeContext = { newPage: async () => fakePage, close: async () => {}, storageState: async () => ({ cookies: [], origins: [] }) };
+  const fakeBrowserWithCapture = {
+    newContext: async (opts: unknown) => {
+      contextCalls.push(opts);
+      return fakeContext;
+    },
+    close: async () => {},
+  } as unknown as Browser;
+
+  const engine = new BrowserEngine({ launch: async () => fakeBrowserWithCapture });
+  const storageState = JSON.stringify({ cookies: [{ name: "a", value: "b" }], origins: [] });
+  await engine.openSession(undefined, { storageState });
+
+  assert.deepEqual(contextCalls, [{ storageState: JSON.parse(storageState) }]);
+  await engine.closeAll();
+});
+
+test("openSession falls back to a fresh context when a persisted storageState is corrupt JSON", async () => {
+  const contextCalls: unknown[] = [];
+  const fakePage = { evaluate: async () => ({}) };
+  const fakeContext = { newPage: async () => fakePage, close: async () => {} };
+  const fakeBrowserWithCapture = {
+    newContext: async (opts: unknown) => {
+      contextCalls.push(opts);
+      return fakeContext;
+    },
+    close: async () => {},
+  } as unknown as Browser;
+
+  const engine = new BrowserEngine({ launch: async () => fakeBrowserWithCapture });
+  await engine.openSession(undefined, { storageState: "not valid json" });
+
+  assert.deepEqual(contextCalls, [{}]);
+  await engine.closeAll();
+});
+
+test("a real Playwright session's exportStorageState reads the context's live storageState (Issue #294)", async () => {
+  const exported = { cookies: [{ name: "session", value: "tok" }], origins: [] };
+  const fakePage = { evaluate: async () => ({}) };
+  const fakeContext = {
+    newPage: async () => fakePage,
+    close: async () => {},
+    storageState: async () => exported,
+  };
+  const fakeBrowserForExport = {
+    newContext: async () => fakeContext,
+    close: async () => {},
+  } as unknown as Browser;
+
+  const engine = new BrowserEngine({ launch: async () => fakeBrowserForExport });
+  const session = await engine.openSession();
+  assert.ok(session.exportStorageState);
+  const raw = await session.exportStorageState();
+  assert.deepEqual(JSON.parse(raw), exported);
+  await session.close();
+  await engine.closeAll();
+});
+
 test("openSession chains the original error when the fallback launch also fails", async () => {
   let attempt = 0;
   const engine = new BrowserEngine({

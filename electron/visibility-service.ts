@@ -42,6 +42,8 @@ export class VisibilityService {
   private activeSession: SiteSession | undefined;
   private cancelRequested = false;
   private pendingHandoff: PendingHandoff | undefined;
+  /** The in-flight `close()` triggered by `abortRun()`, if any (Issue #294 app-quit race). */
+  private pendingSessionClose: Promise<void> | undefined;
 
   constructor(private readonly options: VisibilityServiceOptions) {}
 
@@ -128,8 +130,19 @@ export class VisibilityService {
     if (!this.running) return false;
     this.cancelRequested = true;
     this.abortHandoff();
-    if (this.activeSession) void this.activeSession.close();
+    if (this.activeSession) this.pendingSessionClose = this.activeSession.close().catch(() => {});
     return true;
+  }
+
+  /**
+   * Await the session `close()` (and its persistence export, if opted-in)
+   * kicked off by the most recent `abortRun()`. Callers that tear down the
+   * browser engine right after aborting (app quit) must await this first, or
+   * the engine can be closed out from under an in-flight `storageState` export
+   * (Issue #294).
+   */
+  async waitForActiveSessionClose(): Promise<void> {
+    await this.pendingSessionClose;
   }
 
   private async openTrackedSession(site: SiteAccount): Promise<SiteSession> {

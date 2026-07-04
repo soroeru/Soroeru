@@ -53,6 +53,8 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.ledger.reveal("x", "y");
   await api.ledger.confirmDynamicCandidate({ proposedAttributeKey: "custom.x", label: "x" });
   await api.ledger.deleteSite({ siteAccountId: "x", confirmedFourthBoundary: true });
+  await api.sessionPersistence.set({ siteAccountId: "x", enabled: true });
+  await api.sessionPersistence.clear("x");
   await api.visibility.run("x");
   await api.visibility.resume();
   await api.visibility.abort();
@@ -474,6 +476,38 @@ test("saved page fallback skip records a manual-check constraint without marking
     const manual = detail.constraints.find((constraint) => constraint.detail.includes("手動で確認"));
     assert.equal(manual?.kind, "unknown-state");
     assert.equal(manual?.resolution, "user-stopped");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the session-persistence channels coerce the request shape and route through to the session", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+    assert.equal((await bridge[IPC_CHANNELS.vaultUnlock](PASSPHRASE) as VaultMutationResult).ok, true);
+
+    const set = (await bridge[IPC_CHANNELS.sessionPersistenceSet]({
+      siteAccountId: site.id,
+      enabled: true,
+    })) as { ok: boolean; state?: { enabled: boolean } };
+    assert.equal(set.ok, true);
+    assert.equal(set.state?.enabled, true);
+
+    const cleared = (await bridge[IPC_CHANNELS.sessionPersistenceClear](site.id)) as { ok: boolean };
+    assert.equal(cleared.ok, true);
+
+    // A malformed (non-object) request must not throw; it coerces to empty/false.
+    const malformed = (await bridge[IPC_CHANNELS.sessionPersistenceSet](null)) as { ok: boolean; error?: string };
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.error, "not-found");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

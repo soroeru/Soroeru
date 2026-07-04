@@ -11,6 +11,7 @@ import { Label } from "@radix-ui/react-label";
 import type {
   DisclosureView,
   PendingAttributeCandidateView,
+  SessionPersistenceView,
   SiteLedgerDetail,
   SiteLedgerSummary,
 } from "../../../electron/ipc/contract.js";
@@ -189,6 +190,95 @@ export function SiteDetail({
           ))}
         </ul>
       )}
+
+      <SessionPersistenceControl
+        siteAccountId={detail.siteAccountId}
+        sessionPersistence={detail.sessionPersistence}
+        onReload={onReload}
+      />
+    </div>
+  );
+}
+
+/**
+ * Opt-in per-site toggle for persisting a browser session across Visibility
+ * runs (Issue #294). Disabling clears any persisted session immediately
+ * (server-enforced, unconditional/immediate — this control is just the UI for
+ * it); "今すぐ削除" clears one on demand while staying enabled.
+ */
+function SessionPersistenceControl({
+  siteAccountId,
+  sessionPersistence,
+  onReload,
+}: {
+  siteAccountId: string;
+  sessionPersistence: SessionPersistenceView;
+  onReload: () => void | Promise<void>;
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  const toggle = useCallback(async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await window.soroeru.sessionPersistence.set({
+        siteAccountId,
+        enabled: !sessionPersistence.enabled,
+      });
+      if (!result.ok) setError(reasonMessage(result.error));
+    } catch {
+      setError(reasonMessage(undefined));
+    } finally {
+      // Stay busy (checkbox disabled) until the reload delivers fresh props —
+      // clearing busy first would let a fast second click read the stale
+      // `sessionPersistence.enabled` closure and double-toggle.
+      await onReload();
+      setBusy(false);
+    }
+  }, [onReload, sessionPersistence.enabled, siteAccountId]);
+
+  const clearNow = useCallback(async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await window.soroeru.sessionPersistence.clear(siteAccountId);
+      if (!result.ok) setError(reasonMessage(result.error));
+    } catch {
+      setError(reasonMessage(undefined));
+    } finally {
+      await onReload();
+      setBusy(false);
+    }
+  }, [onReload, siteAccountId]);
+
+  return (
+    <div className="flex flex-col gap-1 rounded border border-neutral-200 p-2 text-xs">
+      <label className="flex items-center gap-2 text-neutral-700">
+        <input
+          type="checkbox"
+          checked={sessionPersistence.enabled}
+          disabled={busy}
+          onChange={() => void toggle()}
+        />
+        <span>ログインセッションを保持する（収集のたびに毎回ログインし直さない）</span>
+      </label>
+      <p className="text-neutral-500">
+        {sessionPersistence.hasPersistedSession
+          ? `保存済み（最終更新: ${new Date(sessionPersistence.updatedAt ?? 0).toLocaleString("ja-JP")}）`
+          : "保存されたセッションはありません。"}
+      </p>
+      {sessionPersistence.hasPersistedSession && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void clearNow()}
+          className="self-start text-red-700 underline"
+        >
+          今すぐ削除
+        </button>
+      )}
+      {error && <p className="text-red-600">{error}</p>}
     </div>
   );
 }
