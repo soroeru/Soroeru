@@ -25,8 +25,10 @@ test("runVisibility persists collected disclosures to disk, not just in memory",
   const dir = await mkdtemp(join(tmpdir(), "soroeru-vis-persist-"));
   const path = join(dir, "vault.json");
   try {
-    // An account page holding one email value; no login fields, so the run
-    // goes straight to collection.
+    // An account page holding one email value. The field id "email" matches the
+    // runner's username-field heuristic, so a login attempt does happen — but it
+    // is a no-op against the fake driver (same snapshot again, no password
+    // field), and collection proceeds over the page's value.
     const page = new FakePageDriver(
       [snapshot("https://example.test/account", [field("email", { autocomplete: "email", labels: ["メールアドレス"] })])],
       { email: "user@example.test" },

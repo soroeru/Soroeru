@@ -62,8 +62,13 @@ UI を Playwright で操作して Visibility のハッピーパスを自動検�
 ## この増分の範囲
 
 - `electron/session.ts`: `runVisibility()` で `VisibilityService.runSite()` の
-  結果を得たあと（成功・失敗いずれの場合も）`await this.vault.save()` を追加する
-  （上記「決定事項」参照）。
+  結果を得たあと（成功・失敗・例外いずれの場合も、`finally` で）
+  `await this.vault.save()` を追加する（上記「決定事項」参照）。
+- `tests/unit/soroeru-visibility-persistence.test.ts`（新規）: 上記修正の
+  **CI で実行される回帰テスト**。フェイク `PageDriver` で収集を 1 回実行した後、
+  同じパスフレーズで `VaultV2.open()` を別インスタンスとしてやり直し、開示が
+  ディスクに永続化されていることを検証する（ローカル専用 E2E だけに回帰防止を
+  委ねない）。
 - `tests/e2e/app-ui.e2e.ts`（新規）:
   1. `startPocServer(0)` でローカルフェイクサイトを起動し、`01-basic` の実際のポート
      付き URL を取得する。
@@ -83,8 +88,9 @@ UI を Playwright で操作して Visibility のハッピーパスを自動検�
   9. アサーション: 取り込みサマリーの件数、収集後の開示件数 ≥ 1（UI 上）に加えて、
      `electronApp.close()` 後に `state/soroeru-poc/e2e-app-ui/<timestamp>/vault.json`
      を同じフェイクパスフレーズで `VaultV2.open()` し直し、対象サイトの開示レコードが
-     実際にディスクへ永続化されていること（上記の永続化バグ修正の回帰防止）。生の
-     認証情報が平文で残っていないことも合わせて確認する。
+     実際にディスクへ永続化されていること（上記の永続化バグ修正の回帰防止）。
+     `vault.json` の生バイト列にフェイクのパスワード/メールアドレス文字列が
+     含まれないこと（平文残存なし）も合わせて確認する。
 - `package.json`: `"e2e:app-ui": "npm run build:app && node --test dist/compiled/tests/e2e/app-ui.e2e.js"`
 - `docs/testing.md`: 新しいローカル専用 E2E フローとして 1 セクション追記
   （§7 CI 表・§5 コマンド一覧・ローカル専用の理由）。
@@ -123,9 +129,12 @@ UI を Playwright で操作して Visibility のハッピーパスを自動検�
 
 ## テスト戦略
 
-- 本 Issue 自体がテストインフラの追加であるため、`app-ui.e2e.ts` 自身が唯一の
+- 本 Issue 自体がテストインフラの追加であるため、E2E 側は `app-ui.e2e.ts` 自身が
   成果物であり対象。既存の `soroeru-poc-web-ui` 等ユニットテストとは層が異なる
   （Electron レンダラー + 実 IPC + 実ボールトを使う唯一のテスト）。
+- 永続化バグ修正の回帰防止は、ローカル専用の E2E だけに委ねず、CI で実行される
+  `tests/unit/soroeru-visibility-persistence.test.ts` が担う（E2E のディスク
+  アサーションはその実機経路での再確認という位置づけ）。
 - `npm run e2e:app-ui` の合否がこの機能の受け入れ基準（Issue #303 の Verification）。
 - 将来、CI 組み込みを検討する場合は本ドキュメントの「CI 方針」を再検討ポイントとして
   更新する。
