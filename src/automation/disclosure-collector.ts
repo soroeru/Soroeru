@@ -56,6 +56,7 @@ export interface ExplorationCollectionOptions {
   /** The driver the exploration runs on; each page's values are read from it. */
   pageDriver: PageDriver;
   now?: () => number;
+  isCanceled?: () => boolean;
 }
 
 export interface ExplorationCollectionResult {
@@ -88,6 +89,7 @@ export async function collectDuringExploration(
 ): Promise<ExplorationCollectionResult> {
   const result: ExplorationCollectionResult = { pagesCollected: 0, disclosures: 0, dynamicCandidates: 0 };
   for await (const event of events) {
+    if (options.isCanceled?.()) return result;
     if (event.kind === "wall-detected") {
       // The explorer pauses itself after this event. Its resume slot lives on
       // the explorer instance and is untouched by closing this iterator, so
@@ -96,11 +98,14 @@ export async function collectDuringExploration(
       return result;
     }
     if (event.kind !== "page-snapshot") continue;
+    if (options.isCanceled?.()) return result;
 
     const values = await options.pageDriver.readValues();
+    if (options.isCanceled?.()) return result;
     // Merging is collision-free: the scanner stamps form fields "f-*" and
     // display values "d-*" (src/agent/scan.ts), disjoint key namespaces.
     const displayValues = (await options.pageDriver.readDisplayValues?.()) ?? {};
+    if (options.isCanceled?.()) return result;
     const displayFields = (event.snapshot.displayValues ?? []).map(displayValueToSyntheticField);
     const collected = collectDisclosures({
       domain: options.domain,
