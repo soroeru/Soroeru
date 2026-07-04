@@ -10,7 +10,7 @@
 import type { PageSnapshot, WallDetection } from "../types.js";
 import type { DecisionContext, DecisionEngine } from "./decision-engine.js";
 import type { PageDriver } from "./page-driver.js";
-import { normalizeUrl } from "./url-utils.js";
+import { isSameSite, normalizeUrl } from "./url-utils.js";
 import type { WallDetectionService } from "./wall-detection.js";
 
 /** Hand-off descriptor for a wall the human must resolve (never bypassed). */
@@ -42,7 +42,6 @@ interface ExplorationState {
   pendingUrls: string[];
   /** URLs skipped on a wall, re-queued by `resume()` after the human clears it. */
   deferredUrls: string[];
-  walls: WallDetection[];
 }
 
 export class PageExplorer {
@@ -65,7 +64,6 @@ export class PageExplorer {
       visitedUrls: new Set(),
       pendingUrls: [normalizeUrl(startUrl)],
       deferredUrls: [],
-      walls: [],
     };
     yield* this.continueExploration();
   }
@@ -93,15 +91,14 @@ export class PageExplorer {
       if (state.visitedUrls.has(url)) continue;
 
       yield { kind: "navigating", url };
-      // egress: target-site — only same-site links suggested by find-profile-links
-      // (RuleEngine filters via isSameSite) or the caller-provided start URL.
+      // egress: target-site — pendingUrls holds only the caller-provided start
+      // URL and links that passed the isSameSite check in the queueing loop.
       await pageDriver.goto(url);
       await pageDriver.waitForReady();
       const snapshot = await pageDriver.snapshot();
 
       const wall = this.wallDetector.detect(snapshot);
       if (wall) {
-        state.walls.push(wall);
         // Not marked visited: resume() must re-visit this URL after the human
         // clears the wall, so it goes to deferredUrls instead.
         state.deferredUrls.push(url);
@@ -124,6 +121,10 @@ export class PageExplorer {
         context: this.buildContext(state, url),
       });
       for (const link of linkDecision.result.links) {
+        // The rule path already filters off-site links, but the decision may
+        // also come from the optional AI engine — the site boundary is enforced
+        // here, at the point that feeds navigation, not trusted from upstream.
+        if (!isSameSite(link.href, state.siteAccount.domain)) continue;
         const normalized = normalizeUrl(link.href);
         if (!state.visitedUrls.has(normalized) && !state.pendingUrls.includes(normalized)) {
           state.pendingUrls.push(normalized);

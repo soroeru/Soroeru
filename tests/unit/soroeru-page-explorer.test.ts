@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { DecisionKind, DecisionRequest, RuleEvaluator, RuleResult } from "../../src/automation/decision-engine.js";
 import { DecisionEngine } from "../../src/automation/decision-engine.js";
 import type { ExplorationEvent } from "../../src/automation/page-explorer.js";
 import { PageExplorer } from "../../src/automation/page-explorer.js";
@@ -109,7 +110,9 @@ test("explores linked profile pages in priority order and completes when URLs ru
     ],
   );
   const complete = events.at(-1);
-  assert.equal(complete?.kind === "exploration-complete" && complete.reason, "no-more-urls");
+  assert.equal(complete?.kind, "exploration-complete");
+  if (complete?.kind !== "exploration-complete") assert.fail("expected exploration-complete");
+  assert.equal(complete.reason, "no-more-urls");
   const snapshots = events.filter((e) => e.kind === "page-snapshot");
   assert.deepEqual(
     snapshots.map((e) => e.kind === "page-snapshot" && e.snapshot.url),
@@ -143,15 +146,25 @@ test("defers a walled URL, hands off, and resume() re-visits it in the same sess
   // Exploration paused on the wall: no page-snapshot for the walled page, no completion.
   assert.equal(firstRun.some((e) => e.kind === "exploration-complete"), false);
 
+  // Resuming while the wall is still up re-defers the URL and pauses again —
+  // the walled page is never silently marked visited, and the state stays
+  // resumable for another attempt.
+  const stillWalled = await collect(explorer.resume());
+  assert.deepEqual(
+    stillWalled.map((e) => e.kind),
+    ["navigating", "wall-detected"],
+  );
+
   // The human resolved the wall in the same session; the page now renders normally.
   pages.set("https://example.com/profile", snapshot("https://example.com/profile"));
 
   const resumed = await collect(explorer.resume());
 
-  // The deferred URL was re-visited (second goto to the same URL), collected, and
+  // The deferred URL was re-visited on each resume, collected once cleared, and
   // exploration completed.
   assert.deepEqual(driver.gotoLog, [
     "https://example.com/mypage",
+    "https://example.com/profile",
     "https://example.com/profile",
     "https://example.com/profile",
   ]);
@@ -178,7 +191,33 @@ test("ends exploration when shouldContinue says stop (page cap reached)", async 
   // The profile link was queued but never visited: the cap ended the loop first.
   assert.deepEqual(driver.gotoLog, ["https://example.com/mypage"]);
   const complete = events.at(-1);
-  assert.equal(complete?.kind === "exploration-complete" && complete.reason, "decision-engine");
+  assert.equal(complete?.kind, "exploration-complete");
+  if (complete?.kind !== "exploration-complete") assert.fail("expected exploration-complete");
+  assert.equal(complete.reason, "decision-engine");
+});
+
+test("never navigates off-site even when the decision layer suggests an external link", async () => {
+  // A fake evaluator standing in for a misbehaving AI suggestion: confidently
+  // returns an off-site link, which the explorer itself must refuse to queue.
+  const offSiteEvaluator: RuleEvaluator = {
+    evaluate<K extends DecisionKind>(request: DecisionRequest & { kind: K }): RuleResult<K> {
+      const result: RuleResult =
+        request.kind === "find-profile-links"
+          ? { confident: true, result: { links: [{ href: "https://evil.example/profile", text: "会員情報" }] } }
+          : { confident: false, result: { continue: true } };
+      return result as RuleResult<K>;
+    },
+  };
+  const driver = new FakePageDriver(new Map());
+  const explorer = new PageExplorer(new DecisionEngine(offSiteEvaluator), new WallDetectionService());
+
+  const events = await collect(explorer.explore(driver, "https://example.com/mypage", SITE));
+
+  assert.deepEqual(driver.gotoLog, ["https://example.com/mypage"]);
+  const complete = events.at(-1);
+  assert.equal(complete?.kind, "exploration-complete");
+  if (complete?.kind !== "exploration-complete") assert.fail("expected exploration-complete");
+  assert.equal(complete.reason, "no-more-urls");
 });
 
 test("resume() without a paused exploration throws, including after completion", async () => {
