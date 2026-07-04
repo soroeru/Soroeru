@@ -89,14 +89,17 @@ export async function collectDuringExploration(
   const result: ExplorationCollectionResult = { pagesCollected: 0, disclosures: 0, dynamicCandidates: 0 };
   for await (const event of events) {
     if (event.kind === "wall-detected") {
-      // The explorer pauses itself after this event; returning (not throwing)
-      // keeps its resume slot intact for the post-hand-off continuation.
+      // The explorer pauses itself after this event. Its resume slot lives on
+      // the explorer instance and is untouched by closing this iterator, so
+      // the caller can hand off and continue with PageExplorer.resume().
       result.wall = { url: event.url, wall: event.wall, handoff: event.handoff };
       return result;
     }
     if (event.kind !== "page-snapshot") continue;
 
     const values = await options.pageDriver.readValues();
+    // Merging is collision-free: the scanner stamps form fields "f-*" and
+    // display values "d-*" (src/agent/scan.ts), disjoint key namespaces.
     const displayValues = (await options.pageDriver.readDisplayValues?.()) ?? {};
     const displayFields = (event.snapshot.displayValues ?? []).map(displayValueToSyntheticField);
     const collected = collectDisclosures({

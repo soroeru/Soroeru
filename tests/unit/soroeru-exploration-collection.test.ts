@@ -286,7 +286,7 @@ test("pauses collection on a wall and continues on resume() in the same session"
     assert.equal(paused.disclosures, 1);
     assert.equal(paused.wall?.url, "https://shop.example.test/profile");
     assert.equal(paused.wall?.wall.kind, "captcha");
-    assert.deepEqual(paused.wall?.handoff.resumable, true);
+    assert.equal(paused.wall?.handoff.resumable, true);
     assert.equal(domain.listDisclosuresForSite(site.id).length, 1);
 
     // The human cleared the wall in the same session; the page now renders
