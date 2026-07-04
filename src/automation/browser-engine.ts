@@ -20,6 +20,9 @@ export type BrowserEngineName = "chromium" | "firefox" | "webkit";
 
 const ENGINES = { chromium, firefox, webkit } as const;
 
+/** Minimal shape `ensureBrowser` needs from a Playwright launcher; real ones satisfy it as-is. */
+export type BrowserLauncher = (options: { headless: boolean; channel?: "chrome" }) => Promise<Browser>;
+
 export interface BrowserEngineOptions {
   /** Default engine is Chromium; Firefox/WebKit are compat targets (RFC-002 §2.3). */
   engine?: BrowserEngineName;
@@ -28,6 +31,30 @@ export interface BrowserEngineOptions {
    * visible session (RFC-002 §5.2). Tests may pass `headless: true`.
    */
   headless?: boolean;
+  /**
+   * Launch via the user's installed Google Chrome (Playwright's `channel: "chrome"`)
+   * instead of the bundled Chromium build, for sites that treat the packaged
+   * Chromium as more automation-suspicious than a real Chrome binary (Issue #293).
+   * Chromium-only; ignored for `engine: "firefox" | "webkit"`. Falls back to the
+   * bundled build if real Chrome is not installed locally, since the unsigned DMG
+   * cannot assume the user has Chrome — this is an opt-in fallback, never the
+   * default launch path.
+   */
+  channel?: "chrome";
+  /** Test-only seam: overrides the Playwright launcher `ensureBrowser` calls. */
+  launch?: BrowserLauncher;
+}
+
+/** Pure helper so the channel/engine interaction is unit-testable without launching a browser. */
+export function buildLaunchOptions(
+  engineName: BrowserEngineName,
+  options: Pick<BrowserEngineOptions, "headless" | "channel">,
+): { headless: boolean; channel?: "chrome" } {
+  const headless = options.headless ?? false;
+  if (options.channel && engineName === "chromium") {
+    return { headless, channel: options.channel };
+  }
+  return { headless };
 }
 
 /** A `PageDriver` over a real Playwright `Page`, keyed by the scanner's data-af-id stamps. */
@@ -151,8 +178,17 @@ export class BrowserEngine {
 
   private async ensureBrowser(): Promise<Browser> {
     if (this.browser) return this.browser;
-    const engine = ENGINES[this.options.engine ?? "chromium"];
-    this.browser = await engine.launch({ headless: this.options.headless ?? false });
+    const engineName = this.options.engine ?? "chromium";
+    const launch = this.options.launch ?? ((opts) => ENGINES[engineName].launch(opts));
+    const launchOptions = buildLaunchOptions(engineName, this.options);
+    try {
+      this.browser = await launch(launchOptions);
+    } catch (err) {
+      if (!launchOptions.channel) throw err;
+      // Real Chrome is not installed locally (unsigned DMG cannot assume it is);
+      // fall back to the bundled Chromium build rather than failing the run.
+      this.browser = await launch({ headless: launchOptions.headless });
+    }
     return this.browser;
   }
 
