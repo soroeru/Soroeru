@@ -82,6 +82,107 @@ test("visibility runner logs in, collects redacted evidence, disclosures, relati
   }
 });
 
+test("visibility runner explores multiple pages after login and collects disclosures from each page", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "multi.example.test",
+      url: "https://multi.example.test/login",
+      displayName: "Multi",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
+    service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "new@example.test", valueType: "email" });
+
+    const page = new FakePageDriver([
+      snapshot("https://multi.example.test/login", [
+        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      ]),
+      {
+        ...snapshot("https://multi.example.test/account", [
+          field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+        links: [{ href: "https://multi.example.test/profile", text: "プロフィール" }],
+      },
+      snapshot("https://multi.example.test/profile", [
+        field("profile-email-2", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+      ]),
+    ], {
+      "profile-email": "old@example.test",
+      "profile-email-2": "second@example.test",
+    });
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      now: () => 1_700_000_000_000,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.disclosures, 2);
+    const disclosures = service.listDisclosuresForSite(site.id);
+    assert.equal(disclosures.length, 2);
+    assert.equal(disclosures.find((d) => d.attributeKey === "email")?.siteHeldValue, "old@example.test");
+    assert.equal(disclosures.filter((d) => d.attributeKey === "email").length, 2);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner resumes when a wall is detected during page exploration", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "wall-later.example.test",
+      url: "https://wall-later.example.test/login",
+      displayName: "Wall Later",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
+
+    const walledProfile = snapshot("https://wall-later.example.test/profile", [], "captcha required");
+    walledProfile.wallMarkers = ["recaptcha"];
+    const page = new FakePageDriver([
+      snapshot("https://wall-later.example.test/login", [
+        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+      ]),
+      {
+        ...snapshot("https://wall-later.example.test/account", [], "概要"),
+        links: [{ href: "https://wall-later.example.test/profile", text: "プロフィール" }],
+      },
+      walledProfile,
+      snapshot("https://wall-later.example.test/profile", [
+        field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+      ]),
+    ], {
+      "profile-email": "user@example.test",
+    });
+    let handoffs = 0;
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => {
+        handoffs++;
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.disclosures, 1);
+    assert.equal(handoffs, 1);
+    assert.equal(service.listConstraints().filter((constraint) => constraint.kind === "wall").length, 1);
+    assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner records a wall constraint and resumes after human handoff", async () => {
   const { dir, service } = await openService();
   try {

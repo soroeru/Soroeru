@@ -1,8 +1,11 @@
 import type { DomainService } from "../domain/domain-service.js";
 import type { Credential, SiteAccount } from "../domain/entities.js";
 import type { PageSnapshot } from "../types.js";
-import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
+import { collectDuringExploration } from "./disclosure-collector.js";
+import { DecisionEngine } from "./decision-engine.js";
 import { findLoginField, findLoginLink, findLoginSubmitButton, hasLoginFields } from "./login-handler.js";
+import { PageExplorer } from "./page-explorer.js";
+import { RuleEngine } from "./rule-engine.js";
 import type { SiteSession } from "./page-driver.js";
 import { WallDetectionService } from "./wall-detection.js";
 
@@ -90,24 +93,9 @@ export class VisibilityRunner {
 
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
-      const values = await session.page.readValues();
-      if (this.isCanceled()) return this.canceledResult(siteAccountId);
-      // Also collect read-only display values (account pages that render registered
-      // info as text, not editable fields). Synthetic fields run through the same
-      // deterministic classifier; the raw values stay local and are redacted/hashed.
-      const displayValues = (await session.page.readDisplayValues?.()) ?? {};
-      if (this.isCanceled()) return this.canceledResult(siteAccountId);
-      const displayFields = (snapshot.displayValues ?? []).map(displayValueToSyntheticField);
-      const combinedFields = [...snapshot.fields, ...displayFields];
-      const combinedValues = { ...values, ...displayValues };
-      const collection = collectDisclosures({
-        domain: this.options.domain,
-        siteAccount,
-        snapshot,
-        fields: combinedFields,
-        values: combinedValues,
-        now: this.now,
-      });
+      const explorer = new PageExplorer(new DecisionEngine(new RuleEngine()), this.wallDetection);
+      const collection = await this.collectFromExploration(siteAccount, session, explorer, snapshot);
+      if (collection.interruptedByWall) return this.handoffResult(siteAccountId);
       const relationships = this.recordRelationships(siteAccount, snapshot);
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
 
@@ -294,6 +282,76 @@ export class VisibilityRunner {
       current = await session.page.snapshot();
     }
     return undefined;
+  }
+
+  private async collectFromExploration(
+    siteAccount: SiteAccount,
+    session: SiteSession,
+    explorer: PageExplorer,
+    startSnapshot: PageSnapshot,
+  ): Promise<{ disclosures: number; dynamicCandidates: number; interruptedByWall: boolean }> {
+    const maxHandoffs = this.options.maxHandoffs ?? 3;
+    let handoffs = 0;
+    let collected = await collectDuringExploration(explorer.explore(session.page, startSnapshot.url, siteAccount, startSnapshot), {
+      domain: this.options.domain,
+      siteAccount,
+      pageDriver: session.page,
+      now: this.now,
+      isCanceled: () => this.isCanceled(),
+    });
+
+    while (collected.wall) {
+      const wall = collected.wall;
+      const evidence = this.options.domain.addEvidence({
+        siteAccountId: siteAccount.id,
+        pageUrl: wall.url,
+        observedAt: this.now(),
+        maskedSnippet: wall.wall.evidence,
+      });
+      this.options.domain.addConstraint({
+        siteAccountId: siteAccount.id,
+        kind: "wall",
+        detail: `${wall.wall.kind}: ${wall.wall.evidence}`,
+        evidenceIds: [evidence.id],
+        observedAt: this.now(),
+      });
+      this.options.domain.saveCheckpoint({
+        workflow: "visibility",
+        siteAccountId: siteAccount.id,
+        step: "exploration",
+        status: "handoff",
+        resumeData: { wall: wall.wall.kind, url: wall.url },
+      });
+
+      if (!this.options.handoff || handoffs >= maxHandoffs) {
+        return { disclosures: collected.disclosures, dynamicCandidates: collected.dynamicCandidates, interruptedByWall: true };
+      }
+      handoffs++;
+      const outcome = await this.options.handoff({
+        siteAccount,
+        instruction: this.wallDetection.instructionFor(wall.wall),
+        evidence: wall.wall.evidence,
+      });
+      if (outcome !== "resolved") {
+        return { disclosures: collected.disclosures, dynamicCandidates: collected.dynamicCandidates, interruptedByWall: true };
+      }
+
+      this.options.domain.saveCheckpoint({
+        workflow: "visibility",
+        siteAccountId: siteAccount.id,
+        step: "exploration:resume",
+        status: "in-progress",
+        resumeData: { url: session.page.currentUrl() },
+      });
+      collected = await collectDuringExploration(explorer.resume(), {
+        domain: this.options.domain,
+        siteAccount,
+        pageDriver: session.page,
+        now: this.now,
+        isCanceled: () => this.isCanceled(),
+      });
+    }
+    return { disclosures: collected.disclosures, dynamicCandidates: collected.dynamicCandidates, interruptedByWall: false };
   }
 
   private async login(session: SiteSession, credential: Credential, snapshot: PageSnapshot): Promise<void> {

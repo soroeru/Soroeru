@@ -57,6 +57,7 @@ export class PageExplorer {
     pageDriver: PageDriver,
     startUrl: string,
     siteAccount: { id: string; domain: string; displayName: string },
+    startSnapshot?: PageSnapshot,
   ): AsyncGenerator<ExplorationEvent> {
     this.currentState = {
       siteAccount: { id: siteAccount.id, domain: siteAccount.domain, displayName: siteAccount.displayName },
@@ -65,7 +66,7 @@ export class PageExplorer {
       pendingUrls: [normalizeUrl(startUrl)],
       deferredUrls: [],
     };
-    yield* this.continueExploration();
+    yield* this.continueExploration(startSnapshot);
   }
 
   /**
@@ -81,7 +82,7 @@ export class PageExplorer {
   }
 
   /** The exploration loop shared by explore() and resume(). */
-  private async *continueExploration(): AsyncGenerator<ExplorationEvent> {
+  private async *continueExploration(startSnapshot?: PageSnapshot): AsyncGenerator<ExplorationEvent> {
     const state = this.currentState;
     if (!state) throw new Error("no exploration state");
     const { pageDriver } = state;
@@ -89,31 +90,36 @@ export class PageExplorer {
     while (state.pendingUrls.length > 0) {
       const url = normalizeUrl(state.pendingUrls.shift()!);
       if (state.visitedUrls.has(url)) continue;
+      let snapshot: PageSnapshot;
 
       yield { kind: "navigating", url };
       // egress: target-site — pendingUrls holds only the caller-provided start
       // URL and links that passed the isSameSite check in the queueing loop.
-      await pageDriver.goto(url);
-      await pageDriver.waitForReady();
-      const snapshot = await pageDriver.snapshot();
-
-      const wall = this.wallDetector.detect(snapshot);
-      if (wall) {
-        // Not marked visited: resume() must re-visit this URL after the human
-        // clears the wall, so it goes to deferredUrls instead.
-        state.deferredUrls.push(url);
-        yield {
-          kind: "wall-detected",
-          url,
-          wall,
-          handoff: { reason: wall.kind, evidence: wall.evidence, resumable: true },
-        };
-        // Pause here; state stays on the instance until the caller resumes.
-        return;
+      if (state.visitedUrls.size === 0 && startSnapshot && normalizeUrl(startSnapshot.url) === url) {
+        state.visitedUrls.add(url);
+        snapshot = startSnapshot;
+        yield { kind: "page-snapshot", url, snapshot };
+      } else {
+        await pageDriver.goto(url);
+        await pageDriver.waitForReady();
+        snapshot = await pageDriver.snapshot();
+        const wall = this.wallDetector.detect(snapshot);
+        if (wall) {
+          // Not marked visited: resume() must re-visit this URL after the human
+          // clears the wall, so it goes to deferredUrls instead.
+          state.deferredUrls.push(url);
+          yield {
+            kind: "wall-detected",
+            url,
+            wall,
+            handoff: { reason: wall.kind, evidence: wall.evidence, resumable: true },
+          };
+          // Pause here; state stays on the instance until the caller resumes.
+          return;
+        }
+        state.visitedUrls.add(url);
+        yield { kind: "page-snapshot", url, snapshot };
       }
-
-      state.visitedUrls.add(url);
-      yield { kind: "page-snapshot", url, snapshot };
 
       const linkDecision = await this.decisionEngine.decide({
         kind: "find-profile-links",
