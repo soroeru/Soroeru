@@ -44,9 +44,26 @@ UI を Playwright で操作して Visibility のハッピーパスを自動検�
   `.github/workflows/ci.yml` には追加しない。理由は Ubuntu CI ランナーでネイティブ
   Electron GUI を安定させるコスト（Xvfb 等）を今は払わないため。`docs/testing.md` に
   「ローカル専用、手動/リリース前チェック」として明記する。
+- **Visibility 収集後の永続化バグを本 Issue で修正する**（ローカル AI レビューで検出、
+  Product Owner 確認済み）: `electron/session.ts` の `runVisibility()` は
+  `VisibilityService.runSite()` を呼ぶのみで、他の変更系メソッド（`importCsv`
+  `importSavedPage` `deleteSiteAccount` `confirmDynamicAttributeCandidate`
+  `setSessionPersistence` 等）と異なり `await this.vault.save()` を一切呼んでいない。
+  `VaultV2` は変更をメモリ上の `Map` にしか保持しないため（`save()` が呼ばれて初めて
+  暗号化 JSON としてディスクに書かれる、`src/store/vault-v2.ts`）、収集結果は
+  ユーザーが施錠・終了した時点で失われうる — Visibility スライスの中核である
+  「開示台帳を構築する」という約束を破る実害のあるバグ。修正は
+  `runVisibility()` の成功・失敗を問わず（収集失敗時も Constraint 記録という
+  ドメイン変更を伴うため）、既存の他メソッドと同型で `await this.vault.save()`
+  を追加するだけの小さな変更（`electron/session.ts`）。これにより E2E の
+  「収集後 vault.json に開示が永続化されている」というアサーションが初めて
+  実際に成立する。
 
 ## この増分の範囲
 
+- `electron/session.ts`: `runVisibility()` で `VisibilityService.runSite()` の
+  結果を得たあと（成功・失敗いずれの場合も）`await this.vault.save()` を追加する
+  （上記「決定事項」参照）。
 - `tests/e2e/app-ui.e2e.ts`（新規）:
   1. `startPocServer(0)` でローカルフェイクサイトを起動し、`01-basic` の実際のポート
      付き URL を取得する。
@@ -63,9 +80,11 @@ UI を Playwright で操作して Visibility のハッピーパスを自動検�
      自動待機で待つ。
   8. `finally` で `electronApp.close()` と `pocServer.close()` を必ず呼ぶ
      （`real-visibility.e2e.ts` の `finally { await engine.closeAll(); }` と同型）。
-  9. アサーション: 取り込みサマリーの件数、収集後の開示件数 ≥ 1、ボールトファイルが
-     `state/soroeru-poc/e2e-app-ui/<timestamp>/vault.json` に暗号化 JSON として
-     存在すること（生の認証情報が平文で残っていないことの軽い確認）。
+  9. アサーション: 取り込みサマリーの件数、収集後の開示件数 ≥ 1（UI 上）に加えて、
+     `electronApp.close()` 後に `state/soroeru-poc/e2e-app-ui/<timestamp>/vault.json`
+     を同じフェイクパスフレーズで `VaultV2.open()` し直し、対象サイトの開示レコードが
+     実際にディスクへ永続化されていること（上記の永続化バグ修正の回帰防止）。生の
+     認証情報が平文で残っていないことも合わせて確認する。
 - `package.json`: `"e2e:app-ui": "npm run build:app && node --test dist/compiled/tests/e2e/app-ui.e2e.js"`
 - `docs/testing.md`: 新しいローカル専用 E2E フローとして 1 セクション追記
   （§7 CI 表・§5 コマンド一覧・ローカル専用の理由）。
