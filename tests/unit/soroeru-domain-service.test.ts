@@ -413,3 +413,127 @@ test("deleteSiteAccount also removes any persisted session state for that site",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// Dynamic-attribute candidates (docs/design/visibility-exploration.md §5): a
+// site-unit vs. global-unit view of the same candidate schema. Exploration
+// Phase 4/5 can surface the same proposed key from more than one page on a
+// site, or from more than one site, before the user confirms it (Issue #250).
+test("recordDynamicAttributeCandidate merges observations of the same proposed key across sites", async () => {
+  const { dir, service } = await openService();
+  try {
+    const siteA = service.upsertSiteAccount({ domain: "a.example.test", displayName: "A" });
+    const siteB = service.upsertSiteAccount({ domain: "b.example.test", displayName: "B" });
+
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: siteA.id,
+      label: "職業",
+      fieldId: "job-a",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+      now: () => 1_700_000_000_000,
+    });
+    // A second page on the same site observes the identical field again: this
+    // must not create a duplicate candidate.
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: siteA.id,
+      label: "職業",
+      fieldId: "job-a-2",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+      now: () => 1_700_000_100_000,
+    });
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: siteB.id,
+      label: "ご職業",
+      fieldId: "job-b",
+      proposedAttributeKey: "custom.occupation",
+      matchTerms: ["ご職業"],
+      now: () => 1_700_000_200_000,
+    });
+
+    const candidates = service.listDynamicAttributeCandidates();
+    assert.equal(candidates.length, 1);
+    const candidate = candidates[0];
+    assert.equal(candidate?.status, "candidate");
+    assert.equal(candidate?.createdAt, 1_700_000_000_000);
+    assert.equal(candidate?.updatedAt, 1_700_000_200_000);
+    assert.deepEqual(new Set(candidate?.siteAccountIds), new Set([siteA.id, siteB.id]));
+    assert.deepEqual(new Set(candidate?.matchTerms), new Set(["職業", "ご職業"]));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("deleteSiteAccount drops only the deleted site from a still-pending multi-site candidate", async () => {
+  const { dir, service } = await openService();
+  try {
+    const siteA = service.upsertSiteAccount({ domain: "a.example.test", displayName: "A" });
+    const siteB = service.upsertSiteAccount({ domain: "b.example.test", displayName: "B" });
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: siteA.id,
+      label: "職業",
+      fieldId: "job-a",
+      proposedAttributeKey: "custom.occupation",
+    });
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: siteB.id,
+      label: "職業",
+      fieldId: "job-b",
+      proposedAttributeKey: "custom.occupation",
+    });
+
+    assert.equal(service.deleteSiteAccount(siteA.id).ok, true);
+
+    const candidates = service.listDynamicAttributeCandidates();
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0]?.status, "candidate");
+    assert.deepEqual(candidates[0]?.siteAccountIds, [siteB.id]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("deleteSiteAccount removes a pending candidate entirely once its only observing site is gone", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "solo.example.test", displayName: "Solo" });
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: site.id,
+      label: "職業",
+      fieldId: "job",
+      proposedAttributeKey: "custom.occupation",
+    });
+
+    assert.equal(service.deleteSiteAccount(site.id).ok, true);
+
+    assert.equal(service.listDynamicAttributeCandidates().length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("deleteSiteAccount never touches an already-confirmed (validated) dynamic attribute", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "solo.example.test", displayName: "Solo" });
+    service.recordDynamicAttributeCandidate({
+      siteAccountId: site.id,
+      label: "職業",
+      fieldId: "job",
+      proposedAttributeKey: "custom.occupation",
+    });
+    service.confirmDynamicAttributeCandidate({
+      label: "職業",
+      attributeKey: "custom.occupation",
+      matchTerms: ["職業"],
+    });
+
+    assert.equal(service.deleteSiteAccount(site.id).ok, true);
+
+    const candidates = service.listDynamicAttributeCandidates();
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0]?.status, "validated");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
