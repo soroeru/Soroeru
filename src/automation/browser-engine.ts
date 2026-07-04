@@ -9,9 +9,12 @@
 //
 // Lifecycle (RFC-002 §2.3): contexts are ephemeral and disposed on
 // `close()`; `closeAll()` disposes every open session and the browser so app
-// quit leaves no orphan process and no plaintext browser profile on disk.
+// quit leaves no orphan process and no plaintext browser profile on disk. A
+// context may optionally be seeded from a previously-exported `storageState`
+// (Issue #294, opt-in per Site Account) — the disk copy of that state is
+// always the vault's encrypted record, never a raw Playwright profile.
 
-import { chromium, firefox, webkit, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, firefox, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
 import { snapshotPage, waitForFields } from "../agent/scan.js";
 import type { PageDriver, SiteSession } from "./page-driver.js";
 import type { PageSnapshot } from "../types.js";
@@ -171,6 +174,15 @@ class PlaywrightSiteSession implements SiteSession {
     this.page = page;
   }
 
+  /**
+   * Export the context's current `storageState` (Issue #294). Must be called
+   * before `close()` — Playwright's `storageState()` reads from the live
+   * context, not a disposed one.
+   */
+  async exportStorageState(): Promise<string> {
+    return JSON.stringify(await this.context.storageState());
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -216,13 +228,17 @@ export class BrowserEngine {
   }
 
   /**
-   * Open a fresh ephemeral context + page for one site. The site argument is
-   * accepted to match the runner's `openSession(site)` shape; the context is
-   * ephemeral regardless of which site it is for.
+   * Open a context + page for one site. The site argument is accepted to
+   * match the runner's `openSession(site)` shape; the context itself stays
+   * decoupled from the domain layer (no `SiteAccount` import here — see
+   * `SoroeruSession.defaultOpenSession`, which is the layer that knows about
+   * persisted sessions and passes `options.storageState` when opted in,
+   * Issue #294). Without `options.storageState` the context is a fresh
+   * ephemeral one, as before.
    */
-  async openSession(_site?: unknown): Promise<SiteSession> {
+  async openSession(_site?: unknown, options?: { storageState?: string }): Promise<SiteSession> {
     const browser = await this.ensureBrowser();
-    const context = await browser.newContext();
+    const context = await browser.newContext(parseStorageStateOption(options?.storageState));
     const page = await context.newPage();
     const session = new PlaywrightSiteSession(context, new PlaywrightPageDriver(page), (s) =>
       this.sessions.delete(s),
@@ -255,6 +271,26 @@ export class BrowserEngine {
         // Same: never let a wedged browser prevent the process from exiting.
       }
     }
+  }
+}
+
+/**
+ * Parse a persisted `storageState` JSON string into the object shape
+ * `newContext()` expects (Issue #294). Playwright's `storageState` context
+ * option treats a bare string as a *file path*, so the parsed object — never
+ * the JSON string itself — must be passed through, or a persisted session
+ * would silently fail to load. A parse failure (corrupt/foreign data, or a
+ * format from an incompatible Playwright version) falls back to a fresh
+ * ephemeral context rather than failing the whole session open.
+ */
+function parseStorageStateOption(
+  storageState: string | undefined,
+): Pick<BrowserContextOptions, "storageState"> {
+  if (!storageState) return {};
+  try {
+    return { storageState: JSON.parse(storageState) as NonNullable<BrowserContextOptions["storageState"]> };
+  } catch {
+    return {};
   }
 }
 

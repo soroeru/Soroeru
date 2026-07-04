@@ -4,8 +4,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SoroeruSession } from "../../electron/session.js";
+import type { SessionEngine } from "../../electron/session.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
+import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
+import type { PageSnapshot } from "../../src/types.js";
 
 // Fake data only (docs/testing.md). Covers issue #160's trusted-layer behavior:
 // CSV import counts, the composed per-site Disclosure ledger with stale flags,
@@ -415,6 +418,189 @@ test("a candidate persisted under the pre-siteAccountIds shape still appears in 
 
     const detail = session.ledgerSite(site.id);
     assert.ok(detail?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("session persistence: set/clear toggles the ledger detail view and enforces immediate clear-on-disable", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/", displayName: "Example" });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+
+    const initial = session.ledgerSite(site.id);
+    assert.deepEqual(initial?.sessionPersistence, { enabled: false, hasPersistedSession: false });
+
+    const enabled = await session.setSessionPersistence({ siteAccountId: site.id, enabled: true });
+    assert.equal(enabled.ok, true);
+    assert.equal(enabled.state?.enabled, true);
+    assert.equal(enabled.state?.hasPersistedSession, false);
+    assert.equal(session.ledgerSite(site.id)?.sessionPersistence.enabled, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** Seed a site with an opted-in, already-persisted session (as if a prior Visibility run exported one). */
+async function seedPersistedSession(path: string): Promise<{ siteId: string }> {
+  const vault = await VaultV2.open(path, PASSPHRASE);
+  const domain = new DomainService(vault);
+  const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/", displayName: "Example" });
+  domain.setSessionPersistenceEnabled(site.id, true);
+  domain.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[],"origins":[]}' });
+  await vault.save();
+  vault.lock();
+  return { siteId: site.id };
+}
+
+test("session persistence: the ledger detail reflects an already-persisted session, and clear/disable remove it", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedPersistedSession(path);
+    const session = new SoroeruSession(path);
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+
+    const withSession = session.ledgerSite(siteId);
+    assert.equal(withSession?.sessionPersistence.enabled, true);
+    assert.equal(withSession?.sessionPersistence.hasPersistedSession, true);
+    assert.ok(withSession?.sessionPersistence.updatedAt);
+    assert.ok(withSession?.sessionPersistence.expiresAt);
+
+    const cleared = await session.clearSessionPersistence(siteId);
+    assert.equal(cleared.ok, true);
+    assert.equal(cleared.state?.enabled, true);
+    assert.equal(cleared.state?.hasPersistedSession, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("session persistence: disabling unconditionally and immediately clears an existing persisted session", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedPersistedSession(path);
+    const session = new SoroeruSession(path);
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+    assert.equal(session.ledgerSite(siteId)?.sessionPersistence.hasPersistedSession, true);
+
+    const disabled = await session.setSessionPersistence({ siteAccountId: siteId, enabled: false });
+    assert.equal(disabled.state?.enabled, false);
+    assert.equal(disabled.state?.hasPersistedSession, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("session persistence: locked and not-found are reported without throwing", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    await session.setup(PASSPHRASE);
+
+    assert.deepEqual(await session.setSessionPersistence({ siteAccountId: "missing", enabled: true }), {
+      ok: false,
+      error: "not-found",
+    });
+    assert.deepEqual(await session.clearSessionPersistence("missing"), { ok: false, error: "not-found" });
+
+    session.lock();
+    assert.deepEqual(await session.setSessionPersistence({ siteAccountId: "any", enabled: true }), {
+      ok: false,
+      error: "locked",
+    });
+    assert.deepEqual(await session.clearSessionPersistence("any"), { ok: false, error: "locked" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+/** Minimal PageDriver reaching a fast "no-data" result: no credential, no fields to collect. */
+class NoDataPageDriver implements PageDriver {
+  closed = false;
+  async goto(): Promise<void> {}
+  async waitForReady(): Promise<void> {}
+  currentUrl(): string {
+    return "https://example.test/account";
+  }
+  async snapshot(): Promise<PageSnapshot> {
+    return {
+      url: "https://example.test/account",
+      title: "Account",
+      fields: [],
+      buttons: [],
+      links: [],
+      visibleText: "",
+      iframeSrcs: [],
+      wallMarkers: [],
+    };
+  }
+  async readValues(): Promise<Record<string, string>> {
+    return {};
+  }
+  async fillField(): Promise<void> {}
+  async click(): Promise<void> {}
+}
+
+/**
+ * Exercises the real (production) `defaultOpenSession` / `wrapSessionForPersistence`
+ * seam in `electron/session.ts` — every other test in this file and in
+ * `soroeru-visibility-service.test.ts` injects a full `openSession` override that
+ * bypasses this seam entirely. Here only the underlying `SessionEngine` is faked,
+ * so `SoroeruSession` runs its own persistence-aware opener/closer.
+ */
+test("session persistence: a real run passes the persisted storageState into the engine and re-saves it on close (Issue #294)", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/account", displayName: "Example" });
+    domain.setSessionPersistenceEnabled(site.id, true);
+    domain.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[{"name":"old"}],"origins":[]}' });
+    await vault.save();
+    vault.lock();
+
+    const openSessionCalls: Array<{ storageState?: string }> = [];
+    const exportedStorageState = '{"cookies":[{"name":"fresh"}],"origins":[]}';
+    const engine: SessionEngine = {
+      openSession: async (_site, options) => {
+        openSessionCalls.push({ ...(options?.storageState !== undefined ? { storageState: options.storageState } : {}) });
+        const page = new NoDataPageDriver();
+        const fakeSession: SiteSession = {
+          page,
+          close: async () => {
+            page.closed = true;
+          },
+          exportStorageState: async () => exportedStorageState,
+        };
+        return fakeSession;
+      },
+      closeAll: async () => {},
+    };
+
+    const session = new SoroeruSession(path, { engine });
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+
+    const result = await session.runVisibility(site.id);
+    assert.equal(result.status, "no-data");
+
+    // The prior persisted session was handed to the engine as the seed storageState.
+    assert.deepEqual(openSessionCalls, [{ storageState: '{"cookies":[{"name":"old"}],"origins":[]}' }]);
+
+    // On close, the freshly exported storageState was saved back to the vault
+    // (verified via a fresh reopen, so this is a real on-disk round-trip, not
+    // just an in-memory check).
+    session.lock();
+    const reopened = new SoroeruSession(path);
+    assert.equal((await reopened.unlock(PASSPHRASE)).ok, true);
+    const view = reopened.ledgerSite(site.id);
+    assert.equal(view?.sessionPersistence.hasPersistedSession, true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

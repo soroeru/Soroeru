@@ -61,7 +61,17 @@ Stored locally, **encrypted** (see [`architecture.md`](architecture.md) §3):
 - per-site Disclosure records, including encrypted site-held values, normalized hashes,
   references, and mandates;
 - local candidate definitions, because they reveal user activity and account-management
-  intent even when they do not contain raw personal values.
+  intent even when they do not contain raw personal values;
+- **opt-in persisted browser session state** (`SessionState.storageState`, Issue #294): an
+  exported Playwright `storageState` (cookies + localStorage), only when the user has
+  enabled persistence for that specific Site Account (default off). It is at least as
+  sensitive as a credential — it can grant a logged-in session without the password — so
+  it is encrypted the same way as every other vault record and never written elsewhere.
+  Fixed 30-day sliding expiry (no per-site risk tiering); a read past expiry treats the
+  record as absent and discards it. Disabling the per-site toggle unconditionally and
+  immediately clears any existing record (same "reduction is immediate" rule as the
+  Delegation Boundary), and the ledger UI offers an explicit "clear now" action independent
+  of the toggle.
 
 Never stored:
 

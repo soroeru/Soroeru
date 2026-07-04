@@ -22,6 +22,8 @@ import {
   type SavedPageImportResult,
   type SavedPageOpenSiteResult,
   type RevealResult,
+  type SessionPersistenceMutationResult,
+  type SetSessionPersistenceRequest,
   type SiteLedgerDetail,
   type SiteLedgerSummary,
   type VaultMutationResult,
@@ -66,6 +68,10 @@ export interface SoroeruApi {
       request: ConfirmDynamicAttributeCandidateRequest,
     ): Promise<ConfirmDynamicAttributeCandidateResult>;
     deleteSite(request: DeleteSiteAccountRequest): Promise<DeleteSiteAccountResultView>;
+  };
+  sessionPersistence: {
+    set(request: SetSessionPersistenceRequest): Promise<SessionPersistenceMutationResult>;
+    clear(siteAccountId: string): Promise<SessionPersistenceMutationResult>;
   };
   visibility: {
     run(siteAccountId: string): Promise<VisibilityRunResultView>;
@@ -116,6 +122,12 @@ export function createSoroeruApi(
         invoke(IPC_CHANNELS.ledgerConfirmDynamicCandidate, request) as Promise<ConfirmDynamicAttributeCandidateResult>,
       deleteSite: (request) =>
         invoke(IPC_CHANNELS.ledgerDeleteSite, request) as Promise<DeleteSiteAccountResultView>,
+    },
+    sessionPersistence: {
+      set: (request) =>
+        invoke(IPC_CHANNELS.sessionPersistenceSet, request) as Promise<SessionPersistenceMutationResult>,
+      clear: (siteAccountId) =>
+        invoke(IPC_CHANNELS.sessionPersistenceClear, siteAccountId) as Promise<SessionPersistenceMutationResult>,
     },
     visibility: {
       run: (siteAccountId) =>

@@ -54,6 +54,8 @@ export const IPC_CHANNELS = {
   revealValue: "soroeru:ledger:reveal",
   ledgerConfirmDynamicCandidate: "soroeru:ledger:confirm-dynamic-candidate",
   ledgerDeleteSite: "soroeru:ledger:delete-site",
+  sessionPersistenceSet: "soroeru:session-persistence:set",
+  sessionPersistenceClear: "soroeru:session-persistence:clear",
   visibilityRun: "soroeru:visibility:run",
   visibilityResume: "soroeru:visibility:resume",
   visibilityAbort: "soroeru:visibility:abort",
@@ -275,6 +277,19 @@ export interface PendingAttributeCandidateView {
   observedAt: number;
 }
 
+/**
+ * Whether a Site Account has opted into persisted-session storage and whether
+ * a live (non-expired) persisted `storageState` currently exists (Issue #294).
+ * Never carries the storageState payload itself — that never leaves the main
+ * process.
+ */
+export interface SessionPersistenceView {
+  enabled: boolean;
+  hasPersistedSession: boolean;
+  updatedAt?: number;
+  expiresAt?: number;
+}
+
 /** The per-site composed ledger view: the summary plus its masked detail rows. */
 export interface SiteLedgerDetail extends SiteLedgerSummary {
   disclosures: DisclosureView[];
@@ -282,6 +297,7 @@ export interface SiteLedgerDetail extends SiteLedgerSummary {
   constraints: ConstraintView[];
   /** Unconfirmed dynamic-attribute candidates observed on this site. */
   pendingAttributeCandidates: PendingAttributeCandidateView[];
+  sessionPersistence: SessionPersistenceView;
 }
 
 /**
@@ -326,6 +342,19 @@ export interface DeleteSiteAccountResultView {
     constraints: number;
     mandates: number;
   };
+}
+
+// --- Session persistence (opt-in encrypted storageState, Issue #294) ---
+
+export interface SetSessionPersistenceRequest {
+  siteAccountId: string;
+  enabled: boolean;
+}
+
+export interface SessionPersistenceMutationResult {
+  ok: boolean;
+  error?: "locked" | "not-found";
+  state?: SessionPersistenceView;
 }
 
 // --- Visibility run (auto-login / collection, RFC-002 §5.1 / §5.2) ---

@@ -288,3 +288,128 @@ test("deleteSiteAccount reports not-found without deleting anything", async () =
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// --- Session state (persisted storageState, Issue #294) ---
+
+test("savePersistedSessionState round-trips through vault encryption and save/reload", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-domain-"));
+  const path = join(dir, "vault.json");
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const service = new DomainService(vault);
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[],"origins":[]}' });
+    await vault.save();
+    vault.lock();
+
+    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopenedService = new DomainService(reopened);
+    const state = reopenedService.getPersistedSessionState(site.id);
+    assert.equal(state?.storageState, '{"cookies":[],"origins":[]}');
+    assert.equal(reopenedService.getSiteAccount(site.id)?.persistSessionEnabled, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("getPersistedSessionState treats an expired record as absent and discards it", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    const now = Date.now();
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}", now });
+
+    // Still valid just before the 30-day mark.
+    assert.ok(service.getPersistedSessionState(site.id, now + 29 * 24 * 60 * 60 * 1000));
+    // Expired at/after the 30-day mark: treated as absent and discarded.
+    assert.equal(service.getPersistedSessionState(site.id, now + 30 * 24 * 60 * 60 * 1000 + 1), undefined);
+    assert.equal(service.getPersistedSessionState(site.id), undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("peekPersistedSessionState reports expiry without discarding the expired record (unlike getPersistedSessionState)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    const now = Date.now();
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}", now });
+    const stillValidAt = now + 29 * 24 * 60 * 60 * 1000;
+    const expiredAt = now + 30 * 24 * 60 * 60 * 1000 + 1;
+
+    assert.ok(service.peekPersistedSessionState(site.id, stillValidAt));
+    // Peeking past expiry reports absent but must not mutate the vault.
+    assert.equal(service.peekPersistedSessionState(site.id, expiredAt), undefined);
+    assert.ok(service.getPersistedSessionState(site.id, stillValidAt), "peek must not have discarded the record");
+    // The mutating getPersistedSessionState does discard it once actually read as expired.
+    assert.equal(service.getPersistedSessionState(site.id, expiredAt), undefined);
+    assert.equal(service.getPersistedSessionState(site.id, stillValidAt), undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("savePersistedSessionState slides expiresAt forward on every re-export", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    const first = Date.now();
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}", now: first });
+    const later = first + 10 * 24 * 60 * 60 * 1000;
+    const refreshed = service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}", now: later });
+    assert.equal(refreshed.expiresAt, later + 30 * 24 * 60 * 60 * 1000);
+    assert.equal(refreshed.createdAt, first);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("setSessionPersistenceEnabled(false) unconditionally and immediately clears the persisted state", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}" });
+    assert.ok(service.getPersistedSessionState(site.id));
+
+    const updated = service.setSessionPersistenceEnabled(site.id, false);
+    assert.equal(updated?.persistSessionEnabled, false);
+    assert.equal(service.getPersistedSessionState(site.id), undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("clearPersistedSessionState removes a session while persistence stays enabled", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}" });
+
+    assert.equal(service.clearPersistedSessionState(site.id), true);
+    assert.equal(service.getPersistedSessionState(site.id), undefined);
+    assert.equal(service.getSiteAccount(site.id)?.persistSessionEnabled, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("deleteSiteAccount also removes any persisted session state for that site", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
+    service.setSessionPersistenceEnabled(site.id, true);
+    service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}" });
+
+    assert.equal(service.deleteSiteAccount(site.id).ok, true);
+    assert.equal(service.getPersistedSessionState(site.id), undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

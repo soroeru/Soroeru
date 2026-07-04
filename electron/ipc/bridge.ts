@@ -38,6 +38,10 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
       session.confirmDynamicAttributeCandidate(toConfirmDynamicCandidateRequest(request)),
     [IPC_CHANNELS.ledgerDeleteSite]: (request: unknown) =>
       session.deleteSiteAccount(toDeleteSiteAccountRequest(request)),
+    [IPC_CHANNELS.sessionPersistenceSet]: (request: unknown) =>
+      session.setSessionPersistence(toSetSessionPersistenceRequest(request)),
+    [IPC_CHANNELS.sessionPersistenceClear]: (siteAccountId: unknown) =>
+      session.clearSessionPersistence(String(siteAccountId ?? "")),
     [IPC_CHANNELS.visibilityRun]: (siteAccountId: unknown) =>
       session.runVisibility(String(siteAccountId ?? "")),
     [IPC_CHANNELS.visibilityResume]: () => session.resumeVisibility(),
@@ -74,6 +78,14 @@ function toDeleteSiteAccountRequest(request: unknown): { siteAccountId: string; 
   return {
     siteAccountId: String(input["siteAccountId"] ?? ""),
     confirmedFourthBoundary: input["confirmedFourthBoundary"] === true,
+  };
+}
+
+function toSetSessionPersistenceRequest(request: unknown): { siteAccountId: string; enabled: boolean } {
+  const input = request && typeof request === "object" ? (request as Record<string, unknown>) : {};
+  return {
+    siteAccountId: String(input["siteAccountId"] ?? ""),
+    enabled: input["enabled"] === true,
   };
 }
 

@@ -20,6 +20,7 @@ import {
   type Evidence,
   type LocalDefinition,
   type PersonalAttribute,
+  type SessionState,
   type SiteAccount,
   type Sensitivity,
   type StaleState,
@@ -58,6 +59,9 @@ export interface DeleteSiteAccountResult {
     mandates: number;
   };
 }
+
+/** Fixed 30-day expiry, sliding on every successful re-export (Issue #294 decision). */
+export const SESSION_STATE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface AddCredentialInput {
   siteAccountId: string;
@@ -235,6 +239,7 @@ export class DomainService {
 
     this.deleteSiteWorkflowCheckpoints(siteAccountId);
     this.removeSiteFromDynamicAttributeCandidates(siteAccountId);
+    this.vault.delete("sessionState", siteAccountId);
     const deletedSiteAccounts = this.vault.delete("siteAccount", siteAccountId) ? 1 : 0;
     return {
       ok: true,
@@ -268,6 +273,76 @@ export class DomainService {
 
   listCredentialsForSite(siteAccountId: string): Credential[] {
     return this.vault.list("credential").filter((c) => c.siteAccountId === siteAccountId);
+  }
+
+  // --- Session state (persisted storageState, Issue #294) ---
+
+  /**
+   * Toggle the per-site opt-in for persisting a browser session across
+   * Visibility runs. Disabling is unconditional and immediate: any existing
+   * `SessionState` for the site is cleared in the same call (mirrors
+   * Delegation Boundary reduction — CLAUDE.md "reduction is unconditional and
+   * immediate").
+   */
+  setSessionPersistenceEnabled(siteAccountId: string, enabled: boolean): SiteAccount | undefined {
+    const site = this.getSiteAccount(siteAccountId);
+    if (!site) return undefined;
+    const updated: SiteAccount = { ...site, persistSessionEnabled: enabled, updatedAt: Date.now() };
+    this.vault.put("siteAccount", updated);
+    if (!enabled) this.vault.delete("sessionState", siteAccountId);
+    return updated;
+  }
+
+  /**
+   * Insert or refresh the persisted `storageState` for a site. Always slides
+   * `expiresAt` forward from `now`, so a session that keeps getting reused
+   * never silently expires mid-use.
+   */
+  savePersistedSessionState(input: { siteAccountId: string; storageState: string; now?: number }): SessionState {
+    const now = input.now ?? Date.now();
+    const existing = this.vault.get("sessionState", input.siteAccountId);
+    const state: SessionState = {
+      id: input.siteAccountId,
+      siteAccountId: input.siteAccountId,
+      storageState: input.storageState,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+      expiresAt: now + SESSION_STATE_EXPIRY_MS,
+    };
+    this.vault.put("sessionState", state);
+    return state;
+  }
+
+  /**
+   * Read the persisted `SessionState` for a site, treating an expired one as
+   * absent and discarding it (Issue #294: fixed 30-day expiry, no per-site
+   * risk tiering).
+   */
+  getPersistedSessionState(siteAccountId: string, now: number = Date.now()): SessionState | undefined {
+    const state = this.vault.get("sessionState", siteAccountId);
+    if (!state) return undefined;
+    if (state.expiresAt <= now) {
+      this.vault.delete("sessionState", siteAccountId);
+      return undefined;
+    }
+    return state;
+  }
+
+  /**
+   * Read-only variant of {@link getPersistedSessionState}: reports whether a
+   * live (non-expired) session exists without deleting an expired one as a
+   * side effect. For pure-read call sites (e.g. the ledger detail view) that
+   * must not mutate the vault just by being viewed.
+   */
+  peekPersistedSessionState(siteAccountId: string, now: number = Date.now()): SessionState | undefined {
+    const state = this.vault.get("sessionState", siteAccountId);
+    if (!state || state.expiresAt <= now) return undefined;
+    return state;
+  }
+
+  /** Explicit "clear now" while persistence stays enabled — a fresh session starts next run. */
+  clearPersistedSessionState(siteAccountId: string): boolean {
+    return this.vault.delete("sessionState", siteAccountId);
   }
 
   // --- Disclosures (the ledger edge) ---

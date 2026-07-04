@@ -106,8 +106,8 @@ bypass); and local-first (no hosted vault, telemetry, analytics, or crash report
 | Runtime / language | **Node.js + TypeScript + Electron** | Playwright's primary runtime is Node-compatible; Electron main can run Playwright, vault services, and provider SDKs without a sidecar. TypeScript keeps page snapshots, the Disclosure ledger, Policy, and IPC contracts shared and typed end to end. |
 | UI | **React + Vite + TypeScript** in the Electron renderer, with `contextIsolation`, `sandbox`, and `nodeIntegration: false`; all privileged operations go through typed preload IPC | Soroeru's UI is mostly ledger tables, filters, forms, confirmation gates, policy settings, and reflection surfaces — React's ecosystem is strongest for accessible primitives, form validation, and virtualized tables. |
 | Browser automation | **Playwright Library**, headed | Unified automation API across Chromium / Firefox / WebKit; supports a live headed session the user can take over for MFA/CAPTCHA. Default packaged engine is Chromium for packaging simplicity; Firefox/WebKit remain compatibility targets behind the same `BrowserEngine` abstraction. |
-| Browser session policy | **Ephemeral Playwright contexts by default**; hand-off/resume happens in the same live page/context; no raw browser profile or cookies persisted as durable plaintext outside the vault | If session persistence is ever added, it must be stored as encrypted vault state (e.g. an encrypted exported `storageState`), never a raw browser profile. If the app exits, a run is safely stopped and must be resumed or retried from encrypted workflow state, not from a raw browser profile. |
-| Browser channel | Packaged Chromium by default; **`BrowserEngine` accepts an opt-in `channel: "chrome"`** to launch the user's installed Google Chrome instead, falling back to packaged Chromium if it is not installed (Issue #293) | Some sites treat the bundled Chromium build as more automation-suspicious than a real Chrome binary. The option is opt-in and off by default (no UI wiring yet); it does not change session persistence — contexts opened via `channel: "chrome"` are still ephemeral unless the (not yet implemented) encrypted `storageState` persistence above is added on top. |
+| Browser session policy | **Ephemeral Playwright contexts by default; opt-in per-Site-Account encrypted `storageState` persistence** (Issue #294), toggled from the ledger's site detail view; no raw browser profile or cookies persisted as durable plaintext outside the vault | For sites that treat a fresh context as automation-suspicious, the user may opt in per site to reuse a session. The exported `storageState` is stored as an encrypted Vault v2 record (`sessionState`, AES-256-GCM / Argon2id, same as every other record) — never a raw browser profile — with a fixed 30-day sliding expiry and immediate clearing on opt-out. If the app exits mid-run, the run is safely stopped and resumed/retried from encrypted workflow state, not from a raw browser profile. |
+| Browser channel | Packaged Chromium by default; **`BrowserEngine` accepts an opt-in `channel: "chrome"`** to launch the user's installed Google Chrome instead, falling back to packaged Chromium if it is not installed (Issue #293) | Some sites treat the bundled Chromium build as more automation-suspicious than a real Chrome binary. The option is opt-in and off by default (no UI wiring yet, separate from the `storageState` persistence toggle above, which is unwired to `channel: "chrome"`). |
 | Local encrypted storage | **Vault v2**: a versioned encrypted record vault (§3), not a plaintext SQLite database or a single encrypted JSON blob | Matches the AES-256-GCM + Argon2id requirement, avoids native DB dependencies, and supports entity-by-entity migration and audit records. SQLCipher SQLite may be revisited later if ledger scale, query performance, or concurrent access becomes a real constraint. |
 | AI provider abstraction | **Deterministic-first**; optional Anthropic/OpenAI adapters are stateless, structure-only, and user-configured | Matches the requirement that raw values never leave the local process; AI proposes (structure classification, terms summarization, Constraint findings), Policy/Delegation decides. |
 | Packaging | **Unsigned macOS DMG** for the MVP, via **Electron Forge `maker-dmg`**, with clear Gatekeeper instructions and no auto-update | Matches the macOS-only MVP, removes the user's Node.js prerequisite, and bundles the app plus the default Playwright browser. Signing/notarization, auto-update, and other platforms are explicitly later. |
@@ -137,17 +137,19 @@ known alternatives and concrete triggers for reconsideration:
   collection has two or more confirmed beta-site failures that pass on Firefox or WebKit
   with the same workflow, or if beta support requires a second bundled engine to satisfy the
   browser-engine independence goal.
-- **`channel: "chrome"` stays opt-in, unwired to any setting, with no `storageState`
-  persistence yet**: a full Soroeru-owned Chrome extension (#291) was evaluated as a heavier
-  alternative and not selected for this increment; `channel: "chrome"` needed no new
-  extension surface, native host, or packaging change, so it landed first as the minimal
-  `BrowserEngine` option. Real-site pass/fail comparison data between packaged Chromium and
-  `channel: "chrome"` was not collected in this Issue (no real-site network access or test
-  credentials in this environment, and `docs/testing.md` restricts automated tests to local
-  fixtures) — the option exists for manual beta evaluation. Reconsider promoting it to a
-  user-facing setting, or adding the encrypted `storageState` persistence layer above it, once
-  manual beta testing records at least one confirmed site where `channel: "chrome"` collects
-  data that packaged Chromium fails to (see follow-up Issue #294).
+- **`channel: "chrome"` stays opt-in, unwired to any setting**: a full Soroeru-owned Chrome
+  extension (#291) was evaluated as a heavier alternative and not selected for this increment;
+  `channel: "chrome"` needed no new extension surface, native host, or packaging change, so it
+  landed first as the minimal `BrowserEngine` option. Real-site pass/fail comparison data
+  between packaged Chromium and `channel: "chrome"` was not collected in this Issue (no
+  real-site network access or test credentials in this environment, and `docs/testing.md`
+  restricts automated tests to local fixtures) — the option exists for manual beta evaluation.
+  Reconsider promoting it to a user-facing setting once manual beta testing records at least
+  one confirmed site where `channel: "chrome"` collects data that packaged Chromium fails to.
+  Unlike `channel: "chrome"`, the `storageState` persistence layer (Issue #294, previous
+  paragraph) was **not** gated on that beta data: the Product Owner decided its own opt-in
+  per-site toggle and fixed 30-day expiry directly, since the persistence question (reuse a
+  session across runs) is independent of which browser binary launches it.
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
   matches the small private beta while making Gatekeeper friction explicit and avoiding
