@@ -1,12 +1,11 @@
 // RuleEngine: the deterministic side of the DecisionEngine
-// (docs/design/visibility-exploration.md §2). This Issue (#245) implements
-// only the exploration-specific decisions that have no existing
-// implementation: find-profile-links and should-continue. The login and
-// classification kinds are intentionally NOT reimplemented here — equivalent
-// logic already lives in visibility-runner.ts (ensureLoginPage / findLoginLink
-// / login) and classifier.ts (classifyFieldsWithEvidence); whether RuleEngine
-// wraps them as thin adapters is decided in Phase 3 / Phase 5 to avoid
-// maintaining the same heuristics twice.
+// (docs/design/visibility-exploration.md §2). #245 implemented the
+// exploration-specific decisions (find-profile-links, should-continue); #246
+// wired the login kinds (find-login-page, detect-login-form,
+// judge-login-result) to the heuristics shared with visibility-runner.ts,
+// which now live in login-handler.ts — one implementation, not two. The
+// classification kinds stay with classifier.ts (classifyFieldsWithEvidence)
+// until Phase 5 decides whether extra label/nearby-text rules belong here.
 
 import type { PageSnapshot } from "../types.js";
 import type {
@@ -18,6 +17,7 @@ import type {
   RuleEvaluator,
   RuleResult,
 } from "./decision-engine.js";
+import { findLoginField, findLoginLinkCandidates, findLoginSubmitButton, LOGIN_LINK_CONFIDENT_SCORE } from "./login-handler.js";
 import { isSameSite, normalizeUrl, resolveHref } from "./url-utils.js";
 
 export interface RuleEngineOptions {
@@ -68,12 +68,11 @@ export class RuleEngine implements RuleEvaluator {
       case "should-continue":
         return this.shouldContinue(request.context);
       case "find-login-page":
+        return this.findLoginPageLinks(request.snapshot, request.context);
       case "detect-login-form":
+        return this.detectLoginForm(request.snapshot);
       case "judge-login-result":
-        // Existing login heuristics live in visibility-runner.ts; the Phase 3
-        // LoginHandler decides what to delegate. Until then these kinds fall
-        // through to the AI (if configured) or the safe default.
-        return { confident: false };
+        return this.judgeLoginResult(request.snapshot, request.context);
       case "classify-field":
         // The deterministic classifier (classifier.ts) is reused directly by
         // Phase 5; additional label/nearby-text rules may be added here then.
@@ -82,6 +81,72 @@ export class RuleEngine implements RuleEvaluator {
         // Naming new attributes is not feasible with rules (design §2).
         return { confident: false };
     }
+  }
+
+  private findLoginPageLinks(snapshot: PageSnapshot, context: DecisionContext): RuleResult<"find-login-page"> {
+    const candidates = findLoginLinkCandidates(snapshot, context.siteAccount.domain);
+    // Confident only when the top candidate matched an explicit login keyword;
+    // weaker href-only hints stay an unconfident partial result, which the
+    // DecisionEngine still uses as the navigation fallback (a miss just visits
+    // a harmless same-site page).
+    return {
+      confident: (candidates[0]?.score ?? 0) >= LOGIN_LINK_CONFIDENT_SCORE,
+      result: { links: candidates },
+    };
+  }
+
+  private detectLoginForm(snapshot: PageSnapshot): RuleResult<"detect-login-form"> {
+    const password = findLoginField(snapshot.fields, "password");
+    // No password field: confidently not a login form page.
+    if (!password) return { confident: true, result: { form: null } };
+
+    const username = findLoginField(snapshot.fields, "username");
+    // A password without a recognizable username field is ambiguous (a
+    // password-only step, or a layout the heuristics miss). A partial form
+    // would make the caller fill an undefined field, so no form is returned
+    // and the AI (if configured) may still find the pair.
+    if (!username) return { confident: false, result: { form: null } };
+
+    const submit = findLoginSubmitButton(snapshot.buttons);
+    return {
+      // Without a recognizable submit button the field pair is still
+      // returned, but unconfidently, so a configured AI gets the chance to
+      // find the button; the partial form remains the no-AI fallback.
+      confident: submit !== undefined,
+      result: {
+        form: {
+          usernameFieldId: username.fieldId,
+          passwordFieldId: password.fieldId,
+          ...(submit ? { submitSelector: submit.selector } : {}),
+        },
+      },
+    };
+  }
+
+  private judgeLoginResult(snapshot: PageSnapshot, context: DecisionContext): RuleResult<"judge-login-result"> {
+    const successSignals = [
+      snapshot.links.some((link) => /ログアウト|sign\s*out|log\s*out/i.test(link.text)),
+      snapshot.links.some((link) => /マイページ|my\s*page|dashboard/i.test(link.text)),
+      // currentUrl unknown is neutral: it counts toward neither side.
+      context.currentUrl != null && !context.currentUrl.includes("login"),
+    ];
+    const failureSignals = [
+      findLoginField(snapshot.fields, "password") !== undefined,
+      /エラー|error|失敗|incorrect|invalid|wrong/i.test(snapshot.visibleText),
+    ];
+    const successScore = successSignals.filter(Boolean).length;
+    const failureScore = failureSignals.filter(Boolean).length;
+
+    if (successScore >= 2 && failureScore === 0) {
+      return { confident: true, result: { success: true, reason: "success-indicators" } };
+    }
+    if (failureScore >= 1 && successScore === 0) {
+      return { confident: true, result: { success: false, reason: "failure-indicators" } };
+    }
+    // Mixed or weak signals: intentionally no result — wrongly deciding
+    // "success" would start collection from an unauthenticated session, so the
+    // DecisionEngine's safe default (login treated as failed) applies.
+    return { confident: false };
   }
 
   private findProfileLinks(snapshot: PageSnapshot, context: DecisionContext): RuleResult<"find-profile-links"> {
