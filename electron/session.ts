@@ -244,7 +244,12 @@ export class SoroeruSession {
     }
     this.collectionRunning = true;
     try {
-      return await this.visibility.runSite(siteAccountId);
+      const result = await this.visibility.runSite(siteAccountId);
+      // A run mutates the domain even on failure (Constraint / Evidence records),
+      // and VaultV2 holds records in memory only — flush so the collected ledger
+      // survives lock/quit instead of silently vanishing.
+      await this.vault?.save();
+      return result;
     } finally {
       this.collectionRunning = false;
     }
