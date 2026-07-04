@@ -1,8 +1,10 @@
 import { classifyFieldsWithEvidence, type CustomFieldDef } from "../agent/classifier.js";
 import type { DomainService } from "../domain/domain-service.js";
 import { MOST_SENSITIVE_ATTRIBUTE_KEY, type DisclosureSourceKind, type SiteAccount } from "../domain/entities.js";
-import type { DisplayValueCandidate, FormField, MappingEntry, PageSnapshot, ProfileKey } from "../types.js";
+import type { DisplayValueCandidate, FormField, MappingEntry, PageSnapshot, ProfileKey, WallDetection } from "../types.js";
 import { redactedEvidence } from "./evidence.js";
+import type { PageDriver } from "./page-driver.js";
+import type { ExplorationEvent, ExplorationHandoff } from "./page-explorer.js";
 
 export interface DisclosureCollectionOptions {
   domain: DomainService;
@@ -46,6 +48,70 @@ export function collectDisclosures(options: DisclosureCollectionOptions): { disc
     dynamicCandidates++;
   }
   return { disclosures, dynamicCandidates };
+}
+
+export interface ExplorationCollectionOptions {
+  domain: DomainService;
+  siteAccount: SiteAccount;
+  /** The driver the exploration runs on; each page's values are read from it. */
+  pageDriver: PageDriver;
+  now?: () => number;
+}
+
+export interface ExplorationCollectionResult {
+  pagesCollected: number;
+  disclosures: number;
+  dynamicCandidates: number;
+  /**
+   * Set when exploration paused on a wall (CAPTCHA / MFA / verification):
+   * counts cover the pages collected before the wall. The caller hands off to
+   * the human, then calls this again with `PageExplorer.resume()` to continue
+   * in the same session. Absent when exploration ran to completion.
+   */
+  wall?: { url: string; wall: WallDetection; handoff: ExplorationHandoff };
+}
+
+/**
+ * Drive disclosure collection over a PageExplorer event stream: for every
+ * `page-snapshot` event the field/display values are read from the driver and
+ * fed to `collectDisclosures` (classification, card sanitization, dynamic
+ * attribute candidates — all existing logic, unchanged).
+ *
+ * Reading values here is correct because the explorer's generator is suspended
+ * at the `page-snapshot` yield: the driver is still showing exactly the page
+ * the snapshot describes. The values stay local — the snapshot handed to any
+ * decision layer remains structure-only.
+ */
+export async function collectDuringExploration(
+  events: AsyncIterable<ExplorationEvent>,
+  options: ExplorationCollectionOptions,
+): Promise<ExplorationCollectionResult> {
+  const result: ExplorationCollectionResult = { pagesCollected: 0, disclosures: 0, dynamicCandidates: 0 };
+  for await (const event of events) {
+    if (event.kind === "wall-detected") {
+      // The explorer pauses itself after this event; returning (not throwing)
+      // keeps its resume slot intact for the post-hand-off continuation.
+      result.wall = { url: event.url, wall: event.wall, handoff: event.handoff };
+      return result;
+    }
+    if (event.kind !== "page-snapshot") continue;
+
+    const values = await options.pageDriver.readValues();
+    const displayValues = (await options.pageDriver.readDisplayValues?.()) ?? {};
+    const displayFields = (event.snapshot.displayValues ?? []).map(displayValueToSyntheticField);
+    const collected = collectDisclosures({
+      domain: options.domain,
+      siteAccount: options.siteAccount,
+      snapshot: event.snapshot,
+      fields: [...event.snapshot.fields, ...displayFields],
+      values: { ...values, ...displayValues },
+      ...(options.now !== undefined ? { now: options.now } : {}),
+    });
+    result.pagesCollected++;
+    result.disclosures += collected.disclosures;
+    result.dynamicCandidates += collected.dynamicCandidates;
+  }
+  return result;
 }
 
 export function displayValueToSyntheticField(candidate: DisplayValueCandidate): FormField {
