@@ -146,10 +146,21 @@ known alternatives and concrete triggers for reconsideration:
   restricts automated tests to local fixtures) — the option exists for manual beta evaluation.
   Reconsider promoting it to a user-facing setting once manual beta testing records at least
   one confirmed site where `channel: "chrome"` collects data that packaged Chromium fails to.
-  Unlike `channel: "chrome"`, the `storageState` persistence layer (Issue #294, previous
-  paragraph) was **not** gated on that beta data: the Product Owner decided its own opt-in
-  per-site toggle and fixed 30-day expiry directly, since the persistence question (reuse a
-  session across runs) is independent of which browser binary launches it.
+  This option is independent of the `storageState` persistence decision below: it is
+  unwired to it, and the two questions (which browser binary launches a session, and whether
+  a session is reused across runs) were decided on separate timelines.
+- **Opt-in `storageState` persistence uses a flat 30-day expiry and a simple per-Site-Account
+  toggle** (Issue #294): two narrower alternatives were considered and rejected for this
+  increment — (a) gating the toggle on the still-undecided #291 permission model instead of
+  its own boolean field, and (b) a variable expiry keyed to per-site risk tier instead of one
+  fixed duration for every site. Unlike `channel: "chrome"` above, this decision was **not**
+  gated on beta comparison data: the Product Owner decided the simple/fixed model directly
+  in-session (`docs/design/storage-state-persistence.md`), since reusing a session across runs
+  is a separate question from which browser binary launches it. Reconsider tying the toggle to
+  #291's permission model once that model ships, or reconsider a risk-tiered expiry if beta
+  feedback shows a flat 30 days is wrong for high-risk sites (either direction changes the
+  `sessionState` record shape and the ledger's session-persistence UI, so it is tracked here
+  as a decision, not left implicit in the table row above).
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
   matches the small private beta while making Gatekeeper friction explicit and avoiding

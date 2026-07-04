@@ -230,8 +230,11 @@ function SessionPersistenceControl({
     } catch {
       setError(reasonMessage(undefined));
     } finally {
-      setBusy(false);
+      // Stay busy (checkbox disabled) until the reload delivers fresh props —
+      // clearing busy first would let a fast second click read the stale
+      // `sessionPersistence.enabled` closure and double-toggle.
       await onReload();
+      setBusy(false);
     }
   }, [onReload, sessionPersistence.enabled, siteAccountId]);
 
@@ -244,8 +247,8 @@ function SessionPersistenceControl({
     } catch {
       setError(reasonMessage(undefined));
     } finally {
-      setBusy(false);
       await onReload();
+      setBusy(false);
     }
   }, [onReload, siteAccountId]);
 

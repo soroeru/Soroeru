@@ -605,3 +605,54 @@ test("session persistence: a real run passes the persisted storageState into the
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("session persistence: disabling the toggle mid-run still skips the export on close (fresh re-check, not the stale opened-with value)", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/account", displayName: "Example" });
+    domain.setSessionPersistenceEnabled(site.id, true);
+    domain.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[{"name":"old"}],"origins":[]}' });
+    await vault.save();
+    vault.lock();
+
+    let exportCalls = 0;
+    let sessionHolder: SoroeruSession | undefined;
+    const engine: SessionEngine = {
+      openSession: async (_site) => {
+        // Simulate the user flipping the toggle off in the UI while the
+        // browser session opened by this very call is still in flight.
+        await sessionHolder!.setSessionPersistence({ siteAccountId: site.id, enabled: false });
+        const page = new NoDataPageDriver();
+        const fakeSession: SiteSession = {
+          page,
+          close: async () => {
+            page.closed = true;
+          },
+          exportStorageState: async () => {
+            exportCalls += 1;
+            return '{"cookies":[{"name":"fresh"}],"origins":[]}';
+          },
+        };
+        return fakeSession;
+      },
+      closeAll: async () => {},
+    };
+
+    const session = new SoroeruSession(path, { engine });
+    sessionHolder = session;
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+
+    await session.runVisibility(site.id);
+
+    // wrapSessionForPersistence re-checks persistSessionEnabled fresh at close
+    // time (not the value the session was opened with), so no export happens.
+    assert.equal(exportCalls, 0);
+    const view = session.ledgerSite(site.id);
+    assert.equal(view?.sessionPersistence.enabled, false);
+    assert.equal(view?.sessionPersistence.hasPersistedSession, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

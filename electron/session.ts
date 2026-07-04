@@ -127,6 +127,10 @@ export class SoroeruSession {
       this.engine = new BrowserEngine();
     }
     const persisted = site.persistSessionEnabled ? this.domain?.getPersistedSessionState(site.id) : undefined;
+    // getPersistedSessionState() discards an expired record in-memory as a side
+    // effect; flush that discard now so a stale encrypted session blob does not
+    // keep living on disk past its documented expiry until some unrelated save.
+    if (site.persistSessionEnabled) await this.vault?.save();
     const session = await this.engine.openSession(
       site,
       persisted ? { storageState: persisted.storageState } : undefined,
@@ -143,7 +147,11 @@ export class SoroeruSession {
    */
   private wrapSessionForPersistence(site: SiteAccount, session: SiteSession): SiteSession {
     return {
-      ...session,
+      page: session.page,
+      // A class instance (the real PlaywrightSiteSession) declares these as
+      // prototype methods, not own properties, so a plain `{ ...session }`
+      // spread would silently drop them from the wrapper. Bind explicitly.
+      ...(session.exportStorageState ? { exportStorageState: session.exportStorageState.bind(session) } : {}),
       close: async () => {
         try {
           if (this.domain?.getSiteAccount(site.id)?.persistSessionEnabled && session.exportStorageState) {
