@@ -82,10 +82,10 @@ central aggregation (consistent with local-first / no hosted vault / no telemetr
   the user's own authenticated sessions, on the user's own accounts**. The boundary is **not**
   "the ToS forbids automation" (that prohibition is precisely the gray Soroeru contests on the
   user's behalf, surfaced as a Constraint for the user to decide); the inviolable line is the
-  **circumvention of actively-enforced technical access controls** (CAPTCHA / MFA / bot
-  detection) — the criminal line under unauthorized-access law (Japan 不正アクセス禁止法 /
-  US CFAA). Soroeru never crosses it: it detects and hands off. *We don't break locks; we help
-  you walk out with your own things.*
+  **circumvention of actively-enforced technical access controls** (see §8) — the criminal
+  line under unauthorized-access law (Japan 不正アクセス禁止法 / US CFAA). Soroeru never crosses
+  it: it detects and hands off. *We don't break locks; we help you walk out with your own
+  things.*
 - **Verified identity, user-governed disclosure.** Canonical identity attributes (legal name,
   residence address, date of birth, sex) are established by the user's own public personal
   authentication (My Number Card / JPKI) and are **not hand-editable**; Soroeru stores verified
@@ -272,12 +272,12 @@ governance.** Only *toil* (execution) is delegated; *judgment* is not.
   ledger):
   - **Suggestion threshold**: the same Preference observed **3 times** consistently (a
     contradicting action resets the count). **Frequency cap: at most one suggestion of the
-    same kind per session/day.**
+    same kind per day.**
   - **Promotion to Policy**: **never automatic.** After a suggestion is shown and the user
     accepts it, or repeats the same action once more after seeing it, Soroeru asks once,
     "Make this a policy?" Demotion / editing is always available.
-  - These thresholds (3 times / once per day) are configurable defaults (the
-    default→self-selection principle applies to them too).
+  - These thresholds (3 observations / at most one suggestion of the same kind per day) are
+    configurable defaults; the default→self-selection principle applies to them too.
 
 ## 7. Scope & Slice Order
 
@@ -351,18 +351,19 @@ registration (last).**
   - **Logging into the user's own My Page with the user's own credentials to read the
     user's own data is treated as agent-assisted self-access** (distinct from third-party
     scraping). No prior manual vetting of all sites is assumed.
-  - **Hard line**: access controls a site actively enforces (CAPTCHA / MFA / bot detection)
-    are **never bypassed** — detect and hand off.
+  - **Hard line**: actively-enforced technical access controls are **never bypassed** —
+    detect and hand off. This includes CAPTCHA, MFA, bot detection, rate limits, paywalls,
+    and any other actively-enforced access control.
   - A **detected automation-prohibiting ToS clause** is **not silently hard-blocked**; it is
     surfaced as a Constraint / high-risk item for **the user to decide** (the agency
     principle: inform; the user decides; never bypass active enforcement).
   - **The boundary line is access control, not the ToS.** A ToS prohibition on automation is
     a civil matter between the user (a party to that contract) and the site; it is the gray
     Soroeru contests *on the user's behalf*. The inviolable line is the **circumvention of
-    actively-enforced technical access controls** (CAPTCHA / MFA / bot detection / rate
-    limits) — the criminal line under unauthorized-access law. Logging into the user's own
-    account with the user's own credentials is **not** unauthorized access, even when
-    automated and even when a ToS forbids bots.
+    actively-enforced technical access controls** (defined above) — the criminal line under
+    unauthorized-access law. Logging into the user's own account with the user's own
+    credentials is **not** unauthorized access, even when automated and even when a ToS
+    forbids bots.
   - **Legitimacy preconditions for contesting ToS-gray.** Any action that proceeds against an
     automation-prohibiting clause is gated on four hard preconditions: (1) the user's explicit,
     per-operation-type consent (tied to the Delegation Boundary L0/L1); (2) the user's own
@@ -388,8 +389,8 @@ registration (last).**
 ## 9. Out of Scope
 
 - L2 full automation (MVP); multi-locale; checkout / purchase / payment (except the approved
-  free-trial→subscription card case); **bypassing** CAPTCHA / MFA / bot detection / rate
-  limits / paywalls / access controls; collecting other people's data; hosted vaults,
+  free-trial→subscription card case); **bypassing actively-enforced technical access
+  controls** (see §8); collecting other people's data; hosted vaults,
   backend API servers (**exception**: a minimal, OSS, zero-retention identity-auth BFF for
   デジタル認証アプリ verification only — §4.2 / [`security.md`](security.md) §14), telemetry,
   analytics, crash reporting; mobile apps and non-macOS
@@ -418,7 +419,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall, credential failure, site error, or unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
 | REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; light understanding check pass required before L1 expansion; five absolute boundaries). | A | Must |
-| REQ-009 | Form Policy/Preference from ledger reactions: suggest after 3 consistent observations (≤1/day), promote to Policy only on explicit user confirmation; thresholds are configurable defaults. | A | Must |
+| REQ-009 | Form Policy/Preference from ledger reactions: suggest after 3 consistent observations (at most one suggestion of the same kind per day), promote to Policy only on explicit user confirmation; thresholds are configurable defaults. | A | Must |
 | REQ-010 | Bulk-update selected sites by diffing Disclosures against canonical Personal Attributes (cross-site by attribute). | B | Must |
 | REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; the withdrawal flow may execute within the delegated range but its final, irreversible confirmation step is always gated (absolute boundary, §5), regardless of ToS-automation stance; deletion of Soroeru's own data is always confirmed. | C | Should |
 | REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
@@ -428,7 +429,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-016 | Never store the 12-digit My Number or the card PIN (the PIN is entered in the Digital Agency app, never seen by Soroeru); store only basic-4 attributes, the PPID, and verification Evidence (Digital Agency reference + timestamp). | A | Must |
 | REQ-017 | Allow derived name fields (kana, romaji) as editable-but-unverified, consistency-checked against the verified legal name. | A | Must |
 | REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
-| REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | A | Won't (MVP) |
+| REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | — | Won't (MVP) |
 | REQ-020 | Run the デジタル認証アプリ integration through a minimal, OSS, zero-retention identity-auth BFF: registered relying party (client ID, redirect / back-channel logout URIs, private_key_jwt), egress to the Digital Agency only, basic-4 forwarded encrypted to the user's device and never persisted server-side. Narrowly-scoped exception to the no-backend principle, identity layer only. | A | Must |
 
 ## 11. Glossary
