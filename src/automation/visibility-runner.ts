@@ -2,8 +2,8 @@ import type { DomainService } from "../domain/domain-service.js";
 import type { Credential, SiteAccount } from "../domain/entities.js";
 import type { FormField, PageSnapshot } from "../types.js";
 import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
+import { findLoginField, findLoginLink, findLoginSubmitButton, hasLoginFields } from "./login-handler.js";
 import type { SiteSession } from "./page-driver.js";
-import { isSameSite } from "./url-utils.js";
 import { WallDetectionService } from "./wall-detection.js";
 
 export type VisibilityHandoff = (input: {
@@ -212,7 +212,7 @@ export class VisibilityRunner {
   ): Promise<PageSnapshot> {
     if (hasLoginFields(snapshot)) return snapshot;
 
-    const loginLink = findLoginLink(snapshot, siteAccount);
+    const loginLink = findLoginLink(snapshot, siteAccount.domain);
     if (!loginLink) return snapshot;
 
     this.options.domain.upsertSiteAccount({
@@ -302,7 +302,7 @@ export class VisibilityRunner {
     if (!username && !password) return;
     if (username) await session.page.fillField(username.fieldId, credential.username);
     if (password) await session.page.fillField(password.fieldId, credential.password);
-    const submit = snapshot.buttons.find((b) => /ログイン|login|sign in/i.test(b.text));
+    const submit = findLoginSubmitButton(snapshot.buttons);
     if (submit) await session.page.click(submit.selector);
   }
 
@@ -442,58 +442,8 @@ export class VisibilityRunner {
   }
 }
 
-function findLoginField(fields: FormField[], kind: "username" | "password"): FormField | undefined {
-  if (kind === "password") return fields.find((field) => field.type === "password" || field.autocomplete === "current-password");
-  return fields.find((field) => field.autocomplete === "username" || field.type === "email" || /mail|email|user|login/i.test(`${field.name} ${field.id}`));
-}
-
-function hasLoginFields(snapshot: PageSnapshot): boolean {
-  return (
-    findLoginField(snapshot.fields, "password") !== undefined &&
-    findLoginField(snapshot.fields, "username") !== undefined
-  );
-}
-
 function shouldOfferHandoffCredential(step: string, snapshot: PageSnapshot, wallKind: string): boolean {
   return step === "login-page" || hasLoginFields(snapshot) || wallKind === "mfa";
-}
-
-function findLoginLink(snapshot: PageSnapshot, siteAccount: SiteAccount): string | undefined {
-  const origin = originFor(snapshot.url);
-  const candidates = snapshot.links
-    .filter((link) => isSameSite(link.href, siteAccount.domain))
-    .map((link) => ({
-      href: absoluteHref(link.href, origin),
-      score: loginLinkScore(link.text, link.href),
-    }))
-    .filter((candidate) => candidate.href && candidate.score > 0)
-    .sort((a, b) => b.score - a.score);
-  return candidates[0]?.href;
-}
-
-function loginLinkScore(text: string, href: string): number {
-  const haystack = `${text} ${href}`;
-  let score = 0;
-  if (/ログイン|login|sign[\s_-]?in|サインイン|会員ログイン|マイページ/i.test(haystack)) score += 3;
-  if (/account|member|auth|session|mypage/i.test(href)) score += 1;
-  if (/logout|sign[\s_-]?out|登録|register|signup|sign[\s_-]?up/i.test(haystack)) score -= 5;
-  return score;
-}
-
-function absoluteHref(href: string, origin: string | undefined): string | undefined {
-  try {
-    return origin ? new URL(href, origin).href : new URL(href).href;
-  } catch {
-    return undefined;
-  }
-}
-
-function originFor(url: string): string | undefined {
-  try {
-    return new URL(url).origin;
-  } catch {
-    return undefined;
-  }
 }
 
 function isHttpUrl(url: string): boolean {

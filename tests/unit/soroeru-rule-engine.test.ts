@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DecisionContext } from "../../src/automation/decision-engine.js";
 import { DEFAULT_MAX_PAGES_PER_SITE, RuleEngine } from "../../src/automation/rule-engine.js";
-import type { PageLink, PageSnapshot } from "../../src/types.js";
+import type { FormField, PageLink, PageSnapshot } from "../../src/types.js";
 
 function snapshot(partial: Partial<PageSnapshot>): PageSnapshot {
   return {
@@ -24,6 +24,22 @@ function context(partial: Partial<DecisionContext> = {}): DecisionContext {
 
 function links(...items: Array<[string, string]>): PageLink[] {
   return items.map(([text, href]) => ({ text, href }));
+}
+
+function loginField(fieldId: string, partial: Partial<FormField>): FormField {
+  return {
+    fieldId,
+    tag: "input",
+    type: "text",
+    name: "",
+    id: "",
+    autocomplete: "",
+    required: false,
+    placeholder: "",
+    labels: [],
+    nearbyText: "",
+    ...partial,
+  };
 }
 
 test("findProfileLinks scores profile-ish links and sorts by priority", () => {
@@ -156,9 +172,134 @@ test("shouldContinue always has an explicit default cap", () => {
 
 test("kinds without a rule implementation return unconfident with no result", () => {
   const engine = new RuleEngine();
-  for (const kind of ["find-login-page", "detect-login-form", "judge-login-result", "classify-field", "name-new-attribute"] as const) {
+  for (const kind of ["classify-field", "name-new-attribute"] as const) {
     const result = engine.evaluate({ kind, snapshot: snapshot({}), context: context() });
     assert.equal(result.confident, false, kind);
     assert.equal(result.result, undefined, kind);
   }
+});
+
+test("findLoginPageLinks is confident on an explicit login keyword and filters external/negative links", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "find-login-page",
+    snapshot: snapshot({
+      url: "https://example.com/",
+      links: links(
+        ["新規登録", "https://example.com/register"],
+        ["ログイン", "/login"],
+        ["ログイン", "https://phish.test/login"],
+      ),
+    }),
+    context: context(),
+  });
+
+  assert.equal(result.confident, true);
+  assert.deepEqual(
+    result.result?.links.map((l) => l.href),
+    ["https://example.com/login"],
+  );
+});
+
+test("findLoginPageLinks with only an href hint is an unconfident partial result", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "find-login-page",
+    snapshot: snapshot({
+      url: "https://example.com/",
+      links: links(["会員メニュー", "https://example.com/member"]),
+    }),
+    context: context(),
+  });
+
+  assert.equal(result.confident, false);
+  assert.deepEqual(
+    result.result?.links.map((l) => l.href),
+    ["https://example.com/member"],
+  );
+});
+
+test("detectLoginForm returns the form confidently when username, password, and submit are present", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "detect-login-form",
+    snapshot: snapshot({
+      fields: [
+        loginField("f-user", { type: "email", autocomplete: "username" }),
+        loginField("f-pass", { type: "password", autocomplete: "current-password" }),
+      ],
+      buttons: [{ selector: "button[type=submit]", text: "ログイン" }],
+    }),
+    context: context(),
+  });
+
+  assert.equal(result.confident, true);
+  assert.deepEqual(result.result?.form, {
+    usernameFieldId: "f-user",
+    passwordFieldId: "f-pass",
+    submitSelector: "button[type=submit]",
+  });
+});
+
+test("detectLoginForm without a password field is confidently no form", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "detect-login-form",
+    snapshot: snapshot({ fields: [loginField("f-search", { type: "text", name: "q" })] }),
+    context: context(),
+  });
+
+  assert.equal(result.confident, true);
+  assert.deepEqual(result.result, { form: null });
+});
+
+test("detectLoginForm with a password but no recognizable username stays unconfident with no form", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "detect-login-form",
+    snapshot: snapshot({ fields: [loginField("f-pass", { type: "password" })] }),
+    context: context(),
+  });
+
+  assert.equal(result.confident, false);
+  assert.deepEqual(result.result, { form: null });
+});
+
+test("judgeLoginResult is confident success on two success signals and no failure signal", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "judge-login-result",
+    snapshot: snapshot({ links: links(["ログアウト", "/logout"], ["マイページ", "/mypage"]) }),
+    context: context({ currentUrl: "https://example.com/account" }),
+  });
+
+  assert.equal(result.confident, true);
+  assert.deepEqual(result.result, { success: true, reason: "success-indicators" });
+});
+
+test("judgeLoginResult is confident failure when a password field remains", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "judge-login-result",
+    snapshot: snapshot({ fields: [loginField("f-pass", { type: "password" })] }),
+    context: context({ currentUrl: "https://example.com/login" }),
+  });
+
+  assert.equal(result.confident, true);
+  assert.deepEqual(result.result, { success: false, reason: "failure-indicators" });
+});
+
+test("judgeLoginResult with mixed signals returns no result (safe default decides)", () => {
+  const engine = new RuleEngine();
+  const result = engine.evaluate({
+    kind: "judge-login-result",
+    snapshot: snapshot({
+      links: links(["ログアウト", "/logout"], ["マイページ", "/mypage"]),
+      visibleText: "パスワードが正しくありません（エラー）",
+    }),
+    context: context({ currentUrl: "https://example.com/account" }),
+  });
+
+  assert.equal(result.confident, false);
+  assert.equal(result.result, undefined);
 });
