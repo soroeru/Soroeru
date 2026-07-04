@@ -147,7 +147,7 @@ known alternatives and concrete triggers for reconsideration:
   fixtures) — the option exists for manual beta evaluation. Reconsider promoting it to a
   user-facing setting, or adding the encrypted `storageState` persistence layer above it, once
   manual beta testing records at least one confirmed site where `channel: "chrome"` collects
-  data that packaged Chromium fails to (see follow-up Issue referenced from #293).
+  data that packaged Chromium fails to (see follow-up Issue #294).
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
   matches the small private beta while making Gatekeeper friction explicit and avoiding
