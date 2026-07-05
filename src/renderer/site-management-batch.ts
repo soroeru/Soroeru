@@ -53,3 +53,40 @@ export async function runVisibilityBatch(
     results,
   };
 }
+
+export interface SessionPersistenceBulkResultEntry {
+  siteAccountId: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface SessionPersistenceBulkSummary {
+  results: SessionPersistenceBulkResultEntry[];
+  failedCount: number;
+}
+
+/** Sequential so each site's `vault.save()` completes before the next mutation starts. */
+export async function enableSessionPersistenceForSites(
+  siteAccountIds: readonly string[],
+  set: (siteAccountId: string) => Promise<{ ok: boolean; error?: string }>,
+): Promise<SessionPersistenceBulkSummary> {
+  const results: SessionPersistenceBulkResultEntry[] = [];
+
+  for (const siteAccountId of siteAccountIds) {
+    try {
+      const result = await set(siteAccountId);
+      results.push({
+        siteAccountId,
+        ok: result.ok,
+        ...(result.error !== undefined ? { error: result.error } : {}),
+      });
+    } catch {
+      results.push({ siteAccountId, ok: false, error: "unknown" });
+    }
+  }
+
+  return {
+    results,
+    failedCount: results.filter((entry) => !entry.ok).length,
+  };
+}
