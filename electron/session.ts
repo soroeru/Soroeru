@@ -7,7 +7,7 @@
 // It never logs decrypted values.
 
 import { AiEngine as AiEngineImpl, type RedactionValueSource } from "../src/automation/ai-engine.js";
-import { aiProviderFromEnv } from "../src/agent/ai/provider.js";
+import { aiProviderFromEnv, type AiProvider } from "../src/agent/ai/provider.js";
 import type { AiEngine } from "../src/automation/decision-engine.js";
 import { DomainService } from "../src/domain/domain-service.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
@@ -84,6 +84,14 @@ export interface SoroeruSessionOptions {
    * the production `.env`-sourced instance.
    */
   aiEngine?: AiEngine;
+  /**
+   * Override how the production per-unlock `AiEngine` sources its `AiProvider`
+   * (tests only). Defaults to `aiProviderFromEnv`; injecting a fake provider
+   * here exercises the real `refreshAiEngine()` → `AiEngineImpl` construction
+   * path without real network egress. Ignored when `aiEngine` is also
+   * provided (that override bypasses `refreshAiEngine()` entirely).
+   */
+  aiProviderFactory?: () => AiProvider | undefined;
 }
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
@@ -123,6 +131,8 @@ export class SoroeruSession {
   private collectionRunning = false;
   /** True when a test injected `SoroeruSessionOptions.aiEngine` directly (skips the per-unlock lazy rebuild/clear below). */
   private readonly aiEngineOverride: boolean;
+  /** `aiProviderFromEnv` in production; test-injectable via `SoroeruSessionOptions.aiProviderFactory`. */
+  private readonly aiProviderFactory: () => AiProvider | undefined;
   /**
    * Local-only value source for AI-prompt redaction (Issue #310, design §8):
    * canonical Personal Attribute values, read fresh on every call so lock/
@@ -141,6 +151,7 @@ export class SoroeruSession {
     this.closeInjectedEngine = options.closeEngine;
     this.openExternal = options.openExternal;
     this.aiEngineOverride = options.aiEngine !== undefined;
+    this.aiProviderFactory = options.aiProviderFactory ?? aiProviderFromEnv;
     const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
     this.visibility = new VisibilityService({
       openSession,
@@ -166,11 +177,15 @@ export class SoroeruSession {
    */
   private refreshAiEngine(): void {
     if (this.aiEngineOverride) return;
-    const provider = aiProviderFromEnv();
+    const provider = this.aiProviderFactory();
     if (!provider) {
       this.visibility.setAiEngine(undefined);
       return;
     }
+    // `AiConsultationLog` (ai-engine.ts) is a closed, structural type — kind /
+    // url (origin+path only) / providerId / latencyMs / outcome — with no
+    // prompt/response/value field to ever accidentally log; that guarantee is
+    // enforced and tested at ai-engine.ts's own sentinel tests, not here.
     this.visibility.setAiEngine(
       new AiEngineImpl(provider, this.redactionSource, {}, (log) => console.log("[ai-engine]", log)),
     );
