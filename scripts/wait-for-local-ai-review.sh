@@ -71,13 +71,15 @@ if [ -z "$UNITS" ]; then
 fi
 
 case "$TIMEOUT_SEC" in
-  ''|*[!0-9]*)
+  ''|*[!0-9]*|0)
     printf -- '--timeout must be a positive integer number of seconds, got: %s\n' "$TIMEOUT_SEC" >&2
     exit 2
     ;;
 esac
 case "$POLL_SEC" in
-  ''|*[!0-9]*)
+  ''|*[!0-9]*|0)
+    # A 0 poll interval would busy-loop (sleep 0 every iteration, hammering
+    # date/glob/grep on every spin) instead of failing fast.
     printf -- '--poll must be a positive integer number of seconds, got: %s\n' "$POLL_SEC" >&2
     exit 2
     ;;
@@ -115,6 +117,11 @@ IFS=$OLD_IFS
 
 # Finds this commit's confirmed output file for one unit, or returns 1.
 # Printed to stdout on success so the caller can collect it.
+#
+# The glob below matches by substring position, not by parsing the
+# documented <timestamp>-<reviewer>-<unit>-<pid> field layout. This is safe
+# only because reviewer names (claude/codex) and unit names never contain
+# a dash; if either ever gained one, the glob could misroute matches.
 find_unit_output() {
   local unit=$1 file
   for file in "$STATE_DIR"/*-"$unit"-*.md; do

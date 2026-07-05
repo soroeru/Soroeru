@@ -124,4 +124,19 @@ set -e
 [ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for an abbreviated --commit, got $STATUS"
 rm -f "$TMP_DIR/short-sha.out"
 
+# --- 8. usage errors: --timeout 0 / --poll 0 (would busy-loop) -----------
+set +e
+bash scripts/wait-for-local-ai-review.sh --unit code --timeout 0 >"$TMP_DIR/timeout0.out" 2>&1
+STATUS=$?
+set -e
+[ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for --timeout 0, got $STATUS"
+rm -f "$TMP_DIR/timeout0.out"
+
+set +e
+bash scripts/wait-for-local-ai-review.sh --unit code --poll 0 >"$TMP_DIR/poll0.out" 2>&1
+STATUS=$?
+set -e
+[ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for --poll 0, got $STATUS"
+rm -f "$TMP_DIR/poll0.out"
+
 printf 'wait-for-local-ai-review smoke check passed\n'
