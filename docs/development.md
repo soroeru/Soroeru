@@ -317,6 +317,9 @@ For code changes, run the available gates:
 - `npm test`
 - `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review
   branch mapping changes
+- `bash scripts/smoke-wait-for-local-ai-review.sh` for changes to the local AI
+  review completion-waiting script (see
+  [`local-ai-review.md`](local-ai-review.md) §10)
 - focused manual tests for affected browser behavior
 - for changes touching network calls, AI provider config, or `package.json`
   dependencies: `npm run poc -- check-egress` (PRIV-001, see
@@ -435,18 +438,27 @@ unless the user explicitly changes it:
 1. Fetch the latest `main` branch.
 2. Create a new branch named for the Issue content.
 3. Implement the Issue.
-4. After committing, wait for one local AI review result when the hook is
-   configured. Apply at most one fix pass for actionable findings. When
-   committing that follow-up fix, set `LOCAL_AI_REVIEW_RUNNING=1` for the
-   commit command so the post-commit hook does not start a second review.
+4. After committing, check the commit command's own output for
+   `[local-ai-review] queued ...`. If present, wait for that result by
+   running `scripts/wait-for-local-ai-review.sh` (see
+   [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
+   the review-count cap and follow-up policy) rather than polling
+   `state/ai-reviews/` turn-by-turn. This workflow allows up to two local AI
+   review runs total: apply a fix pass for the first review's actionable
+   findings and commit it *without* `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
+   second review runs on that fix commit); if that second review still has
+   actionable findings, apply one more fix pass and commit it *with*
+   `LOCAL_AI_REVIEW_RUNNING=1` so a third review never starts.
 5. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged. Also include the local AI review status, actionable
-   findings, and what was fixed. If review did not run or residual risk remains
-   after the single fix pass, state that clearly.
+   when the PR is merged. Also include the local AI review status for each
+   run, actionable findings, and what was fixed. If review did not run or
+   residual risk remains once the two-review cap is reached, state that
+   clearly.
 
-The workflow intentionally avoids an open-ended review loop. If the user gives
-multiple Issue numbers, ask which single Issue to implement first.
+The workflow intentionally avoids an open-ended review loop, capped at two
+review runs total. If the user gives multiple Issue numbers, ask which single
+Issue to implement first.
 
 ## 11. Operational Notes
 
