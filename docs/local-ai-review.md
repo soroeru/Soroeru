@@ -146,11 +146,16 @@ The hook skips when:
 Do not use it manually to suppress review for ordinary commits; use
 `[skip-review]` when the skip should be visible in Git history.
 
-The repository's single-Issue implementation workflow is the narrow exception:
-after one local AI review has run and one follow-up fix pass has been applied,
-commit that follow-up with `LOCAL_AI_REVIEW_RUNNING=1` so the hook does not
-start a second local review. Record the review status, findings, and fixes in
-the PR body instead of starting an open-ended review loop.
+The repository's single-Issue implementation workflow is the narrow exception,
+capped at **two** local AI review runs total (never open-ended): after the
+first review, commit a fix pass for its actionable findings *without*
+`LOCAL_AI_REVIEW_RUNNING=1`, so the hook reviews that fix commit too (a
+confirming second review). If that second review still has actionable
+findings, commit one more fix pass *with* `LOCAL_AI_REVIEW_RUNNING=1` so the
+hook does not start a third review — the cap holds regardless of what the
+second review finds. If the first review already comes back with nothing
+actionable, no second review is needed. Record the review status, findings,
+and fixes in the PR body instead of extending the loop further.
 
 ### Temporarily disabling the hook (e.g. during acceptance testing)
 
