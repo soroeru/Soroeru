@@ -110,7 +110,7 @@ test("importCsv reports a sanitized reason for a malformed CSV", async () => {
   }
 });
 
-test("the composed ledger summary and detail expose stale flags and masked previews only", async () => {
+test("the composed ledger detail shows normal disclosures plainly and masks only sensitive ones", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
     const { siteId, emailDisclosureId } = await seedLedger(path);
@@ -128,28 +128,65 @@ test("the composed ledger summary and detail expose stale flags and masked previ
 
     const detail = session.ledgerSite(siteId);
     assert.ok(detail);
+    // "normal" sensitivity (email, phone, address, custom fields): shown
+    // plainly and immediately, no reveal gate (Issue #300).
     const email = detail.disclosures.find((d) => d.disclosureId === emailDisclosureId);
     assert.equal(email?.staleState, "stale");
     assert.equal(email?.label, "メール");
-    assert.equal(email?.revealable, true);
+    assert.equal(email?.sensitivity, "normal");
+    assert.equal(email?.revealable, false);
     assert.equal(email?.evidenceCount, 1);
-    assert.match(email?.preview ?? "", /^•+$/);
-
-    const cvv = detail.disclosures.find((d) => d.attributeKey === "card.cvv");
-    assert.equal(cvv?.sensitivity, "most-sensitive");
-    assert.equal(cvv?.revealable, false);
+    assert.equal(email?.preview, "old@example.test");
 
     const dynamic = detail.disclosures.find((d) => d.attributeKey === "custom.unknown.occupation");
     assert.equal(dynamic?.label, "職業");
-    assert.equal(dynamic?.revealable, true);
+    assert.equal(dynamic?.sensitivity, "normal");
+    assert.equal(dynamic?.revealable, false);
+    assert.equal(dynamic?.preview, "会社員");
+
+    // "sensitive" (card data, the site password) still stays masked behind reveal.
+    const cvv = detail.disclosures.find((d) => d.attributeKey === "card.cvv");
+    assert.equal(cvv?.sensitivity, "most-sensitive");
+    assert.equal(cvv?.revealable, false);
+    assert.equal(cvv?.preview, "");
 
     const pending = detail.pendingAttributeCandidates.find((c) => c.proposedAttributeKey === "custom.occupation");
     assert.equal(pending?.label, "職業");
 
-    // No raw value may appear anywhere in the serialized detail view.
+    // The CVV canary must never appear unmasked anywhere in the serialized view.
     const serialized = JSON.stringify(detail);
-    assert.equal(serialized.includes("old@example.test"), false);
     assert.equal(serialized.includes("CVV-CANARY-LEAK"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a sensitive disclosure (card number) still masks its preview and requires reveal", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({ domain: "shop.test", url: "https://shop.test/", displayName: "Shop" });
+    const cardDisclosure = domain.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "card.number",
+      siteHeldValue: "1234",
+      sourceKind: "billing-page",
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+    const detail = session.ledgerSite(site.id);
+    const card = detail?.disclosures.find((d) => d.disclosureId === cardDisclosure.id);
+    assert.equal(card?.sensitivity, "sensitive");
+    assert.equal(card?.revealable, true);
+    assert.match(card?.preview ?? "", /^•+$/);
+
+    const revealed = await session.revealValue(cardDisclosure.id, PASSPHRASE);
+    assert.equal(revealed.ok, true);
+    assert.equal(revealed.value, "1234");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

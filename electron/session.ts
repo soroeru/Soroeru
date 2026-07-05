@@ -81,6 +81,18 @@ function maskPreview(value: string): string {
   return "•".repeat(Math.min(value.length, 8));
 }
 
+/**
+ * Only "sensitive"/"most-sensitive" disclosures (card data, the site password)
+ * stay masked behind passphrase re-authentication (Issue #300). "normal"
+ * disclosures (name, address, phone, account id, etc.) are already-imported,
+ * already-known information the user wants to confirm immediately, so they
+ * are shown as-is with no reveal gate.
+ */
+function previewFor(raw: string | undefined, sensitivity: Sensitivity): string {
+  if (raw === undefined) return "";
+  return sensitivity === "normal" ? raw : maskPreview(raw);
+}
+
 /** Sensitivity classification mirrors DomainService's; drives masking and reveal refusal. */
 function sensitivityFor(attributeKey: string): Sensitivity {
   if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return "most-sensitive";
@@ -472,8 +484,8 @@ export class SoroeruSession {
           staleState: disclosure.staleState,
           sourceKind: disclosure.sourceKind,
           observedAt: disclosure.observedAt,
-          preview: raw !== undefined ? maskPreview(raw) : "",
-          revealable: raw !== undefined && sensitivity !== "most-sensitive",
+          preview: previewFor(raw, sensitivity),
+          revealable: raw !== undefined && sensitivity === "sensitive",
           evidenceCount: disclosure.evidenceIds.length,
         };
       })

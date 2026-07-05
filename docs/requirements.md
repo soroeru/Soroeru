@@ -149,8 +149,10 @@ safe defaults.
   comparison and audit without displaying the value.
 - Payoffs: (1) sites collect different fields → `(account, attribute, value, as-of)` rows
   stay flexible; (2) bulk update (B) becomes first-class via a cross-site query
-  "attribute = X and value ≠ canonical"; (3) reveal-gated Disclosure values and
-  hash-only Evidence keep user confirmation and audit concerns separate.
+  "attribute = X and value ≠ canonical"; (3) Disclosure values are shown plainly by
+  default, with reveal gated behind passphrase re-authentication only for
+  sensitive/most-sensitive values (card data, the site password), and hash-only Evidence
+  keeps user confirmation and audit concerns separate.
 
 ### 4.2 Identity Verification and canonical identity (My Number / JPKI)
 
@@ -415,7 +417,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. If login fails because credentials are rejected, the login flow is unrecognized, or the site returns an error, stop after at most two login attempts for that site/credential set, do not enter same-site retry loops, and record the Site Account as `login failed / not collected` until the user explicitly updates credentials or retries later. | A | Must |
 | REQ-004 | Collect registered personal information per site and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers are reduced to last 4 digits before storage, and CVV is never collected or stored. | A | Must |
-| REQ-005 | Present the per-site view by composing Site Account + its Disclosures, masking values by default, revealing a stored site-held value only after passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
+| REQ-005 | Present the per-site view by composing Site Account + its Disclosures, showing normal-sensitivity values (name, address, phone, account id, etc.) plainly and immediately, masking only sensitive/most-sensitive values (card data, the site password) with reveal gated behind passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall, credential failure, site error, or unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
 | REQ-008 | Enforce the Delegation Boundary model (L0 default, L1 in-policy, L2 out of scope; asymmetric expand/reduce; light understanding check pass required before L1 expansion; five absolute boundaries). | A | Must |

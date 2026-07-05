@@ -202,11 +202,14 @@ Slice order: **A Visibility → B Bulk Update → C Withdrawal cleanup → D New
 - **A — Visibility (first slice)**: import the Google/Chrome Password Manager CSV
   (`name, url, username, password, note`), auto-log in to each site, collect registered
   personal info, and build the **Disclosure ledger**. Disclosure rows keep the collected
-  site-held value encrypted so the user can confirm it after passphrase re-authentication;
-  Evidence / audit rows stay reference+hash only. Card numbers collected from sites are
-  reduced to the last 4 digits before storage, and CVV is never collected, stored, or
-  displayed. Flag stale values (Disclosure ≠ canonical). Track **Account Relationship**
-  (newsletter / recurring billing / last-used) and provide filtered lists.
+  site-held value encrypted; normal-sensitivity values (name, address, phone, account id,
+  etc.) are shown plainly and immediately, while sensitive/most-sensitive values (card
+  data, the site password) stay masked and are revealed only after passphrase
+  re-authentication. Evidence / audit rows stay reference+hash only. Card numbers
+  collected from sites are reduced to the last 4 digits before storage, and CVV is never
+  collected, stored, or displayed. Flag stale values (Disclosure ≠ canonical). Track
+  **Account Relationship** (newsletter / recurring billing / last-used) and provide
+  filtered lists.
 - **B — Bulk update**: diff Disclosures against canonical values (cross-site by attribute)
   and update changed fields.
 - **C — Withdrawal cleanup**: stop newsletters, cancel unused subscriptions, withdraw from
