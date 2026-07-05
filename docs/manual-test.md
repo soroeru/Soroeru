@@ -192,7 +192,68 @@ Apple Silicon Mac、macOS 14 Sonoma または macOS 15 Sequoia で実施しま�
 - [ ] AI プロバイダを設定した場合（任意）でも、送られるのはフォーム構造 / 規約テキストのみで、生の個人情報は
       送られない（既定は決定論モードでプロバイダ不要）
 
-## 9.（任意）ローカル限定の実サイト E2E ハーネス
+## 9.（任意）AI フォールバック（AiEngine）の実プロバイダ手動確認
+
+`AiEngine`（`src/automation/ai-engine.ts`、Issue #276）は、Visibility 探索
+（`DecisionEngine` / `RuleEngine` / `PageExplorer` / `LoginHandler`）の一部でルールが
+判断できなかったときのオプションの AI フォールバックです。**パート 4 のアプリ本体の収集フロー
+（`VisibilityRunner`）は現時点で `DecisionEngine` を `AiEngine` なしで構築しており、本 Issue の
+非スコープとして `AiEngine` の結線は行っていません**（ユーザー設定の AI プロバイダを実際の収集に
+使うのは別 Issue）。そのため実プロバイダの確認は、下記のような小さな Node スクリプトで
+`AiEngine.consult()` を直接呼び出して行います。
+
+```ts
+import { AiEngine } from "./src/automation/ai-engine.js";
+import { aiProviderFromEnv } from "./src/agent/ai/provider.js";
+
+const provider = aiProviderFromEnv(); // .env の OPENAI_API_KEY / ANTHROPIC_API_KEY を使用
+if (!provider) throw new Error("set OPENAI_API_KEY (or ANTHROPIC_API_KEY) in .env");
+
+const aiEngine = new AiEngine(provider, { currentValues: () => [] }, {}, (log) => console.log(log));
+
+const result = await aiEngine.consult({
+  kind: "classify-field",
+  snapshot: {
+    url: "https://example.com/mypage",
+    title: "",
+    fields: [],
+    buttons: [],
+    links: [],
+    visibleText: "",
+    iframeSrcs: [],
+    wallMarkers: [],
+  },
+  context: {
+    siteAccount: { domain: "example.com", displayName: "Example" },
+    field: {
+      fieldId: "f-1",
+      tag: "input",
+      type: "text",
+      name: "",
+      id: "",
+      autocomplete: "",
+      required: false,
+      placeholder: "楽天ポイント番号",
+      labels: [],
+      nearbyText: "",
+    },
+  },
+});
+console.log(result);
+```
+
+```bash
+npm run build && node --env-file-if-exists=.env dist/compiled/<script>.js
+```
+
+- [ ] 実プロバイダ（OpenAI または Anthropic）に対して呼び出しが成功し、`source: "ai"` の
+      `DecisionResult` が返る（分類不能な場合は `classification: null` が返る想定で、それも成功扱い）
+- [ ] `onLog` に渡される `AiConsultationLog` の `url` はクエリ・フラグメントを含まない
+      origin+path のみで、プロンプト本文やレスポンス本文自体はログ・保存物のどこにも出力されない
+- [ ] ネットワークキャプチャ（開発者ツール／プロキシ等、任意）で、送信される JSON に
+      `visibleText` やフィールド値、生の個人情報が含まれないことを確認する
+
+## 10.（任意）ローカル限定の実サイト E2E ハーネス
 
 実サイトでの自動ログイン → 収集 → 古い値フラグ → 関係検出 → ウォール検出を CLI で確認したい場合は、
 ローカル限定の E2E ハーネスを使えます。CI では決して動かず、ユーザー名・パスワード・note・収集した生の値を
@@ -211,7 +272,7 @@ CATASHIRO_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visib
 
 ---
 
-## 10. ベータリリースメモと既知の制限
+## 11. ベータリリースメモと既知の制限
 
 ビルドを共有する際は、テストしたコミット SHA / タグ、成果物名と配布チャネル、対応プラットフォーム
 （Apple Silicon Mac、macOS 14/15）、**署名 / 公証の状態（現在は未署名）**、パート 1 の Gatekeeper 手順を
