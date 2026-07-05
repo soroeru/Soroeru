@@ -2,7 +2,7 @@ import type { DomainService } from "../domain/domain-service.js";
 import type { Credential, SiteAccount } from "../domain/entities.js";
 import type { PageSnapshot } from "../types.js";
 import { collectDuringExploration } from "./disclosure-collector.js";
-import { DecisionEngine } from "./decision-engine.js";
+import { DecisionEngine, type AiEngine } from "./decision-engine.js";
 import { findLoginField, findLoginLink, findLoginSubmitButton, hasLoginFields } from "./login-handler.js";
 import { PageExplorer } from "./page-explorer.js";
 import { RuleEngine } from "./rule-engine.js";
@@ -23,11 +23,21 @@ export interface VisibilityRunnerOptions {
   isCanceled?: () => boolean;
   maxHandoffs?: number;
   now?: () => number;
+  /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
+  aiEngine?: AiEngine;
 }
 
 export interface VisibilityRunResult {
   siteAccountId: string;
-  status: "collected" | "handoff" | "failed" | "unreachable" | "skipped" | "login-failed" | "no-data" | "canceled";
+  status:
+    | "collected"
+    | "handoff"
+    | "failed"
+    | "unreachable"
+    | "skipped"
+    | "login-failed"
+    | "no-data"
+    | "canceled";
   disclosures: number;
   relationships: number;
   constraints: number;
@@ -72,7 +82,13 @@ export class VisibilityRunner {
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       await session.page.waitForReady();
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
-      let snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "initial", credential);
+      let snapshot = await this.clearOrPause(
+        siteAccount,
+        session,
+        await session.page.snapshot(),
+        "initial",
+        credential,
+      );
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       if (!snapshot) return this.handoffResult(siteAccountId);
 
@@ -86,14 +102,23 @@ export class VisibilityRunner {
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         await session.page.waitForReady();
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
-        snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "after-login", credential);
+        snapshot = await this.clearOrPause(
+          siteAccount,
+          session,
+          await session.page.snapshot(),
+          "after-login",
+          credential,
+        );
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
       }
 
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
-      const explorer = new PageExplorer(new DecisionEngine(new RuleEngine()), this.wallDetection);
+      const explorer = new PageExplorer(
+        new DecisionEngine(new RuleEngine(), this.options.aiEngine),
+        this.wallDetection,
+      );
       const collection = await this.collectFromExploration(siteAccount, session, explorer, snapshot);
       if (collection.interruptedByWall) return this.handoffResult(siteAccountId);
       const relationships = this.recordRelationships(siteAccount, snapshot);
@@ -292,13 +317,16 @@ export class VisibilityRunner {
   ): Promise<{ disclosures: number; dynamicCandidates: number; interruptedByWall: boolean }> {
     const maxHandoffs = this.options.maxHandoffs ?? 3;
     let handoffs = 0;
-    let collected = await collectDuringExploration(explorer.explore(session.page, startSnapshot.url, siteAccount, startSnapshot), {
-      domain: this.options.domain,
-      siteAccount,
-      pageDriver: session.page,
-      now: this.now,
-      isCanceled: () => this.isCanceled(),
-    });
+    let collected = await collectDuringExploration(
+      explorer.explore(session.page, startSnapshot.url, siteAccount, startSnapshot),
+      {
+        domain: this.options.domain,
+        siteAccount,
+        pageDriver: session.page,
+        now: this.now,
+        isCanceled: () => this.isCanceled(),
+      },
+    );
 
     while (collected.wall) {
       const wall = collected.wall;
@@ -324,7 +352,11 @@ export class VisibilityRunner {
       });
 
       if (!this.options.handoff || handoffs >= maxHandoffs) {
-        return { disclosures: collected.disclosures, dynamicCandidates: collected.dynamicCandidates, interruptedByWall: true };
+        return {
+          disclosures: collected.disclosures,
+          dynamicCandidates: collected.dynamicCandidates,
+          interruptedByWall: true,
+        };
       }
       handoffs++;
       const outcome = await this.options.handoff({
@@ -333,7 +365,11 @@ export class VisibilityRunner {
         evidence: wall.wall.evidence,
       });
       if (outcome !== "resolved") {
-        return { disclosures: collected.disclosures, dynamicCandidates: collected.dynamicCandidates, interruptedByWall: true };
+        return {
+          disclosures: collected.disclosures,
+          dynamicCandidates: collected.dynamicCandidates,
+          interruptedByWall: true,
+        };
       }
 
       this.options.domain.saveCheckpoint({
@@ -351,7 +387,11 @@ export class VisibilityRunner {
         isCanceled: () => this.isCanceled(),
       });
     }
-    return { disclosures: collected.disclosures, dynamicCandidates: collected.dynamicCandidates, interruptedByWall: false };
+    return {
+      disclosures: collected.disclosures,
+      dynamicCandidates: collected.dynamicCandidates,
+      interruptedByWall: false,
+    };
   }
 
   private async login(session: SiteSession, credential: Credential, snapshot: PageSnapshot): Promise<void> {
@@ -495,7 +535,9 @@ export class VisibilityRunner {
   }
 
   private handoffResult(siteAccountId: string): VisibilityRunResult {
-    const constraints = this.options.domain.listConstraints().filter((constraint) => constraint.siteAccountId === siteAccountId).length;
+    const constraints = this.options.domain
+      .listConstraints()
+      .filter((constraint) => constraint.siteAccountId === siteAccountId).length;
     return { siteAccountId, status: "handoff", disclosures: 0, relationships: 0, constraints };
   }
 }

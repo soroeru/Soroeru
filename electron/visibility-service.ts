@@ -9,6 +9,7 @@
 // Framework-free (no electron import) so it is unit-testable with a fake
 // `openSession` and a captured `emit`.
 
+import type { AiEngine } from "../src/automation/decision-engine.js";
 import { VisibilityRunner, type VisibilityRunResult } from "../src/automation/visibility-runner.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
 import type { DomainService } from "../src/domain/domain-service.js";
@@ -27,6 +28,8 @@ export interface VisibilityServiceOptions {
   emit?: (event: VisibilityEvent) => void;
   /** Max chained wall hand-offs before giving up (passed through to the runner). */
   maxHandoffs?: number;
+  /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
+  aiEngine?: AiEngine;
 }
 
 interface PendingHandoff {
@@ -44,8 +47,12 @@ export class VisibilityService {
   private pendingHandoff: PendingHandoff | undefined;
   /** The in-flight `close()` triggered by `abortRun()`, if any (Issue #294 app-quit race). */
   private pendingSessionClose: Promise<void> | undefined;
+  /** Optional AI fallback for DecisionEngine (Issue #310); mutable so the caller can rebuild it per vault-unlock session. */
+  private aiEngine: AiEngine | undefined;
 
-  constructor(private readonly options: VisibilityServiceOptions) {}
+  constructor(private readonly options: VisibilityServiceOptions) {
+    this.aiEngine = options.aiEngine;
+  }
 
   /** Bind the unlocked vault's DomainService (called on unlock). */
   setDomain(domain: DomainService): void {
@@ -56,6 +63,11 @@ export class VisibilityService {
   clearDomain(): void {
     this.abortRun();
     this.domain = undefined;
+  }
+
+  /** Replace the AI fallback (Issue #310): rebuilt per vault-unlock session, cleared on lock. */
+  setAiEngine(aiEngine: AiEngine | undefined): void {
+    this.aiEngine = aiEngine;
   }
 
   status(): VisibilityStatusView {
@@ -92,6 +104,7 @@ export class VisibilityService {
         handoff: (input) => this.onHandoff(input),
         isCanceled: () => this.cancelRequested,
         ...(this.options.maxHandoffs !== undefined ? { maxHandoffs: this.options.maxHandoffs } : {}),
+        ...(this.aiEngine !== undefined ? { aiEngine: this.aiEngine } : {}),
       });
       this.emit({ type: "run-started", siteAccountId });
       const view = toView(await runner.runSite(siteAccountId));

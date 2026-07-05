@@ -6,6 +6,9 @@
 // This module is framework-free (no electron import) so it is unit-testable.
 // It never logs decrypted values.
 
+import { AiEngine as AiEngineImpl, type RedactionValueSource } from "../src/automation/ai-engine.js";
+import { aiProviderFromEnv } from "../src/agent/ai/provider.js";
+import type { AiEngine } from "../src/automation/decision-engine.js";
 import { DomainService } from "../src/domain/domain-service.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
 import { vaultExists } from "../src/store/vault.js";
@@ -73,6 +76,14 @@ export interface SoroeruSessionOptions {
   openExternal?: (url: string) => Promise<void>;
   /** Max chained wall hand-offs before a run gives up. */
   maxHandoffs?: number;
+  /**
+   * Inject a fake AI fallback (tests only) in place of the production
+   * lazy-per-unlock construction from `aiProviderFromEnv()` (Issue #310).
+   * When provided, it is used for the lifetime of this session and is never
+   * rebuilt or cleared on lock/unlock — that reset behavior is specific to
+   * the production `.env`-sourced instance.
+   */
+  aiEngine?: AiEngine;
 }
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
@@ -110,6 +121,17 @@ export class SoroeruSession {
   private readonly openExternal: ((url: string) => Promise<void>) | undefined;
   private eventSink: ((event: VisibilityEvent) => void) | undefined;
   private collectionRunning = false;
+  /** True when a test injected `SoroeruSessionOptions.aiEngine` directly (skips the per-unlock lazy rebuild/clear below). */
+  private readonly aiEngineOverride: boolean;
+  /**
+   * Local-only value source for AI-prompt redaction (Issue #310, design §8):
+   * canonical Personal Attribute values, read fresh on every call so lock/
+   * unlock state is always reflected. Never logged, never sent as-is — only
+   * matched against locally before a prompt is built (ai-engine.ts `redact`).
+   */
+  private readonly redactionSource: RedactionValueSource = {
+    currentValues: () => this.domain?.listPersonalAttributes().map((attr) => attr.value) ?? [],
+  };
 
   constructor(
     private readonly vaultPath: string,
@@ -118,12 +140,40 @@ export class SoroeruSession {
     this.engine = options.engine;
     this.closeInjectedEngine = options.closeEngine;
     this.openExternal = options.openExternal;
+    this.aiEngineOverride = options.aiEngine !== undefined;
     const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
     this.visibility = new VisibilityService({
       openSession,
       emit: (event) => this.eventSink?.(event),
       ...(options.maxHandoffs !== undefined ? { maxHandoffs: options.maxHandoffs } : {}),
+      ...(options.aiEngine !== undefined ? { aiEngine: options.aiEngine } : {}),
     });
+  }
+
+  /**
+   * Production-only: (re)build the `.env`-sourced AI fallback for the vault
+   * session that just unlocked (Issue #310). A fresh `AiEngine` means a fresh
+   * per-site call budget and consecutive-failure breaker for this session,
+   * matching its "one instance per run" lifecycle (design §8). No-op when a
+   * test supplied `SoroeruSessionOptions.aiEngine` directly, and silently
+   * absent (rules-only, today's behavior) when no provider is configured.
+   *
+   * This is a deliberately minimal, dev/manual-verification-only mechanism:
+   * it activates as soon as `OPENAI_API_KEY`/`ANTHROPIC_API_KEY` is present
+   * in the environment, with no settings-level user consent gate. It is not
+   * the eventual production "AI mode" toggle (a real encrypted `ProviderConfig`
+   * settings store is separate, deferred scope — see Issue #310's Non-Scope).
+   */
+  private refreshAiEngine(): void {
+    if (this.aiEngineOverride) return;
+    const provider = aiProviderFromEnv();
+    if (!provider) {
+      this.visibility.setAiEngine(undefined);
+      return;
+    }
+    this.visibility.setAiEngine(
+      new AiEngineImpl(provider, this.redactionSource, {}, (log) => console.log("[ai-engine]", log)),
+    );
   }
 
   /** Register the main-process sink that forwards Visibility events to the renderer. */
@@ -199,6 +249,7 @@ export class SoroeruSession {
     this.vault = await VaultV2.open(this.vaultPath, passphrase);
     this.domain = new DomainService(this.vault);
     this.visibility.setDomain(this.domain);
+    this.refreshAiEngine();
     await this.vault.save();
     return { ok: true, locked: false };
   }
@@ -212,6 +263,7 @@ export class SoroeruSession {
       this.vault = await VaultV2.open(this.vaultPath, passphrase);
       this.domain = new DomainService(this.vault);
       this.visibility.setDomain(this.domain);
+      this.refreshAiEngine();
       return { ok: true, locked: false };
     } catch {
       // Do not surface the underlying error: it must not leak vault internals.
@@ -230,6 +282,7 @@ export class SoroeruSession {
       this.vault = await VaultV2.openWithRecoveryKey(this.vaultPath, recoveryKey);
       this.domain = new DomainService(this.vault);
       this.visibility.setDomain(this.domain);
+      this.refreshAiEngine();
       return { ok: true, locked: false };
     } catch {
       // Wrong recovery key, or none configured: report uniformly, leak nothing.
@@ -241,6 +294,7 @@ export class SoroeruSession {
 
   lock(): VaultMutationResult {
     this.visibility.clearDomain();
+    if (!this.aiEngineOverride) this.visibility.setAiEngine(undefined);
     this.vault?.lock();
     this.vault = undefined;
     this.domain = undefined;
@@ -387,7 +441,9 @@ export class SoroeruSession {
     }
   }
 
-  async openSiteInDefaultBrowser(siteAccountId: string): Promise<{ ok: boolean; url?: string; error?: string }> {
+  async openSiteInDefaultBrowser(
+    siteAccountId: string,
+  ): Promise<{ ok: boolean; url?: string; error?: string }> {
     if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
     const siteAccount = this.domain.getSiteAccount(siteAccountId);
     if (!siteAccount) return { ok: false, error: "not-found" };
@@ -489,10 +545,16 @@ export class SoroeruSession {
     const dynamicLabels = new Map<string, string>();
     for (const candidate of dynamicCandidates) {
       dynamicLabels.set(candidate.proposedAttributeKey, candidate.label);
-      dynamicLabels.set(candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."), candidate.label);
+      dynamicLabels.set(
+        candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."),
+        candidate.label,
+      );
     }
     const pendingAttributeCandidates: PendingAttributeCandidateView[] = dynamicCandidates
-      .filter((candidate) => candidate.status === "candidate" && (candidate.siteAccountIds?.includes(siteAccountId) ?? false))
+      .filter(
+        (candidate) =>
+          candidate.status === "candidate" && (candidate.siteAccountIds?.includes(siteAccountId) ?? false),
+      )
       .map((candidate) => ({
         id: candidate.id,
         label: candidate.label,
@@ -556,10 +618,14 @@ export class SoroeruSession {
     if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
     const proposedAttributeKey = request.proposedAttributeKey.trim();
     const label = request.label.trim();
-    if (!proposedAttributeKey.startsWith("custom.") || label === "") return { ok: false, error: "invalid-request" };
+    if (!proposedAttributeKey.startsWith("custom.") || label === "")
+      return { ok: false, error: "invalid-request" };
     const isPendingCandidate = this.domain
       .listDynamicAttributeCandidates()
-      .some((candidate) => candidate.status === "candidate" && candidate.proposedAttributeKey === proposedAttributeKey);
+      .some(
+        (candidate) =>
+          candidate.status === "candidate" && candidate.proposedAttributeKey === proposedAttributeKey,
+      );
     if (!isPendingCandidate) return { ok: false, error: "not-found" };
     try {
       this.domain.confirmDynamicAttributeCandidate({
@@ -590,7 +656,9 @@ export class SoroeruSession {
   // --- Session persistence (opt-in encrypted storageState, Issue #294) ---
 
   /** Toggle the per-site opt-in; disabling clears any persisted storageState immediately. */
-  async setSessionPersistence(request: SetSessionPersistenceRequest): Promise<SessionPersistenceMutationResult> {
+  async setSessionPersistence(
+    request: SetSessionPersistenceRequest,
+  ): Promise<SessionPersistenceMutationResult> {
     if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
     const site = this.domain.setSessionPersistenceEnabled(request.siteAccountId, request.enabled);
     if (!site) return { ok: false, error: "not-found" };
