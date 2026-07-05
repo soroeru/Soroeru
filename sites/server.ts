@@ -16,6 +16,15 @@ export interface SiteState {
   events: SiteEvent[];
 }
 
+/**
+ * State for the /explore-flow/* fixture (Issue #251) — see exploreFlowFixture
+ * below. Not one of the 10 SITES, so it does not use the per-siteId
+ * SiteState map.
+ */
+interface ExploreFlowState {
+  paymentWallCleared: boolean;
+}
+
 export interface PocServer {
   url: string;
   siteUrl(siteId: string): string;
@@ -34,9 +43,12 @@ export async function startPocServer(port = 0): Promise<PocServer> {
     }
     return s;
   };
+  // Issue #251: single mutable slot for the /explore-flow/* fixture, independent
+  // of the per-siteId `states` map above.
+  const exploreFlowState: ExploreFlowState = { paymentWallCleared: false };
 
   const server = createServer((req, res) => {
-    void handle(req, res, stateFor).catch((err: unknown) => {
+    void handle(req, res, stateFor, exploreFlowState).catch((err: unknown) => {
       res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
       res.end(`server error: ${String(err)}`);
     });
@@ -64,6 +76,7 @@ async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   stateFor: (id: string) => SiteState,
+  exploreFlowState: ExploreFlowState,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname;
@@ -105,6 +118,12 @@ async function handle(
   if (path.startsWith("/wall-flow/") || path === "/wall-flow") {
     const form = req.method === "POST" ? await readForm(req) : {};
     send(wallFlowFixture(path, req.method ?? "GET", form));
+    return;
+  }
+
+  if (path.startsWith("/explore-flow/") || path === "/explore-flow") {
+    const form = req.method === "POST" ? await readForm(req) : {};
+    send(exploreFlowFixture(path, req.method ?? "GET", form, exploreFlowState));
     return;
   }
 
@@ -621,6 +640,127 @@ ${hidden}
   if (path === "/wall-flow/success") {
     return page("壁つき登録テスト - 完了", "<h1>登録が完了しました</h1>");
   }
+  return page("Not Found", "<h1>404</h1>");
+}
+
+// Issue #251: fixed fictional credentials for the /explore-flow/* fixture below.
+// The account is always "already registered" (no /register endpoint), so the
+// E2E test only needs these constants to build its CSV import row.
+const EXPLORE_FLOW_EMAIL = "explore-user@example.test";
+const EXPLORE_FLOW_PASSWORD = "Explore-Fake-Passw0rd!";
+const EXPLORE_FLOW_ZIP = "100-0002";
+const EXPLORE_FLOW_CARD_NUMBER = "4111 1111 1111 5678";
+const EXPLORE_FLOW_CARD_CVV = "321";
+
+/**
+ * Multi-page + wall exploration fixture (Issue #251), used only by
+ * tests/e2e/app-ui-exploration.e2e.ts. Not one of the 10 SITES (same tier as
+ * wallFlowFixture above), so it is never iterated by run/measure.ts's
+ * CI-gated registration/bulk-update matrix.
+ *
+ * login → mypage → {profile, address, payment}. `payment` shows a
+ * CAPTCHA-style wall on its first GET and clears on the next: PageExplorer's
+ * resume() always re-`goto()`s the same deferred URL
+ * (src/automation/page-explorer.ts), so a fresh visit returning different
+ * content is exactly how a real site remembering a solved wall for the
+ * session would behave.
+ */
+function exploreFlowFixture(
+  path: string,
+  method: string,
+  form: Record<string, string>,
+  state: ExploreFlowState,
+): string {
+  const base = "/explore-flow";
+  if ((path === base || path === `${base}/`) && method === "GET") {
+    return page("探索テスト商店", `<h1>探索テスト商店</h1>\n<p><a href="${base}/login">ログイン</a></p>`);
+  }
+
+  if (path === `${base}/login` && method === "GET") {
+    return page(
+      "探索テスト商店 - ログイン",
+      `<h1>ログイン</h1>
+<form method="post" action="${base}/login">
+<div class="row"><label for="ef_email">メールアドレス</label><input id="ef_email" name="email" type="email" autocomplete="email" required></div>
+<div class="row"><label for="ef_password">パスワード</label><input id="ef_password" name="password" type="password" autocomplete="current-password" required></div>
+<div class="row"><button type="submit">ログイン</button></div>
+</form>`,
+    );
+  }
+  if (path === `${base}/login` && method === "POST") {
+    if (form["email"] === EXPLORE_FLOW_EMAIL && form["password"] === EXPLORE_FLOW_PASSWORD) {
+      return page(
+        "探索テスト商店 - ログイン成功",
+        `<h1>ログインしました</h1>
+<p>マイページへ移動します。</p>
+<meta http-equiv="refresh" content="0;url=${base}/mypage">`,
+      );
+    }
+    return page(
+      "探索テスト商店 - ログイン",
+      `<h1>ログイン</h1>
+<p style="color:red">メールアドレスまたはパスワードが正しくありません。</p>
+<form method="post" action="${base}/login">
+<div class="row"><label for="ef_email">メールアドレス</label><input id="ef_email" name="email" type="email" autocomplete="email" required value="${esc(form["email"] ?? "")}"></div>
+<div class="row"><label for="ef_password">パスワード</label><input id="ef_password" name="password" type="password" autocomplete="current-password" required></div>
+<div class="row"><button type="submit">ログイン</button></div>
+</form>`,
+    );
+  }
+
+  if (path === `${base}/mypage` && method === "GET") {
+    return page(
+      "探索テスト商店 - マイページ",
+      `<h1>マイページ</h1>
+<ul>
+<li><a href="${base}/profile">会員情報</a></li>
+<li><a href="${base}/address">お届け先住所</a></li>
+<li><a href="${base}/payment">お支払い方法</a></li>
+</ul>`,
+    );
+  }
+
+  if (path === `${base}/profile` && method === "GET") {
+    return page(
+      "探索テスト商店 - 会員情報",
+      `<h1>会員情報</h1>
+<form>
+<div class="row"><label for="ef_profile_email">メールアドレス</label><input id="ef_profile_email" name="email" autocomplete="email" value="${esc(EXPLORE_FLOW_EMAIL)}" readonly></div>
+</form>`,
+    );
+  }
+
+  if (path === `${base}/address` && method === "GET") {
+    return page(
+      "探索テスト商店 - お届け先住所",
+      `<h1>お届け先住所</h1>
+<form>
+<div class="row"><label for="ef_zip">郵便番号</label><input id="ef_zip" name="zip" autocomplete="postal-code" value="${esc(EXPLORE_FLOW_ZIP)}" readonly></div>
+</form>`,
+    );
+  }
+
+  if (path === `${base}/payment` && method === "GET") {
+    if (!state.paymentWallCleared) {
+      state.paymentWallCleared = true;
+      return page(
+        "認証",
+        `<h1>セキュリティ確認</h1>
+<p>私はロボットではありません</p>
+<div class="g-recaptcha" data-sitekey="dummy"></div>
+<iframe src="/wall-fixture/recaptcha-frame" title="reCAPTCHA"></iframe>`,
+      );
+    }
+    return page(
+      "探索テスト商店 - お支払い方法",
+      `<h1>お支払い方法</h1>
+<form>
+<div class="row"><label for="ef_card">カード番号</label><input id="ef_card" name="card_number" autocomplete="cc-number" value="${esc(EXPLORE_FLOW_CARD_NUMBER)}" readonly></div>
+<div class="row"><label for="ef_cvv">セキュリティコード</label><input id="ef_cvv" name="card_cvv" autocomplete="cc-csc" value="${esc(EXPLORE_FLOW_CARD_CVV)}" readonly></div>
+</form>`,
+    );
+  }
+
   return page("Not Found", "<h1>404</h1>");
 }
 
