@@ -94,4 +94,34 @@ set -e
 [ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for missing --unit, got $STATUS"
 rm -f "$TMP_DIR/usage.out"
 
+# --- 6. --commit omitted defaults to `git rev-parse HEAD` ----------------
+printf -- "- commit: \`%s\`\n" "$COMMIT" > "state/ai-reviews/20260101-000003-claude-code-444.md"
+OUT=$(bash scripts/wait-for-local-ai-review.sh --unit code --timeout 5 --poll 1) \
+  || fail_msg "expected success defaulting --commit to HEAD"
+printf '%s\n' "$OUT" | grep -q "^wait-for-local-ai-review: done " \
+  || fail_msg "expected a 'done' line with --commit defaulted to HEAD, got: $OUT"
+rm -f state/ai-reviews/*.md
+
+# --- 7. usage errors: non-numeric --timeout / --commit not a full SHA ----
+set +e
+bash scripts/wait-for-local-ai-review.sh --unit code --timeout notanumber >"$TMP_DIR/timeout.out" 2>&1
+STATUS=$?
+set -e
+[ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for non-numeric --timeout, got $STATUS"
+rm -f "$TMP_DIR/timeout.out"
+
+set +e
+bash scripts/wait-for-local-ai-review.sh --unit code --poll notanumber >"$TMP_DIR/poll.out" 2>&1
+STATUS=$?
+set -e
+[ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for non-numeric --poll, got $STATUS"
+rm -f "$TMP_DIR/poll.out"
+
+set +e
+bash scripts/wait-for-local-ai-review.sh --unit code --commit "${COMMIT:0:7}" >"$TMP_DIR/short-sha.out" 2>&1
+STATUS=$?
+set -e
+[ "$STATUS" -eq 2 ] || fail_msg "expected exit code 2 for an abbreviated --commit, got $STATUS"
+rm -f "$TMP_DIR/short-sha.out"
+
 printf 'wait-for-local-ai-review smoke check passed\n'

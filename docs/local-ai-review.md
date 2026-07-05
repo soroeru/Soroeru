@@ -269,7 +269,10 @@ scripts/wait-for-local-ai-review.sh --unit <name>[,<name>...] \
 
 - `--unit` (required): one or more of `code`, `requirements`, `architecture`,
   `design` — whichever units the commit's diff actually touches.
-- `--commit` defaults to `git rev-parse HEAD`.
+- `--commit` defaults to `git rev-parse HEAD` and must be a full 40-character
+  SHA if passed explicitly — an abbreviated SHA never matches the output
+  template's `` - commit: `<sha>` `` line and is rejected as a usage error
+  rather than silently running out the full timeout.
 - `--timeout` defaults to 540 seconds for one unit; pass a larger value
   explicitly for a commit that triggers several units, since they run
   sequentially under one lock.

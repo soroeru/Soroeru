@@ -70,8 +70,35 @@ if [ -z "$UNITS" ]; then
   exit 2
 fi
 
+case "$TIMEOUT_SEC" in
+  ''|*[!0-9]*)
+    printf -- '--timeout must be a positive integer number of seconds, got: %s\n' "$TIMEOUT_SEC" >&2
+    exit 2
+    ;;
+esac
+case "$POLL_SEC" in
+  ''|*[!0-9]*)
+    printf -- '--poll must be a positive integer number of seconds, got: %s\n' "$POLL_SEC" >&2
+    exit 2
+    ;;
+esac
+
 if [ -z "$COMMIT" ]; then
   COMMIT=$(cd "$REPO_ROOT" && git rev-parse HEAD)
+fi
+
+# The output template always writes the full 40-char SHA (local-ai-review.sh
+# writes `$COMMIT_SHA` from `git rev-parse HEAD`/the post-commit hook's
+# argument, never an abbreviation), so an abbreviated --commit could never
+# match and would otherwise silently run out the full --timeout instead of
+# failing fast.
+case "$COMMIT" in
+  *[!0-9a-f]*) COMMIT_IS_HEX=0 ;;
+  *) COMMIT_IS_HEX=1 ;;
+esac
+if [ "${#COMMIT}" -ne 40 ] || [ "$COMMIT_IS_HEX" -ne 1 ]; then
+  printf -- '--commit must be a full 40-character hex SHA (got: %s); abbreviated SHAs never match the output template and would silently time out\n' "$COMMIT" >&2
+  exit 2
 fi
 
 STATE_DIR="$REPO_ROOT/$LOCAL_AI_REVIEW_STATE_DIR"
