@@ -5,7 +5,12 @@ import type {
   VisibilityEvent,
   VisibilityHandoffCredentialView,
 } from "../../../electron/ipc/contract.js";
-import { collectVisibleSelectedSiteIds, runVisibilityBatch, type BatchResultEntry } from "../site-management-batch.js";
+import {
+  collectVisibleSelectedSiteIds,
+  enableSessionPersistenceForSites,
+  runVisibilityBatch,
+  type BatchResultEntry,
+} from "../site-management-batch.js";
 import {
   buildCollectionResultModalContent,
   type CollectionResultModalContent,
@@ -67,6 +72,8 @@ export function SiteManagementPanel({
   const [detail, setDetail] = useState<SiteLedgerDetail | undefined>();
   const [detailError, setDetailError] = useState<string | undefined>();
   const [batch, setBatch] = useState<BatchProgress>(emptyProgress);
+  const [sessionPersistenceBulkRunning, setSessionPersistenceBulkRunning] = useState(false);
+  const [sessionPersistenceBulkError, setSessionPersistenceBulkError] = useState<string | undefined>();
   const [resultModal, setResultModal] = useState<CollectionResultModalContent | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<SiteLedgerSummary | undefined>();
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
@@ -126,7 +133,10 @@ export function SiteManagementPanel({
           break;
         case "resumed":
           resumedHandoffSites.current.add(event.siteAccountId);
-          setBatch((current) => ({ ...current, phase: current.queue.length > 0 ? "running" : current.phase }));
+          setBatch((current) => ({
+            ...current,
+            phase: current.queue.length > 0 ? "running" : current.phase,
+          }));
           setHandoff(undefined);
           break;
         case "run-finished":
@@ -142,7 +152,10 @@ export function SiteManagementPanel({
   }, [loadSites]);
 
   const visibleSites = sites;
-  const selectedVisibleIds = useMemo(() => collectVisibleSelectedSiteIds(visibleSites, selected), [selected, visibleSites]);
+  const selectedVisibleIds = useMemo(
+    () => collectVisibleSelectedSiteIds(visibleSites, selected),
+    [selected, visibleSites],
+  );
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
 
@@ -185,8 +198,11 @@ export function SiteManagementPanel({
           results: summary.results,
         }));
         if (!summary.canceled) {
-          const content = buildCollectionResultModalContent(summary.results, (siteAccountId) =>
-            sitesRef.current.find((site) => site.siteAccountId === siteAccountId)?.displayName ?? siteAccountId,
+          const content = buildCollectionResultModalContent(
+            summary.results,
+            (siteAccountId) =>
+              sitesRef.current.find((site) => site.siteAccountId === siteAccountId)?.displayName ??
+              siteAccountId,
           );
           if (content) setResultModal(content);
         }
@@ -256,6 +272,24 @@ export function SiteManagementPanel({
     setDetailError(undefined);
     setDetail(result);
   }, []);
+  const enableSessionPersistenceForSelected = useCallback(async () => {
+    const ids = [...selectedVisibleIds];
+    if (ids.length === 0 || sessionPersistenceBulkRunning) return;
+    setSessionPersistenceBulkRunning(true);
+    setSessionPersistenceBulkError(undefined);
+    try {
+      const summary = await enableSessionPersistenceForSites(ids, (siteAccountId) =>
+        window.soroeru.sessionPersistence.set({ siteAccountId, enabled: true }),
+      );
+      if (summary.failedCount > 0) {
+        const firstFailure = summary.results.find((entry) => !entry.ok);
+        setSessionPersistenceBulkError(reasonMessage(firstFailure?.error));
+      }
+      if (detail && ids.includes(detail.siteAccountId)) await openDetail(detail.siteAccountId);
+    } finally {
+      setSessionPersistenceBulkRunning(false);
+    }
+  }, [detail, openDetail, selectedVisibleIds, sessionPersistenceBulkRunning]);
   const retrySite = useCallback(
     (siteAccountId: string) => {
       setResultModal(undefined);
@@ -337,8 +371,8 @@ export function SiteManagementPanel({
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-medium">サイト管理</h2>
           <p className="text-sm text-neutral-500">
-            取り込んだサイトを選び、上から順に Visibility 収集します。CAPTCHA / MFA / 検証ウォールは自動で突破せず、
-            表示中のブラウザでご自身に解決をお願いします。
+            取り込んだサイトを選び、上から順に Visibility 収集します。CAPTCHA / MFA /
+            検証ウォールは自動で突破せず、 表示中のブラウザでご自身に解決をお願いします。
           </p>
         </div>
 
@@ -353,8 +387,9 @@ export function SiteManagementPanel({
           disabled={batchBusy}
           onStart={() => void startBatch()}
           onCancel={cancelBatch}
-          onSelectAll={selectAllVisible}
-          onClear={clearVisible}
+          onEnableSessionPersistence={() => void enableSessionPersistenceForSelected()}
+          sessionPersistenceBulkRunning={sessionPersistenceBulkRunning}
+          sessionPersistenceBulkError={sessionPersistenceBulkError}
         />
 
         {handoff && (
@@ -369,39 +404,62 @@ export function SiteManagementPanel({
 
         {sites.length === 0 ? (
           <p className="text-sm text-neutral-500">
-            まだサイトがありません。上の「CSV を取り込む」から CSV を取り込むと、ここに収集対象が表示されます。
+            まだサイトがありません。上の「CSV を取り込む」から CSV
+            を取り込むと、ここに収集対象が表示されます。
           </p>
         ) : (
-          <ul className="flex flex-col divide-y divide-neutral-200">
-            {sites.map((site) => (
-              <SiteRow
-                key={site.siteAccountId}
-                site={site}
-                checked={selected.has(site.siteAccountId)}
-                disabled={batchBusy}
-                savedPageOpen={savedPageSiteId === site.siteAccountId}
-                guideOpen={guideSiteId === site.siteAccountId}
-                detailOpen={detail?.siteAccountId === site.siteAccountId}
-                detail={detail?.siteAccountId === site.siteAccountId ? detail : undefined}
-                running={runningSiteId === site.siteAccountId}
-                onCheckedChange={(checked) => selectSite(site.siteAccountId, checked)}
-                onToggleSavedPage={() =>
-                  setSavedPageSiteId((current) => (current === site.siteAccountId ? undefined : site.siteAccountId))
-                }
-                onOpenSite={() => void openSite(site.siteAccountId)}
-                onMarkManual={() => void markManual(site.siteAccountId)}
-                onSavedPageImported={() => {
-                  setGuideSiteId(undefined);
-                  void loadSites();
-                  onCollectedRef.current();
-                }}
-                onOpenDetail={() => void openDetail(site.siteAccountId)}
-                onCloseDetail={() => setDetail(undefined)}
-                onReloadDetail={() => openDetail(site.siteAccountId)}
-                onRequestDelete={() => requestDelete(site)}
-              />
-            ))}
-          </ul>
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={batchBusy || visibleSites.length === 0}
+                onClick={selectAllVisible}
+                className="text-sm underline"
+              >
+                全てにチェックする
+              </button>
+              <button
+                type="button"
+                disabled={batchBusy || selectedVisibleIds.length === 0}
+                onClick={clearVisible}
+                className="text-sm underline"
+              >
+                全てのチェックを外す
+              </button>
+            </div>
+            <ul className="flex flex-col divide-y divide-neutral-200">
+              {sites.map((site) => (
+                <SiteRow
+                  key={site.siteAccountId}
+                  site={site}
+                  checked={selected.has(site.siteAccountId)}
+                  disabled={batchBusy}
+                  savedPageOpen={savedPageSiteId === site.siteAccountId}
+                  guideOpen={guideSiteId === site.siteAccountId}
+                  detailOpen={detail?.siteAccountId === site.siteAccountId}
+                  detail={detail?.siteAccountId === site.siteAccountId ? detail : undefined}
+                  running={runningSiteId === site.siteAccountId}
+                  onCheckedChange={(checked) => selectSite(site.siteAccountId, checked)}
+                  onToggleSavedPage={() =>
+                    setSavedPageSiteId((current) =>
+                      current === site.siteAccountId ? undefined : site.siteAccountId,
+                    )
+                  }
+                  onOpenSite={() => void openSite(site.siteAccountId)}
+                  onMarkManual={() => void markManual(site.siteAccountId)}
+                  onSavedPageImported={() => {
+                    setGuideSiteId(undefined);
+                    void loadSites();
+                    onCollectedRef.current();
+                  }}
+                  onOpenDetail={() => void openDetail(site.siteAccountId)}
+                  onCloseDetail={() => setDetail(undefined)}
+                  onReloadDetail={() => openDetail(site.siteAccountId)}
+                  onRequestDelete={() => requestDelete(site)}
+                />
+              ))}
+            </ul>
+          </>
         )}
       </div>
 
@@ -435,8 +493,9 @@ function BatchCollectionBar({
   disabled,
   onStart,
   onCancel,
-  onSelectAll,
-  onClear,
+  onEnableSessionPersistence,
+  sessionPersistenceBulkRunning,
+  sessionPersistenceBulkError,
 }: {
   selectedCount: number;
   totalVisible: number;
@@ -445,8 +504,9 @@ function BatchCollectionBar({
   disabled: boolean;
   onStart: () => void;
   onCancel: () => void;
-  onSelectAll: () => void;
-  onClear: () => void;
+  onEnableSessionPersistence: () => void;
+  sessionPersistenceBulkRunning: boolean;
+  sessionPersistenceBulkError: string | undefined;
 }): React.JSX.Element {
   const successful = batch.results.filter((entry) => entry.status === "collected").length;
   const failed = batch.results.filter((entry) => entry.status !== "collected").length;
@@ -461,11 +521,13 @@ function BatchCollectionBar({
         >
           選択したサイトを収集
         </button>
-        <button type="button" disabled={disabled || totalVisible === 0} onClick={onSelectAll} className="text-sm underline">
-          全てにチェックする
-        </button>
-        <button type="button" disabled={disabled || selectedCount === 0} onClick={onClear} className="text-sm underline">
-          全てのチェックを外す
+        <button
+          type="button"
+          disabled={selectedCount === 0 || disabled || sessionPersistenceBulkRunning}
+          onClick={onEnableSessionPersistence}
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {sessionPersistenceBulkRunning ? "設定中…" : "選択したサイトのログインセッションを保持する"}
         </button>
         {disabled && (
           <button type="button" onClick={onCancel} className="text-sm text-red-700 underline">
@@ -473,6 +535,7 @@ function BatchCollectionBar({
           </button>
         )}
       </div>
+      {sessionPersistenceBulkError && <p className="text-xs text-red-600">{sessionPersistenceBulkError}</p>}
       <p className="text-xs text-neutral-500">
         選択中 {selectedCount} / 表示中 {totalVisible}
         {batch.phase === "running" || batch.phase === "paused"
@@ -502,13 +565,20 @@ function CollectionResultModal({
     <Modal title={content.title} onClose={onClose}>
       <ul className="flex flex-col gap-3">
         {content.failures.map((failure) => (
-          <li key={failure.siteAccountId} className="flex flex-col gap-1 rounded border border-neutral-200 p-2">
+          <li
+            key={failure.siteAccountId}
+            className="flex flex-col gap-1 rounded border border-neutral-200 p-2"
+          >
             <span className="font-medium">{failure.siteName}</span>
             <span className="text-sm text-neutral-700">{failure.reason}</span>
             {(failure.canRetry || failure.canImportSavedPage) && (
               <span className="mt-1 flex flex-wrap gap-2">
                 {failure.canRetry && (
-                  <button type="button" onClick={() => onRetry(failure.siteAccountId)} className="text-sm underline">
+                  <button
+                    type="button"
+                    onClick={() => onRetry(failure.siteAccountId)}
+                    className="text-sm underline"
+                  >
                     再収集
                   </button>
                 )}
@@ -563,7 +633,11 @@ function HandoffPanel({
       </p>
       <HandoffCredentialPanel credential={handoff.credential} />
       <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={onResume} className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white">
+        <button
+          type="button"
+          onClick={onResume}
+          className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white"
+        >
           解決して再開
         </button>
         <button type="button" onClick={onSkip} className="text-sm underline">
@@ -683,7 +757,11 @@ function CopyableCredential({
             {revealed ? "隠す" : "表示"}
           </button>
         )}
-        <button type="button" onClick={() => void copy()} className="rounded border border-neutral-300 px-3 py-1.5 text-sm">
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
+        >
           {copied ? "コピーしました" : "コピー"}
         </button>
       </div>
@@ -748,9 +826,13 @@ function SiteRow({
               ) : (
                 <span className="text-neutral-400">未収集</span>
               )}
-              {site.stale.stale > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">古い {site.stale.stale}</span>}
+              {site.stale.stale > 0 && (
+                <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">古い {site.stale.stale}</span>
+              )}
               {site.stale.unknown > 0 && (
-                <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600">不明 {site.stale.unknown}</span>
+                <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600">
+                  不明 {site.stale.unknown}
+                </span>
               )}
               {site.relationshipKinds.map((kind) => (
                 <span key={kind} className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">
@@ -767,7 +849,11 @@ function SiteRow({
           </span>
         </label>
         <span className="flex shrink-0 flex-wrap justify-end gap-2">
-          <button type="button" onClick={onOpenDetail} className="rounded border border-neutral-300 px-3 py-1.5 text-sm">
+          <button
+            type="button"
+            onClick={onOpenDetail}
+            className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
+          >
             詳細
           </button>
           <button
@@ -794,9 +880,18 @@ function SiteRow({
       {savedPageOpen && (
         <div className="flex flex-col gap-2 pl-7">
           {guideOpen && (
-            <SavedPageImportGuide site={site} disabled={disabled} onOpenSite={onOpenSite} onSkip={onMarkManual} />
+            <SavedPageImportGuide
+              site={site}
+              disabled={disabled}
+              onOpenSite={onOpenSite}
+              onSkip={onMarkManual}
+            />
           )}
-          <SavedPageImportPanel siteAccountId={site.siteAccountId} disabled={disabled} onImported={onSavedPageImported} />
+          <SavedPageImportPanel
+            siteAccountId={site.siteAccountId}
+            disabled={disabled}
+            onImported={onSavedPageImported}
+          />
         </div>
       )}
 
@@ -828,8 +923,8 @@ function DeleteSiteModal({
     <Modal title="サイト情報の削除" onClose={onCancel}>
       <div className="flex flex-col gap-3">
         <p className="text-sm text-neutral-800">
-          「{site.displayName}」の情報を Soroeru から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、
-          取り消せません。
+          「{site.displayName}」の情報を Soroeru
+          から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、 取り消せません。
         </p>
         <p className="text-sm text-red-700">
           これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。
@@ -908,11 +1003,15 @@ function SavedPageImportGuide({
       <div className="grid gap-2 md:grid-cols-2">
         <figure className="overflow-hidden rounded border border-neutral-200 bg-neutral-50">
           <img src={guideWallImage} alt="ローカルダミーサイトのセキュリティ確認画面" className="w-full" />
-          <figcaption className="px-2 py-1 text-xs text-neutral-500">ローカルダミーサイト: セキュリティ確認</figcaption>
+          <figcaption className="px-2 py-1 text-xs text-neutral-500">
+            ローカルダミーサイト: セキュリティ確認
+          </figcaption>
         </figure>
         <figure className="overflow-hidden rounded border border-neutral-200 bg-neutral-50">
           <img src={guideAccountImage} alt="ローカルダミーサイトの登録情報ページ" className="w-full" />
-          <figcaption className="px-2 py-1 text-xs text-neutral-500">ローカルダミーサイト: 登録情報ページ</figcaption>
+          <figcaption className="px-2 py-1 text-xs text-neutral-500">
+            ローカルダミーサイト: 登録情報ページ
+          </figcaption>
         </figure>
       </div>
       <div className="flex flex-wrap gap-2">

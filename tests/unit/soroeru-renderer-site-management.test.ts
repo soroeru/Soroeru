@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   collectVisibleSelectedSiteIds,
+  enableSessionPersistenceForSites,
   runVisibilityBatch,
 } from "../../src/renderer/site-management-batch.js";
 import type { SiteLedgerSummary, VisibilityRunResultView } from "../../electron/ipc/contract.js";
@@ -84,4 +85,37 @@ test("runVisibilityBatch stops before the next site when canceled", async () => 
   assert.deepEqual(started, ["amazon"]);
   assert.equal(summary.completed, 1);
   assert.equal(summary.canceled, true);
+});
+
+test("enableSessionPersistenceForSites sets each selected site sequentially and tallies failures", async () => {
+  const requested: string[] = [];
+
+  const summary = await enableSessionPersistenceForSites(
+    ["amazon", "rakuten", "yoyostore"],
+    async (siteAccountId) => {
+      requested.push(siteAccountId);
+      if (siteAccountId === "rakuten") return { ok: false, error: "not-found" };
+      return { ok: true };
+    },
+  );
+
+  assert.deepEqual(requested, ["amazon", "rakuten", "yoyostore"]);
+  assert.deepEqual(
+    summary.results.map((entry) => [entry.siteAccountId, entry.ok, entry.error]),
+    [
+      ["amazon", true, undefined],
+      ["rakuten", false, "not-found"],
+      ["yoyostore", true, undefined],
+    ],
+  );
+  assert.equal(summary.failedCount, 1);
+});
+
+test("enableSessionPersistenceForSites records a failure entry when the setter throws", async () => {
+  const summary = await enableSessionPersistenceForSites(["amazon"], async () => {
+    throw new Error("ipc failed");
+  });
+
+  assert.deepEqual(summary.results, [{ siteAccountId: "amazon", ok: false, error: "unknown" }]);
+  assert.equal(summary.failedCount, 1);
 });
