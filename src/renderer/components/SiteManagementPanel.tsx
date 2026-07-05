@@ -281,7 +281,10 @@ export function SiteManagementPanel({
       const summary = await enableSessionPersistenceForSites(ids, (siteAccountId) =>
         window.soroeru.sessionPersistence.set({ siteAccountId, enabled: true }),
       );
-      if (summary.failedCount > 0) setSessionPersistenceBulkError(reasonMessage(undefined));
+      if (summary.failedCount > 0) {
+        const firstFailure = summary.results.find((entry) => !entry.ok);
+        setSessionPersistenceBulkError(reasonMessage(firstFailure?.error));
+      }
       if (detail && ids.includes(detail.siteAccountId)) await openDetail(detail.siteAccountId);
     } finally {
       setSessionPersistenceBulkRunning(false);
