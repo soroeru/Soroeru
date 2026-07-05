@@ -363,6 +363,63 @@ test("name-new-attribute (form-field path) may send labels/placeholder/nearbyTex
   });
 });
 
+// --- should-continue: pendingSameSiteLinkCount / visitedCount / collectedAttributes -----
+
+test("should-continue counts unvisited same-site links and excludes visited/cross-site ones", async () => {
+  const snap = snapshot({
+    url: "https://example.com/mypage",
+    links: [
+      { href: "/settings", text: "settings" }, // same-site, unvisited
+      { href: "/mypage", text: "mypage" }, // same-site, but already visited
+      { href: "https://other.example/page", text: "other" }, // cross-site
+    ],
+  });
+  const ctx = context({
+    visitedUrls: ["https://example.com/mypage"],
+    collectedAttributes: ["email", "phone.full"],
+  });
+  const provider = new StubProvider([{ continue: true, confidence: 0.4 }]);
+  const aiEngine = new AiEngine(provider, redactionSource());
+
+  const result = await aiEngine.consult(req("should-continue", snap, ctx));
+
+  const [call] = provider.calls;
+  assert.ok(call);
+  const payload = JSON.parse(call.user) as {
+    visitedCount: number;
+    pendingSameSiteLinkCount: number;
+    collectedAttributes: string[];
+  };
+  assert.equal(payload.visitedCount, 1);
+  assert.equal(payload.pendingSameSiteLinkCount, 1);
+  assert.deepEqual(payload.collectedAttributes, ["email", "phone.full"]);
+  assert.deepEqual(result?.result, { continue: true });
+});
+
+// --- caller-contract guard: missing required context never reaches the provider --------
+
+test("classify-field without context.field is rejected before spending budget or a failure count", async () => {
+  const provider = new StubProvider([{ classification: null, confidence: 0.5 }]);
+  const { logs, onLog } = collectLogs();
+  const aiEngine = new AiEngine(provider, redactionSource(), {}, onLog);
+
+  const result = await aiEngine.consult(req("classify-field", snapshot(), context()));
+
+  assert.equal(result, null);
+  assert.equal(provider.calls.length, 0, "the provider must never be called");
+  assert.equal(logs.length, 0, "a caller-contract violation is not an AI consultation event");
+});
+
+test("name-new-attribute without field or displayValue is rejected before spending budget or a failure count", async () => {
+  const provider = new StubProvider([{ attributeKey: "x", label: "x", confidence: 0.5 }]);
+  const aiEngine = new AiEngine(provider, redactionSource());
+
+  const result = await aiEngine.consult(req("name-new-attribute", snapshot(), context()));
+
+  assert.equal(result, null);
+  assert.equal(provider.calls.length, 0);
+});
+
 // --- 5. existence validation (fabricated href / fieldId) --------------------------------
 
 test("find-login-page rejects a fabricated href not present in the snapshot", async () => {

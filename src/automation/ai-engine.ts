@@ -137,6 +137,13 @@ interface SanitizedLink {
  * be resolved to real data. Only links that resolve to an absolute URL are
  * included, so a fabricated href never has an entry to match against
  * ("実在検証"): the AI can only ever select a link it was actually shown.
+ *
+ * Two distinct links that share an origin+path but differ only by query
+ * string collide on the same map key; the first one seen wins and the rest
+ * are dropped from what the AI is shown (never sent, so never selectable —
+ * an availability tradeoff, not a safety one, accepted for the same reason
+ * query strings are stripped in the first place: query-carried session
+ * tokens / emails must never reach a prompt).
  */
 function linkLookup(snapshot: PageSnapshot): Map<string, { href: string; text: string }> {
   const map = new Map<string, { href: string; text: string }>();
@@ -231,6 +238,24 @@ function normalizeAttributeKey(raw: string): string | undefined {
 interface Prepared<K extends DecisionKind> {
   request: CompleteJsonOptions;
   validate(raw: unknown, confidence: number): DecisionResultMap[K] | undefined;
+}
+
+/**
+ * Whether `request.context` carries what its kind requires (classify-field
+ * needs `field`; name-new-attribute needs `field` or `displayValue`). A
+ * missing required context is a caller-contract violation, not a genuine AI
+ * failure, so `consult` checks this before spending a call budget slot or a
+ * consecutive-failure count on a request that could never have succeeded.
+ */
+function hasRequiredContext(request: DecisionRequest): boolean {
+  switch (request.kind) {
+    case "classify-field":
+      return request.context.field !== undefined;
+    case "name-new-attribute":
+      return request.context.field !== undefined || request.context.displayValue !== undefined;
+    default:
+      return true;
+  }
 }
 
 function prepareAny(request: DecisionRequest, values: readonly string[]): Prepared<DecisionKind> {
@@ -560,6 +585,10 @@ export class AiEngine implements AiConsultant {
   async consult<K extends DecisionKind>(
     request: DecisionRequest & { kind: K },
   ): Promise<DecisionResult<K> | null> {
+    // A caller-contract violation (missing required context), not an AI
+    // failure: reject before touching the budget/breaker or the provider.
+    if (!hasRequiredContext(request)) return null;
+
     const domain = request.context.siteAccount.domain;
     const loggedUrl = sanitizeUrl(request.context.currentUrl);
 
