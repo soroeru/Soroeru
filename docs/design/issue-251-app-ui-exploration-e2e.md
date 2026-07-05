@@ -10,7 +10,7 @@ Issue #251は当初、Visibility探索（複数ページ収集）フローに対
 
 - Phase 6（#249, closed）で、`VisibilityRunner.runSite()`
   （`src/automation/visibility-runner.ts:118-121`、`collectFromExploration`
-  同ファイル311-390行）が実ブラウザ相手にすでに複数ページ探索＋壁ハンドオフ→resumeを
+  同ファイル312-395行）が実ブラウザ相手にすでに複数ページ探索＋壁ハンドオフ→resumeを
   実装済み。
 - Phase 6/7で追加された`tests/unit/soroeru-exploration-collection.test.ts` /
   `soroeru-page-explorer.test.ts`が、複数ページ収集・壁ハンドオフ→resume・複数ページに
@@ -115,6 +115,12 @@ Issue #251は当初、Visibility探索（複数ページ収集）フローに対
       `/explore-flow/payment`の3リンク。ラベル文言は
       `RuleEngine.PROFILE_LINK_RULES`（`会員情報|登録情報|プロフィール`、
       `住所|配送先`、`クレジットカード|お支払い`）に一致させる。
+      「先に会員情報・住所を収集してから支払い方法の壁で止まる」という探索順序は、
+      `address`と`payment`が`PROFILE_LINK_RULES`上で同じ優先度4であり
+      （`src/automation/rule-engine.ts:44-45`）、同優先度内は安定ソート＋HTML上の
+      リンク順（住所→支払い方法の順で並べる）で決まることに依存している。将来
+      `PROFILE_LINK_RULES`の優先度を再調整する場合は、このE2Eの一時停止位置が
+      黙って変わりうる点に注意すること。
     - `GET /explore-flow/profile` — readonlyなメールアドレス欄1つ。
     - `GET /explore-flow/address` — readonlyな郵便番号欄1つ。
     - `GET /explore-flow/payment` — `exploreFlowState.paymentWallCleared`が
