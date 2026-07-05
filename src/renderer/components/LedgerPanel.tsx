@@ -1,10 +1,11 @@
-// Disclosure ledger (issue #160, RFC-002 §4.2 / §5.1). Shows the composed
-// per-site view: what each Site Account holds, with stale flags and Account
-// Relationship chips. Values are masked by default; a single value is revealed
-// only through an explicit re-authenticated flow (master passphrase re-checked
-// in the trusted layer). A revealed value is held in component state only after
-// that explicit reveal, stays until the user hides it or the row unmounts, and
-// is never persisted.
+// Disclosure ledger (issue #160, RFC-002 §4.2 / §5.1; spreadsheet-style table
+// layout added for Issue #301). Shows the composed per-site view: what each
+// Site Account holds, with stale flags and Account Relationship chips. Values
+// are masked by default; a single value is revealed only through an explicit
+// re-authenticated flow (master passphrase re-checked in the trusted layer). A
+// revealed value is held in component state only after that explicit reveal,
+// stays until the user hides it or the row/cell unmounts, and is never
+// persisted.
 
 import { useCallback, useEffect, useState } from "react";
 import { Label } from "@radix-ui/react-label";
@@ -13,19 +14,25 @@ import type {
   PendingAttributeCandidateView,
   SessionPersistenceView,
   SiteLedgerDetail,
-  SiteLedgerSummary,
 } from "../../../electron/ipc/contract.js";
+import { buildLedgerColumns, disclosureFor } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 
 interface LedgerPanelProps {
-  /** Bumped by the parent after a CSV import so the ledger refetches. */
+  /** Bumped by the parent after a CSV import or collection so the ledger refetches. */
   reloadToken: number;
 }
 
+/**
+ * Spreadsheet-style Disclosure ledger (Issue #301): rows are sites, columns are
+ * the union of every attribute observed across all sites, and the container
+ * scrolls horizontally so every collected value is visible without opening a
+ * per-site detail panel first. `SiteManagementPanel`'s per-row "詳細" flow
+ * (relationships, constraints, pending candidates, session persistence) stays
+ * the place for those actions; this view is read-only.
+ */
 export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Element {
-  const [sites, setSites] = useState<SiteLedgerSummary[]>([]);
-  const [detail, setDetail] = useState<SiteLedgerDetail | undefined>();
-  const [detailError, setDetailError] = useState<string | undefined>();
+  const [sites, setSites] = useState<SiteLedgerDetail[]>([]);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
 
@@ -33,7 +40,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
     // Mirror the sibling components' discipline: a rejected invoke must not leave
     // the panel wedged on the loading text with an unhandled rejection.
     try {
-      setSites(await window.soroeru.ledger.sites());
+      setSites(await window.soroeru.ledger.siteDetails());
       setLoadError(undefined);
     } catch {
       setLoadError(reasonMessage(undefined));
@@ -46,19 +53,6 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadSites();
   }, [loadSites, reloadToken]);
-
-  const openSite = useCallback(async (siteAccountId: string) => {
-    const result = await window.soroeru.ledger.site(siteAccountId);
-    if (!result) {
-      // The site was removed or the vault locked mid-session: surface it rather
-      // than rendering an empty detail and leaving the click feeling dead.
-      setDetail(undefined);
-      setDetailError("詳細を取得できませんでした。");
-      return;
-    }
-    setDetailError(undefined);
-    setDetail(result);
-  }, []);
 
   if (loading) return <p className="text-sm text-neutral-500">読み込み中…</p>;
 
@@ -85,55 +79,138 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
     );
   }
 
+  const columns = buildLedgerColumns(sites);
+
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
-      <ul className="flex flex-col divide-y divide-neutral-200">
-        {sites.map((site) => (
-          <li key={site.siteAccountId}>
-            <button
-              type="button"
-              onClick={() => void openSite(site.siteAccountId)}
-              className="flex w-full flex-col gap-1 py-2 text-left hover:bg-neutral-50"
-            >
-              <span className="flex items-center justify-between">
-                <span className="font-medium">{site.displayName}</span>
-                <span className="text-xs text-neutral-400">{site.domain}</span>
-              </span>
-              <span className="flex flex-wrap items-center gap-2 text-xs text-neutral-500">
-                <span>開示 {site.disclosureCount}</span>
-                {site.stale.stale > 0 && (
-                  <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">
-                    古い {site.stale.stale}
-                  </span>
-                )}
-                {site.stale.unknown > 0 && (
-                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600">
-                    不明 {site.stale.unknown}
-                  </span>
-                )}
-                {site.relationshipKinds.map((kind) => (
-                  <span key={kind} className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">
-                    {relationshipLabel(kind)}
-                  </span>
-                ))}
-                {site.constraintCount > 0 && (
-                  <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">
-                    要確認 {site.constraintCount}
-                  </span>
-                )}
-                {!site.collected && <span className="text-neutral-400">未収集</span>}
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      <div className="flex flex-col gap-1">
+        <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
+        <p className="text-sm text-neutral-500">
+          サイトを行、項目を列にした表形式です。横にスクロールするとすべての項目を確認できます。
+        </p>
+      </div>
 
-      {detailError && <p className="text-sm text-red-600">{detailError}</p>}
-      {detail && (
-        <SiteDetail detail={detail} onClose={() => setDetail(undefined)} onReload={() => openSite(detail.siteAccountId)} />
+      {columns.length === 0 ? (
+        <p className="text-sm text-neutral-500">
+          収集済みの開示がまだありません。サイト管理からサイトを収集すると、ここに表示されます。
+        </p>
+      ) : (
+        <div className="max-h-[60vh] overflow-auto rounded border border-neutral-200">
+          <table className="border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-neutral-200 bg-neutral-50">
+                <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-3 py-2 font-medium">
+                  サイト
+                </th>
+                {columns.map((column) => (
+                  <th
+                    key={column.attributeKey}
+                    scope="col"
+                    className="sticky top-0 z-10 whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
+                  >
+                    {column.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sites.map((site) => (
+                <tr key={site.siteAccountId} className="border-b border-neutral-100 last:border-b-0">
+                  <th
+                    scope="row"
+                    className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-2 text-left align-top font-medium"
+                  >
+                    <span className="flex flex-col">
+                      <span>{site.displayName}</span>
+                      <span className="text-xs font-normal text-neutral-400">{site.domain}</span>
+                    </span>
+                  </th>
+                  {site.collected ? (
+                    columns.map((column) => (
+                      <LedgerCell key={column.attributeKey} disclosure={disclosureFor(site, column.attributeKey)} />
+                    ))
+                  ) : (
+                    <td colSpan={columns.length} className="px-3 py-2 text-neutral-400">
+                      未収集
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
+  );
+}
+
+/** One spreadsheet cell: a site's value for one attribute column, if collected. */
+function LedgerCell({ disclosure }: { disclosure: DisclosureView | undefined }): React.JSX.Element {
+  const reveal = useDisclosureReveal(disclosure?.disclosureId ?? "");
+
+  if (!disclosure) {
+    return <td className="whitespace-nowrap px-3 py-2 align-top text-neutral-400">—</td>;
+  }
+
+  return (
+    <td className="whitespace-nowrap px-3 py-2 align-top">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono">{reveal.value ?? (disclosure.preview || "—")}</span>
+          {disclosure.revealable && reveal.value === undefined && !reveal.revealing && (
+            <button type="button" onClick={() => reveal.setRevealing(true)} className="text-xs underline">
+              表示
+            </button>
+          )}
+          {reveal.value !== undefined && (
+            <button type="button" onClick={reveal.hide} className="text-xs underline">
+              隠す
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <StaleBadge state={disclosure.staleState} />
+          <SourceBadge sourceKind={disclosure.sourceKind} />
+        </div>
+
+        {reveal.revealing && (
+          <form
+            className="flex flex-col gap-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void reveal.reveal();
+            }}
+          >
+            <Label htmlFor={`reveal-cell-${disclosure.disclosureId}`} className="sr-only">
+              パスフレーズ
+            </Label>
+            <input
+              id={`reveal-cell-${disclosure.disclosureId}`}
+              type="password"
+              autoComplete="off"
+              placeholder="パスフレーズを再入力"
+              value={reveal.passphrase}
+              onChange={(event) => reveal.setPassphrase(event.target.value)}
+              className="rounded border border-neutral-300 px-2 py-1 text-xs"
+            />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={reveal.busy || reveal.passphrase.length === 0}
+                className="rounded bg-neutral-900 px-2 py-1 text-xs text-white disabled:opacity-50"
+              >
+                確認して表示
+              </button>
+              <button type="button" onClick={reveal.cancel} className="text-xs underline">
+                取消
+              </button>
+            </div>
+          </form>
+        )}
+
+        {reveal.error && <p className="text-xs text-red-600">{reveal.error}</p>}
+      </div>
+    </td>
   );
 }
 
@@ -353,7 +430,24 @@ function PendingCandidateRow({
   );
 }
 
-function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JSX.Element {
+/**
+ * Shared re-authenticated reveal state machine for a single Disclosure, used by
+ * both the list-style `DisclosureRow` and the spreadsheet's `LedgerCell` — two
+ * different layouts around the same security-sensitive flow (never persist the
+ * revealed value; clear it on hide/unmount).
+ */
+function useDisclosureReveal(disclosureId: string): {
+  revealing: boolean;
+  setRevealing: (revealing: boolean) => void;
+  passphrase: string;
+  setPassphrase: (passphrase: string) => void;
+  value: string | undefined;
+  error: string | undefined;
+  busy: boolean;
+  reveal: () => Promise<void>;
+  hide: () => void;
+  cancel: () => void;
+} {
   const [revealing, setRevealing] = useState(false);
   const [passphrase, setPassphrase] = useState("");
   const [value, setValue] = useState<string | undefined>();
@@ -364,7 +458,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
     setBusy(true);
     setError(undefined);
     try {
-      const result = await window.soroeru.ledger.reveal(disclosure.disclosureId, passphrase);
+      const result = await window.soroeru.ledger.reveal(disclosureId, passphrase);
       if (!result.ok || result.value === undefined) {
         setError(reasonMessage(result.error));
         return;
@@ -377,12 +471,25 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
     } finally {
       setBusy(false);
     }
-  }, [disclosure.disclosureId, passphrase]);
+  }, [disclosureId, passphrase]);
 
   const hide = useCallback(() => {
     setValue(undefined);
     setError(undefined);
   }, []);
+
+  const cancel = useCallback(() => {
+    setRevealing(false);
+    setPassphrase("");
+    setError(undefined);
+  }, []);
+
+  return { revealing, setRevealing, passphrase, setPassphrase, value, error, busy, reveal, hide, cancel };
+}
+
+function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JSX.Element {
+  const { revealing, setRevealing, passphrase, setPassphrase, value, error, busy, reveal, hide, cancel } =
+    useDisclosureReveal(disclosure.disclosureId);
 
   return (
     <li className="flex flex-col gap-1 text-sm">
@@ -434,15 +541,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
           >
             確認して表示
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setRevealing(false);
-              setPassphrase("");
-              setError(undefined);
-            }}
-            className="text-xs underline"
-          >
+          <button type="button" onClick={cancel} className="text-xs underline">
             取消
           </button>
         </form>

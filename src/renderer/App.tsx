@@ -9,10 +9,11 @@ import type { VaultStatus } from "../../electron/ipc/contract.js";
 import { reasonMessage } from "./messages.js";
 import { VaultGate } from "./components/VaultGate.js";
 import { InsightsPanel } from "./components/InsightsPanel.js";
+import { LedgerPanel } from "./components/LedgerPanel.js";
 import { SiteManagementPanel } from "./components/SiteManagementPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
-type Tab = "sites" | "insights";
+type Tab = "sites" | "ledger" | "insights";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -103,6 +104,9 @@ export function App(): React.JSX.Element {
             <TabButton active={tab === "sites"} onClick={() => setTab("sites")}>
               サイト管理
             </TabButton>
+            <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
+              開示台帳
+            </TabButton>
             <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>
               インサイト
             </TabButton>
@@ -115,6 +119,7 @@ export function App(): React.JSX.Element {
               onImported={() => setReloadToken((token) => token + 1)}
             />
           )}
+          {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}
           {tab === "insights" && <InsightsPanel reloadToken={reloadToken} />}
         </>
       )}
