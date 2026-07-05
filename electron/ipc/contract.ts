@@ -50,6 +50,7 @@ export const IPC_CHANNELS = {
   savedPageMarkManual: "soroeru:saved-page:mark-manual",
   ledgerSites: "soroeru:ledger:sites",
   ledgerSite: "soroeru:ledger:site",
+  ledgerSiteDetails: "soroeru:ledger:site-details",
   ledgerInsights: "soroeru:ledger:insights",
   revealValue: "soroeru:ledger:reveal",
   ledgerConfirmDynamicCandidate: "soroeru:ledger:confirm-dynamic-candidate",

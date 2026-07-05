@@ -453,6 +453,25 @@ export class SoroeruSession {
   /** The per-site composed ledger detail (masked disclosures, relationships, constraints). */
   ledgerSite(siteAccountId: string): SiteLedgerDetail | undefined {
     if (!this.domain || !this.vault || this.vault.isLocked) return undefined;
+    return this.composeSiteDetail(siteAccountId);
+  }
+
+  /**
+   * All sites' composed ledger detail in one call (Issue #301's spreadsheet-style
+   * ledger view needs every site's disclosures at once to build its attribute
+   * columns). Returns an empty list when locked.
+   */
+  ledgerSiteDetails(): SiteLedgerDetail[] {
+    if (!this.domain || !this.vault || this.vault.isLocked) return [];
+    return this.domain
+      .listSiteAccounts()
+      .map((site) => this.composeSiteDetail(site.id))
+      .filter((detail): detail is SiteLedgerDetail => detail !== undefined)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  private composeSiteDetail(siteAccountId: string): SiteLedgerDetail | undefined {
+    if (!this.domain) return undefined;
     const summary = this.composeSiteSummary(siteAccountId);
     if (!summary) return undefined;
     const dynamicCandidates = this.domain.listDynamicAttributeCandidates();

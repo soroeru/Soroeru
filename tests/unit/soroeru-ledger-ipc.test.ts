@@ -161,6 +161,50 @@ test("the composed ledger detail shows normal disclosures plainly and masks only
   }
 });
 
+test("ledgerSiteDetails returns every site's full detail in one call, matching ledgerSite per site", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedLedger(path);
+
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    // A second site with a different (heterogeneous) attribute set, per Issue
+    // #301's spreadsheet-style ledger view, which unions columns across sites.
+    const otherSite = domain.upsertSiteAccount({ domain: "shop.test", url: "https://shop.test/", displayName: "Shop" });
+    domain.addDisclosure({ siteAccountId: otherSite.id, attributeKey: "phone.full", siteHeldValue: "09033334444", sourceKind: "form-field" });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+
+    const details = session.ledgerSiteDetails();
+    assert.equal(details.length, 2);
+
+    const seeded = details.find((d) => d.siteAccountId === siteId);
+    const shop = details.find((d) => d.siteAccountId === otherSite.id);
+    assert.ok(seeded);
+    assert.ok(shop);
+    assert.deepEqual(seeded, session.ledgerSite(siteId));
+    assert.deepEqual(shop, session.ledgerSite(otherSite.id));
+    assert.equal(shop?.disclosures.length, 1);
+    assert.equal(shop?.disclosures[0]?.attributeKey, "phone.full");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ledgerSiteDetails returns an empty list while locked", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    await seedLedger(path);
+    const session = new SoroeruSession(path);
+    assert.deepEqual(session.ledgerSiteDetails(), []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("a sensitive disclosure (card number) still masks its preview and requires reveal", async () => {
   const { dir, path } = await tmpVaultPath();
   try {

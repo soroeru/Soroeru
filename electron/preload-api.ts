@@ -62,6 +62,7 @@ export interface SoroeruApi {
   ledger: {
     sites(): Promise<SiteLedgerSummary[]>;
     site(siteAccountId: string): Promise<SiteLedgerDetail | undefined>;
+    siteDetails(): Promise<SiteLedgerDetail[]>;
     insights(): Promise<LedgerInsights>;
     reveal(disclosureId: string, passphrase: string): Promise<RevealResult>;
     confirmDynamicCandidate(
@@ -115,6 +116,7 @@ export function createSoroeruApi(
       sites: () => invoke(IPC_CHANNELS.ledgerSites) as Promise<SiteLedgerSummary[]>,
       site: (siteAccountId) =>
         invoke(IPC_CHANNELS.ledgerSite, siteAccountId) as Promise<SiteLedgerDetail | undefined>,
+      siteDetails: () => invoke(IPC_CHANNELS.ledgerSiteDetails) as Promise<SiteLedgerDetail[]>,
       insights: () => invoke(IPC_CHANNELS.ledgerInsights) as Promise<LedgerInsights>,
       reveal: (disclosureId, passphrase) =>
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,

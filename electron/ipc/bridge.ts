@@ -31,6 +31,7 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
       session.markSavedPageManualCheck(String(siteAccountId ?? "")),
     [IPC_CHANNELS.ledgerSites]: () => session.ledgerSites(),
     [IPC_CHANNELS.ledgerSite]: (siteAccountId: unknown) => session.ledgerSite(String(siteAccountId ?? "")),
+    [IPC_CHANNELS.ledgerSiteDetails]: () => session.ledgerSiteDetails(),
     [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),
     [IPC_CHANNELS.revealValue]: (disclosureId: unknown, passphrase: unknown) =>
       session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
