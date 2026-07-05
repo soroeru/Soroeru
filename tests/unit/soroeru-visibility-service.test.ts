@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField, PageSnapshot } from "../../src/types.js";
+import type { AiEngine, DecisionKind } from "../../src/automation/decision-engine.js";
 import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
 import { VisibilityService } from "../../electron/visibility-service.js";
 import type { VisibilityEvent } from "../../electron/ipc/contract.js";
@@ -25,13 +26,26 @@ async function openDomain(): Promise<{ dir: string; domain: DomainService }> {
 test("runs to completion and emits started + finished events", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/account", displayName: "Example" });
+    const site = domain.upsertSiteAccount({
+      domain: "example.test",
+      url: "https://example.test/account",
+      displayName: "Example",
+    });
     const page = new FakePageDriver(
-      [snapshot("https://example.test/account", [field("email", { autocomplete: "email", labels: ["メールアドレス"] })], "newsletter")],
+      [
+        snapshot(
+          "https://example.test/account",
+          [field("email", { autocomplete: "email", labels: ["メールアドレス"] })],
+          "newsletter",
+        ),
+      ],
       { email: "user@example.test" },
     );
     const events: VisibilityEvent[] = [];
-    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)), emit: (e) => events.push(e) });
+    const service = new VisibilityService({
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      emit: (e) => events.push(e),
+    });
     service.setDomain(domain);
 
     const result = await service.runSite(site.id);
@@ -46,24 +60,79 @@ test("runs to completion and emits started + finished events", async () => {
   }
 });
 
+test("setAiEngine wires an AI fallback through to a real run (Issue #310)", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({
+      domain: "ai-wiring.test",
+      url: "https://ai-wiring.test/account",
+      displayName: "AI Wiring",
+    });
+    const page = new FakePageDriver(
+      [
+        snapshot("https://ai-wiring.test/account", [
+          field("email", { autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
+      { email: "user@example.test" },
+    );
+    const consulted: DecisionKind[] = [];
+    const fakeAiEngine: AiEngine = {
+      consult: (request) => {
+        consulted.push(request.kind);
+        return Promise.resolve(null);
+      },
+    };
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
+    service.setDomain(domain);
+    service.setAiEngine(fakeAiEngine);
+
+    const result = await service.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.ok(
+      consulted.length > 0,
+      "the AiEngine set via setAiEngine must actually be consulted during a real run",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("pauses at a wall, exposes the hand-off, and resumes on request", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "mfa.test", url: "https://mfa.test/login", displayName: "MFA" });
-    domain.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    const site = domain.upsertSiteAccount({
+      domain: "mfa.test",
+      url: "https://mfa.test/login",
+      displayName: "MFA",
+    });
+    domain.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
     const page = new FakePageDriver(
       [
         snapshot("https://mfa.test/login", [
           field("email", { autocomplete: "username", labels: ["ID"] }),
           field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
         ]),
-        snapshot("https://mfa.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
-        snapshot("https://mfa.test/account", [field("email-now", { autocomplete: "email", labels: ["メール"] })]),
+        snapshot("https://mfa.test/otp", [
+          field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] }),
+        ]),
+        snapshot("https://mfa.test/account", [
+          field("email-now", { autocomplete: "email", labels: ["メール"] }),
+        ]),
       ],
       { "email-now": "user@example.test" },
     );
     const events: VisibilityEvent[] = [];
-    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)), emit: (e) => events.push(e) });
+    const service = new VisibilityService({
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      emit: (e) => events.push(e),
+    });
     service.setDomain(domain);
 
     const runPromise = service.runSite(site.id);
@@ -90,7 +159,11 @@ test("pauses at a wall, exposes the hand-off, and resumes on request", async () 
 test("handoff event includes the site's login credential for local copy assistance", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "mfa.test", url: "https://mfa.test/login", displayName: "MFA" });
+    const site = domain.upsertSiteAccount({
+      domain: "mfa.test",
+      url: "https://mfa.test/login",
+      displayName: "MFA",
+    });
     domain.addCredential({
       siteAccountId: site.id,
       username: "acceptance-user@example.test",
@@ -98,10 +171,15 @@ test("handoff event includes the site's login credential for local copy assistan
       source: "csv-import",
     });
     const page = new FakePageDriver([
-      snapshot("https://mfa.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
+      snapshot("https://mfa.test/otp", [
+        field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] }),
+      ]),
     ]);
     const events: VisibilityEvent[] = [];
-    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)), emit: (e) => events.push(e) });
+    const service = new VisibilityService({
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      emit: (e) => events.push(e),
+    });
     service.setDomain(domain);
 
     const runPromise = service.runSite(site.id);
@@ -121,7 +199,11 @@ test("handoff event includes the site's login credential for local copy assistan
 test("handoff event omits credentials for a post-login non-MFA wall", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "captcha.test", url: "https://captcha.test/login", displayName: "Captcha" });
+    const site = domain.upsertSiteAccount({
+      domain: "captcha.test",
+      url: "https://captcha.test/login",
+      displayName: "Captcha",
+    });
     domain.addCredential({
       siteAccountId: site.id,
       username: "acceptance-user@example.test",
@@ -138,7 +220,10 @@ test("handoff event omits credentials for a post-login non-MFA wall", async () =
       afterLoginCaptcha,
     ]);
     const events: VisibilityEvent[] = [];
-    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)), emit: (e) => events.push(e) });
+    const service = new VisibilityService({
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      emit: (e) => events.push(e),
+    });
     service.setDomain(domain);
 
     const runPromise = service.runSite(site.id);
@@ -158,8 +243,16 @@ test("handoff event omits credentials for a post-login non-MFA wall", async () =
 test("refuses a concurrent run while one is paused at a hand-off", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "mfa.test", url: "https://mfa.test/login", displayName: "MFA" });
-    const page = new FakePageDriver([snapshot("https://mfa.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })])]);
+    const site = domain.upsertSiteAccount({
+      domain: "mfa.test",
+      url: "https://mfa.test/login",
+      displayName: "MFA",
+    });
+    const page = new FakePageDriver([
+      snapshot("https://mfa.test/otp", [
+        field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] }),
+      ]),
+    ]);
     const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
     service.setDomain(domain);
 
@@ -179,7 +272,11 @@ test("refuses a concurrent run while one is paused at a hand-off", async () => {
 test("abort stops an in-flight run even before a wall hand-off", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "slow.test", url: "https://slow.test/account", displayName: "Slow" });
+    const site = domain.upsertSiteAccount({
+      domain: "slow.test",
+      url: "https://slow.test/account",
+      displayName: "Slow",
+    });
     const page = new BlockingPageDriver();
     const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
     service.setDomain(domain);
@@ -202,9 +299,17 @@ test("abort stops an in-flight run even before a wall hand-off", async () => {
 test("abort before display-value collection prevents persisted disclosures and records canceled checkpoint", async () => {
   const { dir, domain } = await openDomain();
   try {
-    const site = domain.upsertSiteAccount({ domain: "slow.test", url: "https://slow.test/account", displayName: "Slow" });
+    const site = domain.upsertSiteAccount({
+      domain: "slow.test",
+      url: "https://slow.test/account",
+      displayName: "Slow",
+    });
     const page = new BlockingDisplayPageDriver(
-      [snapshot("https://slow.test/account", [field("email", { autocomplete: "email", labels: ["メールアドレス"] })])],
+      [
+        snapshot("https://slow.test/account", [
+          field("email", { autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
       { email: "user@example.test" },
     );
     const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });

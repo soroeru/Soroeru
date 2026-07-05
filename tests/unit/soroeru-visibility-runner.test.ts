@@ -7,6 +7,7 @@ import { DomainService } from "../../src/domain/domain-service.js";
 import type { SiteAccount } from "../../src/domain/entities.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField, PageSnapshot } from "../../src/types.js";
+import type { AiEngine, DecisionKind } from "../../src/automation/decision-engine.js";
 import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
 import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
 
@@ -26,26 +27,43 @@ test("visibility runner logs in, collects redacted evidence, disclosures, relati
       url: "https://example.test/login",
       displayName: "Example",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
-    service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "new@example.test", valueType: "email" });
-
-    const page = new FakePageDriver([
-      snapshot("https://example.test/login", [
-        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
-        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
-      ]),
-      snapshot(
-        "https://example.test/account",
-        [
-          field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
-          field("profile-phone", { autocomplete: "tel", labels: ["電話番号"] }),
-        ],
-        "メールマガジンを購読中です。継続課金があります。",
-      ),
-    ], {
-      "profile-email": "old@example.test",
-      "profile-phone": "090-1234-5678",
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
     });
+    service.setPersonalAttribute({
+      attributeKey: "email",
+      label: "メール",
+      value: "new@example.test",
+      valueType: "email",
+    });
+
+    const page = new FakePageDriver(
+      [
+        snapshot("https://example.test/login", [
+          field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+          field("login-password", {
+            type: "password",
+            autocomplete: "current-password",
+            labels: ["パスワード"],
+          }),
+        ]),
+        snapshot(
+          "https://example.test/account",
+          [
+            field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+            field("profile-phone", { autocomplete: "tel", labels: ["電話番号"] }),
+          ],
+          "メールマガジンを購読中です。継続課金があります。",
+        ),
+      ],
+      {
+        "profile-email": "old@example.test",
+        "profile-phone": "090-1234-5678",
+      },
+    );
 
     const runner = new VisibilityRunner({
       domain: service,
@@ -71,12 +89,62 @@ test("visibility runner logs in, collects redacted evidence, disclosures, relati
 
     const evidence = service.listEvidence();
     assert.equal(evidence.length, 2);
-    assert.ok(evidence.every((item) => item.maskedSnippet && !item.maskedSnippet.includes("old@example.test")));
+    assert.ok(
+      evidence.every((item) => item.maskedSnippet && !item.maskedSnippet.includes("old@example.test")),
+    );
     assert.ok(evidence.every((item) => item.normalizedHash));
 
     assert.equal(service.listAccountRelationshipsForSite(site.id).length, 2);
     assert.equal(service.getCheckpoint("visibility", site.id)?.status, "done");
     assert.equal(page.closed, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner consults the optional AiEngine when the RuleEngine cannot confidently decide (Issue #310 wiring)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "ai-wiring.example.test",
+      url: "https://ai-wiring.example.test/account",
+      displayName: "AI Wiring",
+    });
+    // No credential: the runner skips login and goes straight to exploration,
+    // whose DecisionEngine.decide calls are the only ones VisibilityRunner
+    // actually wires an AiEngine into today (login-page/form/result still use
+    // the plain login-handler.ts heuristics directly, not DecisionEngine).
+    const page = new FakePageDriver(
+      [
+        snapshot("https://ai-wiring.example.test/account", [
+          field("acct-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
+      { "acct-email": "user@example.test" },
+    );
+
+    const consulted: DecisionKind[] = [];
+    const fakeAiEngine: AiEngine = {
+      consult: (request) => {
+        consulted.push(request.kind);
+        return Promise.resolve(null); // let the safe default apply; only presence-of-consult is under test
+      },
+    };
+
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      aiEngine: fakeAiEngine,
+      now: () => 1_700_000_000_000,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.ok(
+      consulted.includes("find-profile-links"),
+      `expected an AiEngine consultation for find-profile-links; got ${JSON.stringify(consulted)}`,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -90,27 +158,44 @@ test("visibility runner explores multiple pages after login and collects disclos
       url: "https://multi.example.test/login",
       displayName: "Multi",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
-    service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "new@example.test", valueType: "email" });
-
-    const page = new FakePageDriver([
-      snapshot("https://multi.example.test/login", [
-        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
-        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
-      ]),
-      {
-        ...snapshot("https://multi.example.test/account", [
-          field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
-        ]),
-        links: [{ href: "https://multi.example.test/profile", text: "プロフィール" }],
-      },
-      snapshot("https://multi.example.test/profile", [
-        field("profile-email-2", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
-      ]),
-    ], {
-      "profile-email": "old@example.test",
-      "profile-email-2": "second@example.test",
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
     });
+    service.setPersonalAttribute({
+      attributeKey: "email",
+      label: "メール",
+      value: "new@example.test",
+      valueType: "email",
+    });
+
+    const page = new FakePageDriver(
+      [
+        snapshot("https://multi.example.test/login", [
+          field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+          field("login-password", {
+            type: "password",
+            autocomplete: "current-password",
+            labels: ["パスワード"],
+          }),
+        ]),
+        {
+          ...snapshot("https://multi.example.test/account", [
+            field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+          ]),
+          links: [{ href: "https://multi.example.test/profile", text: "プロフィール" }],
+        },
+        snapshot("https://multi.example.test/profile", [
+          field("profile-email-2", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
+      {
+        "profile-email": "old@example.test",
+        "profile-email-2": "second@example.test",
+      },
+    );
 
     const runner = new VisibilityRunner({
       domain: service,
@@ -140,26 +225,38 @@ test("visibility runner resumes when a wall is detected during page exploration"
       url: "https://wall-later.example.test/login",
       displayName: "Wall Later",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
 
     const walledProfile = snapshot("https://wall-later.example.test/profile", [], "captcha required");
     walledProfile.wallMarkers = ["recaptcha"];
-    const page = new FakePageDriver([
-      snapshot("https://wall-later.example.test/login", [
-        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
-        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
-      ]),
+    const page = new FakePageDriver(
+      [
+        snapshot("https://wall-later.example.test/login", [
+          field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+          field("login-password", {
+            type: "password",
+            autocomplete: "current-password",
+            labels: ["パスワード"],
+          }),
+        ]),
+        {
+          ...snapshot("https://wall-later.example.test/account", [], "概要"),
+          links: [{ href: "https://wall-later.example.test/profile", text: "プロフィール" }],
+        },
+        walledProfile,
+        snapshot("https://wall-later.example.test/profile", [
+          field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
       {
-        ...snapshot("https://wall-later.example.test/account", [], "概要"),
-        links: [{ href: "https://wall-later.example.test/profile", text: "プロフィール" }],
+        "profile-email": "user@example.test",
       },
-      walledProfile,
-      snapshot("https://wall-later.example.test/profile", [
-        field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
-      ]),
-    ], {
-      "profile-email": "user@example.test",
-    });
+    );
     let handoffs = 0;
 
     const runner = new VisibilityRunner({
@@ -186,20 +283,36 @@ test("visibility runner resumes when a wall is detected during page exploration"
 test("visibility runner records a wall constraint and resumes after human handoff", async () => {
   const { dir, service } = await openService();
   try {
-    const site = service.upsertSiteAccount({ domain: "mfa.example.test", url: "https://mfa.example.test/login", displayName: "MFA" });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
-
-    const page = new FakePageDriver([
-      snapshot("https://mfa.example.test/login", [
-        field("email", { autocomplete: "username", labels: ["ログインID"] }),
-        field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
-      ]),
-      snapshot("https://mfa.example.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
-      snapshot("https://mfa.example.test/email-check", [], "確認メールを送信しました"),
-      snapshot("https://mfa.example.test/account", [field("email-current", { autocomplete: "email", labels: ["メールアドレス"] })]),
-    ], {
-      "email-current": "user@example.test",
+    const site = service.upsertSiteAccount({
+      domain: "mfa.example.test",
+      url: "https://mfa.example.test/login",
+      displayName: "MFA",
     });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+
+    const page = new FakePageDriver(
+      [
+        snapshot("https://mfa.example.test/login", [
+          field("email", { autocomplete: "username", labels: ["ログインID"] }),
+          field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+        ]),
+        snapshot("https://mfa.example.test/otp", [
+          field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] }),
+        ]),
+        snapshot("https://mfa.example.test/email-check", [], "確認メールを送信しました"),
+        snapshot("https://mfa.example.test/account", [
+          field("email-current", { autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
+      {
+        "email-current": "user@example.test",
+      },
+    );
     let handoffs = 0;
 
     const runner = new VisibilityRunner({
@@ -233,7 +346,9 @@ test("visibility runner reports the actual wall constraint count when handoff ca
     });
     const page = new FakePageDriver([
       snapshot("https://blocked.example.test/captcha", [], "私はロボットではありません"),
-      snapshot("https://blocked.example.test/otp", [field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] })]),
+      snapshot("https://blocked.example.test/otp", [
+        field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] }),
+      ]),
     ]);
     const runner = new VisibilityRunner({
       domain: service,
@@ -254,16 +369,23 @@ test("visibility runner reports the actual wall constraint count when handoff ca
 test("visibility runner surfaces automation-prohibiting terms as a constraint", async () => {
   const { dir, service } = await openService();
   try {
-    const site = service.upsertSiteAccount({ domain: "tos.example.test", url: "https://tos.example.test/account", displayName: "ToS" });
-    const page = new FakePageDriver([
-      snapshot(
-        "https://tos.example.test/account",
-        [field("email", { autocomplete: "email", labels: ["メールアドレス"] })],
-        "No automated access is prohibited. newsletter",
-      ),
-    ], {
-      email: "user@example.test",
+    const site = service.upsertSiteAccount({
+      domain: "tos.example.test",
+      url: "https://tos.example.test/account",
+      displayName: "ToS",
     });
+    const page = new FakePageDriver(
+      [
+        snapshot(
+          "https://tos.example.test/account",
+          [field("email", { autocomplete: "email", labels: ["メールアドレス"] })],
+          "No automated access is prohibited. newsletter",
+        ),
+      ],
+      {
+        email: "user@example.test",
+      },
+    );
 
     const runner = new VisibilityRunner({
       domain: service,
@@ -311,17 +433,25 @@ test("visibility runner does not click arbitrary buttons when credentials exist 
       url: "https://already-in.example.test/account",
       displayName: "Already In",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
-    const page = new FakePageDriver([
-      {
-        ...snapshot("https://already-in.example.test/account", [
-          field("email-current", { autocomplete: "email", labels: ["メールアドレス"] }),
-        ]),
-        buttons: [{ selector: "button.delete", text: "削除" }],
-      },
-    ], {
-      "email-current": "user@example.test",
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
     });
+    const page = new FakePageDriver(
+      [
+        {
+          ...snapshot("https://already-in.example.test/account", [
+            field("email-current", { autocomplete: "email", labels: ["メールアドレス"] }),
+          ]),
+          buttons: [{ selector: "button.delete", text: "削除" }],
+        },
+      ],
+      {
+        "email-current": "user@example.test",
+      },
+    );
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
@@ -345,26 +475,38 @@ test("visibility runner discovers a same-site login page and stores that URL on 
       url: "https://example.test/",
       displayName: "Example",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
-
-    const page = new FakePageDriver([
-      {
-        ...snapshot("https://example.test/", [], "トップページ"),
-        links: [
-          { href: "https://example.test/help", text: "ヘルプ" },
-          { href: "https://example.test/login", text: "ログイン" },
-        ],
-      },
-      snapshot("https://example.test/login", [
-        field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
-        field("login-password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
-      ]),
-      snapshot("https://example.test/account", [
-        field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
-      ]),
-    ], {
-      "profile-email": "user@example.test",
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
     });
+
+    const page = new FakePageDriver(
+      [
+        {
+          ...snapshot("https://example.test/", [], "トップページ"),
+          links: [
+            { href: "https://example.test/help", text: "ヘルプ" },
+            { href: "https://example.test/login", text: "ログイン" },
+          ],
+        },
+        snapshot("https://example.test/login", [
+          field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+          field("login-password", {
+            type: "password",
+            autocomplete: "current-password",
+            labels: ["パスワード"],
+          }),
+        ]),
+        snapshot("https://example.test/account", [
+          field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+        ]),
+      ],
+      {
+        "profile-email": "user@example.test",
+      },
+    );
 
     const runner = new VisibilityRunner({
       domain: service,
@@ -390,8 +532,18 @@ test("visibility runner collects read-only display values (text-rendered account
       url: "https://profile.example.test/account",
       displayName: "Profile",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
-    service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "current@example.test", valueType: "email" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    service.setPersonalAttribute({
+      attributeKey: "email",
+      label: "メール",
+      value: "current@example.test",
+      valueType: "email",
+    });
 
     // The account page has NO editable form fields; the registered values are
     // rendered as text (e.g. a <dl>), surfaced as displayValues by the scanner.
@@ -399,10 +551,14 @@ test("visibility runner collects read-only display values (text-rendered account
       { valueId: "d-1", labelText: "メールアドレス", nearbyText: "" },
       { valueId: "d-2", labelText: "電話番号", nearbyText: "" },
     ]);
-    const page = new FakePageDriver([accountPage], {}, {
-      "d-1": "old@example.test",
-      "d-2": "090-1234-5678",
-    });
+    const page = new FakePageDriver(
+      [accountPage],
+      {},
+      {
+        "d-1": "old@example.test",
+        "d-2": "090-1234-5678",
+      },
+    );
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
@@ -435,7 +591,12 @@ test("visibility runner skips a non-web credential (e.g. android://) without mar
       url: "android://hash@com.example.app/",
       displayName: "Example App",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
     let opened = false;
     const runner = new VisibilityRunner({
       domain: service,
@@ -465,7 +626,12 @@ test("visibility runner reports login-failed (not collected) when a password fie
       url: "https://stuck.example.test/login",
       displayName: "Stuck",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
     // Both snapshots are the same login page: the login click never advanced past it.
     const loginSnapshot = snapshot("https://stuck.example.test/login", [
       field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
@@ -498,7 +664,12 @@ test("visibility runner still reports login-failed when a stuck login page also 
       url: "https://stuck-with-extra-field.example.test/login",
       displayName: "StuckWithExtraField",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
     // Both snapshots are the same login page: the login click never advanced past it.
     // The page also has an unrelated required field (e.g. a promo/referral code) that
     // the classifier cannot map — recording a dynamic-attribute candidate must not
@@ -535,12 +706,14 @@ test("visibility runner reports no-data (not collected) when the page yields no 
       url: "https://empty.example.test/account",
       displayName: "Empty",
     });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
     // Already past login (no login fields), but readValues returns nothing.
-    const page = new FakePageDriver(
-      [snapshot("https://empty.example.test/account", [], "ようこそ")],
-      {},
-    );
+    const page = new FakePageDriver([snapshot("https://empty.example.test/account", [], "ようこそ")], {});
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
@@ -602,7 +775,12 @@ test("visibility runner records an unreachable URL without leaking credentials",
       url: "https://gone.example.test/login",
       displayName: "Gone",
     });
-    service.addCredential({ siteAccountId: site.id, username: "real-user-canary", password: "real-password-canary", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "real-user-canary",
+      password: "real-password-canary",
+      source: "csv-import",
+    });
     const page = new FakePageDriver([]);
     page.gotoError = new Error("page.goto: net::ERR_NAME_NOT_RESOLVED at https://gone.example.test/login");
 
@@ -617,7 +795,10 @@ test("visibility runner records an unreachable URL without leaking credentials",
     const constraint = service.listConstraints().find((item) => item.kind === "unknown-state");
     assert.ok(constraint);
     assert.equal(constraint.detail, "access-unreachable: dns-not-found");
-    const serialized = JSON.stringify({ constraints: service.listConstraints(), evidence: service.listEvidence() });
+    const serialized = JSON.stringify({
+      constraints: service.listConstraints(),
+      evidence: service.listEvidence(),
+    });
     assert.equal(serialized.includes("real-user-canary"), false);
     assert.equal(serialized.includes("real-password-canary"), false);
   } finally {

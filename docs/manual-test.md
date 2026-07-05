@@ -196,11 +196,32 @@ Apple Silicon Mac、macOS 14 Sonoma または macOS 15 Sequoia で実施しま�
 
 `AiEngine`（`src/automation/ai-engine.ts`、Issue #276）は、Visibility 探索
 （`DecisionEngine` / `RuleEngine` / `PageExplorer` / `LoginHandler`）の一部でルールが
-判断できなかったときのオプションの AI フォールバックです。**パート 4 のアプリ本体の収集フロー
-（`VisibilityRunner`）は現時点で `DecisionEngine` を `AiEngine` なしで構築しており、本 Issue の
-非スコープとして `AiEngine` の結線は行っていません**（ユーザー設定の AI プロバイダを実際の収集に
-使うのは別 Issue）。そのため実プロバイダの確認は、下記のような小さな Node スクリプトで
-`AiEngine.consult()` を直接呼び出して行います。
+判断できなかったときのオプションの AI フォールバックです。
+
+**Issue #310 以降、`npm run dev` のアプリ本体でも実際に発火します**: `SoroeruSession`
+（`electron/session.ts`）がバルト解錠のたびに `.env` の `OPENAI_API_KEY` /
+`ANTHROPIC_API_KEY` を見て `AiEngine` を（設定されていれば）自動的に構築し、
+`VisibilityRunner` の `DecisionEngine` へ結線します。**設定画面はまだなく、鍵が環境変数に
+あるだけで有効化される開発・手動検証専用の暫定配線**です（本番の設定ストア連携は別
+Issue）。ただし現状 `DecisionEngine` 経由で AI フォールバックが実際に発火しうるのは
+`find-profile-links` / `should-continue`（`PageExplorer` の探索判断）のみです —
+ログインページ探索・フォーム検出・ログイン結果判定は今も `login-handler.ts` の
+決定的ヒューリスティックを直接使っており `DecisionEngine` を経由しません。
+
+- [ ] `.env` に `OPENAI_API_KEY`（または `ANTHROPIC_API_KEY`）を設定した状態で
+      `npm run dev` を起動し、ローカルのフェイクサイト（`npm run poc:serve`）に対して
+      パート 4 の「収集」を実行する。ログイン後ページのリンク文言が §2 の組み込み
+      キーワード（マイページ／会員情報／住所 等）に一切マッチしないフェイクサイトを使うと、
+      ルールが確信を持てず AI へフォールバックしやすい
+- [ ] 開発ターミナルに `[ai-engine] { kind: "find-profile-links" | "should-continue", ... }`
+      の形の `AiConsultationLog` が出力される（`outcome: "used"` を含む）。本文・プロンプトは
+      一切出力されない
+- [ ] `.env` の鍵を外して同じ操作を行うと、`[ai-engine]` ログが一切出ずルールベースのみで
+      従来通り収集が完了する（既定挙動が変わっていないことの確認）
+
+`classify-field` / `name-new-attribute` / `detect-login-form` / `judge-login-result` /
+`find-login-page` は上記の理由でアプリ本体からは未到達のため、これらの実プロバイダ確認は
+引き続き下記のような小さな Node スクリプトで `AiEngine.consult()` を直接呼び出して行います。
 
 ```ts
 import { AiEngine } from "./src/automation/ai-engine.js";
