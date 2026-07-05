@@ -193,6 +193,20 @@ npm run poc:matrix -- deterministic chromium   # CI: see §7
 npm run poc:matrix -- both                     # local: all engines + AI variant if a key is configured
 ```
 
+For the Electron app's own UI (Issue #303), a local-only E2E harness drives the built
+app with Playwright's built-in Electron support (`_electron.launch()`, no extra
+dependency) through the Visibility happy path — vault setup → CSV import → collection
+against the local `01-basic` test site → disclosure ledger in the UI and persisted to
+an isolated `SOROERU_STATE_ROOT` vault:
+
+```bash
+npm run e2e:app-ui   # local-only: builds the app, launches it, drives the renderer UI
+```
+
+The run opens a real Electron window plus the headed collection browser, uses fake
+data only, and leaves its per-run state under `state/soroeru-poc/e2e-app-ui/` for
+debugging (`state/` is git-ignored).
+
 ## 6. Manual Testing
 
 Use [`manual-test.md`](manual-test.md) for browser-based checklists. Per AGENTS.md
@@ -227,6 +241,10 @@ the packaged `.app` artifact before sharing a build with beta users.
   `ANTHROPIC_API_KEY`, REQ-012) — both require either installing all three Playwright browser
   engines or a user-supplied AI provider key, neither of which CI provides. `npm run poc -- demo`
   (headed visual walkthrough) and the manual checklist (§6) also remain local/manual.
+  `npm run e2e:app-ui` (§5, Issue #303) is likewise local-only for now: it launches a native
+  Electron GUI plus a headed collection browser, which the Ubuntu CI runners would only
+  support with extra display plumbing (Xvfb) we are not paying for yet. Run it as a
+  manual / pre-release check.
 - Local AI review (`docs/local-ai-review.md`) remains local, as before.
 
 ## 8. Registration / Bulk-Update E2E Matrix (TEST-001 / #45)
