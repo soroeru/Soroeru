@@ -27,6 +27,13 @@ Issue #251は当初、Visibility探索（複数ページ収集）フローに対
 価値は、探索・壁ハンドオフ→resumeを**実Electronアプリの UI と実ブラウザを通して**
 検証することに絞られる。`run/measure.ts`型のマトリクス追加はやり直さない。
 
+**ガバナンス**: `docs/github-operations.md` §3は「PRが計画を大きく変える場合はIssueを
+更新するか、PR説明で変更点を説明する」ことを求めている。本設計は#251の当初計画（登録
+マトリクス方式）からの実質的な方向転換であるため、実装着手前にGitHub Issue #251本文
+自体を本ドキュメントと同じ内容（Goal/Scope/Non-Scope/Approachを`/explore-flow/*` +
+`app-ui-exploration.e2e.ts`方式に更新）で書き換え済み（`gh issue edit 251`）。PR説明
+にも、この方向転換の理由と更新済みIssue本文への言及を含める。
+
 ## 決定事項
 
 - **ハーネスは#303のパターンをそのまま再利用する**：`_electron.launch()`で開発ビルド
@@ -52,9 +59,15 @@ Issue #251は当初、Visibility探索（複数ページ収集）フローに対
     フィクスチャルート**であり、コード上のコメントも「10パターンの一部ではない、
     壁検出の骨格を検証するためだけのページ」と明記している
     （sites/server.ts:100-121）。本IssueもこのTierに新規`/explore-flow/*`を追加する。
+  実装上の制約として、`/explore-flow/*`の分岐は`handle()`内で`/site/:id/...` →
+  `SITES`検索（sites/server.ts:122以降）より**必ず手前**に置くこと。後ろに置くと
+  `/site/:id/...`の正規表現に先にマッチしてしまい素通りする心配はないが（パスが
+  `/explore-flow/...`で`/site/`から始まらないため実害はない）、`/wall-fixture/*`等
+  既存の分岐と同じ並び順に置くことで、この一群が「`SITES`とは独立したフィクスチャ層」
+  であることをコード上でも一目で分かるようにする。
 - **壁の「解除」はサーバー側の再訪問状態で表現する**。
   `PageExplorer.resume()`（`src/automation/page-explorer.ts:76-82`）はresume時に
-  必ずderredURLを再キューし、`continueExploration`（同ファイル103行目）で
+  必ず deferredURL を再キューし、`continueExploration`（同ファイル103行目）で
   同じURLに対して`pageDriver.goto()`をもう一度呼ぶ——その場でスナップショットを
   取り直すだけではない。したがって、`/explore-flow/payment`のようなフィクスチャ
   ページが「初回GETでは壁を出し、2回目以降のGETでは壁を出さない」という
