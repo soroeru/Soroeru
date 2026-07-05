@@ -23,8 +23,20 @@ export interface DecisionContext {
   /** Attribute keys already collected in this run (keys only, no values). */
   collectedAttributes?: string[];
   siteAccount: { domain: string; displayName: string };
-  /** The field under classification (classify-field only). */
+  /**
+   * The field under classification/naming (classify-field, name-new-attribute).
+   * Set for form-field-sourced candidates; mutually exclusive with
+   * `displayValue` below (display-value-sourced candidates).
+   */
   field?: FormField;
+  /**
+   * A read-only display-value candidate under naming (name-new-attribute
+   * only), for fields sourced from `PageSnapshot.displayValues` rather than
+   * an editable form field. Carries only the label text — never `nearbyText`,
+   * which for display values often contains the value itself (design §8:
+   * "<dt>氏名</dt><dd>山田太郎</dd>"-shaped markup).
+   */
+  displayValue?: { labelText: string };
 }
 
 export interface DecisionRequest {
