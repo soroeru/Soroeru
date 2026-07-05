@@ -459,22 +459,33 @@ export class SoroeruSession {
   /**
    * All sites' composed ledger detail in one call (Issue #301's spreadsheet-style
    * ledger view needs every site's disclosures at once to build its attribute
-   * columns). Returns an empty list when locked.
+   * columns). Returns an empty list when locked. Fetches dynamic-attribute
+   * candidates and constraints once and shares them across every site instead
+   * of letting each `composeSiteDetail` call re-scan them (this is now the
+   * primary load path for the Ledger tab).
    */
   ledgerSiteDetails(): SiteLedgerDetail[] {
     if (!this.domain || !this.vault || this.vault.isLocked) return [];
+    const dynamicCandidates = this.domain.listDynamicAttributeCandidates();
+    const constraints = this.domain.listConstraints();
     return this.domain
       .listSiteAccounts()
-      .map((site) => this.composeSiteDetail(site.id))
+      .map((site) => this.composeSiteDetail(site.id, { dynamicCandidates, constraints }))
       .filter((detail): detail is SiteLedgerDetail => detail !== undefined)
       .sort((a, b) => a.displayName.localeCompare(b.displayName));
   }
 
-  private composeSiteDetail(siteAccountId: string): SiteLedgerDetail | undefined {
+  private composeSiteDetail(
+    siteAccountId: string,
+    shared?: {
+      dynamicCandidates: ReturnType<DomainService["listDynamicAttributeCandidates"]>;
+      constraints: ReturnType<DomainService["listConstraints"]>;
+    },
+  ): SiteLedgerDetail | undefined {
     if (!this.domain) return undefined;
     const summary = this.composeSiteSummary(siteAccountId);
     if (!summary) return undefined;
-    const dynamicCandidates = this.domain.listDynamicAttributeCandidates();
+    const dynamicCandidates = shared?.dynamicCandidates ?? this.domain.listDynamicAttributeCandidates();
     const dynamicLabels = new Map<string, string>();
     for (const candidate of dynamicCandidates) {
       dynamicLabels.set(candidate.proposedAttributeKey, candidate.label);
@@ -515,8 +526,7 @@ export class SoroeruSession {
       ...(r.detail !== undefined ? { detail: r.detail } : {}),
       observedAt: r.observedAt,
     }));
-    const constraints = this.domain
-      .listConstraints()
+    const constraints = (shared?.constraints ?? this.domain.listConstraints())
       .filter((c) => c.siteAccountId === siteAccountId)
       .map((c) => ({
         kind: c.kind,

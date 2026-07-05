@@ -353,8 +353,11 @@ experience: the user sees their scattered online footprint at once.
    - collect field/text values locally (`disclosure-collector.ts`);
    - classify values into Disclosures and Account Relationships;
    - store encrypted records plus Evidence/Audit.
-4. **Ledger view** (`LedgerPanel`): per-site composed view (`ledgerSite`) and cross-site
-   summaries (`ledgerSites`).
+4. **Ledger view** (`LedgerPanel`): a spreadsheet-style table (sites as rows, the union of
+   observed attributes as horizontally-scrollable columns) backed by `ledgerSiteDetails`
+   (all sites' composed detail in one call); per-site composed detail (`ledgerSite`) and
+   cross-site summaries (`ledgerSites`) remain available for `SiteManagementPanel`'s
+   per-row "詳細" flow.
 5. **Initial Reflection / filters** (`InsightsPanel`): `ledgerInsights` /
    `computeLedgerInsights` summarize stale, risky, over-disclosed, newsletter, billing, and
    not-fully-checked findings without turning them into pressure to approve blindly.
