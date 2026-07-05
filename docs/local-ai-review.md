@@ -2,7 +2,7 @@
 
 This document owns the **local Git hook for AI review**: purpose, setup,
 configuration, branch rules, review target, skip conditions, follow-up policy,
-cleanup policy, output, and troubleshooting.
+cleanup policy, output, waiting for completion, and troubleshooting.
 
 Out of scope here: GitHub PR workflow expectations (see
 [`github-operations.md`](github-operations.md)) and general development setup
@@ -234,7 +234,56 @@ Useful files:
 
 Review artifacts are local state and should not be committed.
 
-## 10. Troubleshooting
+## 10. Waiting for Completion
+
+The hook runs asynchronously in the background (`launchctl`/`nohup`), so
+`git commit` returns immediately — before the reviewer CLI has produced a
+result. Waiting for that result by repeatedly re-checking `state/ai-reviews/`
+turn-by-turn (e.g. an agent re-polling every minute or two) is expensive: each
+check re-enters a full conversation turn, and a naive `ps aux | grep` check
+can re-dump the entire reviewer prompt (including the branch diff) into that
+turn's output every single time.
+
+Two things make this cheap to wait for correctly instead:
+
+- **Whether anything was queued at all is known immediately, for free.** The
+  commit's own stdout prints
+  `[local-ai-review] queued <reviewer> review for <branch> (commit=<short-sha>)`
+  synchronously when `git commit` returns (`.githooks/post-commit`). If that
+  line is absent, no review was queued (disabled, branch prefix mismatch,
+  merge commit, `[skip-review]`, or empty diff) and there is nothing to wait
+  for.
+- **Completion is a pure file-existence condition**: every requested review
+  unit (§5) has a `state/ai-reviews/<timestamp>-<reviewer>-<unit>-<pid>.md`
+  file whose `` - commit: `<sha>` `` line matches the target commit, **and**
+  `state/ai-reviews/.lock` is gone (a single commit can trigger several units
+  sequentially under one lock, so the lock clears only once all of them are
+  done).
+
+`scripts/wait-for-local-ai-review.sh` encodes both of the above:
+
+```bash
+scripts/wait-for-local-ai-review.sh --unit <name>[,<name>...] \
+  [--commit <sha>] [--timeout <seconds>] [--poll <seconds>]
+```
+
+- `--unit` (required): one or more of `code`, `requirements`, `architecture`,
+  `design` — whichever units the commit's diff actually touches.
+- `--commit` defaults to `git rev-parse HEAD`.
+- `--timeout` defaults to 540 seconds for one unit; pass a larger value
+  explicitly for a commit that triggers several units, since they run
+  sequentially under one lock.
+- `--poll` defaults to 10 seconds.
+
+Exit codes: `0` once every requested unit's commit-confirmed output exists and
+the lock is gone, `1` on timeout, `2` on a usage error.
+
+This section documents the mechanism only; *which tool* invokes the script is
+harness-specific and belongs in that harness's own operating instructions (for
+Claude Code: `CLAUDE.md`'s "Fable 5 Session Conventions → Tooling"; the
+`issue-implementation` skill's workflow step also points here).
+
+## 11. Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
@@ -243,6 +292,7 @@ Review artifacts are local state and should not be committed.
 | Repeated reviews | `last-reviewed.json` and diff hash changes |
 | Hook blocks unexpectedly | `last-run.log`, lock file age, reviewer timeout |
 | Shellcheck fails | Bash 3.2 compatibility and quoted path handling |
+| `wait-for-local-ai-review.sh` times out | `last-run.log`/`last-error.log`, whether the commit's stdout actually printed `queued`, and whether `--timeout` covers all requested units |
 
 For branch-mapping changes, run:
 
@@ -264,7 +314,17 @@ This runs the orchestrator in a throwaway repository with a stubbed reviewer
 and asserts unit selection, prompt selection, per-unit idempotency, and the
 multi-unit-per-commit behavior.
 
-## 11. Optional GitHub Actions Fallback
+For changes to the completion-waiting script (§10), run:
+
+```bash
+bash scripts/smoke-wait-for-local-ai-review.sh
+```
+
+This checks the commit-SHA matching guard, the lock-wait, and the timeout
+path against fixture `state/ai-reviews/` artifacts, without invoking a real
+reviewer CLI.
+
+## 12. Optional GitHub Actions Fallback
 
 GitHub Actions based AI review is intentionally outside the default template.
 If a project adds it, keep these details in a separate optional document:

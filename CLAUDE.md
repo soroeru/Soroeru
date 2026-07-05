@@ -480,6 +480,14 @@ Tooling:
   see verbatim mid-task, never for narration or reasoning.
 - **Memory**: use Claude Code's built-in auto-memory (the project-scoped `memory/`
   directory) for cross-session lessons. Do not create a separate ad hoc notes file.
+- **Waiting on backgrounded work (e.g. the local AI review hook)**: use `Bash`
+  with `run_in_background: true` running a tight polling script that exits the
+  moment its condition is met (`scripts/wait-for-local-ai-review.sh` for the
+  review hook, `docs/local-ai-review.md` §10), paired with a single long
+  fallback `ScheduleWakeup` as a dead-man's switch — never a chain of
+  short-interval `ScheduleWakeup` calls interleaved with manual `Bash` checks;
+  each such pair costs a full turn and can re-dump large command output (e.g.
+  `ps aux` capturing an entire review prompt) into context every time.
 
 Local AI review and the `issue-implementation` skill remain in force regardless of
 which model orchestrates; subagent/Codex review does not replace them.

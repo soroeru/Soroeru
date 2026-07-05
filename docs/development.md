@@ -317,6 +317,9 @@ For code changes, run the available gates:
 - `npm test`
 - `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review
   branch mapping changes
+- `bash scripts/smoke-wait-for-local-ai-review.sh` for changes to the local AI
+  review completion-waiting script (see
+  [`local-ai-review.md`](local-ai-review.md) §10)
 - focused manual tests for affected browser behavior
 - for changes touching network calls, AI provider config, or `package.json`
   dependencies: `npm run poc -- check-egress` (PRIV-001, see
