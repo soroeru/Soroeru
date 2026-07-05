@@ -207,6 +207,22 @@ The run opens a real Electron window plus the headed collection browser, uses fa
 data only, and leaves its per-run state under `state/soroeru-poc/e2e-app-ui/` for
 debugging (`state/` is git-ignored).
 
+For the Visibility **exploration** flow (Issue #251), a second local-only harness
+extends the same `_electron.launch()` pattern against a dedicated multi-page fixture
+(`sites/server.ts`'s `/explore-flow/*`, not one of the 10 `SITES` — see
+[`docs/design/issue-251-app-ui-exploration-e2e.md`](design/issue-251-app-ui-exploration-e2e.md)):
+login → mypage → profile/address/payment, where the payment page shows a CAPTCHA-style
+wall on its first visit and clears on the next. The test drives the real hand-off
+banner ("ウォールの解決が必要です") and its "解決して再開" button to resume, then asserts
+the resulting disclosures were sourced from all three pages and persisted to the vault,
+with the card number reduced to its last 4 digits and the CVV never present:
+
+```bash
+npm run e2e:app-ui-exploration   # local-only: multi-page exploration + wall handoff/resume
+```
+
+Per-run state is kept under `state/soroeru-poc/e2e-app-ui-exploration/` for debugging.
+
 ## 6. Manual Testing
 
 Use [`manual-test.md`](manual-test.md) for browser-based checklists. Per AGENTS.md
@@ -244,7 +260,8 @@ the packaged `.app` artifact before sharing a build with beta users.
   `npm run e2e:app-ui` (§5, Issue #303) is likewise local-only for now: it launches a native
   Electron GUI plus a headed collection browser, which the Ubuntu CI runners would only
   support with extra display plumbing (Xvfb) we are not paying for yet. Run it as a
-  manual / pre-release check.
+  manual / pre-release check. `npm run e2e:app-ui-exploration` (§5, Issue #251) is the same
+  decision for the same reason.
 - Local AI review (`docs/local-ai-review.md`) remains local, as before.
 
 ## 8. Registration / Bulk-Update E2E Matrix (TEST-001 / #45)
