@@ -233,7 +233,13 @@ export interface SiteLedgerSummary {
   collected: boolean;
 }
 
-/** One disclosed value as the renderer sees it: masked preview, never the raw value. */
+/**
+ * One disclosed value as the renderer sees it. Only "sensitive"/"most-sensitive"
+ * rows (card data, the site password) carry a masked preview gated behind
+ * reveal; "normal" rows (name, address, phone, account id, etc., Issue #300)
+ * carry their plain value directly in `preview` since the user wants to
+ * confirm already-imported, already-known information immediately.
+ */
 export interface DisclosureView {
   disclosureId: string;
   attributeKey: string;
@@ -242,9 +248,9 @@ export interface DisclosureView {
   staleState: StaleState;
   sourceKind: DisclosureSourceKind;
   observedAt: number;
-  /** Masked bullets that reveal at most the value's length, or "" when unknown. */
+  /** Plain value for "normal" sensitivity; masked bullets for "sensitive"/"most-sensitive"; "" when unknown. */
   preview: string;
-  /** A re-authenticated reveal can return a raw value (has one and not most-sensitive). */
+  /** A re-authenticated reveal can return a raw value ("sensitive" only; "normal" is already shown unmasked). */
   revealable: boolean;
   evidenceCount: number;
 }
