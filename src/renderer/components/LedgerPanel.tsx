@@ -95,15 +95,19 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
           収集済みの開示がまだありません。サイト管理からサイトを収集すると、ここに表示されます。
         </p>
       ) : (
-        <div className="overflow-x-auto rounded border border-neutral-200">
+        <div className="max-h-[60vh] overflow-auto rounded border border-neutral-200">
           <table className="border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-neutral-200 bg-neutral-50">
-                <th scope="col" className="sticky left-0 z-10 bg-neutral-50 px-3 py-2 font-medium">
+                <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-3 py-2 font-medium">
                   サイト
                 </th>
                 {columns.map((column) => (
-                  <th key={column.attributeKey} scope="col" className="whitespace-nowrap px-3 py-2 font-medium">
+                  <th
+                    key={column.attributeKey}
+                    scope="col"
+                    className="sticky top-0 z-10 whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
+                  >
                     {column.label}
                   </th>
                 ))}
