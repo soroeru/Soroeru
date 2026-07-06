@@ -60,6 +60,20 @@ test("a wall pause is attributed to the site's preceding wall-detected kind", ()
   assert.equal(bySite.get("nokind.example"), "wall:unknown");
 });
 
+test("a cancel preceded by a wall (UI skip) is attributed to the wall, not to cancel", () => {
+  const text = [
+    line({ message: "wall detected", domain: "skip.example", wall: "captcha", step: "initial", level: "warn" }),
+    line({ message: "run canceled", domain: "skip.example", siteAccountId: "site-1" }),
+    // A cancel with no preceding wall stays a genuine cancel.
+    line({ message: "run canceled", domain: "abort.example", siteAccountId: "site-2" }),
+  ].join("\n");
+
+  const outcomes = siteOutcomes(parseLogEntries(text));
+  const bySite = new Map(outcomes.map((outcome) => [outcome.site, outcome.category]));
+  assert.equal(bySite.get("skip.example"), "wall:captcha");
+  assert.equal(bySite.get("abort.example"), "canceled");
+});
+
 test("a retried site keeps only its last terminal outcome", () => {
   const text = [
     line({ message: "site unreachable", domain: "retry.example", reason: "timeout" }),

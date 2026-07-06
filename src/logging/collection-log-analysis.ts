@@ -120,7 +120,13 @@ function terminalOutcome(
     case "collection completed":
       return { site, category: "collected" };
     case "run canceled":
-      return { site, category: "canceled" };
+      // Skipping a wall in the UI aborts the current site, so a wall-skip
+      // surfaces as "run canceled" preceded by "wall detected" for the same
+      // site. Attribute those to the wall; a cancel with no preceding wall is
+      // a genuine user/batch abort.
+      return wallKind !== undefined
+        ? { site, category: `wall:${wallKind}` }
+        : { site, category: "canceled" };
     case "site unreachable":
       return { site, category: `unreachable:${entry.reason ?? "unknown"}` };
     case "login failed: still on a login page after submitting credentials":
