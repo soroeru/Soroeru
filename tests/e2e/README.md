@@ -3,6 +3,22 @@
 This directory is for local-only E2E harness code. Do not commit exported
 password-manager CSV files, session files, screenshots, or result JSON here.
 
+## Collection diagnostics run (Issue #317)
+
+`collection-diagnostics-run.ts` drives the packaged app unattended through the
+full Visibility batch (vault setup → CSV import → select all → collect → log
+download) and leaves the diagnostics log under
+`state/soroeru-poc/collection-diagnostics/<timestamp>/logs/soroeru.log`:
+
+```bash
+npm run diagnostics:collect
+npm run diagnostics:analyze -- state/soroeru-poc/collection-diagnostics/<timestamp>/logs/soroeru.log
+```
+
+See `skills/collection-diagnostics/SKILL.md` for the workflow and environment
+knobs (`SOROERU_DIAG_APP`, `SOROERU_DIAG_CSV`, `SOROERU_DIAG_MAX_SITES`,
+`SOROERU_DIAG_TIMEOUT_MIN`).
+
 Run the real-site Visibility check explicitly:
 
 ```bash

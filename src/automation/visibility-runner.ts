@@ -208,9 +208,12 @@ export class VisibilityRunner {
         this.recordUnreachable(siteAccount, unreachableReason);
         return { siteAccountId, status: "unreachable", disclosures: 0, relationships: 0, constraints: 1 };
       }
+      // Field named `error`, not `message`: the FileLogger envelope's own
+      // `message` key is spread last and would clobber a caller field of the
+      // same name, silently dropping the failure detail (Issue #317).
       this.logger.error("visibility", "run failed", {
         domain: siteAccount.domain,
-        message: err instanceof Error ? err.message : String(err),
+        error: err instanceof Error ? err.message : String(err),
       });
       return { siteAccountId, status: "failed", disclosures: 0, relationships: 0, constraints: 0 };
     } finally {
@@ -304,6 +307,11 @@ export class VisibilityRunner {
         status: "handoff",
         resumeData: { wall: wall.kind, url: current.url },
       });
+      this.logger.warn("visibility", "wall detected", {
+        domain: siteAccount.domain,
+        wall: wall.kind,
+        step,
+      });
 
       if (!this.options.handoff || handoffs === maxHandoffs) return undefined;
       const outcome = await this.options.handoff({
@@ -365,6 +373,11 @@ export class VisibilityRunner {
         step: "exploration",
         status: "handoff",
         resumeData: { wall: wall.wall.kind, url: wall.url },
+      });
+      this.logger.warn("visibility", "wall detected", {
+        domain: siteAccount.domain,
+        wall: wall.wall.kind,
+        step: "exploration",
       });
 
       if (!this.options.handoff || handoffs >= maxHandoffs) {
@@ -563,7 +576,13 @@ export class VisibilityRunner {
     const constraints = this.options.domain
       .listConstraints()
       .filter((constraint) => constraint.siteAccountId === siteAccountId).length;
-    this.logger.info("visibility", "run paused for wall hand-off", { siteAccountId });
+    // Include the domain so the log analysis (Issue #317) can join this pause
+    // with the site's preceding "wall detected" entry, which is keyed by domain.
+    const domain = this.options.domain.getSiteAccount(siteAccountId)?.domain;
+    this.logger.info("visibility", "run paused for wall hand-off", {
+      siteAccountId,
+      ...(domain !== undefined ? { domain } : {}),
+    });
     return { siteAccountId, status: "handoff", disclosures: 0, relationships: 0, constraints };
   }
 }
