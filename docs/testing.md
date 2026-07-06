@@ -134,6 +134,7 @@ surface; **B/C/D** layers are present for the later slices.
 | UI — local web app | all | `app/web-ui.ts` | `soroeru-poc-web-ui`, `soroeru-poc-add-site` |
 | UI — legacy terminal fallback | — | `app/ui.ts` | `soroeru-poc-ui` |
 | Diagnostics / support bundle | all | `app/diagnostics.ts` | `soroeru-poc-diagnostics` |
+| App diagnostics log (unencrypted, Issue #314) | A | `logging/logger.ts`, `logging/file-logger.ts`, wired into `automation/visibility-runner.ts`, `electron/visibility-service.ts`, `electron/session.ts`, `electron/main.ts` | `soroeru-file-logger`, plus the logger-spy assertions in `soroeru-visibility-runner` and the export round-trip in `soroeru-ipc-permission` |
 | Dev checks (PRIV-001/002, SEC-002) | all | `dev/{egress,privacy,bypass}-check.ts` | `soroeru-poc-egress`, `soroeru-poc-privacy`, `soroeru-poc-bypass` |
 | Measurement / CI gate (E2E) | B/D | `run/measure.ts` | `soroeru-poc-measure` |
 
@@ -223,6 +224,23 @@ npm run e2e:app-ui-exploration   # local-only: multi-page exploration + wall han
 
 Per-run state is kept under `state/soroeru-poc/e2e-app-ui-exploration/` for debugging.
 
+For the app diagnostics log (Issue #314), a third local-only harness reuses the same
+`_electron.launch()` pattern to drive a real Visibility collection failure through the app
+UI (a CSV row pointing at `127.0.0.1:1`, a loopback port nothing listens on, so the run
+deterministically fails with "unreachable" / "navigation-failed" — no external network or
+DNS dependency), smoke-tests the new Settings tab's "ログをダウンロード" button through the
+real UI, and asserts the on-disk plain-text log it reads contains a `site unreachable`
+entry with that reason — and never the raw email/password. (The assertion reads the log
+file directly rather than capturing a Playwright `download` event: Electron routes an
+`<a download>` click through its native `will-download` session API, not the standard
+Chromium download manager Playwright observes.)
+
+```bash
+npm run e2e:app-ui-logging   # local-only: drives a login failure, verifies the downloadable log
+```
+
+Per-run state is kept under `state/soroeru-poc/e2e-app-ui-logging/` for debugging.
+
 ## 6. Manual Testing
 
 Use [`manual-test.md`](manual-test.md) for browser-based checklists. Per AGENTS.md
@@ -260,8 +278,8 @@ the packaged `.app` artifact before sharing a build with beta users.
   `npm run e2e:app-ui` (§5, Issue #303) is likewise local-only for now: it launches a native
   Electron GUI plus a headed collection browser, which the Ubuntu CI runners would only
   support with extra display plumbing (Xvfb) we are not paying for yet. Run it as a
-  manual / pre-release check. `npm run e2e:app-ui-exploration` (§5, Issue #251) is the same
-  decision for the same reason.
+  manual / pre-release check. `npm run e2e:app-ui-exploration` (§5, Issue #251) and
+  `npm run e2e:app-ui-logging` (§5, Issue #314) are the same decision for the same reason.
 - Local AI review (`docs/local-ai-review.md`) remains local, as before.
 
 ## 8. Registration / Bulk-Update E2E Matrix (TEST-001 / #45)

@@ -24,7 +24,8 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.recoveryGenerate]: () => session.generateRecoveryKey(),
     [IPC_CHANNELS.domainSummary]: () => session.domainSummary(),
     [IPC_CHANNELS.csvImport]: (data: unknown) => session.importCsv(toCsvData(data)),
-    [IPC_CHANNELS.savedPageImport]: (request: unknown) => session.importSavedPage(toSavedPageImportRequest(request)),
+    [IPC_CHANNELS.savedPageImport]: (request: unknown) =>
+      session.importSavedPage(toSavedPageImportRequest(request)),
     [IPC_CHANNELS.savedPageOpenSite]: (siteAccountId: unknown) =>
       session.openSiteInDefaultBrowser(String(siteAccountId ?? "")),
     [IPC_CHANNELS.savedPageMarkManual]: (siteAccountId: unknown) =>
@@ -48,12 +49,15 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.visibilityResume]: () => session.resumeVisibility(),
     [IPC_CHANNELS.visibilityAbort]: () => session.abortVisibility(),
     [IPC_CHANNELS.visibilityStatus]: () => session.visibilityStatus(),
+    [IPC_CHANNELS.logsExport]: () => session.exportLogs(),
   };
 }
 
-function toConfirmDynamicCandidateRequest(
-  request: unknown,
-): { proposedAttributeKey: string; label: string; matchTerms?: string[] } {
+function toConfirmDynamicCandidateRequest(request: unknown): {
+  proposedAttributeKey: string;
+  label: string;
+  matchTerms?: string[];
+} {
   const input = request && typeof request === "object" ? (request as Record<string, unknown>) : {};
   const matchTerms = Array.isArray(input["matchTerms"])
     ? input["matchTerms"].filter((term): term is string => typeof term === "string")
@@ -65,8 +69,12 @@ function toConfirmDynamicCandidateRequest(
   };
 }
 
-function toSavedPageImportRequest(request: unknown): { siteAccountId: string; fileName: string; data: Uint8Array } {
-  const input = request && typeof request === "object" ? request as Record<string, unknown> : {};
+function toSavedPageImportRequest(request: unknown): {
+  siteAccountId: string;
+  fileName: string;
+  data: Uint8Array;
+} {
+  const input = request && typeof request === "object" ? (request as Record<string, unknown>) : {};
   return {
     siteAccountId: String(input["siteAccountId"] ?? ""),
     fileName: String(input["fileName"] ?? ""),
@@ -74,8 +82,11 @@ function toSavedPageImportRequest(request: unknown): { siteAccountId: string; fi
   };
 }
 
-function toDeleteSiteAccountRequest(request: unknown): { siteAccountId: string; confirmedFourthBoundary: boolean } {
-  const input = request && typeof request === "object" ? request as Record<string, unknown> : {};
+function toDeleteSiteAccountRequest(request: unknown): {
+  siteAccountId: string;
+  confirmedFourthBoundary: boolean;
+} {
+  const input = request && typeof request === "object" ? (request as Record<string, unknown>) : {};
   return {
     siteAccountId: String(input["siteAccountId"] ?? ""),
     confirmedFourthBoundary: input["confirmedFourthBoundary"] === true,

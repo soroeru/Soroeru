@@ -10,6 +10,7 @@ import type { FormField, PageSnapshot } from "../../src/types.js";
 import type { AiEngine, DecisionKind } from "../../src/automation/decision-engine.js";
 import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
 import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
+import type { LogFields, Logger } from "../../src/logging/logger.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
@@ -17,6 +18,27 @@ async function openService(): Promise<{ dir: string; service: DomainService }> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-visibility-"));
   const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
   return { dir, service: new DomainService(vault) };
+}
+
+interface RecordedLogEntry {
+  level: "info" | "warn" | "error";
+  category: string;
+  message: string;
+  fields?: LogFields;
+}
+
+/** In-memory `Logger` spy (Issue #314) so tests can assert on failure-reason logging without touching disk. */
+function recordingLogger(): { logger: Logger; entries: RecordedLogEntry[] } {
+  const entries: RecordedLogEntry[] = [];
+  const record =
+    (level: RecordedLogEntry["level"]) =>
+    (category: string, message: string, fields?: LogFields): void => {
+      entries.push({ level, category, message, ...(fields ? { fields } : {}) });
+    };
+  return {
+    entries,
+    logger: { info: record("info"), warn: record("warn"), error: record("error") },
+  };
 }
 
 test("visibility runner logs in, collects redacted evidence, disclosures, relationships, and checkpoints", async () => {
@@ -638,9 +660,11 @@ test("visibility runner reports login-failed (not collected) when a password fie
       field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
     ]);
     const page = new FakePageDriver([loginSnapshot, loginSnapshot], {});
+    const { logger, entries } = recordingLogger();
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
+      logger,
     });
 
     const result = await runner.runSite(site.id);
@@ -651,6 +675,10 @@ test("visibility runner reports login-failed (not collected) when a password fie
     assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
     const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
     assert.ok(constraint?.detail.startsWith("login-incomplete:"));
+    // Issue #314: the diagnostics log must record the login-failure reason so a
+    // downloaded log can distinguish this from an unreachable site or a generic error.
+    const loginFailureLog = entries.find((e) => e.level === "warn" && e.message.startsWith("login failed"));
+    assert.equal(loginFailureLog?.fields?.["domain"], "stuck.example.test");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -784,9 +812,11 @@ test("visibility runner records an unreachable URL without leaking credentials",
     const page = new FakePageDriver([]);
     page.gotoError = new Error("page.goto: net::ERR_NAME_NOT_RESOLVED at https://gone.example.test/login");
 
+    const { logger, entries } = recordingLogger();
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
+      logger,
     });
 
     const result = await runner.runSite(site.id);
@@ -801,6 +831,13 @@ test("visibility runner records an unreachable URL without leaking credentials",
     });
     assert.equal(serialized.includes("real-user-canary"), false);
     assert.equal(serialized.includes("real-password-canary"), false);
+    // Issue #314: the diagnostics log must carry the fine-grained reason (dns-not-found)
+    // distinct from a generic "failed", and must never carry the credential.
+    const unreachableLog = entries.find((e) => e.category === "visibility" && e.message === "site unreachable");
+    assert.equal(unreachableLog?.fields?.["reason"], "dns-not-found");
+    const serializedLog = JSON.stringify(entries);
+    assert.equal(serializedLog.includes("real-user-canary"), false);
+    assert.equal(serializedLog.includes("real-password-canary"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

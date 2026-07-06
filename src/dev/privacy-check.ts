@@ -22,6 +22,7 @@ const ALLOWED_CATEGORIES = new Set([
   "encrypted-store", // src/store/store.ts: AES-256-GCM encrypted store + recovery rekey (docs/security.md §4)
   "encrypted-export", // recovery export/import: same encrypted JSON shape as the on-disk store (§4)
   "measurement-output", // state/soroeru-poc/matrix-*.json, masked via maskForArtifact (§3)
+  "diagnostics-log", // src/logging/file-logger.ts: unencrypted by design (Issue #314), structural facts only
 ]);
 
 /** Patterns that indicate a line writes to the local filesystem. */

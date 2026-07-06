@@ -61,6 +61,7 @@ export const IPC_CHANNELS = {
   visibilityResume: "soroeru:visibility:resume",
   visibilityAbort: "soroeru:visibility:abort",
   visibilityStatus: "soroeru:visibility:status",
+  logsExport: "soroeru:logs:export",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
@@ -433,3 +434,18 @@ export type VisibilityEvent =
     }
   | { type: "resumed"; siteAccountId: string }
   | { type: "run-finished"; result: VisibilityRunResultView };
+
+// --- Diagnostics log export (Issue #314) ---
+
+/**
+ * The plain-text diagnostics log for the Settings tab's download button.
+ * Unencrypted by design (never a raw personal value — structural facts only,
+ * see `src/logging/logger.ts`); `content` is the full text so the renderer can
+ * trigger a browser-side file download without any main-process dialog.
+ */
+export interface LogsExportResult {
+  ok: boolean;
+  fileName?: string;
+  content?: string;
+  error?: string;
+}

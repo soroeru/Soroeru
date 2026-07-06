@@ -11,6 +11,7 @@ import { mkdir } from "node:fs/promises";
 import { SoroeruSession } from "./session.js";
 import { createIpcBridge } from "./ipc/bridge.js";
 import { VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
+import { registerCrashLogging } from "./crash-logging.js";
 
 // Product name (issue #158): the userData path becomes
 // ".../Application Support/Soroeru". The code identifier stays "soroeru".
@@ -90,6 +91,8 @@ async function main(): Promise<void> {
     // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
     openExternal: (url) => shell.openExternal(url),
   });
+  registerCrashLogging(session);
+  session.log("info", "app", "app started", { version: app.getVersion(), platform: process.platform });
   registerIpc(session);
 
   await createWindow(session);

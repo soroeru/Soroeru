@@ -10,10 +10,11 @@ import { reasonMessage } from "./messages.js";
 import { VaultGate } from "./components/VaultGate.js";
 import { InsightsPanel } from "./components/InsightsPanel.js";
 import { LedgerPanel } from "./components/LedgerPanel.js";
+import { SettingsPanel } from "./components/SettingsPanel.js";
 import { SiteManagementPanel } from "./components/SiteManagementPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
-type Tab = "sites" | "ledger" | "insights";
+type Tab = "sites" | "ledger" | "insights" | "settings";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -110,6 +111,9 @@ export function App(): React.JSX.Element {
             <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>
               インサイト
             </TabButton>
+            <TabButton active={tab === "settings"} onClick={() => setTab("settings")}>
+              設定
+            </TabButton>
           </nav>
 
           {tab === "sites" && (
@@ -121,6 +125,7 @@ export function App(): React.JSX.Element {
           )}
           {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}
           {tab === "insights" && <InsightsPanel reloadToken={reloadToken} />}
+          {tab === "settings" && <SettingsPanel />}
         </>
       )}
     </main>
