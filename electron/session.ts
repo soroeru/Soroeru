@@ -468,7 +468,12 @@ export class SoroeruSession {
    */
   async exportLogs(): Promise<LogsExportResult> {
     try {
-      const content = await new FileLogger(this.logPath).read();
+      // Reuse the injected logger when it is a real `FileLogger` (production,
+      // and most tests) so this reads exactly what was logged through it;
+      // only fall back to a fresh instance at `logPath` when a test injected
+      // a non-`FileLogger` spy in `logger`'s place.
+      const fileLogger = this.logger instanceof FileLogger ? this.logger : new FileLogger(this.logPath);
+      const content = await fileLogger.read();
       const fileName = `soroeru-log-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
       return { ok: true, fileName, content };
     } catch {

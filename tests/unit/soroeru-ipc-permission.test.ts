@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -494,7 +494,7 @@ test("the session-persistence channels coerce the request shape and route throug
 
     const session = new SoroeruSession(path);
     const bridge = createIpcBridge(session);
-    assert.equal((await bridge[IPC_CHANNELS.vaultUnlock](PASSPHRASE) as VaultMutationResult).ok, true);
+    assert.equal(((await bridge[IPC_CHANNELS.vaultUnlock](PASSPHRASE)) as VaultMutationResult).ok, true);
 
     const set = (await bridge[IPC_CHANNELS.sessionPersistenceSet]({
       siteAccountId: site.id,
@@ -507,7 +507,10 @@ test("the session-persistence channels coerce the request shape and route throug
     assert.equal(cleared.ok, true);
 
     // A malformed (non-object) request must not throw; it coerces to empty/false.
-    const malformed = (await bridge[IPC_CHANNELS.sessionPersistenceSet](null)) as { ok: boolean; error?: string };
+    const malformed = (await bridge[IPC_CHANNELS.sessionPersistenceSet](null)) as {
+      ok: boolean;
+      error?: string;
+    };
     assert.equal(malformed.ok, false);
     assert.equal(malformed.error, "not-found");
   } finally {
@@ -537,6 +540,27 @@ test("logs export reads back what the trusted layer logged, with no raw credenti
     assert.ok(exported.content?.includes("csv import completed"));
     assert.equal(exported.content?.includes("super-secret-password"), false);
     assert.equal(exported.content?.includes("user@example.test"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("logs export reports read-failed instead of silently returning empty content on a genuine read error", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    // A directory in place of the expected log file makes the underlying
+    // read fail with EISDIR (not ENOENT), so this must surface as an error
+    // rather than a successful empty-content download.
+    const logPath = join(dir, "logs", "soroeru.log");
+    await mkdir(logPath, { recursive: true });
+
+    const session = new SoroeruSession(path, { logPath });
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+
+    const exported = (await bridge[IPC_CHANNELS.logsExport]()) as { ok: boolean; error?: string };
+    assert.equal(exported.ok, false);
+    assert.equal(exported.error, "read-failed");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

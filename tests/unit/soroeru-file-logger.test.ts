@@ -69,6 +69,18 @@ test("read() returns empty string before any write and never throws", async () =
   }
 });
 
+test("read() rethrows a genuine read failure instead of silently returning empty content", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-file-logger-"));
+  try {
+    // A directory where the log file is expected to be: readFile fails with
+    // EISDIR, not ENOENT, so this must propagate rather than look like "no log yet".
+    const logger = new FileLogger(dir);
+    await assert.rejects(() => logger.read());
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("rotates once the active file exceeds the size threshold, keeping one prior generation", async () => {
   const { dir, path } = await tmpLogPath();
   try {

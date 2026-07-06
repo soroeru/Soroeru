@@ -53,15 +53,21 @@ export class FileLogger implements Logger {
     this.write("error", category, message, fields);
   }
 
-  /** Prior generation (if rotated) followed by the current file's contents, oldest first. */
+  /**
+   * Prior generation (if rotated) followed by the current file's contents,
+   * oldest first. Only a missing file (not yet created, or never rotated) is
+   * swallowed; any other error (e.g. a permission problem) is rethrown so a
+   * genuine read failure surfaces to the caller instead of silently returning
+   * empty/partial content as if nothing had been logged.
+   */
   async read(): Promise<string> {
     const previousPath = `${this.filePath}.1`;
     const parts: string[] = [];
     for (const path of [previousPath, this.filePath]) {
       try {
         parts.push(await readFile(path, "utf8"));
-      } catch {
-        // Missing file (not yet created, or never rotated) — nothing to add.
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       }
     }
     return parts.join("");
