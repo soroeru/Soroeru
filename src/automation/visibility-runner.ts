@@ -4,6 +4,7 @@ import type { PageSnapshot } from "../types.js";
 import { collectDuringExploration } from "./disclosure-collector.js";
 import { DecisionEngine, type AiEngine } from "./decision-engine.js";
 import { findLoginField, findLoginLink, findLoginSubmitButton, hasLoginFields } from "./login-handler.js";
+import { noopLogger, type Logger } from "../logging/logger.js";
 import { PageExplorer } from "./page-explorer.js";
 import { RuleEngine } from "./rule-engine.js";
 import type { SiteSession } from "./page-driver.js";
@@ -25,6 +26,8 @@ export interface VisibilityRunnerOptions {
   now?: () => number;
   /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
   aiEngine?: AiEngine;
+  /** Plain-text diagnostics sink for run outcomes / failure reasons (Issue #314); defaults to a no-op. */
+  logger?: Logger;
 }
 
 export interface VisibilityRunResult {
@@ -46,9 +49,11 @@ export interface VisibilityRunResult {
 export class VisibilityRunner {
   private readonly wallDetection = new WallDetectionService();
   private readonly now: () => number;
+  private readonly logger: Logger;
 
   constructor(private readonly options: VisibilityRunnerOptions) {
     this.now = options.now ?? Date.now;
+    this.logger = options.logger ?? noopLogger;
   }
 
   async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
@@ -174,6 +179,12 @@ export class VisibilityRunner {
         },
       });
 
+      this.logger.info("visibility", "collection completed", {
+        domain: siteAccount.domain,
+        disclosures: collection.disclosures,
+        relationships,
+        constraints,
+      });
       return {
         siteAccountId,
         status: "collected",
@@ -197,6 +208,10 @@ export class VisibilityRunner {
         this.recordUnreachable(siteAccount, unreachableReason);
         return { siteAccountId, status: "unreachable", disclosures: 0, relationships: 0, constraints: 1 };
       }
+      this.logger.error("visibility", "run failed", {
+        domain: siteAccount.domain,
+        message: err instanceof Error ? err.message : String(err),
+      });
       return { siteAccountId, status: "failed", disclosures: 0, relationships: 0, constraints: 0 };
     } finally {
       await session?.close();
@@ -215,6 +230,7 @@ export class VisibilityRunner {
       status: "failed",
       resumeData: { reason: "user-canceled" },
     });
+    this.logger.info("visibility", "run canceled", { siteAccountId });
     return { siteAccountId, status: "canceled", disclosures: 0, relationships: 0, constraints: 0 };
   }
 
@@ -419,6 +435,7 @@ export class VisibilityRunner {
       evidenceIds: [evidence.id],
       observedAt: this.now(),
     });
+    this.logger.warn("visibility", "site unreachable", { domain: siteAccount.domain, reason });
   }
 
   private recordNonWeb(siteAccount: SiteAccount, targetUrl: string): void {
@@ -440,6 +457,10 @@ export class VisibilityRunner {
       detail: `non-web-credential: ${schemeOf(targetUrl)}`,
       evidenceIds: [evidence.id],
       observedAt: this.now(),
+    });
+    this.logger.info("visibility", "skipped non-web credential", {
+      domain: siteAccount.domain,
+      scheme: schemeOf(targetUrl),
     });
   }
 
@@ -463,6 +484,9 @@ export class VisibilityRunner {
       detail: "login-incomplete: still on a login page after submitting credentials",
       evidenceIds: [evidence.id],
       observedAt: this.now(),
+    });
+    this.logger.warn("visibility", "login failed: still on a login page after submitting credentials", {
+      domain: siteAccount.domain,
     });
     return 1;
   }
@@ -488,6 +512,7 @@ export class VisibilityRunner {
       evidenceIds: [evidence.id],
       observedAt: this.now(),
     });
+    this.logger.info("visibility", "no collectable data found", { domain: siteAccount.domain });
     return 1;
   }
 
@@ -538,6 +563,7 @@ export class VisibilityRunner {
     const constraints = this.options.domain
       .listConstraints()
       .filter((constraint) => constraint.siteAccountId === siteAccountId).length;
+    this.logger.info("visibility", "run paused for wall hand-off", { siteAccountId });
     return { siteAccountId, status: "handoff", disclosures: 0, relationships: 0, constraints };
   }
 }

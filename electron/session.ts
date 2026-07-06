@@ -6,6 +6,7 @@
 // This module is framework-free (no electron import) so it is unit-testable.
 // It never logs decrypted values.
 
+import { dirname, join } from "node:path";
 import { AiEngine as AiEngineImpl, type RedactionValueSource } from "../src/automation/ai-engine.js";
 import { aiProviderFromEnv, type AiProvider } from "../src/agent/ai/provider.js";
 import type { AiEngine } from "../src/automation/decision-engine.js";
@@ -23,6 +24,8 @@ import {
 import type { SiteSession } from "../src/automation/page-driver.js";
 import { VisibilityService } from "./visibility-service.js";
 import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-page-importer.js";
+import { FileLogger } from "../src/logging/file-logger.js";
+import type { LogFields, LogLevel, Logger } from "../src/logging/logger.js";
 import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
 import type {
   AttributeSummary,
@@ -34,6 +37,7 @@ import type {
   DisclosureView,
   DomainSummary,
   LedgerInsights,
+  LogsExportResult,
   PendingAttributeCandidateView,
   RecoveryKeyResult,
   RevealResult,
@@ -92,6 +96,15 @@ export interface SoroeruSessionOptions {
    * provided (that override bypasses `refreshAiEngine()` entirely).
    */
   aiProviderFactory?: () => AiProvider | undefined;
+  /**
+   * Plain-text diagnostics log sink (Issue #314). Defaults to a `FileLogger`
+   * at `logPath`, so the local test suite (which constructs many sessions
+   * against tmpdirs) gets real-but-harmless log files alongside the vault;
+   * inject a fake here to assert on log calls without touching disk.
+   */
+  logger?: Logger;
+  /** Override where the default `FileLogger` writes (tests only). Defaults to a `logs/` dir next to the vault file. */
+  logPath?: string;
 }
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
@@ -133,6 +146,9 @@ export class SoroeruSession {
   private readonly aiEngineOverride: boolean;
   /** `aiProviderFromEnv` in production; test-injectable via `SoroeruSessionOptions.aiProviderFactory`. */
   private readonly aiProviderFactory: () => AiProvider | undefined;
+  /** Where the plain-text diagnostics log lives on disk, regardless of which `Logger` is injected (Issue #314). */
+  private readonly logPath: string;
+  private readonly logger: Logger;
   /**
    * Local-only value source for AI-prompt redaction (Issue #310, design §8):
    * canonical Personal Attribute values, read fresh on every call so lock/
@@ -152,10 +168,13 @@ export class SoroeruSession {
     this.openExternal = options.openExternal;
     this.aiEngineOverride = options.aiEngine !== undefined;
     this.aiProviderFactory = options.aiProviderFactory ?? aiProviderFromEnv;
+    this.logPath = options.logPath ?? join(dirname(vaultPath), "logs", "soroeru.log");
+    this.logger = options.logger ?? new FileLogger(this.logPath);
     const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
     this.visibility = new VisibilityService({
       openSession,
       emit: (event) => this.eventSink?.(event),
+      logger: this.logger,
       ...(options.maxHandoffs !== undefined ? { maxHandoffs: options.maxHandoffs } : {}),
       ...(options.aiEngine !== undefined ? { aiEngine: options.aiEngine } : {}),
     });
@@ -256,9 +275,11 @@ export class SoroeruSession {
   /** First-run vault creation. Fails if a vault already exists at the path. */
   async setup(passphrase: string): Promise<VaultMutationResult> {
     if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+      this.logger.warn("vault", "setup rejected", { reason: "passphrase-too-short" });
       return { ok: false, locked: true, error: "passphrase-too-short" };
     }
     if (await vaultExists(this.vaultPath)) {
+      this.logger.warn("vault", "setup rejected", { reason: "vault-already-exists" });
       return { ok: false, locked: true, error: "vault-already-exists" };
     }
     this.vault = await VaultV2.open(this.vaultPath, passphrase);
@@ -266,12 +287,14 @@ export class SoroeruSession {
     this.visibility.setDomain(this.domain);
     this.refreshAiEngine();
     await this.vault.save();
+    this.logger.info("vault", "vault created");
     return { ok: true, locked: false };
   }
 
   /** Unlock an existing vault. A wrong passphrase fails GCM auth and is reported. */
   async unlock(passphrase: string): Promise<VaultMutationResult> {
     if (!(await vaultExists(this.vaultPath))) {
+      this.logger.warn("vault", "unlock rejected", { reason: "vault-not-found" });
       return { ok: false, locked: true, error: "vault-not-found" };
     }
     try {
@@ -279,11 +302,13 @@ export class SoroeruSession {
       this.domain = new DomainService(this.vault);
       this.visibility.setDomain(this.domain);
       this.refreshAiEngine();
+      this.logger.info("vault", "vault unlocked");
       return { ok: true, locked: false };
     } catch {
       // Do not surface the underlying error: it must not leak vault internals.
       this.vault = undefined;
       this.domain = undefined;
+      this.logger.warn("vault", "unlock failed", { reason: "unlock-failed" });
       return { ok: false, locked: true, error: "unlock-failed" };
     }
   }
@@ -291,6 +316,7 @@ export class SoroeruSession {
   /** Unlock an existing vault with its recovery key instead of the passphrase (RFC-002 §6). */
   async unlockWithRecoveryKey(recoveryKey: string): Promise<VaultMutationResult> {
     if (!(await vaultExists(this.vaultPath))) {
+      this.logger.warn("vault", "recovery unlock rejected", { reason: "vault-not-found" });
       return { ok: false, locked: true, error: "vault-not-found" };
     }
     try {
@@ -298,11 +324,13 @@ export class SoroeruSession {
       this.domain = new DomainService(this.vault);
       this.visibility.setDomain(this.domain);
       this.refreshAiEngine();
+      this.logger.info("vault", "vault unlocked with recovery key");
       return { ok: true, locked: false };
     } catch {
       // Wrong recovery key, or none configured: report uniformly, leak nothing.
       this.vault = undefined;
       this.domain = undefined;
+      this.logger.warn("vault", "recovery unlock failed", { reason: "unlock-failed" });
       return { ok: false, locked: true, error: "unlock-failed" };
     }
   }
@@ -313,6 +341,7 @@ export class SoroeruSession {
     this.vault?.lock();
     this.vault = undefined;
     this.domain = undefined;
+    this.logger.info("vault", "vault locked");
     return { ok: true, locked: true };
   }
 
@@ -416,11 +445,40 @@ export class SoroeruSession {
     try {
       const summary = importPasswordCsv(this.domain, { data });
       await this.vault.save();
+      this.logger.info("csv-import", "csv import completed", {
+        importedCredentials: summary.importedCredentials,
+        sitesCreated: summary.sitesCreated,
+        sitesMatched: summary.sitesMatched,
+        skipped: summary.skipped,
+      });
       return { ok: true, summary };
     } catch (err) {
       // CsvImportError carries a safe reason code; anything else is reported opaquely.
-      return { ok: false, error: err instanceof CsvImportError ? err.reason : "import-failed" };
+      const reason = err instanceof CsvImportError ? err.reason : "import-failed";
+      this.logger.warn("csv-import", "csv import failed", { reason });
+      return { ok: false, error: reason };
     }
+  }
+
+  /**
+   * Read the plain-text diagnostics log for the Settings tab's download button
+   * (Issue #314). Unencrypted by design — this file never carries a raw
+   * personal value, only operational/structural facts, so it is safe to read
+   * whether the vault is locked or unlocked.
+   */
+  async exportLogs(): Promise<LogsExportResult> {
+    try {
+      const content = await new FileLogger(this.logPath).read();
+      const fileName = `soroeru-log-${new Date().toISOString().replace(/[:.]/g, "-")}.log`;
+      return { ok: true, fileName, content };
+    } catch {
+      return { ok: false, error: "read-failed" };
+    }
+  }
+
+  /** Cross-cutting diagnostics entry point for main-process lifecycle/crash logging (Issue #314). */
+  log(level: LogLevel, category: string, message: string, fields?: LogFields): void {
+    this.logger[level](category, message, fields);
   }
 
   async importSavedPage(request: SavedPageImportRequest): Promise<SavedPageImportResult> {

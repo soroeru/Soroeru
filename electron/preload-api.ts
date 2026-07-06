@@ -16,6 +16,7 @@ import {
   type DomainSummary,
   type IpcChannel,
   type LedgerInsights,
+  type LogsExportResult,
   type RecoveryKeyResult,
   type SavedPageManualCheckResult,
   type SavedPageImportRequest,
@@ -82,6 +83,10 @@ export interface SoroeruApi {
     /** Subscribe to run progress / wall hand-off events; returns an unsubscribe function. */
     onEvent(listener: (event: VisibilityEvent) => void): () => void;
   };
+  logs: {
+    /** Read the plain-text diagnostics log (Settings tab download button). */
+    export(): Promise<LogsExportResult>;
+  };
 }
 
 export function createSoroeruApi(
@@ -105,8 +110,7 @@ export function createSoroeruApi(
       import: (data) => invoke(IPC_CHANNELS.csvImport, data) as Promise<CsvImportResult>,
     },
     savedPage: {
-      import: (request) =>
-        invoke(IPC_CHANNELS.savedPageImport, request) as Promise<SavedPageImportResult>,
+      import: (request) => invoke(IPC_CHANNELS.savedPageImport, request) as Promise<SavedPageImportResult>,
       openSite: (siteAccountId) =>
         invoke(IPC_CHANNELS.savedPageOpenSite, siteAccountId) as Promise<SavedPageOpenSiteResult>,
       markManualCheck: (siteAccountId) =>
@@ -121,7 +125,10 @@ export function createSoroeruApi(
       reveal: (disclosureId, passphrase) =>
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,
       confirmDynamicCandidate: (request) =>
-        invoke(IPC_CHANNELS.ledgerConfirmDynamicCandidate, request) as Promise<ConfirmDynamicAttributeCandidateResult>,
+        invoke(
+          IPC_CHANNELS.ledgerConfirmDynamicCandidate,
+          request,
+        ) as Promise<ConfirmDynamicAttributeCandidateResult>,
       deleteSite: (request) =>
         invoke(IPC_CHANNELS.ledgerDeleteSite, request) as Promise<DeleteSiteAccountResultView>,
     },
@@ -129,7 +136,10 @@ export function createSoroeruApi(
       set: (request) =>
         invoke(IPC_CHANNELS.sessionPersistenceSet, request) as Promise<SessionPersistenceMutationResult>,
       clear: (siteAccountId) =>
-        invoke(IPC_CHANNELS.sessionPersistenceClear, siteAccountId) as Promise<SessionPersistenceMutationResult>,
+        invoke(
+          IPC_CHANNELS.sessionPersistenceClear,
+          siteAccountId,
+        ) as Promise<SessionPersistenceMutationResult>,
     },
     visibility: {
       run: (siteAccountId) =>
@@ -138,6 +148,9 @@ export function createSoroeruApi(
       abort: () => invoke(IPC_CHANNELS.visibilityAbort) as Promise<VisibilityHandoffAck>,
       status: () => invoke(IPC_CHANNELS.visibilityStatus) as Promise<VisibilityStatusView>,
       onEvent: (listener) => subscribeVisibility?.(listener) ?? (() => {}),
+    },
+    logs: {
+      export: () => invoke(IPC_CHANNELS.logsExport) as Promise<LogsExportResult>,
     },
   };
 }

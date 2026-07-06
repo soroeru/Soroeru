@@ -14,6 +14,7 @@ import { VisibilityRunner, type VisibilityRunResult } from "../src/automation/vi
 import type { SiteSession } from "../src/automation/page-driver.js";
 import type { DomainService } from "../src/domain/domain-service.js";
 import type { Credential, SiteAccount } from "../src/domain/entities.js";
+import { noopLogger, type Logger } from "../src/logging/logger.js";
 import type {
   VisibilityEvent,
   VisibilityHandoffCredentialView,
@@ -30,6 +31,8 @@ export interface VisibilityServiceOptions {
   maxHandoffs?: number;
   /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
   aiEngine?: AiEngine;
+  /** Plain-text diagnostics sink passed through to the runner (Issue #314); defaults to a no-op. */
+  logger?: Logger;
 }
 
 interface PendingHandoff {
@@ -49,9 +52,11 @@ export class VisibilityService {
   private pendingSessionClose: Promise<void> | undefined;
   /** Optional AI fallback for DecisionEngine (Issue #310); mutable so the caller can rebuild it per vault-unlock session. */
   private aiEngine: AiEngine | undefined;
+  private readonly logger: Logger;
 
   constructor(private readonly options: VisibilityServiceOptions) {
     this.aiEngine = options.aiEngine;
+    this.logger = options.logger ?? noopLogger;
   }
 
   /** Bind the unlocked vault's DomainService (called on unlock). */
@@ -103,6 +108,7 @@ export class VisibilityService {
         openSession: (site) => this.openTrackedSession(site),
         handoff: (input) => this.onHandoff(input),
         isCanceled: () => this.cancelRequested,
+        logger: this.logger,
         ...(this.options.maxHandoffs !== undefined ? { maxHandoffs: this.options.maxHandoffs } : {}),
         ...(this.aiEngine !== undefined ? { aiEngine: this.aiEngine } : {}),
       });

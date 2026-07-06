@@ -223,7 +223,9 @@ function cmdCheckPersistence(): void {
     process.exitCode = 1;
     return;
   }
-  console.log("ok: every local write is annotated (encrypted-store / encrypted-export / measurement-output)");
+  console.log(
+    "ok: every local write is annotated (encrypted-store / encrypted-export / measurement-output / diagnostics-log)",
+  );
 }
 
 /** SEC-002 (#23): fail if package.json gained a CAPTCHA-solving / anti-bot-evasion dependency. */

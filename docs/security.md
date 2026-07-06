@@ -122,14 +122,29 @@ a profile value can reach a display or a file:
 **Local persistence (PRIV-002 / #21)**: `npm run poc -- check-persistence`
 (`src/dev/privacy-check.ts`, tested by
 `tests/unit/soroeru-poc-privacy.test.ts`) scans
-`{src,run}/**/*.ts` for local-filesystem writes and fails
+`{src,run,electron}/**/*.ts` for local-filesystem writes and fails
 unless each one carries a `// persist: encrypted-store`,
-`// persist: encrypted-export`, or `// persist: measurement-output`
-annotation — i.e. the encrypted store (`src/store/store.ts`), the encrypted
-export/import (SEC-003 / #44), and the masked measurement output above are the
-*only* code paths allowed to write to local disk. A new, unannotated local
-write fails this check and must be reviewed against this section before it is
-annotated.
+`// persist: encrypted-export`, `// persist: measurement-output`, or
+`// persist: diagnostics-log` annotation — i.e. the encrypted store
+(`src/store/store.ts`), the encrypted export/import (SEC-003 / #44), the
+masked measurement output above, and the plain-text app diagnostics log below
+are the *only* code paths allowed to write to local disk. A new, unannotated
+local write fails this check and must be reviewed against this section before
+it is annotated.
+
+**App diagnostics log (Issue #314)**: `src/logging/file-logger.ts` writes an
+unencrypted, newline-delimited JSON log (default
+`<userData>/logs/soroeru.log`, one-generation size rotation) so the user can
+attach it to a bug report and so debugging work can read it directly. This is
+a deliberate, scoped exception to "encrypt everything," matching the existing
+`measurement-output` precedent: callers may only pass structural facts (site
+domain, run status/reason codes, counts, sanitized error messages) — never a
+raw canonical Personal Attribute, Disclosure value, credential, card datum,
+passphrase, recovery key, or `storageState`. `FileLogger` additionally runs a
+regex-based redaction pass over every message/field string as defense-in-depth
+before writing. The Settings tab's "ログをダウンロード" button reads this file
+over IPC (`soroeru:logs:export`) and triggers a renderer-side download; no
+native dialog or extra filesystem grant is added to the renderer.
 
 **`state/ai-reviews/`** (the local AI review hook,
 [`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
@@ -555,7 +570,8 @@ that protect the beta boundary, and the dependency-audit gate:
 - `npm run poc -- check-egress` — network egress annotations plus telemetry /
   analytics dependency denylist (PRIV-001, §6)
 - `npm run poc -- check-persistence` — local-write annotations, limiting persistence to
-  encrypted store/export and masked measurement output (PRIV-002, §3)
+  encrypted store/export, masked measurement output, and the unencrypted-by-design app
+  diagnostics log (PRIV-002, §3)
 - `npm run poc -- check-bypass` — CAPTCHA-solving / anti-bot / fingerprint-evasion
   dependency denylist (SEC-002, §7)
 - `npm run audit:check` — production dependency audit gate (SEC-003,

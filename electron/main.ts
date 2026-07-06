@@ -80,6 +80,24 @@ async function createWindow(session: SoroeruSession): Promise<BrowserWindow> {
   return window;
 }
 
+/**
+ * Forward otherwise-fatal main-process errors to the diagnostics log (Issue
+ * #314) before Electron's default handling runs, so a packaged-app crash
+ * leaves a plain-text trail the user can attach to a bug report. Registering
+ * these handlers does not suppress Electron's own crash behavior; it only
+ * ensures the failure is recorded first.
+ */
+function registerCrashLogging(session: SoroeruSession): void {
+  process.on("uncaughtException", (err) => {
+    session.log("error", "app", "uncaught exception", { message: err.message });
+  });
+  process.on("unhandledRejection", (reason) => {
+    session.log("error", "app", "unhandled rejection", {
+      message: reason instanceof Error ? reason.message : String(reason),
+    });
+  });
+}
+
 async function main(): Promise<void> {
   await app.whenReady();
   configurePackagedPlaywrightBrowsers();
@@ -90,6 +108,8 @@ async function main(): Promise<void> {
     // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
     openExternal: (url) => shell.openExternal(url),
   });
+  registerCrashLogging(session);
+  session.log("info", "app", "app started", { version: app.getVersion(), platform: process.platform });
   registerIpc(session);
 
   await createWindow(session);

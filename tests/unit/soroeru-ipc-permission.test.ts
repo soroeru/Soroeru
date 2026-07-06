@@ -63,6 +63,7 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   // onEvent only subscribes (no channel invoke); calling it must not throw and
   // returns an unsubscribe function even with no subscribe transport provided.
   assert.equal(typeof api.visibility.onEvent(() => {}), "function");
+  await api.logs.export();
 
   for (const channel of invoked) {
     assert.ok(isIpcChannel(channel), `unexpected channel ${channel}`);
@@ -509,6 +510,33 @@ test("the session-persistence channels coerce the request shape and route throug
     const malformed = (await bridge[IPC_CHANNELS.sessionPersistenceSet](null)) as { ok: boolean; error?: string };
     assert.equal(malformed.ok, false);
     assert.equal(malformed.error, "not-found");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("logs export reads back what the trusted layer logged, with no raw credential leaking", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    const bridge = createIpcBridge(session);
+    await bridge[IPC_CHANNELS.vaultSetup](PASSPHRASE);
+    const csv = [
+      "name,url,username,password,note",
+      "Example,https://example.test/account,user@example.test,super-secret-password,",
+    ].join("\n");
+    await bridge[IPC_CHANNELS.csvImport](csv);
+
+    const exported = (await bridge[IPC_CHANNELS.logsExport]()) as {
+      ok: boolean;
+      fileName?: string;
+      content?: string;
+    };
+    assert.equal(exported.ok, true);
+    assert.match(exported.fileName ?? "", /^soroeru-log-.*\.log$/);
+    assert.ok(exported.content?.includes("csv import completed"));
+    assert.equal(exported.content?.includes("super-secret-password"), false);
+    assert.equal(exported.content?.includes("user@example.test"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
