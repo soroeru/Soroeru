@@ -36,7 +36,7 @@ One terminal outcome per site, from the diagnostics log (`soroeru.log`):
 
 - Date:
 - App: packaged build (commit)
-- Sites analyzed: / collected: / failed:
+- Sites analyzed: / collected: / not collected:
 - Ranking:
 
 ## Top-3 causes and remediation Issues

@@ -233,7 +233,14 @@ export class VisibilityRunner {
       status: "failed",
       resumeData: { reason: "user-canceled" },
     });
-    this.logger.info("visibility", "run canceled", { siteAccountId });
+    // Include the domain (when the id resolves) for the same log-analysis
+    // domain join as handoffResult — a cancel logged only by siteAccountId
+    // would count as a second site in the per-domain outcome reduction.
+    const domain = this.options.domain.getSiteAccount(siteAccountId)?.domain;
+    this.logger.info("visibility", "run canceled", {
+      siteAccountId,
+      ...(domain !== undefined ? { domain } : {}),
+    });
     return { siteAccountId, status: "canceled", disclosures: 0, relationships: 0, constraints: 0 };
   }
 

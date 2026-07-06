@@ -36,7 +36,9 @@ async function main(): Promise<void> {
   const causes = rankFailureCauses(outcomes);
   const collected = outcomes.filter((outcome) => outcome.category === "collected").length;
   const canceled = outcomes.filter((outcome) => outcome.category === "canceled").length;
-  const failedTotal = causes.reduce((sum, cause) => sum + cause.count, 0);
+  // "Not collected", not "failed": the ranked causes include expected
+  // non-failures such as wall hand-offs and non-web credentials.
+  const notCollected = causes.reduce((sum, cause) => sum + cause.count, 0);
 
   if (json) {
     console.log(
@@ -45,7 +47,7 @@ async function main(): Promise<void> {
           sites: outcomes.length,
           collected,
           canceled,
-          failed: failedTotal,
+          notCollected,
           causes: showSites ? causes : causes.map(({ sites: _sites, ...rest }) => rest),
         },
         null,
@@ -56,13 +58,13 @@ async function main(): Promise<void> {
   }
 
   console.log(`sites analyzed: ${outcomes.length}`);
-  console.log(`collected: ${collected}  failed: ${failedTotal}  canceled: ${canceled}`);
+  console.log(`collected: ${collected}  not collected: ${notCollected}  canceled: ${canceled}`);
   console.log("");
   if (causes.length === 0) {
-    console.log("no failure causes found in this log.");
+    console.log("no not-collected causes found in this log.");
     return;
   }
-  console.log("failure causes (most frequent first):");
+  console.log("not-collected causes (most frequent first):");
   for (const [index, cause] of causes.entries()) {
     const share = (cause.share * 100).toFixed(1);
     console.log(`${index + 1}. ${cause.category} — ${cause.count} site(s), ${share}% of all sites`);

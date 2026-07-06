@@ -11,6 +11,7 @@ import type { AiEngine, DecisionKind } from "../../src/automation/decision-engin
 import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
 import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
 import type { LogFields, Logger } from "../../src/logging/logger.js";
+import { parseLogEntries, siteOutcomes } from "../../src/logging/collection-log-analysis.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
@@ -838,6 +839,80 @@ test("visibility runner records an unreachable URL without leaking credentials",
     const serializedLog = JSON.stringify(entries);
     assert.equal(serializedLog.includes("real-user-canary"), false);
     assert.equal(serializedLog.includes("real-password-canary"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("runner log entries round-trip through the collection-log analysis (Issue #317)", async () => {
+  // Pins the runner↔analyzer contract on real runner output: if a runner log
+  // message or field name is reworded, the site drops out of the analysis and
+  // this test fails — the hand-written fixtures in
+  // soroeru-collection-log-analysis.test.ts alone would not notice.
+  const { dir, service } = await openService();
+  try {
+    const { logger, entries } = recordingLogger();
+
+    const dns = service.upsertSiteAccount({
+      domain: "dns.example.test",
+      url: "https://dns.example.test/login",
+      displayName: "DNS",
+    });
+    const dnsPage = new FakePageDriver([snapshot("https://dns.example.test/login", [])]);
+    dnsPage.gotoError = new Error("page.goto: net::ERR_NAME_NOT_RESOLVED");
+    await new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(dnsPage)),
+      logger,
+    }).runSite(dns.id);
+
+    const walledSite = service.upsertSiteAccount({
+      domain: "wall.example.test",
+      url: "https://wall.example.test/login",
+      displayName: "Wall",
+    });
+    const walled = snapshot("https://wall.example.test/login", [], "私はロボットではありません");
+    walled.wallMarkers = ["recaptcha"];
+    await new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(new FakePageDriver([walled]))),
+      logger,
+    }).runSite(walledSite.id);
+
+    const canceledSite = service.upsertSiteAccount({
+      domain: "cancel.example.test",
+      url: "https://cancel.example.test/",
+      displayName: "Cancel",
+    });
+    await new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(new FakePageDriver([]))),
+      isCanceled: () => true,
+      logger,
+    }).runSite(canceledSite.id);
+
+    // Serialize the captured entries the same way the FileLogger envelope
+    // does (fields spread first, envelope keys last), then run the analysis.
+    const logText = entries
+      .map((entry) =>
+        JSON.stringify({
+          ...entry.fields,
+          at: "2026-07-06T00:00:00.000Z",
+          level: entry.level,
+          category: entry.category,
+          message: entry.message,
+        }),
+      )
+      .join("\n");
+    const outcomes = siteOutcomes(parseLogEntries(logText));
+
+    const bySite = new Map(outcomes.map((outcome) => [outcome.site, outcome.category]));
+    assert.equal(bySite.get("dns.example.test"), "unreachable:dns-not-found");
+    assert.equal(bySite.get("wall.example.test"), "wall:captcha");
+    assert.equal(bySite.get("cancel.example.test"), "canceled");
+    // One outcome per site: the domain join must hold for every terminal
+    // entry (a siteAccountId-keyed duplicate would show up as a fourth row).
+    assert.equal(outcomes.length, 3);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -105,7 +105,16 @@ async function main(): Promise<void> {
     //    for why the OS download itself is not asserted here).
     await page.getByRole("button", { name: "設定" }).click();
     await page.getByRole("button", { name: "ログをダウンロード" }).click();
-    await page.getByText("ログをダウンロード").waitFor();
+    // Wait for the button to leave 「書き出し中…」 and re-render its idle
+    // label; the error paragraph (if any) lands in the same render, so its
+    // absence then means the export path did not fail.
+    await page.getByRole("button", { name: "ログをダウンロード", exact: true }).waitFor();
+    const exportError = page.locator("section", { hasText: "ログ" }).locator("p.text-red-600");
+    if (await exportError.isVisible().catch(() => false)) {
+      throw new Error(
+        `log download reported an error: ${((await exportError.textContent()) ?? "").trim()}`,
+      );
+    }
   } finally {
     await electronApp?.close().catch(() => {});
   }

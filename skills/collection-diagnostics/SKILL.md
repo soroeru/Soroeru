@@ -49,7 +49,7 @@ collection, obtain the diagnostics log, and rank the failure causes.
    npm run diagnostics:analyze -- <stateRoot>/logs/soroeru.log
    ```
 
-   Prints collected/failed totals and the failure causes ranked by count
+   Prints collected/not-collected totals and the not-collected causes ranked by count
    (`--json` for machine-readable output, `--no-sites` to omit domain lists).
 
 3. **Report**: update `docs/collection-failure-analysis.md` with the new
