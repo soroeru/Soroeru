@@ -71,12 +71,14 @@ export class FileLogger implements Logger {
     try {
       this.ensureDirSync();
       this.rotateIfNeeded();
+      // Reserved envelope keys are spread last so a caller-supplied field
+      // (e.g. one literally named "level") can never clobber them.
       const entry = {
+        ...(fields ? redactFields(fields) : {}),
         at: new Date().toISOString(),
         level,
         category,
         message: redactLogText(message),
-        ...(fields ? redactFields(fields) : {}),
       };
       // persist: diagnostics-log
       appendFileSync(this.filePath, `${JSON.stringify(entry)}\n`, "utf8");

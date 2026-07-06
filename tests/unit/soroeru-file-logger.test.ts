@@ -22,7 +22,10 @@ test("writes structured JSONL entries and reads them back", async () => {
     logger.warn("visibility", "site unreachable", { domain: "example.test", reason: "timeout" });
 
     const content = await logger.read();
-    const lines = content.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    const lines = content
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
     assert.equal(lines.length, 2);
     assert.equal(lines[0]?.["level"], "info");
     assert.equal(lines[0]?.["category"], "vault");
@@ -80,6 +83,21 @@ test("rotates once the active file exceeds the size threshold, keeping one prior
     // The prior (oversized filler) generation is included ahead of the fresh entry.
     assert.ok(content.startsWith("x".repeat(10)));
     assert.ok(content.includes("after rotation"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a caller-supplied field cannot clobber the reserved envelope keys", async () => {
+  const { dir, path } = await tmpLogPath();
+  try {
+    const logger = new FileLogger(path);
+    logger.warn("visibility", "site unreachable", { level: "not-a-real-level", category: "spoofed" });
+
+    const content = await logger.read();
+    const entry = JSON.parse(content.trim()) as Record<string, unknown>;
+    assert.equal(entry["level"], "warn");
+    assert.equal(entry["category"], "visibility");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

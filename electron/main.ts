@@ -11,6 +11,7 @@ import { mkdir } from "node:fs/promises";
 import { SoroeruSession } from "./session.js";
 import { createIpcBridge } from "./ipc/bridge.js";
 import { VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
+import { registerCrashLogging } from "./crash-logging.js";
 
 // Product name (issue #158): the userData path becomes
 // ".../Application Support/Soroeru". The code identifier stays "soroeru".
@@ -78,24 +79,6 @@ async function createWindow(session: SoroeruSession): Promise<BrowserWindow> {
     await window.loadFile(RENDERER_INDEX);
   }
   return window;
-}
-
-/**
- * Forward otherwise-fatal main-process errors to the diagnostics log (Issue
- * #314) before Electron's default handling runs, so a packaged-app crash
- * leaves a plain-text trail the user can attach to a bug report. Registering
- * these handlers does not suppress Electron's own crash behavior; it only
- * ensures the failure is recorded first.
- */
-function registerCrashLogging(session: SoroeruSession): void {
-  process.on("uncaughtException", (err) => {
-    session.log("error", "app", "uncaught exception", { message: err.message });
-  });
-  process.on("unhandledRejection", (reason) => {
-    session.log("error", "app", "unhandled rejection", {
-      message: reason instanceof Error ? reason.message : String(reason),
-    });
-  });
 }
 
 async function main(): Promise<void> {
