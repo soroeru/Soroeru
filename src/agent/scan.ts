@@ -41,8 +41,20 @@ function scanInPage(): {
   displayValues: NonNullable<PageSnapshot["displayValues"]>;
 } {
   const SUPPORTED_TYPES = new Set([
-    "text", "email", "tel", "url", "search", "number", "password",
-    "date", "datetime-local", "month", "time", "week", "radio", "checkbox",
+    "text",
+    "email",
+    "tel",
+    "url",
+    "search",
+    "number",
+    "password",
+    "date",
+    "datetime-local",
+    "month",
+    "time",
+    "week",
+    "radio",
+    "checkbox",
   ]);
 
   let counter = 0;
@@ -103,7 +115,13 @@ function scanInPage(): {
   const radioGroups = new Map<string, PageSnapshot["fields"][number]>();
 
   for (const el of Array.from(document.querySelectorAll("input, textarea, select"))) {
-    if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) {
+    if (
+      !(
+        el instanceof HTMLInputElement ||
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLSelectElement
+      )
+    ) {
       continue;
     }
     if (el instanceof HTMLInputElement && !SUPPORTED_TYPES.has(el.type)) continue;
@@ -126,13 +144,14 @@ function scanInPage(): {
           required: el.required,
           placeholder: "",
           labels: [],
-          nearbyText: nearbyTextFor(el.closest("div, td, dd") as HTMLElement ?? el),
+          nearbyText: nearbyTextFor((el.closest("div, td, dd") as HTMLElement) ?? el),
           options: [],
         };
         // The group label is whatever labels the row, not the individual radio.
         const row = el.closest("div.row, tr, dd, fieldset");
-        const rowLabel = row?.querySelector("label:not(:has(input))")?.textContent?.trim()
-          ?? row?.querySelector("legend, th")?.textContent?.trim();
+        const rowLabel =
+          row?.querySelector("label:not(:has(input))")?.textContent?.trim() ??
+          row?.querySelector("legend, th")?.textContent?.trim();
         if (rowLabel) group.labels.push(rowLabel);
         radioGroups.set(groupKey, group);
         fields.push(group);
@@ -191,8 +210,24 @@ function scanInPage(): {
   // The runner collects these the same way as form fields, but the raw value is
   // read separately and locally; here we only export the label + a stamp id.
   const PLACEHOLDER_VALUES = new Set([
-    "", "-", "—", "--", "未登録", "未設定", "未入力", "なし", "未連携", "非公開",
-    "設定する", "変更", "編集", "登録する", "追加", "削除", "表示", "非表示",
+    "",
+    "-",
+    "—",
+    "--",
+    "未登録",
+    "未設定",
+    "未入力",
+    "なし",
+    "未連携",
+    "非公開",
+    "設定する",
+    "変更",
+    "編集",
+    "登録する",
+    "追加",
+    "削除",
+    "表示",
+    "非表示",
   ]);
   const isPlausibleValue = (text: string): boolean => {
     const t = text.trim();
@@ -201,11 +236,20 @@ function scanInPage(): {
     if (!/[0-9A-Za-z぀-ヿ一-鿿@]/.test(t)) return false; // not pure punctuation/symbols
     return true;
   };
-  const hasFormControl = (el: Element): boolean => el.querySelector("input, select, textarea, button") !== null;
+  const hasFormControl = (el: Element): boolean => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "input" || tag === "select" || tag === "textarea" || tag === "button") return true;
+    return el.querySelector("input, select, textarea, button") !== null;
+  };
 
   const displayValues: NonNullable<PageSnapshot["displayValues"]> = [];
   const seenValueEls = new Set<Element>();
-  const pushDisplay = (valueEl: HTMLElement, rawValue: string, labelText: string, nearbyText: string): void => {
+  const pushDisplay = (
+    valueEl: HTMLElement,
+    rawValue: string,
+    labelText: string,
+    nearbyText: string,
+  ): void => {
     if (seenValueEls.has(valueEl)) return;
     if (!isPlausibleValue(rawValue)) return;
     if (!isVisible(valueEl)) return;
@@ -242,6 +286,79 @@ function scanInPage(): {
     const td = tr.querySelector("td");
     if (!(th instanceof HTMLElement) || !(td instanceof HTMLElement) || hasFormControl(td)) continue;
     pushDisplay(td, td.textContent ?? "", th.textContent ?? "", "");
+  }
+
+  // (d) General sibling layout: label element followed by value element.
+  const DISPLAY_LABEL_KEYWORDS = [
+    "名前",
+    "氏名",
+    "フルネーム",
+    "姓",
+    "名",
+    "セイ",
+    "メイ",
+    "フリガナ",
+    "ふりがな",
+    "カナ",
+    "メール",
+    "email",
+    "電話",
+    "tel",
+    "郵便番号",
+    "〒",
+    "住所",
+    "都道府県",
+    "市区町村",
+    "会社",
+    "部署",
+    "部門",
+    "所属",
+    "生年月日",
+    "生年",
+    "性別",
+    "ログイン",
+    "ユーザー",
+    "会員",
+  ];
+  const ACTION_EXCLUDE_RE = /(?:変更|追加|削除|登録|編集|設定|ログイン|送信|クリア)/;
+
+  const labelTags = [
+    "label",
+    "span",
+    "div",
+    "p",
+    "dt",
+    "th",
+    "strong",
+    "b",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "li",
+  ];
+  for (const tag of labelTags) {
+    for (const lbl of Array.from(document.querySelectorAll(tag))) {
+      if (!(lbl instanceof HTMLElement) || !isVisible(lbl) || hasFormControl(lbl)) continue;
+
+      // A label candidate must be a leaf element unless it's a standard label/header tag.
+      const isStandardLabelTag = ["label", "th", "dt", "legend"].includes(lbl.tagName.toLowerCase());
+      if (!isStandardLabelTag && lbl.children.length > 0) continue;
+
+      const labelText = lbl.textContent?.trim().replace(/[:：]$/, "") ?? "";
+      if (labelText.length === 0 || labelText.length > 40) continue;
+
+      const hasKeyword = DISPLAY_LABEL_KEYWORDS.some((kw) => labelText.includes(kw));
+      if (!hasKeyword) continue;
+      if (ACTION_EXCLUDE_RE.test(labelText)) continue;
+
+      const val = lbl.nextElementSibling;
+      if (val instanceof HTMLElement && isVisible(val) && !hasFormControl(val)) {
+        pushDisplay(val, val.textContent ?? "", labelText, "");
+      }
+    }
   }
 
   return {

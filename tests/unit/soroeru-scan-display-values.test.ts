@@ -66,3 +66,44 @@ test("scanner surfaces read-only display values as labels (no raw value in the s
     await browser?.close();
   }
 });
+
+test("scanner surfaces read-only display values via sibling layout", async () => {
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const html = `<!doctype html><html><body>
+      <p class="lbl">通常使用する住所</p>
+      <p class="val">宮城県仙台市泉区</p>
+      <div>
+        <span class="lbl-mail">メールアドレス</span>
+        <span class="val-mail">test@example.com</span>
+      </div>
+      <!-- Exclude action verbs and buttons -->
+      <button class="btn">住所を追加する</button>
+      <div class="val-btn">宮城県仙台市</div>
+    </body></html>`;
+    await page.setContent(html);
+    const snapshot = await snapshotPage(page);
+
+    const labels = (snapshot.displayValues ?? []).map((d) => d.labelText).sort();
+    assert.deepEqual(labels, ["メールアドレス", "通常使用する住所"].sort());
+
+    // Read the values locally
+    const read = await page.evaluate(() => {
+      const out: Record<string, string> = {};
+      for (const el of Array.from(document.querySelectorAll("[data-af-id]"))) {
+        const id = el.getAttribute("data-af-id");
+        if (!id || !id.startsWith("d")) continue;
+        const value = el instanceof HTMLInputElement ? el.value : (el.textContent ?? "");
+        const trimmed = value.trim();
+        if (trimmed !== "") out[id] = trimmed;
+      }
+      return out;
+    });
+    const values = Object.values(read).sort();
+    assert.deepEqual(values, ["test@example.com", "宮城県仙台市泉区"]);
+  } finally {
+    await browser?.close();
+  }
+});
