@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -42,7 +42,9 @@ test("saved page import ignores inline scripts before collecting values", async 
     });
 
     assert.equal(result.disclosures, 1);
-    const email = domain.listDisclosuresForSite(siteAccount.id).find((disclosure) => disclosure.attributeKey === "email");
+    const email = domain
+      .listDisclosuresForSite(siteAccount.id)
+      .find((disclosure) => disclosure.attributeKey === "email");
     assert.equal(email?.normalizedValueHash, normalizedValueHash("email", "original@example.test"));
     assert.notEqual(email?.normalizedValueHash, normalizedValueHash("email", "mutated@example.test"));
   } finally {
@@ -79,6 +81,36 @@ test("saved page import saves a done checkpoint when only a dynamic-attribute ca
     assert.equal(domain.getCheckpoint("visibility", siteAccount.id)?.status, "done");
     const candidate = domain.listDynamicAttributeCandidates()[0];
     assert.equal(candidate?.label, "職業");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("saved page import collects disclosures from 住所_fixture.html", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const siteAccount = domain.upsertSiteAccount({
+      domain: "yoyostorerewind.com",
+      url: "https://yoyostorerewind.com/account/addresses",
+      displayName: "Rewind",
+    });
+
+    const fileData = await readFile("tests/fixtures/住所_fixture.html");
+    const result = await importSavedPage({
+      domain,
+      siteAccount,
+      fileName: "住所_fixture.html",
+      data: fileData,
+      now: () => 1_700_000_000_000,
+    });
+
+    // It should collect disclosures (including address and potentially others)
+    assert.ok(result.disclosures > 0, `Expected some disclosures, got ${result.disclosures}`);
+    const disclosures = domain.listDisclosuresForSite(siteAccount.id);
+    const address = disclosures.find((d) => d.attributeKey === "address.full");
+    assert.ok(address, "Expected address.full disclosure to be collected");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
