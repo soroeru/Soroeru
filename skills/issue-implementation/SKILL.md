@@ -1,6 +1,15 @@
 ---
 name: issue-implementation
-description: Implement exactly one GitHub Issue from an explicit Issue number such as "#139" or "139". Use when the user asks Codex to implement a single Issue or asks to follow the repository Issue Implementation workflow. The workflow refreshes main, creates an issue-named branch, implements and commits the change, then waits for local AI review results (up to two review runs total: an initial review and one confirming re-review after a fix pass), applying a fix pass after each review that has actionable findings and suppressing any review beyond the second, then pushes the branch and opens a PR whose body records the local AI review status, findings, and fixes.
+description: >-
+  Implement exactly one GitHub Issue from an explicit Issue number such as
+  "#139" or "139". Use when the user asks Codex to implement a single Issue or
+  asks to follow the repository Issue Implementation workflow. The workflow
+  refreshes main, creates an issue-named branch, implements and commits the
+  change, then waits for local AI review results (up to two review runs total:
+  an initial review and one confirming re-review after a fix pass), applying
+  a fix pass after each review that has actionable findings and suppressing
+  any review beyond the second, then pushes the branch and opens a PR whose
+  body records the local AI review status, findings, and fixes.
 ---
 
 # Issue Implementation
