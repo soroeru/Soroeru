@@ -4,6 +4,13 @@
   color-scheme: light dark;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  min-height: 100%;
+}
+
 body {
   margin: 0;
   font-family:
@@ -12,4 +19,18 @@ body {
     "Hiragino Kaku Gothic ProN",
     "Noto Sans JP",
     sans-serif;
+}
+
+/* Spreadsheet ledger: viewport stays full-width; table fills it and scrolls when wider. */
+.ledger-table-viewport {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+  box-sizing: border-box;
+}
+
+.ledger-table-viewport > table {
+  width: max(100%, max-content);
+  table-layout: fixed;
 }

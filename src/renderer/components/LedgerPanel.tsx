@@ -82,7 +82,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
   const columns = buildLedgerColumns(sites);
 
   return (
-    <section className="flex w-full min-w-0 flex-col gap-4">
+    <section className="flex w-full min-w-0 flex-1 flex-col self-stretch gap-4">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
         <p className="text-sm text-neutral-500">
@@ -95,18 +95,24 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
           収集済みの開示がまだありません。サイト管理からサイトを収集すると、ここに表示されます。
         </p>
       ) : (
-        <div className="max-h-[60vh] w-full min-w-0 overflow-x-auto rounded border border-neutral-200">
-          <table className="w-full min-w-full border-collapse text-left text-sm">
+        <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
+          <table className="border-collapse text-left text-sm">
+            <colgroup>
+              <col className="w-64" />
+              {columns.map((column) => (
+                <col key={column.attributeKey} />
+              ))}
+            </colgroup>
             <thead>
               <tr className="border-b border-neutral-200 bg-neutral-50">
-                <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-3 py-2 font-medium">
+                <th scope="col" className="sticky left-0 top-0 z-20 w-64 bg-neutral-50 px-3 py-2 font-medium">
                   サイト
                 </th>
                 {columns.map((column) => (
                   <th
                     key={column.attributeKey}
                     scope="col"
-                    className="sticky top-0 z-10 whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
+                    className="sticky top-0 z-10 min-w-[8rem] whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
                   >
                     {column.label}
                   </th>
@@ -118,7 +124,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
                 <tr key={site.siteAccountId} className="border-b border-neutral-100 last:border-b-0">
                   <th
                     scope="row"
-                    className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-2 text-left align-top font-medium"
+                    className="sticky left-0 z-10 w-64 whitespace-nowrap bg-white px-3 py-2 text-left align-top font-medium"
                   >
                     <span className="flex flex-col">
                       <span>{site.displayName}</span>
@@ -152,11 +158,11 @@ function LedgerCell({ disclosure }: { disclosure: DisclosureView | undefined }):
   const reveal = useDisclosureReveal(disclosure?.disclosureId ?? "");
 
   if (!disclosure) {
-    return <td className="whitespace-nowrap px-3 py-2 align-top text-neutral-400">—</td>;
+    return <td className="min-w-[8rem] whitespace-nowrap px-3 py-2 align-top text-neutral-400">—</td>;
   }
 
   return (
-    <td className="whitespace-nowrap px-3 py-2 align-top">
+    <td className="min-w-[8rem] whitespace-nowrap px-3 py-2 align-top">
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="font-mono">{reveal.value ?? (disclosure.preview || "—")}</span>

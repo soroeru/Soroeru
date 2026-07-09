@@ -75,7 +75,7 @@ export function App(): React.JSX.Element {
 
   return (
     <main
-      className={`mx-auto flex min-h-screen w-full ${shellWidthClass} flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:p-8`}
+      className={`mx-auto flex min-h-screen w-full ${shellWidthClass} flex-col items-stretch gap-4 p-4 sm:gap-6 sm:p-6 lg:p-8`}
     >
       <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
