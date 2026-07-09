@@ -120,7 +120,7 @@ IFS=$OLD_IFS
 #
 # The glob below matches by substring position, not by parsing the
 # documented <timestamp>-<reviewer>-<unit>-<pid> field layout. This is safe
-# only because reviewer names (claude/codex) and unit names never contain
+# only because reviewer names (claude/codex/grok) and unit names never contain
 # a dash; if either ever gained one, the glob could misroute matches.
 find_unit_output() {
   local unit=$1 file

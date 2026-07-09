@@ -6,6 +6,7 @@ local_ai_review_select_reviewer() {
   case "$branch" in
     ${LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE}*) printf '%s\n' "claude" ;;
     ${LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX}*)  printf '%s\n' "codex" ;;
+    ${LOCAL_AI_REVIEW_AUTHOR_PREFIX_GROK}*)   printf '%s\n' "grok" ;;
     *) return 1 ;;
   esac
 }

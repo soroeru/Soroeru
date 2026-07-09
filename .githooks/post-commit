@@ -4,7 +4,7 @@
 # Triggers a background reviewer CLI on the just-created commit.
 # Skips on:
 #   - LOCAL_AI_REVIEW_RUNNING=1 (recursion guard)
-#   - branch not matching codex/* or claude/* prefix
+#   - branch not matching codex/* , claude/* , or grok/* prefix
 #   - merge / rebase / cherry-pick in progress
 #   - commit message contains [skip-review]
 #
