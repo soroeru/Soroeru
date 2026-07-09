@@ -71,10 +71,7 @@ export function App(): React.JSX.Element {
     }
   }, [refresh]);
 
-  const shellWidthClass =
-    tab === "ledger"
-      ? "max-w-[calc(100vw-2rem)] sm:max-w-[calc(100vw-3rem)] lg:max-w-[calc(100vw-4rem)]"
-      : "max-w-2xl md:max-w-5xl";
+  const shellWidthClass = tab === "ledger" ? "max-w-none" : "max-w-2xl md:max-w-5xl";
 
   return (
     <main

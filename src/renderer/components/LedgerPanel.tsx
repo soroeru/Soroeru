@@ -82,7 +82,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
   const columns = buildLedgerColumns(sites);
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex w-full min-w-0 flex-col gap-4">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
         <p className="text-sm text-neutral-500">
@@ -95,8 +95,8 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
           収集済みの開示がまだありません。サイト管理からサイトを収集すると、ここに表示されます。
         </p>
       ) : (
-        <div className="max-h-[60vh] max-w-full overflow-auto rounded border border-neutral-200">
-          <table className="min-w-full border-collapse text-left text-sm">
+        <div className="max-h-[60vh] w-full min-w-0 overflow-x-auto rounded border border-neutral-200">
+          <table className="w-full min-w-full border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-neutral-200 bg-neutral-50">
                 <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-3 py-2 font-medium">
