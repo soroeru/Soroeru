@@ -118,14 +118,17 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }, []);
-  const showGuide = useCallback(async (siteAccountId: string) => {
-    await window.soroeru.visibility.abort();
-    await waitForVisibilityIdle();
-    setRunningSiteId(undefined);
-    setHandoff(undefined);
-    setGuideSiteId(siteAccountId);
-    setSavedPageSiteId(siteAccountId);
-  }, [waitForVisibilityIdle]);
+  const showGuide = useCallback(
+    async (siteAccountId: string) => {
+      await window.soroeru.visibility.abort();
+      await waitForVisibilityIdle();
+      setRunningSiteId(undefined);
+      setHandoff(undefined);
+      setGuideSiteId(siteAccountId);
+      setSavedPageSiteId(siteAccountId);
+    },
+    [waitForVisibilityIdle],
+  );
   const markManual = useCallback(
     async (siteAccountId: string) => {
       await window.soroeru.visibility.abort();
@@ -169,7 +172,8 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           <p className="text-xs text-amber-800">{handoff.instruction}</p>
           {handoff.fallbackSuggested ? (
             <p className="text-xs text-amber-800">
-              このサイトはセキュリティがとても厳重です。Soroeru からの自動ログインを最後まで完了できないことがあります。
+              このサイトはセキュリティがとても厳重です。Soroeru
+              からの自動ログインを最後まで完了できないことがあります。
               いつものブラウザでログインして登録情報ページを保存すれば、その内容をローカルで読み取れます。
             </p>
           ) : (
@@ -189,7 +193,11 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
             <button type="button" onClick={abort} className="text-sm underline">
               中止
             </button>
-            <button type="button" onClick={() => void showGuide(handoff.siteAccountId)} className="text-sm underline">
+            <button
+              type="button"
+              onClick={() => void showGuide(handoff.siteAccountId)}
+              className="text-sm underline"
+            >
               別の方法でこのサイトの情報を取り込む
             </button>
           </div>
@@ -317,11 +325,15 @@ function SavedPageImportGuide({
       <div className="grid gap-2 md:grid-cols-2">
         <figure className="overflow-hidden rounded border border-neutral-200 bg-neutral-50">
           <img src={guideWallImage} alt="ローカルダミーサイトのセキュリティ確認画面" className="w-full" />
-          <figcaption className="px-2 py-1 text-xs text-neutral-500">ローカルダミーサイト: セキュリティ確認</figcaption>
+          <figcaption className="px-2 py-1 text-xs text-neutral-500">
+            ローカルダミーサイト: セキュリティ確認
+          </figcaption>
         </figure>
         <figure className="overflow-hidden rounded border border-neutral-200 bg-neutral-50">
           <img src={guideAccountImage} alt="ローカルダミーサイトの登録情報ページ" className="w-full" />
-          <figcaption className="px-2 py-1 text-xs text-neutral-500">ローカルダミーサイト: 登録情報ページ</figcaption>
+          <figcaption className="px-2 py-1 text-xs text-neutral-500">
+            ローカルダミーサイト: 登録情報ページ
+          </figcaption>
         </figure>
       </div>
       <div className="flex flex-wrap gap-2">

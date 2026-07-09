@@ -246,12 +246,28 @@ and skill content has a single source of truth under `skills/`.
 
 ## 6. Formatting And Linting
 
-No formatter or linter command exists yet. Add and document one when the project
-needs formatting or lint coverage beyond TypeScript checks.
+Format and lint checks exist for the Electron app sources and supporting app
+configuration. Run them for code changes before committing, and use
+`npm run format:write` only as a mechanical cleanup step before re-running the
+check command.
 
-Current format command: none.
+Format check:
 
-Current lint command: none.
+```bash
+npm run format
+```
+
+Format write:
+
+```bash
+npm run format:write
+```
+
+Lint command:
+
+```bash
+npm run lint
+```
 
 ## 7. Type Checking
 
@@ -343,6 +359,8 @@ The hook is activated by `scripts/setup-hooks.sh` (sets
 
 For code changes, run the available gates:
 
+- `npm run format`
+- `npm run lint`
 - `npm run typecheck`
 - `npm test`
 - `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review

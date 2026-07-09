@@ -82,7 +82,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
   const columns = buildLedgerColumns(sites);
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex w-full min-w-0 flex-1 flex-col self-stretch gap-4">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
         <p className="text-sm text-neutral-500">
@@ -95,18 +95,24 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
           収集済みの開示がまだありません。サイト管理からサイトを収集すると、ここに表示されます。
         </p>
       ) : (
-        <div className="max-h-[60vh] overflow-auto rounded border border-neutral-200">
+        <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
           <table className="border-collapse text-left text-sm">
+            <colgroup>
+              <col className="w-64" />
+              {columns.map((column) => (
+                <col key={column.attributeKey} />
+              ))}
+            </colgroup>
             <thead>
               <tr className="border-b border-neutral-200 bg-neutral-50">
-                <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-3 py-2 font-medium">
+                <th scope="col" className="sticky left-0 top-0 z-20 w-64 bg-neutral-50 px-3 py-2 font-medium">
                   サイト
                 </th>
                 {columns.map((column) => (
                   <th
                     key={column.attributeKey}
                     scope="col"
-                    className="sticky top-0 z-10 whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
+                    className="sticky top-0 z-10 min-w-[8rem] whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
                   >
                     {column.label}
                   </th>
@@ -118,7 +124,7 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
                 <tr key={site.siteAccountId} className="border-b border-neutral-100 last:border-b-0">
                   <th
                     scope="row"
-                    className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-2 text-left align-top font-medium"
+                    className="sticky left-0 z-10 w-64 whitespace-nowrap bg-white px-3 py-2 text-left align-top font-medium"
                   >
                     <span className="flex flex-col">
                       <span>{site.displayName}</span>
@@ -127,7 +133,10 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
                   </th>
                   {site.collected ? (
                     columns.map((column) => (
-                      <LedgerCell key={column.attributeKey} disclosure={disclosureFor(site, column.attributeKey)} />
+                      <LedgerCell
+                        key={column.attributeKey}
+                        disclosure={disclosureFor(site, column.attributeKey)}
+                      />
                     ))
                   ) : (
                     <td colSpan={columns.length} className="px-3 py-2 text-neutral-400">
@@ -149,11 +158,11 @@ function LedgerCell({ disclosure }: { disclosure: DisclosureView | undefined }):
   const reveal = useDisclosureReveal(disclosure?.disclosureId ?? "");
 
   if (!disclosure) {
-    return <td className="whitespace-nowrap px-3 py-2 align-top text-neutral-400">—</td>;
+    return <td className="min-w-[8rem] whitespace-nowrap px-3 py-2 align-top text-neutral-400">—</td>;
   }
 
   return (
-    <td className="whitespace-nowrap px-3 py-2 align-top">
+    <td className="min-w-[8rem] whitespace-nowrap px-3 py-2 align-top">
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <span className="font-mono">{reveal.value ?? (disclosure.preview || "—")}</span>
@@ -225,8 +234,8 @@ export function SiteDetail({
   onReload: () => void | Promise<void>;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-3 rounded border border-neutral-200 p-4">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col gap-3 rounded border border-neutral-200 p-3 sm:p-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="font-medium">{detail.displayName}</h3>
         <button type="button" onClick={onClose} className="text-sm underline">
           閉じる
@@ -401,7 +410,7 @@ function PendingCandidateRow({
   return (
     <li className="flex flex-col gap-1 text-sm">
       <form
-        className="flex items-center gap-2"
+        className="flex flex-col gap-2 sm:flex-row sm:items-center"
         onSubmit={(event) => {
           event.preventDefault();
           void confirm();
@@ -493,14 +502,14 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
 
   return (
     <li className="flex flex-col gap-1 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span>{disclosure.label}</span>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="break-words">{disclosure.label}</span>
           <StaleBadge state={disclosure.staleState} />
           <SourceBadge sourceKind={disclosure.sourceKind} />
         </span>
-        <span className="flex items-center gap-2">
-          <span className="font-mono text-neutral-500">{value ?? (disclosure.preview || "—")}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="break-all font-mono text-neutral-500">{value ?? (disclosure.preview || "—")}</span>
           {disclosure.revealable && value === undefined && !revealing && (
             <button type="button" onClick={() => setRevealing(true)} className="text-xs underline">
               表示
@@ -516,7 +525,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
 
       {revealing && (
         <form
-          className="flex items-center gap-2"
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
           onSubmit={(event) => {
             event.preventDefault();
             void reveal();
@@ -532,7 +541,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
             placeholder="パスフレーズを再入力"
             value={passphrase}
             onChange={(event) => setPassphrase(event.target.value)}
-            className="rounded border border-neutral-300 px-2 py-1 text-xs"
+            className="min-w-0 flex-1 rounded border border-neutral-300 px-2 py-1 text-xs"
           />
           <button
             type="submit"
@@ -554,11 +563,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
 
 function SourceBadge({ sourceKind }: { sourceKind: DisclosureView["sourceKind"] }): React.JSX.Element | null {
   if (sourceKind !== "manual-import") return null;
-  return (
-    <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">
-      保存ページ
-    </span>
-  );
+  return <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-xs text-neutral-600">保存ページ</span>;
 }
 
 function StaleBadge({ state }: { state: DisclosureView["staleState"] }): React.JSX.Element {

@@ -71,7 +71,8 @@ export function SavedPageImportPanel({
           保存ページを選択
         </button>
         <p className="text-xs text-neutral-500">
-          HTML のみ。外部サイトにはアクセスしません。{disabled ? "収集中は取り込みを一時停止しています。" : ""}
+          HTML のみ。外部サイトにはアクセスしません。
+          {disabled ? "収集中は取り込みを一時停止しています。" : ""}
         </p>
       </div>
       <input

@@ -141,7 +141,7 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
 
       {summary && (
         <div className="flex flex-col gap-3">
-          <dl className="grid grid-cols-2 gap-1 text-sm">
+          <dl className="grid grid-cols-1 gap-1 text-sm sm:grid-cols-2">
             <dt className="text-neutral-500">データ行数</dt>
             <dd>{summary.totalDataRows}</dd>
             <dt className="text-neutral-500">取り込んだ認証情報</dt>

@@ -632,7 +632,7 @@ function HandoffPanel({
         このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
       </p>
       <HandoffCredentialPanel credential={handoff.credential} />
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <button
           type="button"
           onClick={onResume}
@@ -808,7 +808,7 @@ function SiteRow({
 }): React.JSX.Element {
   return (
     <li className="flex flex-col gap-2 py-3">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <label className="flex min-w-0 flex-1 items-start gap-3">
           <input
             type="checkbox"
@@ -848,7 +848,7 @@ function SiteRow({
             </span>
           </span>
         </label>
-        <span className="flex shrink-0 flex-wrap justify-end gap-2">
+        <span className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:justify-end">
           <button
             type="button"
             onClick={onOpenDetail}
@@ -878,7 +878,7 @@ function SiteRow({
       </div>
 
       {savedPageOpen && (
-        <div className="flex flex-col gap-2 pl-7">
+        <div className="flex flex-col gap-2 pl-4 sm:pl-7">
           {guideOpen && (
             <SavedPageImportGuide
               site={site}
@@ -896,7 +896,7 @@ function SiteRow({
       )}
 
       {detailOpen && detail && (
-        <div className="pl-7">
+        <div className="pl-4 sm:pl-7">
           <SiteDetail detail={detail} onClose={onCloseDetail} onReload={onReloadDetail} />
         </div>
       )}
@@ -939,7 +939,7 @@ function DeleteSiteModal({
           />
           <span>取り消せない削除であることを確認しました。</span>
         </label>
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
             disabled={deleting}
