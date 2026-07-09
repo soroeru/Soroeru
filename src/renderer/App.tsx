@@ -72,7 +72,7 @@ export function App(): React.JSX.Element {
   }, [refresh]);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-8">
+    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:max-w-5xl lg:p-8">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Soroeru</h1>
@@ -101,7 +101,7 @@ export function App(): React.JSX.Element {
           />
           {recoveryError && <p className="text-sm text-red-600">{recoveryError}</p>}
 
-          <nav className="flex gap-2 border-b border-neutral-200">
+          <nav className="flex gap-1 overflow-x-auto border-b border-neutral-200 sm:gap-2">
             <TabButton active={tab === "sites"} onClick={() => setTab("sites")}>
               サイト管理
             </TabButton>
@@ -145,7 +145,7 @@ function TabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`px-3 py-2 text-sm ${active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"}`}
+      className={`whitespace-nowrap px-2 py-2 text-sm sm:px-3 ${active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"}`}
     >
       {children}
     </button>
@@ -209,7 +209,7 @@ function RecoveryKeyNotice({
   }
   if (hasRecoveryKey) return null;
   return (
-    <div className="flex items-center justify-between gap-2 rounded border border-neutral-200 p-3">
+    <div className="flex flex-col gap-2 rounded border border-neutral-200 p-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="text-sm text-neutral-600">
         リカバリーキーが未設定です。パスフレーズ紛失時の復旧用に作成できます。
       </p>

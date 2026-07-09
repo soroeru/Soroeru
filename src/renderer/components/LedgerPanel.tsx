@@ -225,7 +225,7 @@ export function SiteDetail({
   onReload: () => void | Promise<void>;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-3 rounded border border-neutral-200 p-4">
+    <div className="flex flex-col gap-3 rounded border border-neutral-200 p-3 sm:p-4">
       <div className="flex items-center justify-between">
         <h3 className="font-medium">{detail.displayName}</h3>
         <button type="button" onClick={onClose} className="text-sm underline">
@@ -401,7 +401,7 @@ function PendingCandidateRow({
   return (
     <li className="flex flex-col gap-1 text-sm">
       <form
-        className="flex items-center gap-2"
+        className="flex flex-col gap-2 sm:flex-row sm:items-center"
         onSubmit={(event) => {
           event.preventDefault();
           void confirm();
@@ -493,7 +493,7 @@ function DisclosureRow({ disclosure }: { disclosure: DisclosureView }): React.JS
 
   return (
     <li className="flex flex-col gap-1 text-sm">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
         <span className="flex items-center gap-2">
           <span>{disclosure.label}</span>
           <StaleBadge state={disclosure.staleState} />

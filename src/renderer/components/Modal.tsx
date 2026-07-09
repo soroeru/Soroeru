@@ -71,7 +71,7 @@ export function Modal({ title, onClose, children, dismissible = true }: ModalPro
         aria-label={title}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
-        className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-y-auto rounded bg-white p-4 shadow-lg"
+        className="flex max-h-full w-full max-w-md flex-col gap-3 overflow-y-auto rounded bg-white p-3 shadow-lg sm:p-4 md:max-w-lg"
       >
         <div className="flex items-start justify-between gap-2">
           <h3 className="text-base font-medium">{title}</h3>
