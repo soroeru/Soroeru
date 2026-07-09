@@ -350,8 +350,9 @@ Code review (human or AI) prioritizes, in this order:
 4. **missing tests** — new behavior or new branches that have no test coverage
 
 This mirrors the local AI review's code-review criteria
-(`.githooks/prompts/local-review-claude.md` / `local-review-codex.md`); keep the two in
-sync if either changes.
+(`.githooks/prompts/local-review-claude.md` /
+`local-review-codex.md` / `local-review-grok.md`); keep them in sync if any
+change.
 
 ### 9.2 Requirements Review
 

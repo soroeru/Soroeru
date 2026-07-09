@@ -9,7 +9,7 @@
 #     "merge_base": "...",
 #     "units": { "<unit>": "<diff sha256>", ... },
 #     "last_reviewed_at": "ISO8601",
-#     "last_reviewer": "claude" | "codex"
+#     "last_reviewer": "claude" | "codex" | "grok"
 #   }
 # Legacy files written before per-unit reviews stored a single
 # top-level "last_diff_sha256"; it is read as the "code" unit's sha

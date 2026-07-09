@@ -14,9 +14,10 @@ LOCAL_AI_REVIEW_DISABLED=0
 # --- Branch prefix mapping --------------------------------------
 # When the current branch starts with one of these prefixes, the
 # reviewer is the AI named by the prefix. Branches that match
-# neither prefix are skipped entirely.
+# none of the prefixes are skipped entirely.
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE="claude/"
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX="codex/"
+LOCAL_AI_REVIEW_AUTHOR_PREFIX_GROK="grok/"
 
 # --- Diff base --------------------------------------------------
 # Base ref to compute branch-wide diff against. The actual diff
@@ -58,7 +59,7 @@ LOCAL_AI_REVIEW_TARGET_PATHS=(
 # lines, output filenames, and last-reviewed.json), the git pathspec
 # whose diff the unit reviews (a file, or a directory ending in
 # "/"), and the prompt file fed to the reviewer (the skill's
-# SKILL.md, shared by both reviewers; relative to repo root).
+# SKILL.md, shared by all reviewers; relative to repo root).
 #
 # A commit touching several units triggers one reviewer run per
 # unit, sequentially, in the order listed (after the "code" unit).
@@ -114,4 +115,15 @@ local_ai_review_run_codex() {
   exec codex exec \
     --sandbox read-only \
     "$prompt"
+}
+
+local_ai_review_run_grok() {
+  local prompt
+  prompt=$(cat)
+  # plan mode is read-only at the model level. We additionally
+  # restrict --tools to read-only operations as defense in depth.
+  exec grok -p "$prompt" \
+    --permission-mode plan \
+    --output-format plain \
+    --tools "read_file,grep,list_dir"
 }

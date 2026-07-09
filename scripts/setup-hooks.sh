@@ -51,6 +51,7 @@ warn_missing_reviewer() {
 }
 warn_missing_reviewer claude "https://docs.claude.com/claude-code"
 warn_missing_reviewer codex  "https://github.com/openai/codex"
+warn_missing_reviewer grok   "install the Grok Build CLI (xAI)"
 
 if [ "$missing" -gt 0 ]; then
   printf '\ninstall the missing tools above and re-run this script.\n' >&2
@@ -73,4 +74,4 @@ else
 fi
 
 printf '\nhooks installed. local AI review will run on commits made\n'
-printf 'on branches prefixed with claude/ or codex/.\n'
+printf 'on branches prefixed with claude/, codex/, or grok/.\n'

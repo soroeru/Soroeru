@@ -47,6 +47,7 @@ Reviewer CLIs:
 
 - `claude` for Claude review
 - `codex` for Codex review
+- `grok` for Grok review
 
 The setup script warns if reviewer CLIs are missing, but does not fail.
 
@@ -63,6 +64,7 @@ Important settings:
 - `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE`: branch prefix for Claude-authored
   work;
 - `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX`: branch prefix for Codex-authored work;
+- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_GROK`: branch prefix for Grok-authored work;
 - `LOCAL_AI_REVIEW_BASE_REF`: base ref used to compute the branch-wide diff,
   usually `origin/main`;
 - `LOCAL_AI_REVIEW_TARGET_PATHS`: pathspecs reviewed as the `code` unit with
@@ -79,6 +81,8 @@ Reviewer CLI invocations:
 - `local_ai_review_run_claude`: Bash function that must `exec` the Claude
   reviewer command;
 - `local_ai_review_run_codex`: Bash function that must `exec` the Codex
+  reviewer command;
+- `local_ai_review_run_grok`: Bash function that must `exec` the Grok
   reviewer command.
 
 Prefer project-level changes in `.githooks/config` over editing hook library
@@ -90,13 +94,14 @@ Default reviewer mapping:
 
 - `codex/*` branches trigger Codex review
 - `claude/*` branches trigger Claude review
+- `grok/*` branches trigger Grok review
 - other branches are skipped
 
 This mapping keeps the branch agent prefix and reviewer CLI aligned. For the
 `code` unit, prompt files remain reviewer-specific: `local-review-codex.md`
-is used for Codex review and `local-review-claude.md` is used for Claude
-review. Documentation units use their review skill's `SKILL.md` as the
-prompt, shared by both reviewers.
+for Codex, `local-review-claude.md` for Claude, and `local-review-grok.md`
+for Grok. Documentation units use their review skill's `SKILL.md` as the
+prompt, shared by all reviewers.
 
 ## 5. Review Target
 
@@ -233,6 +238,7 @@ Useful files:
 
 - `<timestamp>-claude-<unit>-<pid>.md`
 - `<timestamp>-codex-<unit>-<pid>.md`
+- `<timestamp>-grok-<unit>-<pid>.md`
 - `last-run.log`
 - `last-error.log`
 - `last-reviewed.json` (per-unit diff hashes under `units`)

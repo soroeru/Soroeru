@@ -8,7 +8,7 @@
 #
 # Usage:
 #   LOCAL_AI_REVIEW_RUNNING=1 .githooks/lib/local-ai-review.sh <reviewer> <branch>
-#     reviewer: "claude" | "codex"
+#     reviewer: "claude" | "codex" | "grok"
 #     branch:   the current branch name (passed in to avoid races
 #               if the user switches branches mid-run)
 
@@ -29,7 +29,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 
 cd "$REPO_ROOT"
 
-REVIEWER=${1:?reviewer required (claude|codex)}
+REVIEWER=${1:?reviewer required (claude|codex|grok)}
 BRANCH=${2:?branch required}
 # Commit SHA is optional for backward compatibility with manual
 # invocations, but post-commit always passes it so the review is
@@ -190,6 +190,7 @@ fi
 case "$REVIEWER" in
   claude) CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-claude.md" ;;
   codex)  CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-codex.md" ;;
+  grok)   CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-grok.md" ;;
   *) fail "unknown reviewer: $REVIEWER"; exit 1 ;;
 esac
 
@@ -273,6 +274,7 @@ run_reviewer() {
   case "$REVIEWER" in
     claude) local_ai_review_run_claude < "$PAYLOAD_FILE" ;;
     codex)  local_ai_review_run_codex < "$PAYLOAD_FILE" ;;
+    grok)   local_ai_review_run_grok < "$PAYLOAD_FILE" ;;
   esac
 }
 
