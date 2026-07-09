@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# pre-commit hook — quality gate enforcement.
+#
+# Runs the following checks before every commit:
+#   1. npm run format   — Prettier format check
+#   2. npm run lint     — ESLint
+#   3. npm run typecheck — TypeScript (main + renderer tsconfigs)
+#
+# Skips on:
+#   - commit message contains [skip-hooks] (read from COMMIT_EDITMSG)
+#   - merge / rebase / cherry-pick in progress
+#
+# To bypass in an emergency, include [skip-hooks] in the commit message
+# or use `git commit --no-verify` (git built-in, but leaves no trace in
+# the commit message).
+#
+# Note: `npm test` is intentionally excluded from the pre-commit hook
+# because it includes a full build step and is too slow for per-commit use.
+# Run `npm test` manually or via `npm run release:check` before pushing.
+
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# --- Skip: merge / rebase / cherry-pick in progress ---------------
+# During pre-commit, MERGE_HEAD still exists for merge commits.
+GIT_DIR=$(git rev-parse --git-dir)
+if [ -f "$GIT_DIR/MERGE_HEAD" ] \
+   || [ -d "$GIT_DIR/rebase-merge" ] \
+   || [ -d "$GIT_DIR/rebase-apply" ] \
+   || [ -f "$GIT_DIR/CHERRY_PICK_HEAD" ]; then
+  exit 0
+fi
+
+# --- Skip: [skip-hooks] in commit message -------------------------
+# In pre-commit, the message is available in COMMIT_EDITMSG (written
+# by `git commit -m` or already populated for `git commit --amend`).
+COMMIT_MSG_FILE="$GIT_DIR/COMMIT_EDITMSG"
+if [ -f "$COMMIT_MSG_FILE" ]; then
+  COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+  case "$COMMIT_MSG" in
+    *'[skip-hooks]'*)
+      printf '[pre-commit] skipped: [skip-hooks] found in commit message\n' >&2
+      exit 0
+      ;;
+  esac
+fi
+
+# --- Quality gates ------------------------------------------------
+# Run each gate sequentially. On first failure, abort the commit with
+# a clear message indicating which gate failed.
+
+run_gate() {
+  local label="$1"
+  local cmd="$2"
+  printf '[pre-commit] running: %s\n' "$label" >&2
+  if ! (cd "$REPO_ROOT" && $cmd); then
+    printf '\n[pre-commit] ❌ FAILED: %s\n' "$label" >&2
+    printf '[pre-commit] commit aborted. Fix the issue and try again.\n' >&2
+    printf '[pre-commit] to bypass: include [skip-hooks] in your commit message\n' >&2
+    exit 1
+  fi
+  printf '[pre-commit] ✅ passed: %s\n' "$label" >&2
+}
+
+run_gate "npm run format"    "npm run format"
+run_gate "npm run lint"      "npm run lint"
+run_gate "npm run typecheck" "npm run typecheck"
+
+printf '[pre-commit] all quality gates passed ✅\n' >&2
+
+exit 0
