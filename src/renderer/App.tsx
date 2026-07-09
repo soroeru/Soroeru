@@ -71,8 +71,15 @@ export function App(): React.JSX.Element {
     }
   }, [refresh]);
 
+  const shellWidthClass =
+    tab === "ledger"
+      ? "max-w-[calc(100vw-2rem)] sm:max-w-[calc(100vw-3rem)] lg:max-w-[calc(100vw-4rem)]"
+      : "max-w-2xl md:max-w-5xl";
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-4 p-4 sm:gap-6 sm:p-6 md:max-w-5xl lg:p-8">
+    <main
+      className={`mx-auto flex min-h-screen w-full ${shellWidthClass} flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:p-8`}
+    >
       <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Soroeru</h1>
