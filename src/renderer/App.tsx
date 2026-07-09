@@ -73,7 +73,7 @@ export function App(): React.JSX.Element {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-4 p-4 sm:gap-6 sm:p-6 lg:max-w-5xl lg:p-8">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Soroeru</h1>
           <p className="text-sm text-neutral-500">ローカルファースト・エージェンシーエンジン</p>

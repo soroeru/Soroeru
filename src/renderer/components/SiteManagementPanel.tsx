@@ -632,7 +632,7 @@ function HandoffPanel({
         このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
       </p>
       <HandoffCredentialPanel credential={handoff.credential} />
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <button
           type="button"
           onClick={onResume}
@@ -848,7 +848,7 @@ function SiteRow({
             </span>
           </span>
         </label>
-        <span className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0 sm:justify-end">
+        <span className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row sm:flex-wrap sm:justify-end">
           <button
             type="button"
             onClick={onOpenDetail}
@@ -939,7 +939,7 @@ function DeleteSiteModal({
           />
           <span>取り消せない削除であることを確認しました。</span>
         </label>
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           <button
             type="button"
             disabled={deleting}
