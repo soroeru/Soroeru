@@ -311,6 +311,36 @@ Decision (why this shape):
   shift-left convenience that shares its exact command, so a developer sees the same
   pass/fail before pushing.
 
+### 8.2 Pre-commit quality gate hook
+
+The `.githooks/pre-commit` hook automatically runs three gates before every
+commit:
+
+1. `npm run format` — Prettier format check
+2. `npm run lint` — ESLint
+3. `npm run typecheck` — TypeScript (main + renderer tsconfigs)
+
+If any gate fails, the commit is aborted with a message indicating which gate
+failed.
+
+`npm test` is intentionally excluded from the pre-commit hook because it
+includes a full build step and adds significant latency. Run `npm test` manually
+or via `npm run release:check` before pushing.
+
+**Skipping the hook:**
+
+- Include `[skip-hooks]` in the commit message — the hook reads
+  `.git/COMMIT_EDITMSG` and skips all gates. This leaves an auditable trace in
+  the commit history.
+- `git commit --no-verify` — git's built-in bypass (leaves no trace in the
+  message).
+
+The hook also skips automatically during merge, rebase, and cherry-pick
+operations.
+
+The hook is activated by `scripts/setup-hooks.sh` (sets
+`core.hooksPath=.githooks`). No additional setup is required.
+
 For code changes, run the available gates:
 
 - `npm run typecheck`
