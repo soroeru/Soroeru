@@ -92,7 +92,13 @@ export function App(): React.JSX.Element {
           <p className="text-sm text-neutral-500">ローカルファースト・エージェンシーエンジン</p>
         </div>
         {phase === "unlocked" && (
-          <button type="button" onClick={() => void lock()} className="text-sm underline">
+          <button
+            type="button"
+            onClick={() => void lock()}
+            disabled={collectionBusy}
+            title={collectionBusy ? "収集の実行中は施錠できません" : undefined}
+            className="text-sm underline disabled:cursor-not-allowed disabled:opacity-40"
+          >
             施錠
           </button>
         )}
@@ -135,14 +141,21 @@ export function App(): React.JSX.Element {
           </nav>
           {collectionBusy && (
             <p className="text-xs text-neutral-500">
-              収集の実行中は他のタブに切り替えられません（ウォールの解決や再開のため）。
+              収集の実行中は他のタブへの切り替えと施錠ができません（ウォールの解決や再開のため）。
             </p>
           )}
 
           {/* Keep the ledger mounted so batch / hand-off state and the visibility
               event subscription survive tab switches when not busy, and remain
-              available if a run is active. */}
-          <div className={tab === "ledger" ? undefined : "hidden"} aria-hidden={tab !== "ledger"}>
+              available if a run is active. When hidden, `inert` removes the
+              subtree from tab order so focusable controls do not stay reachable
+              under an aria-hidden tree. */}
+          <div
+            className={tab === "ledger" ? undefined : "hidden"}
+            aria-hidden={tab !== "ledger"}
+            // React 19 types `inert`; omit the attribute when the panel is active.
+            {...(tab !== "ledger" ? { inert: true as const } : {})}
+          >
             <LedgerPanel
               reloadToken={reloadToken}
               onCollected={bumpReload}

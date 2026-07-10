@@ -332,7 +332,7 @@ export function DeleteSiteModal({
       <div className="flex flex-col gap-3">
         <p className="text-sm text-neutral-800">
           「{site.displayName}」の情報を Soroeru
-          から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、 取り消せません。
+          から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、取り消せません。
         </p>
         <p className="text-sm text-red-700">
           これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。
