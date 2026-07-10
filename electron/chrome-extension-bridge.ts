@@ -2,7 +2,11 @@ import { chmod, mkdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { createHandshakeToken, removeHandshakeToken } from "../native-host/token.js";
-import { decodeNativeMessages, encodeNativeMessage } from "../native-host/framing.js";
+import {
+  MAX_NATIVE_MESSAGE_BYTES,
+  decodeNativeMessages,
+  encodeNativeMessage,
+} from "../native-host/framing.js";
 import {
   parseChromeBridgeMessage,
   type ChromeBridgeCommand,
@@ -53,6 +57,7 @@ export interface ChromeExtensionBridgeOptions {
 export class ChromeExtensionBridge {
   private server: Server | undefined;
   private socket: Socket | undefined;
+  private readonly sockets = new Set<Socket>();
   private tokenPath: string | undefined;
   private readonly supersededSockets = new WeakSet<Socket>();
   private started = false;
@@ -84,7 +89,8 @@ export class ChromeExtensionBridge {
       this.started = true;
       this.emit({ type: "connecting" });
     } catch (error) {
-      this.socket?.destroy();
+      for (const socket of this.sockets) socket.destroy();
+      this.sockets.clear();
       this.socket = undefined;
       await this.closeServer(server);
       await rm(this.options.socketPath, { force: true });
@@ -96,7 +102,8 @@ export class ChromeExtensionBridge {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
-    this.socket?.destroy();
+    for (const socket of this.sockets) socket.destroy();
+    this.sockets.clear();
     this.socket = undefined;
     const server = this.server;
     this.server = undefined;
@@ -109,12 +116,8 @@ export class ChromeExtensionBridge {
   }
 
   private accept(socket: Socket, expectedToken: string): void {
+    this.sockets.add(socket);
     this.emit({ type: "connecting" });
-    if (this.socket) {
-      this.supersededSockets.add(this.socket);
-      this.socket.destroy();
-    }
-    this.socket = socket;
     let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let authenticated = false;
     let rejected = false;
@@ -129,6 +132,7 @@ export class ChromeExtensionBridge {
     socket.on("data", (chunk: Buffer) => {
       try {
         remainder = Buffer.concat([remainder, chunk]);
+        if (remainder.length > MAX_NATIVE_MESSAGE_BYTES + 4) return reject("invalid-message");
         const decoded = decodeNativeMessages(remainder);
         remainder = decoded.remainder;
         for (const message of decoded.messages) {
@@ -136,6 +140,11 @@ export class ChromeExtensionBridge {
             if (message.kind !== "hello") return reject("invalid-message");
             if (message.token !== expectedToken) return reject("unauthorized");
             authenticated = true;
+            if (this.socket && this.socket !== socket) {
+              this.supersededSockets.add(this.socket);
+              this.socket.destroy();
+            }
+            this.socket = socket;
             socket.write(
               encodeNativeMessage({
                 version: 1,
@@ -163,6 +172,7 @@ export class ChromeExtensionBridge {
       socket.destroy();
     });
     socket.on("close", () => {
+      this.sockets.delete(socket);
       if (this.socket === socket) {
         this.socket = undefined;
         if (!this.closing) this.emit({ type: "disconnected" });
@@ -192,7 +202,19 @@ export class ChromeExtensionBridge {
       }
       socket.write(encodeNativeMessage(parseChromeBridgeMessage(response)));
     } catch {
-      socket.destroy();
+      try {
+        socket.write(
+          encodeNativeMessage({
+            version: 1,
+            kind: "result",
+            requestId: command.requestId,
+            ok: false,
+            error: "command failed",
+          }),
+        );
+      } catch {
+        socket.destroy();
+      }
     }
   }
 
