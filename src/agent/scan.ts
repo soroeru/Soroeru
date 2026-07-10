@@ -321,6 +321,15 @@ function scanInPage(): {
     "会員",
   ];
   const ACTION_EXCLUDE_RE = /(?:変更|追加|削除|登録|編集|設定|ログイン|送信|クリア)/;
+  const isDisplayLabel = (text: string): boolean => {
+    const label = text.trim().replace(/[:：]$/, "");
+    return (
+      label.length > 0 &&
+      label.length <= 40 &&
+      DISPLAY_LABEL_KEYWORDS.some((keyword) => label.includes(keyword)) &&
+      !ACTION_EXCLUDE_RE.test(label)
+    );
+  };
 
   const labelTags = [
     "label",
@@ -348,17 +357,55 @@ function scanInPage(): {
       if (!isStandardLabelTag && lbl.children.length > 0) continue;
 
       const labelText = lbl.textContent?.trim().replace(/[:：]$/, "") ?? "";
-      if (labelText.length === 0 || labelText.length > 40) continue;
-
-      const hasKeyword = DISPLAY_LABEL_KEYWORDS.some((kw) => labelText.includes(kw));
-      if (!hasKeyword) continue;
-      if (ACTION_EXCLUDE_RE.test(labelText)) continue;
+      if (!isDisplayLabel(labelText)) continue;
 
       const val = lbl.nextElementSibling;
       if (val instanceof HTMLElement && isVisible(val) && !hasFormControl(val)) {
         pushDisplay(val, val.textContent ?? "", labelText, "");
       }
     }
+  }
+
+  // (e) Wrapped key/value rows: many component libraries put the label and
+  // value in separate wrappers, so the label element is not itself adjacent
+  // to the value element. Restrict this to a two-column row and known labels
+  // to avoid treating arbitrary page copy as personal data.
+  for (const row of Array.from(document.querySelectorAll("div, li, section, article"))) {
+    if (!(row instanceof HTMLElement) || !isVisible(row) || hasFormControl(row)) continue;
+    const children = Array.from(row.children).filter(
+      (child): child is HTMLElement => child instanceof HTMLElement && isVisible(child),
+    );
+    if (children.length !== 2) continue;
+    const [labelEl, valueEl] = children;
+    if (!labelEl || !valueEl || !isDisplayLabel(labelEl.textContent ?? "")) continue;
+    pushDisplay(valueEl, valueEl.textContent ?? "", labelEl.textContent ?? "", "");
+  }
+
+  // (f) Inline key/value markup such as `氏名：<span>山田</span>`. The label is
+  // read from the text node before the first child; the stamped value element
+  // is still read separately and locally by PageDriver.readDisplayValues.
+  for (const container of Array.from(document.querySelectorAll("p, div, li, dt, th"))) {
+    if (!(container instanceof HTMLElement) || !isVisible(container) || hasFormControl(container)) continue;
+    const firstElement = container.firstElementChild;
+    if (!(firstElement instanceof HTMLElement) || !isVisible(firstElement)) continue;
+    const labelText = Array.from(container.childNodes)
+      .slice(0, Array.from(container.childNodes).indexOf(firstElement))
+      .filter((node): node is Text => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent ?? "")
+      .join(" ")
+      .trim()
+      .replace(/[:：]$/, "");
+    if (!isDisplayLabel(labelText) || hasFormControl(firstElement)) continue;
+    pushDisplay(firstElement, firstElement.textContent ?? "", labelText, "");
+  }
+
+  // (g) Some accessibility-first layouts put the display label on the value
+  // element itself. Accept only non-form elements with known PII labels.
+  for (const valueEl of Array.from(document.querySelectorAll("[aria-label]"))) {
+    if (!(valueEl instanceof HTMLElement) || !isVisible(valueEl) || hasFormControl(valueEl)) continue;
+    const labelText = valueEl.getAttribute("aria-label")?.trim() ?? "";
+    if (!isDisplayLabel(labelText)) continue;
+    pushDisplay(valueEl, valueEl.textContent ?? "", labelText, "");
   }
 
   return {
