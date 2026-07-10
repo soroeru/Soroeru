@@ -169,11 +169,16 @@ known alternatives and concrete triggers for reconsideration:
   architecture option whose first implementation would be a developer-only, feature-flagged
   prototype — not an MVP scope change; browser-extension distribution stays post-MVP (§1).
   The extension would sit behind the same `PageDriver` seam as a second session surface, so
-  the Playwright path is preserved, not replaced. Reconsider (i.e. file the follow-up
-  implementation Issues listed in that design) once manual beta testing records **two or
-  more** sites that still fail collection due to bot/risk checks with `channel: "chrome"`
-  plus persisted `storageState`, with the failure attributed to the browser surface rather
-  than selector/flow mismatch. The design depends only on public Chrome extension /
+  the Playwright path is preserved, not replaced. The option is a front-door use of the
+  user's own profile, not bot-detection evasion: no fingerprint/UA spoofing, no stealth, no
+  wall bypass, and the automation is visibly indicated via the extension badge and an
+  in-page banner (design §1/§7; [`security.md`](security.md) §7 unchanged). Reconsider
+  (i.e. file the follow-up implementation Issues listed in that design) once manual beta
+  testing records **two or more** sites that still fail collection due to bot/risk checks
+  with `channel: "chrome"` plus persisted `storageState`, with the failure attributed to
+  the browser surface rather than selector/flow mismatch (recordable via the Issue #317
+  collection-failure diagnostics harness rather than as a judgment call). The design
+  depends only on public Chrome extension /
   Native Messaging APIs — never on the Codex extension or any undocumented protocol.
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
