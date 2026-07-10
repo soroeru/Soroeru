@@ -2,7 +2,11 @@
 // CSV import & queue review → Disclosure ledger (per-site composed view with
 // stale flags and re-authenticated reveal). Everything crosses the typed IPC
 // boundary; the renderer holds no fs/network/vault handle and sees only
-// sanitized, masked views (RFC-002 §3 / §5.1).
+// sanitized, masked views (RFC-002 §5.1).
+//
+// Issue #341 removed the dedicated Site Management tab: CSV import lives under
+// Settings, and collection / session-persistence / row actions live on the
+// Disclosure ledger.
 
 import { useCallback, useEffect, useState } from "react";
 import type { VaultStatus } from "../../electron/ipc/contract.js";
@@ -11,10 +15,9 @@ import { VaultGate } from "./components/VaultGate.js";
 import { InsightsPanel } from "./components/InsightsPanel.js";
 import { LedgerPanel } from "./components/LedgerPanel.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
-import { SiteManagementPanel } from "./components/SiteManagementPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
-type Tab = "sites" | "ledger" | "insights" | "settings";
+type Tab = "ledger" | "insights" | "settings";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -23,7 +26,7 @@ function phaseFor(status: VaultStatus): Phase {
 
 export function App(): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [tab, setTab] = useState<Tab>("sites");
+  const [tab, setTab] = useState<Tab>("ledger");
   const [hasRecoveryKey, setHasRecoveryKey] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState<string | undefined>();
   const [reloadToken, setReloadToken] = useState(0);
@@ -71,6 +74,8 @@ export function App(): React.JSX.Element {
     }
   }, [refresh]);
 
+  const bumpReload = useCallback(() => setReloadToken((token) => token + 1), []);
+
   const shellWidthClass = tab === "ledger" ? "max-w-none" : "max-w-2xl md:max-w-5xl";
 
   return (
@@ -106,9 +111,6 @@ export function App(): React.JSX.Element {
           {recoveryError && <p className="text-sm text-red-600">{recoveryError}</p>}
 
           <nav className="flex gap-1 overflow-x-auto border-b border-neutral-200 sm:gap-2">
-            <TabButton active={tab === "sites"} onClick={() => setTab("sites")}>
-              サイト管理
-            </TabButton>
             <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
               開示台帳
             </TabButton>
@@ -120,16 +122,9 @@ export function App(): React.JSX.Element {
             </TabButton>
           </nav>
 
-          {tab === "sites" && (
-            <SiteManagementPanel
-              reloadToken={reloadToken}
-              onCollected={() => setReloadToken((token) => token + 1)}
-              onImported={() => setReloadToken((token) => token + 1)}
-            />
-          )}
-          {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}
+          {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} onCollected={bumpReload} />}
           {tab === "insights" && <InsightsPanel reloadToken={reloadToken} />}
-          {tab === "settings" && <SettingsPanel />}
+          {tab === "settings" && <SettingsPanel onImported={bumpReload} />}
         </>
       )}
     </main>

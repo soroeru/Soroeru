@@ -2,7 +2,7 @@
 // Google / Chrome Password Manager export; the file is read locally and sent as
 // bytes over IPC. Only a counts-only summary returns — never a raw credential.
 // After import the user reviews the imported sites; the actual auto-login +
-// collection run is launched from the Site Management panel.
+// collection run is launched from the Disclosure ledger (Issue #341).
 
 import { useCallback, useRef, useState } from "react";
 import type { CsvImportResult } from "../../../electron/ipc/contract.js";
@@ -163,7 +163,7 @@ export function CsvImportPanel({ onImported }: CsvImportPanelProps): React.JSX.E
           <div className="flex flex-col gap-2">
             <p className="text-sm font-medium">取り込まれたサイト（{summary.siteAccountIds.length}）</p>
             <p className="text-xs text-neutral-400">
-              取り込みは完了しています。下のサイト管理で対象にチェックを入れて収集できます。
+              取り込みは完了しています。開示台帳タブで対象にチェックを入れて収集できます。
             </p>
             <ul className="flex max-h-48 flex-col gap-1 overflow-auto text-sm">
               {summary.siteAccountIds.map((id) => (

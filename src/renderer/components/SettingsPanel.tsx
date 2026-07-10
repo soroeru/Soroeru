@@ -3,13 +3,22 @@
 // returns its text over IPC; this panel triggers a browser-side file download
 // (a Blob + a transient <a download>) — no native save dialog, no filesystem
 // access is granted to the renderer.
+//
+// Issue #341 also hosts CSV import here (moved from the removed Site Management
+// tab). Import still only sends bytes over IPC and returns a counts-only
+// summary; collection itself runs from the Disclosure ledger.
 
 import { useCallback, useState } from "react";
 import { reasonMessage } from "../messages.js";
+import { CsvImportPanel } from "./CsvImportPanel.js";
 
 type DownloadState = "idle" | "downloading" | "done";
 
-export function SettingsPanel(): React.JSX.Element {
+interface SettingsPanelProps {
+  onImported: () => void;
+}
+
+export function SettingsPanel({ onImported }: SettingsPanelProps): React.JSX.Element {
   const [state, setState] = useState<DownloadState>("idle");
   const [error, setError] = useState<string | undefined>();
 
@@ -39,6 +48,15 @@ export function SettingsPanel(): React.JSX.Element {
 
   return (
     <div className="flex flex-col gap-6">
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-medium">パスワード CSV の取り込み</h2>
+        <p className="text-sm text-neutral-600">
+          Google / Chrome のパスワード マネージャーから書き出した CSV を取り込みます。
+          取り込み後は開示台帳タブでサイトを選んで収集してください。
+        </p>
+        <CsvImportPanel onImported={onImported} />
+      </section>
+
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">ログ</h2>
         <p className="text-sm text-neutral-600">

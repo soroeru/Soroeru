@@ -69,15 +69,18 @@ async function main(): Promise<void> {
     // 1. First launch shows the vault-setup gate; create and unlock.
     await page.locator("#passphrase").fill(passphrase);
     await page.getByRole("button", { name: "作成して解錠" }).click();
-    await page.getByRole("button", { name: "サイト管理" }).waitFor();
+    await page.getByRole("button", { name: "開示台帳" }).waitFor();
 
-    // 2. Import the CSV through the hidden file input behind 「ファイルを選択」.
+    // 2. Import the CSV under Settings, then return to the ledger to collect.
+    await page.getByRole("button", { name: "設定" }).click();
     await page.locator('input[type="file"][accept=".csv,text/csv"]').setInputFiles(csvPath);
     await page.getByText("取り込んだ認証情報").waitFor({ timeout: 180_000 });
+    await page.getByRole("button", { name: "開示台帳" }).click();
+    await page.getByRole("button", { name: "選択したサイトを収集" }).waitFor();
 
     // 3. Select the sites to collect.
     if (maxSites !== undefined) {
-      const checkboxes = page.locator('li input[type="checkbox"]');
+      const checkboxes = page.locator('table tbody input[type="checkbox"]');
       const total = await checkboxes.count();
       const target = Math.min(maxSites, total);
       for (let i = 0; i < target; i++) await checkboxes.nth(i).check();

@@ -1,47 +1,113 @@
 // Disclosure ledger (issue #160, RFC-002 §4.2 / §5.1; spreadsheet-style table
-// layout added for Issue #301). Shows the composed per-site view: what each
-// Site Account holds, with stale flags and Account Relationship chips. Values
-// are masked by default; a single value is revealed only through an explicit
-// re-authenticated flow (master passphrase re-checked in the trusted layer). A
-// revealed value is held in component state only after that explicit reveal,
-// stays until the user hides it or the row/cell unmounts, and is never
-// persisted.
+// layout added for Issue #301; Site Management folded in for Issue #341). Shows
+// the composed per-site view: what each Site Account holds, with stale flags and
+// Account Relationship chips. Values are masked by default; a single value is
+// revealed only through an explicit re-authenticated flow (master passphrase
+// re-checked in the trusted layer). A revealed value is held in component state
+// only after that explicit reveal, stays until the user hides it or the
+// row/cell unmounts, and is never persisted.
+//
+// Issue #341 also owns selection, batch Visibility collection, session
+// persistence bulk-enable, per-row detail / saved-page import / delete, and
+// status chips that used to live on the dedicated Site Management tab.
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Label } from "@radix-ui/react-label";
 import type {
   DisclosureView,
   PendingAttributeCandidateView,
   SessionPersistenceView,
   SiteLedgerDetail,
+  SiteLedgerSummary,
+  VisibilityEvent,
 } from "../../../electron/ipc/contract.js";
+import {
+  buildCollectionResultModalContent,
+  type CollectionResultModalContent,
+} from "../collection-result-summary.js";
 import { buildLedgerColumns, disclosureFor } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
+import {
+  collectVisibleSelectedSiteIds,
+  enableSessionPersistenceForSites,
+  runVisibilityBatch,
+  type BatchResultEntry,
+} from "../site-management-batch.js";
+import { SavedPageImportPanel } from "./SavedPageImportPanel.js";
+import {
+  BatchCollectionBar,
+  CollectionResultModal,
+  DeleteSiteModal,
+  HandoffPanel,
+  SavedPageImportGuide,
+  type BatchProgress,
+  type HandoffState,
+} from "./SiteCollectionUi.js";
+
+const emptyBatchProgress: BatchProgress = {
+  phase: "idle",
+  queue: [],
+  currentSiteId: undefined,
+  completed: 0,
+  results: [],
+};
 
 interface LedgerPanelProps {
   /** Bumped by the parent after a CSV import or collection so the ledger refetches. */
   reloadToken: number;
+  /** Notify the parent that collection/import/delete changed vault-backed data. */
+  onCollected: () => void;
 }
 
 /**
- * Spreadsheet-style Disclosure ledger (Issue #301): rows are sites, columns are
- * the union of every attribute observed across all sites, and the container
- * scrolls horizontally so every collected value is visible without opening a
- * per-site detail panel first. `SiteManagementPanel`'s per-row "詳細" flow
- * (relationships, constraints, pending candidates, session persistence) stays
- * the place for those actions; this view is read-only.
+ * Spreadsheet-style Disclosure ledger with integrated site collection controls
+ * (Issue #341). Rows are sites, columns are the union of every attribute
+ * observed across all sites, plus selection, status, and row actions.
  */
-export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Element {
+export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): React.JSX.Element {
   const [sites, setSites] = useState<SiteLedgerDetail[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loadError, setLoadError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
+  const [runningSiteId, setRunningSiteId] = useState<string | undefined>();
+  const [savedPageSiteId, setSavedPageSiteId] = useState<string | undefined>();
+  const [guideSiteId, setGuideSiteId] = useState<string | undefined>();
+  const [handoff, setHandoff] = useState<HandoffState | undefined>();
+  const [detail, setDetail] = useState<SiteLedgerDetail | undefined>();
+  const [detailError, setDetailError] = useState<string | undefined>();
+  const [batch, setBatch] = useState<BatchProgress>(emptyBatchProgress);
+  const [sessionPersistenceBulkRunning, setSessionPersistenceBulkRunning] = useState(false);
+  const [sessionPersistenceBulkError, setSessionPersistenceBulkError] = useState<string | undefined>();
+  const [resultModal, setResultModal] = useState<CollectionResultModalContent | undefined>();
+  const [deleteTarget, setDeleteTarget] = useState<SiteLedgerSummary | undefined>();
+  const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
+  const [deletingSite, setDeletingSite] = useState(false);
+  const resumedHandoffSites = useRef<Set<string>>(new Set());
+  const cancelBatchRef = useRef(false);
+  const onCollectedRef = useRef(onCollected);
+  const sitesRef = useRef(sites);
+
+  useEffect(() => {
+    onCollectedRef.current = onCollected;
+  }, [onCollected]);
+
+  useEffect(() => {
+    sitesRef.current = sites;
+  }, [sites]);
 
   const loadSites = useCallback(async () => {
-    // Mirror the sibling components' discipline: a rejected invoke must not leave
-    // the panel wedged on the loading text with an unhandled rejection.
     try {
-      setSites(await window.soroeru.ledger.siteDetails());
+      const nextSites = await window.soroeru.ledger.siteDetails();
+      setSites(nextSites);
       setLoadError(undefined);
+      setSelected((current) => {
+        const validIds = new Set(nextSites.map((site) => site.siteAccountId));
+        return new Set([...current].filter((siteAccountId) => validIds.has(siteAccountId)));
+      });
+      setDetail((current) => {
+        if (!current) return current;
+        return nextSites.find((site) => site.siteAccountId === current.siteAccountId);
+      });
     } catch {
       setLoadError(reasonMessage(undefined));
     } finally {
@@ -54,9 +120,253 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
     void loadSites();
   }, [loadSites, reloadToken]);
 
+  useEffect(() => {
+    const unsubscribe = window.soroeru.visibility.onEvent((event: VisibilityEvent) => {
+      switch (event.type) {
+        case "run-started":
+          setRunningSiteId(event.siteAccountId);
+          setHandoff(undefined);
+          setGuideSiteId(undefined);
+          resumedHandoffSites.current.delete(event.siteAccountId);
+          break;
+        case "handoff":
+          setBatch((current) => ({ ...current, phase: "paused" }));
+          setHandoff({
+            siteAccountId: event.siteAccountId,
+            instruction: event.instruction,
+            fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
+            credential: event.credential,
+          });
+          if (resumedHandoffSites.current.has(event.siteAccountId)) setGuideSiteId(event.siteAccountId);
+          break;
+        case "resumed":
+          resumedHandoffSites.current.add(event.siteAccountId);
+          setBatch((current) => ({
+            ...current,
+            phase: current.queue.length > 0 ? "running" : current.phase,
+          }));
+          setHandoff(undefined);
+          break;
+        case "run-finished":
+          setRunningSiteId(undefined);
+          setHandoff(undefined);
+          resumedHandoffSites.current.delete(event.result.siteAccountId);
+          void loadSites();
+          onCollectedRef.current();
+          break;
+      }
+    });
+    return unsubscribe;
+  }, [loadSites]);
+
+  const selectedVisibleIds = useMemo(() => collectVisibleSelectedSiteIds(sites, selected), [selected, sites]);
+  const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
+  const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
+  const allSelected = sites.length > 0 && selectedVisibleIds.length === sites.length;
+
+  const refreshAfterSite = useCallback(
+    async (siteAccountId: string, result: BatchResultEntry) => {
+      await loadSites();
+      onCollectedRef.current();
+      setBatch((current) => ({
+        ...current,
+        completed: current.completed + 1,
+        results: [...current.results, result],
+        currentSiteId: siteAccountId,
+      }));
+    },
+    [loadSites],
+  );
+
+  const startBatch = useCallback(
+    async (overrideIds?: string[]) => {
+      const queue = overrideIds ?? [...selectedVisibleIds];
+      if (queue.length === 0 || batchBusy) return;
+      cancelBatchRef.current = false;
+      setLoadError(undefined);
+      setResultModal(undefined);
+      setBatch({ phase: "running", queue, currentSiteId: queue[0], completed: 0, results: [] });
+      try {
+        const summary = await runVisibilityBatch(queue, {
+          run: async (siteAccountId) => {
+            setBatch((current) => ({ ...current, phase: "running", currentSiteId: siteAccountId }));
+            return window.soroeru.visibility.run(siteAccountId);
+          },
+          refreshAfterSite,
+          isCanceled: () => cancelBatchRef.current,
+        });
+        setBatch((current) => ({
+          ...current,
+          phase: summary.canceled ? "idle" : "done",
+          currentSiteId: undefined,
+          completed: summary.completed,
+          results: summary.results,
+        }));
+        if (!summary.canceled) {
+          const content = buildCollectionResultModalContent(
+            summary.results,
+            (siteAccountId) =>
+              sitesRef.current.find((site) => site.siteAccountId === siteAccountId)?.displayName ??
+              siteAccountId,
+          );
+          if (content) setResultModal(content);
+        }
+      } catch {
+        setLoadError(reasonMessage(undefined));
+        setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
+      }
+    },
+    [batchBusy, refreshAfterSite, selectedVisibleIds],
+  );
+
+  const cancelBatch = useCallback(() => {
+    cancelBatchRef.current = true;
+    if (runningSiteId !== undefined || handoff) void window.soroeru.visibility.abort();
+    setBatch((current) => ({ ...current, phase: "canceling" }));
+  }, [handoff, runningSiteId]);
+
+  const resume = useCallback(() => void window.soroeru.visibility.resume(), []);
+  const skipCurrentSite = useCallback(() => void window.soroeru.visibility.abort(), []);
+  const waitForVisibilityIdle = useCallback(async () => {
+    for (let i = 0; i < 20; i++) {
+      const status = await window.soroeru.visibility.status();
+      if (!status.running) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }, []);
+  const showGuide = useCallback(
+    async (siteAccountId: string) => {
+      cancelBatchRef.current = true;
+      setBatch((current) => ({ ...current, phase: "canceling" }));
+      await window.soroeru.visibility.abort();
+      await waitForVisibilityIdle();
+      setRunningSiteId(undefined);
+      setHandoff(undefined);
+      setGuideSiteId(siteAccountId);
+      setSavedPageSiteId(siteAccountId);
+    },
+    [waitForVisibilityIdle],
+  );
+  const markManual = useCallback(
+    async (siteAccountId: string) => {
+      await window.soroeru.visibility.abort();
+      await waitForVisibilityIdle();
+      const result = await window.soroeru.savedPage.markManualCheck(siteAccountId);
+      if (!result.ok) {
+        setLoadError(reasonMessage(result.error));
+        return;
+      }
+      setGuideSiteId(undefined);
+      setSavedPageSiteId(undefined);
+      await loadSites();
+      onCollectedRef.current();
+    },
+    [loadSites, waitForVisibilityIdle],
+  );
+  const openSite = useCallback(async (siteAccountId: string) => {
+    const result = await window.soroeru.savedPage.openSite(siteAccountId);
+    if (!result.ok) setLoadError(reasonMessage(result.error));
+  }, []);
+  const openDetail = useCallback(async (siteAccountId: string) => {
+    const result = await window.soroeru.ledger.site(siteAccountId);
+    if (!result) {
+      setDetail(undefined);
+      setDetailError("詳細を取得できませんでした。");
+      return;
+    }
+    setDetailError(undefined);
+    setDetail(result);
+  }, []);
+  const enableSessionPersistenceForSelected = useCallback(async () => {
+    const ids = [...selectedVisibleIds];
+    if (ids.length === 0 || sessionPersistenceBulkRunning) return;
+    setSessionPersistenceBulkRunning(true);
+    setSessionPersistenceBulkError(undefined);
+    try {
+      const summary = await enableSessionPersistenceForSites(ids, (siteAccountId) =>
+        window.soroeru.sessionPersistence.set({ siteAccountId, enabled: true }),
+      );
+      if (summary.failedCount > 0) {
+        const firstFailure = summary.results.find((entry) => !entry.ok);
+        setSessionPersistenceBulkError(reasonMessage(firstFailure?.error));
+      }
+      if (detail && ids.includes(detail.siteAccountId)) await openDetail(detail.siteAccountId);
+      await loadSites();
+    } finally {
+      setSessionPersistenceBulkRunning(false);
+    }
+  }, [detail, loadSites, openDetail, selectedVisibleIds, sessionPersistenceBulkRunning]);
+  const retrySite = useCallback(
+    (siteAccountId: string) => {
+      setResultModal(undefined);
+      void startBatch([siteAccountId]);
+    },
+    [startBatch],
+  );
+  const importSavedPageFor = useCallback((siteAccountId: string) => {
+    setResultModal(undefined);
+    setSavedPageSiteId(siteAccountId);
+  }, []);
+  const requestDelete = useCallback((site: SiteLedgerSummary) => {
+    setLoadError(undefined);
+    setDeleteAcknowledged(false);
+    setDeleteTarget(site);
+  }, []);
+  const closeDeleteModal = useCallback(() => {
+    if (deletingSite) return;
+    setDeleteTarget(undefined);
+    setDeleteAcknowledged(false);
+  }, [deletingSite]);
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget || !deleteAcknowledged || deletingSite) return;
+    setDeletingSite(true);
+    try {
+      const siteAccountId = deleteTarget.siteAccountId;
+      const result = await window.soroeru.ledger.deleteSite({
+        siteAccountId,
+        confirmedFourthBoundary: true,
+      });
+      if (!result.ok) {
+        setLoadError(reasonMessage(result.error));
+        return;
+      }
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(siteAccountId);
+        return next;
+      });
+      setDetail((current) => (current?.siteAccountId === siteAccountId ? undefined : current));
+      setSavedPageSiteId((current) => (current === siteAccountId ? undefined : current));
+      setGuideSiteId((current) => (current === siteAccountId ? undefined : current));
+      setDeleteTarget(undefined);
+      setDeleteAcknowledged(false);
+      await loadSites();
+      onCollectedRef.current();
+    } catch {
+      setLoadError(reasonMessage("delete-failed"));
+    } finally {
+      setDeletingSite(false);
+    }
+  }, [deleteAcknowledged, deleteTarget, deletingSite, loadSites]);
+
+  const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(siteAccountId);
+      else next.delete(siteAccountId);
+      return next;
+    });
+  }, []);
+  const selectAllVisible = useCallback(() => {
+    setSelected(new Set(sites.map((site) => site.siteAccountId)));
+  }, [sites]);
+  const clearVisible = useCallback(() => {
+    setSelected(new Set());
+  }, []);
+
   if (loading) return <p className="text-sm text-neutral-500">読み込み中…</p>;
 
-  if (loadError) {
+  if (loadError && sites.length === 0) {
     return (
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-medium">開示台帳</h2>
@@ -73,7 +383,8 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
       <section className="flex flex-col gap-2">
         <h2 className="text-lg font-medium">開示台帳</h2>
         <p className="text-sm text-neutral-500">
-          まだサイトがありません。CSV を取り込むと、ここに開示台帳が表示されます。
+          まだサイトがありません。設定タブの「CSV を取り込む」から CSV
+          を取り込むと、ここに開示台帳が表示されます。
         </p>
       </section>
     );
@@ -86,70 +397,266 @@ export function LedgerPanel({ reloadToken }: LedgerPanelProps): React.JSX.Elemen
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
         <p className="text-sm text-neutral-500">
-          サイトを行、項目を列にした表形式です。横にスクロールするとすべての項目を確認できます。
+          サイトを行、項目を列にした表形式です。チェックしたサイトを収集できます。CAPTCHA / MFA /
+          検証ウォールは自動で突破せず、表示中のブラウザでご自身に解決をお願いします。
         </p>
       </div>
 
-      {columns.length === 0 ? (
-        <p className="text-sm text-neutral-500">
-          収集済みの開示がまだありません。サイト管理からサイトを収集すると、ここに表示されます。
-        </p>
-      ) : (
-        <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
-          <table className="border-collapse text-left text-sm">
-            <colgroup>
-              <col className="w-64" />
+      {loadError && <p className="text-sm text-red-600">{loadError}</p>}
+      {detailError && <p className="text-sm text-red-600">{detailError}</p>}
+
+      <BatchCollectionBar
+        selectedCount={selectedVisibleIds.length}
+        totalVisible={sites.length}
+        batch={batch}
+        currentSiteName={currentSite?.displayName}
+        disabled={batchBusy}
+        onStart={() => void startBatch()}
+        onCancel={cancelBatch}
+        onEnableSessionPersistence={() => void enableSessionPersistenceForSelected()}
+        sessionPersistenceBulkRunning={sessionPersistenceBulkRunning}
+        sessionPersistenceBulkError={sessionPersistenceBulkError}
+      />
+
+      {handoff && (
+        <HandoffPanel
+          handoff={handoff}
+          onResume={resume}
+          onSkip={skipCurrentSite}
+          onCancelBatch={cancelBatch}
+          onShowGuide={() => void showGuide(handoff.siteAccountId)}
+        />
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {!allSelected && (
+          <button
+            type="button"
+            disabled={batchBusy || sites.length === 0}
+            onClick={selectAllVisible}
+            className="text-sm underline"
+          >
+            全てにチェックする
+          </button>
+        )}
+        {selectedVisibleIds.length > 0 && (
+          <button type="button" disabled={batchBusy} onClick={clearVisible} className="text-sm underline">
+            全てのチェックを外す
+          </button>
+        )}
+      </div>
+
+      <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
+        <table className="border-collapse text-left text-sm">
+          <colgroup>
+            <col className="w-10" />
+            <col className="w-56" />
+            <col className="w-64" />
+            {columns.map((column) => (
+              <col key={column.attributeKey} />
+            ))}
+          </colgroup>
+          <thead>
+            <tr className="border-b border-neutral-200 bg-neutral-50">
+              <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-2 py-2">
+                <span className="sr-only">選択</span>
+              </th>
+              <th scope="col" className="sticky left-10 top-0 z-20 w-56 bg-neutral-50 px-3 py-2 font-medium">
+                サイト
+              </th>
+              <th scope="col" className="sticky top-0 z-10 min-w-[16rem] bg-neutral-50 px-3 py-2 font-medium">
+                操作
+              </th>
               {columns.map((column) => (
-                <col key={column.attributeKey} />
-              ))}
-            </colgroup>
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50">
-                <th scope="col" className="sticky left-0 top-0 z-20 w-64 bg-neutral-50 px-3 py-2 font-medium">
-                  サイト
+                <th
+                  key={column.attributeKey}
+                  scope="col"
+                  className="sticky top-0 z-10 min-w-[8rem] whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
+                >
+                  {column.label}
                 </th>
-                {columns.map((column) => (
-                  <th
-                    key={column.attributeKey}
-                    scope="col"
-                    className="sticky top-0 z-10 min-w-[8rem] whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
-                  >
-                    {column.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sites.map((site) => (
-                <tr key={site.siteAccountId} className="border-b border-neutral-100 last:border-b-0">
-                  <th
-                    scope="row"
-                    className="sticky left-0 z-10 w-64 whitespace-nowrap bg-white px-3 py-2 text-left align-top font-medium"
-                  >
-                    <span className="flex flex-col">
-                      <span>{site.displayName}</span>
-                      <span className="text-xs font-normal text-neutral-400">{site.domain}</span>
-                    </span>
-                  </th>
-                  {site.collected ? (
-                    columns.map((column) => (
-                      <LedgerCell
-                        key={column.attributeKey}
-                        disclosure={disclosureFor(site, column.attributeKey)}
-                      />
-                    ))
-                  ) : (
-                    <td colSpan={columns.length} className="px-3 py-2 text-neutral-400">
-                      未収集
-                    </td>
-                  )}
-                </tr>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </tr>
+          </thead>
+          <tbody>
+            {sites.map((site) => {
+              const detailOpen = detail?.siteAccountId === site.siteAccountId;
+              const savedPageOpen = savedPageSiteId === site.siteAccountId;
+              const guideOpen = guideSiteId === site.siteAccountId;
+              const expanded = detailOpen || savedPageOpen;
+              const attributeColSpan = Math.max(columns.length, 1);
+              return (
+                <Fragment key={site.siteAccountId}>
+                  <tr className="border-b border-neutral-100">
+                    <td className="sticky left-0 z-10 bg-white px-2 py-2 align-top">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(site.siteAccountId)}
+                        disabled={batchBusy}
+                        onChange={(event) => selectSite(site.siteAccountId, event.target.checked)}
+                        aria-label={site.displayName}
+                        className="mt-1"
+                      />
+                    </td>
+                    <th
+                      scope="row"
+                      className="sticky left-10 z-10 w-56 bg-white px-3 py-2 text-left align-top font-medium"
+                    >
+                      <span className="flex flex-col gap-1">
+                        <span>{site.displayName}</span>
+                        <span className="break-all text-xs font-normal text-neutral-400">
+                          {site.url ?? site.domain}
+                        </span>
+                        <SiteStatusChips site={site} running={runningSiteId === site.siteAccountId} />
+                      </span>
+                    </th>
+                    <td className="min-w-[16rem] px-3 py-2 align-top">
+                      <span className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void openDetail(site.siteAccountId)}
+                          className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
+                        >
+                          詳細
+                        </button>
+                        <button
+                          type="button"
+                          disabled={batchBusy}
+                          onClick={() =>
+                            setSavedPageSiteId((current) =>
+                              current === site.siteAccountId ? undefined : site.siteAccountId,
+                            )
+                          }
+                          className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          保存ページを取り込む
+                        </button>
+                        <button
+                          type="button"
+                          disabled={batchBusy}
+                          onClick={() => requestDelete(site)}
+                          title={`${site.displayName} の情報を削除`}
+                          aria-label={`${site.displayName} の情報を削除`}
+                          className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          削除
+                        </button>
+                      </span>
+                    </td>
+                    {columns.length === 0 ? (
+                      <td className="px-3 py-2 text-neutral-400">—</td>
+                    ) : site.collected ? (
+                      columns.map((column) => (
+                        <LedgerCell
+                          key={column.attributeKey}
+                          disclosure={disclosureFor(site, column.attributeKey)}
+                        />
+                      ))
+                    ) : (
+                      <td colSpan={columns.length} className="px-3 py-2 text-neutral-400">
+                        未収集
+                      </td>
+                    )}
+                  </tr>
+                  {expanded && (
+                    <tr className="border-b border-neutral-100 bg-neutral-50">
+                      <td colSpan={3 + attributeColSpan} className="px-3 py-3">
+                        <div className="flex flex-col gap-3">
+                          {savedPageOpen && (
+                            <div className="flex flex-col gap-2">
+                              {guideOpen && (
+                                <SavedPageImportGuide
+                                  site={site}
+                                  disabled={batchBusy}
+                                  onOpenSite={() => void openSite(site.siteAccountId)}
+                                  onSkip={() => void markManual(site.siteAccountId)}
+                                />
+                              )}
+                              <SavedPageImportPanel
+                                siteAccountId={site.siteAccountId}
+                                disabled={batchBusy}
+                                onImported={() => {
+                                  setGuideSiteId(undefined);
+                                  void loadSites();
+                                  onCollectedRef.current();
+                                }}
+                              />
+                            </div>
+                          )}
+                          {detailOpen && detail && (
+                            <SiteDetail
+                              detail={detail}
+                              onClose={() => setDetail(undefined)}
+                              onReload={() => openDetail(site.siteAccountId)}
+                            />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {resultModal && (
+        <CollectionResultModal
+          content={resultModal}
+          onClose={() => setResultModal(undefined)}
+          onRetry={retrySite}
+          onImportSavedPage={importSavedPageFor}
+        />
+      )}
+      {deleteTarget && (
+        <DeleteSiteModal
+          site={deleteTarget}
+          acknowledged={deleteAcknowledged}
+          deleting={deletingSite}
+          onAcknowledgedChange={setDeleteAcknowledged}
+          onCancel={closeDeleteModal}
+          onConfirm={() => void confirmDelete()}
+        />
       )}
     </section>
+  );
+}
+
+function SiteStatusChips({
+  site,
+  running,
+}: {
+  site: SiteLedgerSummary;
+  running: boolean;
+}): React.JSX.Element {
+  return (
+    <span className="flex flex-wrap items-center gap-2 text-xs font-normal text-neutral-500">
+      {site.collected ? (
+        <span className="text-green-700">収集済み（開示 {site.disclosureCount}）</span>
+      ) : (
+        <span className="text-neutral-400">未収集</span>
+      )}
+      {site.stale.stale > 0 && (
+        <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700">古い {site.stale.stale}</span>
+      )}
+      {site.stale.unknown > 0 && (
+        <span className="rounded bg-neutral-100 px-1.5 py-0.5 text-neutral-600">
+          不明 {site.stale.unknown}
+        </span>
+      )}
+      {site.relationshipKinds.map((kind) => (
+        <span key={kind} className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-700">
+          {relationshipLabel(kind)}
+        </span>
+      ))}
+      {site.constraintCount > 0 && (
+        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">
+          要確認 {site.constraintCount}
+        </span>
+      )}
+      {running && <span className="text-neutral-700">収集中…</span>}
+    </span>
   );
 }
 
@@ -234,7 +741,7 @@ export function SiteDetail({
   onReload: () => void | Promise<void>;
 }): React.JSX.Element {
   return (
-    <div className="flex flex-col gap-3 rounded border border-neutral-200 p-3 sm:p-4">
+    <div className="flex flex-col gap-3 rounded border border-neutral-200 bg-white p-3 sm:p-4">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="font-medium">{detail.displayName}</h3>
         <button type="button" onClick={onClose} className="text-sm underline">
@@ -316,9 +823,6 @@ function SessionPersistenceControl({
     } catch {
       setError(reasonMessage(undefined));
     } finally {
-      // Stay busy (checkbox disabled) until the reload delivers fresh props —
-      // clearing busy first would let a fast second click read the stale
-      // `sessionPersistence.enabled` closure and double-toggle.
       await onReload();
       setBusy(false);
     }
@@ -401,9 +905,6 @@ function PendingCandidateRow({
     } finally {
       setBusy(false);
     }
-    // The reload is best-effort: the confirm already persisted, so a failure
-    // here (e.g. the vault locked mid-request) must not be reported as if the
-    // confirm itself had failed.
     if (confirmedOk) await onConfirmed();
   }, [candidate.matchTerms, candidate.proposedAttributeKey, label, onConfirmed]);
 
