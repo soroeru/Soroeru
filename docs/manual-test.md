@@ -40,7 +40,7 @@ This experiment is developer-only and is not part of the MVP DMG. Use a fake
 HTTPS fixture or a test account with fake values; never use another person's
 account or real personal data.
 
-- [ ] Run `npm run build:extension` and load `dist/compiled/extension/` with
+- [ ] Run `npm run build:extension` and load `dist/extension/` with
       Chrome's **Load unpacked** developer-mode flow.
 - [ ] Confirm the extension lists only `nativeMessaging`, `scripting`,
       `activeTab`, and `storage`; no cookies/history/bookmarks/debugger access.

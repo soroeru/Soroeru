@@ -9,7 +9,7 @@ Build the unpacked directory with:
 npm run build:extension
 ```
 
-Load `dist/compiled/extension/` in Chrome's developer-mode **Load unpacked**
+Load `dist/extension/` in Chrome's developer-mode **Load unpacked**
 flow after the Electron/native-host setup from the bridge documentation. The
 extension requests only the four static permissions in `manifest.json`; each
 HTTPS origin is requested from the popup after the user clicks the permission
