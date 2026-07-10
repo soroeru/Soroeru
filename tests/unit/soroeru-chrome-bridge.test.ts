@@ -20,6 +20,7 @@ import {
   type ChromeBridgeCommand,
 } from "../../src/shared/chrome-bridge.js";
 import { ChromeExtensionBridge, type ChromeBridgeEventView } from "../../electron/chrome-extension-bridge.js";
+import { createChromeExtensionBridge } from "../../electron/chrome-extension-bridge-runtime.js";
 
 function waitForEvent<T>(events: T[], predicate: (event: T) => boolean): Promise<T> {
   const existing = events.find(predicate);
@@ -149,6 +150,17 @@ test("default native host paths are stable under the macOS application support l
   });
 });
 
+test("chrome bridge runtime stays disabled until a command dispatcher is supplied", () => {
+  assert.equal(
+    createChromeExtensionBridge({
+      enabled: true,
+      appSupportDir: "/tmp/soroeru",
+      socketPath: "/tmp/soroeru/bridge.sock",
+    }),
+    undefined,
+  );
+});
+
 test("electron bridge authenticates a host and forwards a validated command result", async () => {
   const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-"));
   const socketPath = join(root, "bridge.sock");
@@ -231,6 +243,29 @@ test("electron bridge reports an unavailable command handler instead of leaving 
     error: "command handler unavailable",
   });
   socket.destroy();
+  await bridge.close();
+});
+
+test("electron bridge does not report an intentional client replacement as a socket error", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-"));
+  const socketPath = join(root, "bridge.sock");
+  const events: ChromeBridgeEventView[] = [];
+  const bridge = new ChromeExtensionBridge({
+    appSupportDir: root,
+    socketPath,
+    onEvent: (event: ChromeBridgeEventView) => events.push(event),
+  });
+  await bridge.start();
+
+  const first = await waitForSocket(socketPath);
+  const second = await waitForSocket(socketPath);
+  first.emit("error", new Error("superseded client"));
+
+  assert.equal(
+    events.some((event) => event.type === "rejected" && event.reason === "socket-error"),
+    false,
+  );
+  second.destroy();
   await bridge.close();
 });
 

@@ -54,6 +54,7 @@ export class ChromeExtensionBridge {
   private server: Server | undefined;
   private socket: Socket | undefined;
   private tokenPath: string | undefined;
+  private readonly supersededSockets = new WeakSet<Socket>();
   private started = false;
   private closing = false;
 
@@ -67,12 +68,14 @@ export class ChromeExtensionBridge {
     await rm(this.options.socketPath, { force: true });
     const token = await createHandshakeToken(this.options.appSupportDir);
     this.tokenPath = token.tokenPath;
+    let server: Server | undefined;
     try {
-      const server = createServer((socket) => this.accept(socket, token.token));
+      const listeningServer = createServer((socket) => this.accept(socket, token.token));
+      server = listeningServer;
       await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(this.options.socketPath, () => {
-          server.removeListener("error", reject);
+        listeningServer.once("error", reject);
+        listeningServer.listen(this.options.socketPath, () => {
+          listeningServer.removeListener("error", reject);
           resolve();
         });
       });
@@ -81,6 +84,10 @@ export class ChromeExtensionBridge {
       this.started = true;
       this.emit({ type: "connecting" });
     } catch (error) {
+      this.socket?.destroy();
+      this.socket = undefined;
+      await this.closeServer(server);
+      await rm(this.options.socketPath, { force: true });
       await removeHandshakeToken(token.tokenPath);
       throw error;
     }
@@ -93,11 +100,7 @@ export class ChromeExtensionBridge {
     this.socket = undefined;
     const server = this.server;
     this.server = undefined;
-    if (server) {
-      await new Promise<void>((resolve) => {
-        server.close(() => resolve());
-      });
-    }
+    await this.closeServer(server);
     await rm(this.options.socketPath, { force: true });
     if (this.tokenPath) await removeHandshakeToken(this.tokenPath);
     this.tokenPath = undefined;
@@ -107,7 +110,10 @@ export class ChromeExtensionBridge {
 
   private accept(socket: Socket, expectedToken: string): void {
     this.emit({ type: "connecting" });
-    this.socket?.destroy();
+    if (this.socket) {
+      this.supersededSockets.add(this.socket);
+      this.socket.destroy();
+    }
     this.socket = socket;
     let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let authenticated = false;
@@ -152,7 +158,8 @@ export class ChromeExtensionBridge {
       }
     });
     socket.on("error", () => {
-      if (!rejected) this.emit({ type: "rejected", reason: "socket-error" });
+      if (!rejected && !this.supersededSockets.has(socket))
+        this.emit({ type: "rejected", reason: "socket-error" });
       socket.destroy();
     });
     socket.on("close", () => {
@@ -161,6 +168,11 @@ export class ChromeExtensionBridge {
         if (!this.closing) this.emit({ type: "disconnected" });
       }
     });
+  }
+
+  private async closeServer(server: Server | undefined): Promise<void> {
+    if (!server || !server.listening) return;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
   private async handleCommand(socket: Socket, command: ChromeBridgeCommand): Promise<void> {
