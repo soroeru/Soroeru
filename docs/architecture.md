@@ -161,6 +161,32 @@ known alternatives and concrete triggers for reconsideration:
   feedback shows a flat 30 days is wrong for high-risk sites (either direction changes the
   `sessionState` record shape and the ledger's session-persistence UI, so it is tracked here
   as a decision, not left implicit in the table row above).
+- **Soroeru-owned Chrome extension + Native Messaging + Electron bridge: designed option
+  now entering a developer-only, feature-flagged prototype stage (trigger fired
+  2026-07-10)** (Issue #291): a design spike
+  ([`design/issue-291-chrome-extension-bridge.md`](design/issue-291-chrome-extension-bridge.md))
+  compared it against the current Playwright path (with `channel: "chrome"` and encrypted
+  `storageState` above) and a localhost-WebSocket variant, and concluded it is a post-MVP
+  architecture option whose first implementation would be a developer-only, feature-flagged
+  prototype — not an MVP scope change; browser-extension distribution stays post-MVP (§1).
+  The extension would sit behind the same `PageDriver` seam as a second session surface, so
+  the Playwright path is preserved, not replaced. The option is a front-door use of the
+  user's own profile, not bot-detection evasion: no fingerprint/UA spoofing, no stealth, no
+  wall bypass, and the automation is visibly indicated via the extension badge and an
+  in-page banner (design §1/§7; [`security.md`](security.md) §7 unchanged). The
+  reconsideration trigger — manual beta testing showing **two or more** sites that still
+  fail collection due to bot/risk checks with `channel: "chrome"` plus persisted
+  `storageState`, with the failure attributed to the browser surface rather than
+  selector/flow mismatch — **fired on 2026-07-10**: the Product Owner's manual beta
+  evaluation found no collection-rate improvement at all from either option (the
+  implementing PRs #295/#297 had explicitly deferred real-site comparison to manual
+  beta). The per-site surface-vs-selector attribution was not separately recorded via the
+  #317 diagnostics; the Product Owner, as owner of the trigger, judged the blanket
+  no-improvement result sufficient to fire it. The design's follow-up implementation
+  Issues are filed as **#335–#340**; the first implementation stage remains the
+  developer-only, feature-flagged prototype, and browser-extension distribution remains
+  post-MVP. The design depends only on public Chrome extension /
+  Native Messaging APIs — never on the Codex extension or any undocumented protocol.
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
   matches the small private beta while making Gatekeeper friction explicit and avoiding
