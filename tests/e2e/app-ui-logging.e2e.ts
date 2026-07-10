@@ -55,11 +55,13 @@ test("Electron app UI: an unreachable site's collection failure is recorded in t
     // 1. First launch shows the vault-setup gate; create and unlock.
     await page.locator("#passphrase").fill(PASSPHRASE);
     await page.getByRole("button", { name: "作成して解錠" }).click();
-    await page.getByRole("button", { name: "サイト管理" }).waitFor();
+    await page.getByRole("button", { name: "開示台帳" }).waitFor();
 
-    // 2. Import the CSV through the hidden file input behind 「ファイルを選択」.
+    // 2. Import the CSV under Settings, then return to the ledger to collect.
+    await page.getByRole("button", { name: "設定" }).click();
     await page.locator('input[type="file"][accept=".csv,text/csv"]').setInputFiles(csvPath);
     await page.getByText("取り込んだ認証情報").waitFor();
+    await page.getByRole("button", { name: "開示台帳" }).click();
 
     // 3. Select the imported site and start collection; a refused connection
     //    on 127.0.0.1:1 never reaches "収集済み" — it ends with a recorded
@@ -74,7 +76,7 @@ test("Electron app UI: an unreachable site's collection failure is recorded in t
     // the modal body also has a same-text "閉じる" button with no aria-label.)
     await page.getByLabel("閉じる").click();
 
-    // 4. Smoke-test the new Settings tab's download button through the real UI
+    // 4. Smoke-test the Settings tab's download button through the real UI
     //    (it must not error), then verify the actual log content it reads by
     //    inspecting the same on-disk file the trusted layer wrote (see header
     //    comment for why this test does not assert on a captured OS download).

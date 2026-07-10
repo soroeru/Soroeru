@@ -47,10 +47,11 @@ Soroeru.app (Electron)
 │
 └── renderer (untrusted UI surface, React + Vite)
     ├── vault setup / unlock (`VaultGate`)
-    ├── CSV import and saved-page import (`CsvImportPanel`, `SavedPageImportPanel`)
-    ├── Visibility collection run (`CollectionPanel`)
-    ├── Disclosure ledger, filters, and Reflection (`LedgerPanel`, `InsightsPanel`)
-    ├── site management / batch collection (`SiteManagementPanel`)
+    ├── CSV import under Settings (`CsvImportPanel` via `SettingsPanel`)
+    ├── Visibility collection + saved-page import on the Disclosure ledger
+      (`LedgerPanel`, `SavedPageImportPanel`, `SiteCollectionUi`)
+    ├── Disclosure ledger spreadsheet, filters, and Reflection
+      (`LedgerPanel`, `InsightsPanel`)
     └── review-and-confirm gates (later slices)
 ```
 
@@ -367,7 +368,7 @@ experience: the user sees their scattered online footprint at once.
 2. **CSV import**: create Site Account and Credential seeds (`CsvImportPanel`); a saved
    local account page (HTML) can also be imported manually as a fallback
    (`SavedPageImportPanel`, when auto-login/collection cannot reach a page).
-3. **Visibility run** (`CollectionPanel`, `VisibilityService`):
+3. **Visibility run** (`LedgerPanel` / `SiteCollectionUi`, `VisibilityService`):
    - open an ephemeral Playwright browser session per selected Site Account
      (`BrowserEngine.openSession`);
    - navigate to the site and log in with the stored credential;
@@ -379,11 +380,14 @@ experience: the user sees their scattered online footprint at once.
    - collect field/text values locally (`disclosure-collector.ts`);
    - classify values into Disclosures and Account Relationships;
    - store encrypted records plus Evidence/Audit.
+     (`CollectionPanel.tsx` is residual/unmounted; the live shell drives collection from
+     the Disclosure ledger after Issue #341.)
 4. **Ledger view** (`LedgerPanel`): a spreadsheet-style table (sites as rows, the union of
    observed attributes as horizontally-scrollable columns) backed by `ledgerSiteDetails`
-   (all sites' composed detail in one call); per-site composed detail (`ledgerSite`) and
-   cross-site summaries (`ledgerSites`) remain available for `SiteManagementPanel`'s
-   per-row "詳細" flow.
+   (all sites' composed detail in one call). The same panel owns selection, batch
+   Visibility collection, session-persistence bulk-enable, and per-row 詳細 / 保存ページ
+   import / 削除 actions (Issue #341; the dedicated Site Management tab was removed).
+   Per-site composed detail (`ledgerSite`) remains available for the row "詳細" flow.
 5. **Initial Reflection / filters** (`InsightsPanel`): `ledgerInsights` /
    `computeLedgerInsights` summarize stale, risky, over-disclosed, newsletter, billing, and
    not-fully-checked findings without turning them into pressure to approve blindly.

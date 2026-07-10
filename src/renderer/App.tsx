@@ -2,7 +2,11 @@
 // CSV import & queue review → Disclosure ledger (per-site composed view with
 // stale flags and re-authenticated reveal). Everything crosses the typed IPC
 // boundary; the renderer holds no fs/network/vault handle and sees only
-// sanitized, masked views (RFC-002 §3 / §5.1).
+// sanitized, masked views (RFC-002 §5.1).
+//
+// Issue #341 removed the dedicated Site Management tab: CSV import lives under
+// Settings, and collection / session-persistence / row actions live on the
+// Disclosure ledger.
 
 import { useCallback, useEffect, useState } from "react";
 import type { VaultStatus } from "../../electron/ipc/contract.js";
@@ -11,10 +15,9 @@ import { VaultGate } from "./components/VaultGate.js";
 import { InsightsPanel } from "./components/InsightsPanel.js";
 import { LedgerPanel } from "./components/LedgerPanel.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
-import { SiteManagementPanel } from "./components/SiteManagementPanel.js";
 
 type Phase = "loading" | "setup" | "unlock" | "unlocked";
-type Tab = "sites" | "ledger" | "insights" | "settings";
+type Tab = "ledger" | "insights" | "settings";
 
 function phaseFor(status: VaultStatus): Phase {
   if (!status.exists) return "setup";
@@ -23,12 +26,14 @@ function phaseFor(status: VaultStatus): Phase {
 
 export function App(): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [tab, setTab] = useState<Tab>("sites");
+  const [tab, setTab] = useState<Tab>("ledger");
   const [hasRecoveryKey, setHasRecoveryKey] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState<string | undefined>();
   const [reloadToken, setReloadToken] = useState(0);
   const [recoveryError, setRecoveryError] = useState<string | undefined>();
   const [statusError, setStatusError] = useState<string | undefined>();
+  /** True while the ledger's Visibility batch is running / paused / canceling. */
+  const [collectionBusy, setCollectionBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     // Guard the status round trip: a rejected invoke must not leave the app stuck
@@ -71,6 +76,10 @@ export function App(): React.JSX.Element {
     }
   }, [refresh]);
 
+  const bumpReload = useCallback(() => setReloadToken((token) => token + 1), []);
+
+  // Collection busy disables other tabs, so the user stays on 開示台帳 while a
+  // run is active; width only needs to track the active tab.
   const shellWidthClass = tab === "ledger" ? "max-w-none" : "max-w-2xl md:max-w-5xl";
 
   return (
@@ -83,7 +92,13 @@ export function App(): React.JSX.Element {
           <p className="text-sm text-neutral-500">ローカルファースト・エージェンシーエンジン</p>
         </div>
         {phase === "unlocked" && (
-          <button type="button" onClick={() => void lock()} className="text-sm underline">
+          <button
+            type="button"
+            onClick={() => void lock()}
+            disabled={collectionBusy}
+            title={collectionBusy ? "収集の実行中は施錠できません" : undefined}
+            className="text-sm underline disabled:cursor-not-allowed disabled:opacity-40"
+          >
             施錠
           </button>
         )}
@@ -106,30 +121,49 @@ export function App(): React.JSX.Element {
           {recoveryError && <p className="text-sm text-red-600">{recoveryError}</p>}
 
           <nav className="flex gap-1 overflow-x-auto border-b border-neutral-200 sm:gap-2">
-            <TabButton active={tab === "sites"} onClick={() => setTab("sites")}>
-              サイト管理
-            </TabButton>
             <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
               開示台帳
             </TabButton>
-            <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>
+            <TabButton
+              active={tab === "insights"}
+              disabled={collectionBusy}
+              onClick={() => setTab("insights")}
+            >
               インサイト
             </TabButton>
-            <TabButton active={tab === "settings"} onClick={() => setTab("settings")}>
+            <TabButton
+              active={tab === "settings"}
+              disabled={collectionBusy}
+              onClick={() => setTab("settings")}
+            >
               設定
             </TabButton>
           </nav>
-
-          {tab === "sites" && (
-            <SiteManagementPanel
-              reloadToken={reloadToken}
-              onCollected={() => setReloadToken((token) => token + 1)}
-              onImported={() => setReloadToken((token) => token + 1)}
-            />
+          {collectionBusy && (
+            <p className="text-xs text-neutral-500">
+              収集の実行中は他のタブへの切り替えと施錠ができません（ウォールの解決や再開のため）。
+            </p>
           )}
-          {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} />}
+
+          {/* Keep the ledger mounted so batch / hand-off state and the visibility
+              event subscription survive tab switches when not busy, and remain
+              available if a run is active. When hidden, `inert` removes the
+              subtree from tab order so focusable controls do not stay reachable
+              under an aria-hidden tree. */}
+          <div
+            className={tab === "ledger" ? undefined : "hidden"}
+            aria-hidden={tab !== "ledger"}
+            // React 19 types `inert`; omit the attribute when the panel is active.
+            {...(tab !== "ledger" ? { inert: true as const } : {})}
+          >
+            <LedgerPanel
+              reloadToken={reloadToken}
+              onCollected={bumpReload}
+              onCollectionBusyChange={setCollectionBusy}
+            />
+          </div>
           {tab === "insights" && <InsightsPanel reloadToken={reloadToken} />}
-          {tab === "settings" && <SettingsPanel />}
+          {tab === "settings" && <SettingsPanel onImported={bumpReload} />}
         </>
       )}
     </main>
@@ -139,17 +173,22 @@ export function App(): React.JSX.Element {
 function TabButton({
   active,
   onClick,
+  disabled = false,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`whitespace-nowrap px-2 py-2 text-sm sm:px-3 ${active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"}`}
+      disabled={disabled}
+      className={`whitespace-nowrap px-2 py-2 text-sm sm:px-3 ${
+        active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"
+      } disabled:cursor-not-allowed disabled:opacity-40`}
     >
       {children}
     </button>
