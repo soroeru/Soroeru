@@ -142,7 +142,7 @@ export function parseChromeBridgeMessage(value: unknown): ChromeBridgeMessage {
   throw new ChromeBridgeProtocolError("unsupported message kind");
 }
 
-export function encodeChromeBridgeMessage(message: ChromeBridgeMessage): Buffer {
+export function encodeChromeBridgeMessage(message: ChromeBridgeMessage): Uint8Array {
   parseChromeBridgeMessage(message);
-  return Buffer.from(JSON.stringify(message), "utf8");
+  return new TextEncoder().encode(JSON.stringify(message));
 }

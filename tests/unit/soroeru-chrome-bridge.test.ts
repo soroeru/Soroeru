@@ -12,7 +12,11 @@ import {
   unregisterNativeHost,
 } from "../../native-host/registration.js";
 import { acceptsHandshakeResponse } from "../../native-host/host.js";
-import { ChromeBridgeProtocolError, parseChromeBridgeMessage } from "../../src/shared/chrome-bridge.js";
+import {
+  ChromeBridgeProtocolError,
+  encodeChromeBridgeMessage,
+  parseChromeBridgeMessage,
+} from "../../src/shared/chrome-bridge.js";
 
 test("schema accepts known messages and rejects unknown kinds and versions", () => {
   assert.deepEqual(
@@ -36,6 +40,8 @@ test("schema accepts known messages and rejects unknown kinds and versions", () 
 });
 
 test("native messaging framing supports fragmented and coalesced frames", () => {
+  const sharedEncoded = encodeChromeBridgeMessage({ version: 1, kind: "event", event: "ready" });
+  assert.equal(Buffer.isBuffer(sharedEncoded), false);
   const first = encodeNativeMessage({ version: 1, kind: "event", event: "ready" });
   const second = encodeNativeMessage({
     version: 1,
