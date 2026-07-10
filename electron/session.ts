@@ -22,6 +22,8 @@ import {
   type Sensitivity,
 } from "../src/domain/entities.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
+import type { ChromeBridgeTransport } from "../src/automation/extension-page-driver.js";
+import { openExtensionTabSession } from "../src/automation/extension-page-driver.js";
 import { VisibilityService } from "./visibility-service.js";
 import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-page-importer.js";
 import { FileLogger } from "../src/logging/file-logger.js";
@@ -105,6 +107,15 @@ export interface SoroeruSessionOptions {
   logger?: Logger;
   /** Override where the default `FileLogger` writes (tests only). Defaults to a `logs/` dir next to the vault file. */
   logPath?: string;
+  /**
+   * Developer-only Chrome extension bridge (Issue #338). When set and
+   * `SOROERU_CHROME_BRIDGE_TAB_ID` is a positive integer, Visibility uses
+   * ExtensionPageDriver against that bound tab instead of Playwright.
+   * Renderer tab-selection UI is a later Issue (#339).
+   */
+  chromeBridge?: ChromeBridgeTransport & {
+    openTabSession?: (tabId: number) => SiteSession;
+  };
 }
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
@@ -149,6 +160,10 @@ export class SoroeruSession {
   /** Where the plain-text diagnostics log lives on disk, regardless of which `Logger` is injected (Issue #314). */
   private readonly logPath: string;
   private readonly logger: Logger;
+  /** Optional Chrome extension bridge for the developer-only extension automation path (Issue #338). */
+  private readonly chromeBridge:
+    | (ChromeBridgeTransport & { openTabSession?: (tabId: number) => SiteSession })
+    | undefined;
   /**
    * Local-only value source for AI-prompt redaction (Issue #310, design §8):
    * canonical Personal Attribute values, read fresh on every call so lock/
@@ -166,6 +181,7 @@ export class SoroeruSession {
     this.engine = options.engine;
     this.closeInjectedEngine = options.closeEngine;
     this.openExternal = options.openExternal;
+    this.chromeBridge = options.chromeBridge;
     this.aiEngineOverride = options.aiEngine !== undefined;
     this.aiProviderFactory = options.aiProviderFactory ?? aiProviderFromEnv;
     this.logPath = options.logPath ?? join(dirname(vaultPath), "logs", "soroeru.log");
@@ -217,6 +233,9 @@ export class SoroeruSession {
 
   /** Default production session opener: a headed Chromium BrowserEngine, created on first use. */
   private async defaultOpenSession(site: SiteAccount): Promise<SiteSession> {
+    const extensionSession = this.tryOpenExtensionSession();
+    if (extensionSession) return extensionSession;
+
     if (!this.engine) {
       // Dynamic import keeps Playwright out of the module graph until a run starts.
       const { BrowserEngine } = await import("../src/automation/browser-engine.js");
@@ -232,6 +251,28 @@ export class SoroeruSession {
       persisted ? { storageState: persisted.storageState } : undefined,
     );
     return this.wrapSessionForPersistence(site, session);
+  }
+
+  /**
+   * Developer-only extension path (Issue #338): when the bridge is injected and
+   * `SOROERU_CHROME_BRIDGE_TAB_ID` names a positive tab id, open an
+   * ExtensionPageDriver session. No storageState export — real-profile sessions
+   * are never sucked out (design §4 / §5). Returns undefined to keep Playwright.
+   */
+  private tryOpenExtensionSession(): SiteSession | undefined {
+    const bridge = this.chromeBridge;
+    if (!bridge) return undefined;
+    const raw = process.env["SOROERU_CHROME_BRIDGE_TAB_ID"];
+    if (!raw || raw.length === 0) return undefined;
+    const tabId = Number(raw);
+    if (!Number.isInteger(tabId) || tabId < 1) {
+      throw new Error("SOROERU_CHROME_BRIDGE_TAB_ID must be a positive integer");
+    }
+    if (!bridge.isConnected()) {
+      throw new Error("chrome bridge not connected");
+    }
+    if (bridge.openTabSession) return bridge.openTabSession(tabId);
+    return openExtensionTabSession(bridge, { tabId });
   }
 
   /**

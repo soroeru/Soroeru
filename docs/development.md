@@ -65,11 +65,13 @@ bash scripts/setup-hooks.sh
 ```
 
 The Chrome extension bridge prototype is disabled by default and is not part of
-the MVP UI or DMG. The Electron-side UNIX socket listener remains unavailable
-until the command dispatcher is supplied by the later ExtensionPageDriver
-integration; `SOROERU_ENABLE_CHROME_BRIDGE=1` alone does not start a
-non-functional bridge. The transport still requires the native-host handshake
-token and rejects unknown commands.
+the MVP UI or DMG. Developer-only experiments may enable its Electron-side UNIX
+socket listener with `SOROERU_ENABLE_CHROME_BRIDGE=1`; the bridge still requires
+the native-host handshake token and rejects unknown commands. To route a
+Visibility run through `ExtensionPageDriver` (Issue #338) instead of Playwright,
+also set `SOROERU_CHROME_BRIDGE_TAB_ID` to the positive Chrome tab id already
+bound/authorized in the extension. Tab-selection UI is a later Issue; without
+that env var the Playwright path is unchanged.
 
 ## 3. Run Locally
 

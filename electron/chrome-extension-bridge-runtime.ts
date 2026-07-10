@@ -9,17 +9,18 @@ export interface ChromeExtensionBridgeRuntimeOptions extends Omit<
 }
 
 /**
- * Keep the transport unavailable until the command dispatcher is wired. The
- * Electron app must not advertise an authenticated but non-functional bridge.
+ * Create the Chrome extension bridge when the developer feature flag is on.
+ * Outbound PageDriver dispatch (`sendCommand`) is built into the bridge
+ * (Issue #338); an inbound `commandHandler` remains optional for tests/legacy.
  */
 export function createChromeExtensionBridge(
   options: ChromeExtensionBridgeRuntimeOptions,
 ): ChromeExtensionBridge | undefined {
-  if (!options.enabled || typeof options.commandHandler !== "function") return undefined;
+  if (!options.enabled) return undefined;
   const bridgeOptions: ChromeExtensionBridgeOptions = {
     appSupportDir: options.appSupportDir,
     socketPath: options.socketPath,
-    commandHandler: options.commandHandler,
+    ...(options.commandHandler === undefined ? {} : { commandHandler: options.commandHandler }),
     ...(options.onEvent === undefined ? {} : { onEvent: options.onEvent }),
   };
   return new ChromeExtensionBridge(bridgeOptions);

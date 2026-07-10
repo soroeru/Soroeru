@@ -89,10 +89,6 @@ async function main(): Promise<void> {
 
   const vaultPath = resolveVaultPath();
   await mkdir(dirname(vaultPath), { recursive: true });
-  const session = new SoroeruSession(vaultPath, {
-    // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
-    openExternal: (url) => shell.openExternal(url),
-  });
   const chromeBridge = createChromeExtensionBridge({
     enabled: CHROME_BRIDGE_ENABLED,
     appSupportDir: app.getPath("userData"),
@@ -104,6 +100,13 @@ async function main(): Promise<void> {
     },
   });
   if (chromeBridge) await chromeBridge.start();
+  const session = new SoroeruSession(vaultPath, {
+    // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
+    openExternal: (url) => shell.openExternal(url),
+    // Developer-only extension automation path (Issue #338); selected when
+    // SOROERU_CHROME_BRIDGE_TAB_ID is set. Playwright remains the default.
+    ...(chromeBridge ? { chromeBridge } : {}),
+  });
   registerCrashLogging(session);
   session.log("info", "app", "app started", { version: app.getVersion(), platform: process.platform });
   registerIpc(session);
