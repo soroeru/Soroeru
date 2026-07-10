@@ -64,6 +64,11 @@ Install local hooks only if the local AI review workflow is in use:
 bash scripts/setup-hooks.sh
 ```
 
+The Chrome extension bridge prototype is disabled by default and is not part of
+the MVP UI or DMG. Developer-only experiments may enable its Electron-side UNIX
+socket listener with `SOROERU_ENABLE_CHROME_BRIDGE=1`; the bridge still requires
+the native-host handshake token and rejects unknown commands.
+
 ## 3. Run Locally
 
 ```bash

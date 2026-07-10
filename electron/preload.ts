@@ -7,7 +7,12 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import { createSoroeruApi } from "./preload-api.js";
-import { VISIBILITY_EVENT_CHANNEL, type VisibilityEvent } from "./ipc/contract.js";
+import {
+  CHROME_BRIDGE_EVENT_CHANNEL,
+  VISIBILITY_EVENT_CHANNEL,
+  type ChromeBridgeConnectionEvent,
+  type VisibilityEvent,
+} from "./ipc/contract.js";
 
 contextBridge.exposeInMainWorld(
   "soroeru",
@@ -19,6 +24,11 @@ contextBridge.exposeInMainWorld(
       const handler = (_event: unknown, payload: VisibilityEvent): void => listener(payload);
       ipcRenderer.on(VISIBILITY_EVENT_CHANNEL, handler);
       return () => ipcRenderer.removeListener(VISIBILITY_EVENT_CHANNEL, handler);
+    },
+    (listener) => {
+      const handler = (_event: unknown, payload: ChromeBridgeConnectionEvent): void => listener(payload);
+      ipcRenderer.on(CHROME_BRIDGE_EVENT_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(CHROME_BRIDGE_EVENT_CHANNEL, handler);
     },
   ),
 );

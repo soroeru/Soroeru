@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -16,7 +17,38 @@ import {
   ChromeBridgeProtocolError,
   encodeChromeBridgeMessage,
   parseChromeBridgeMessage,
+  type ChromeBridgeCommand,
 } from "../../src/shared/chrome-bridge.js";
+import { ChromeExtensionBridge, type ChromeBridgeEventView } from "../../electron/chrome-extension-bridge.js";
+
+function waitForEvent<T>(events: T[], predicate: (event: T) => boolean): Promise<T> {
+  const existing = events.find(predicate);
+  if (existing) return Promise.resolve(existing);
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timed out waiting for bridge event")), 1000);
+    const timer = setInterval(() => {
+      const event = events.find(predicate);
+      if (event) {
+        clearInterval(timer);
+        clearTimeout(timeout);
+        resolve(event);
+      }
+    }, 5);
+  });
+}
+
+function waitForSocket(socketPath: string): Promise<import("node:net").Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(socketPath);
+    socket.once("connect", () => resolve(socket));
+    socket.once("error", reject);
+  });
+}
+
+function waitForClose(socket: import("node:net").Socket): Promise<void> {
+  if (socket.destroyed) return Promise.resolve();
+  return new Promise((resolve) => socket.once("close", () => resolve()));
+}
 
 test("schema accepts known messages and rejects unknown kinds and versions", () => {
   assert.deepEqual(
@@ -115,4 +147,82 @@ test("default native host paths are stable under the macOS application support l
     appSupportDir: "/Users/tester/Library/Application Support/Soroeru",
     chromeNativeMessagingDir: "/Users/tester/Library/Application Support/Google/Chrome/NativeMessagingHosts",
   });
+});
+
+test("electron bridge authenticates a host and forwards a validated command result", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-"));
+  const socketPath = join(root, "bridge.sock");
+  const events: ChromeBridgeEventView[] = [];
+  const bridge = new ChromeExtensionBridge({
+    appSupportDir: root,
+    socketPath,
+    onEvent: (event: ChromeBridgeEventView) => events.push(event),
+    commandHandler: (command: ChromeBridgeCommand) => ({
+      version: 1,
+      kind: "result",
+      requestId: command.requestId,
+      ok: true,
+      payload: { command: command.command },
+    }),
+  });
+  await bridge.start();
+
+  const socket = await waitForSocket(socketPath);
+  const token = (await readFile(join(root, "native-host", "bridge-token"), "utf8")).trim();
+  socket.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
+  socket.write(encodeNativeMessage({ version: 1, kind: "command", requestId: "r1", command: "snapshot" }));
+
+  let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  const messages = await new Promise<ReturnType<typeof decodeNativeMessages>["messages"]>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for bridge response")), 1000);
+    socket.on("data", (chunk: Buffer) => {
+      remainder = Buffer.concat([remainder, chunk]);
+      const decoded = decodeNativeMessages(remainder);
+      remainder = decoded.remainder;
+      if (decoded.messages.length >= 2) {
+        clearTimeout(timer);
+        resolve(decoded.messages);
+      }
+    });
+  });
+
+  assert.deepEqual(messages, [
+    { version: 1, kind: "result", requestId: "native-host-handshake", ok: true },
+    { version: 1, kind: "result", requestId: "r1", ok: true, payload: { command: "snapshot" } },
+  ]);
+  assert.deepEqual(await waitForEvent(events, (event) => event.type === "connected"), { type: "connected" });
+  socket.destroy();
+  await waitForEvent(events, (event) => event.type === "disconnected");
+  await bridge.close();
+  await assert.rejects(stat(socketPath));
+  await assert.rejects(stat(join(root, "native-host", "bridge-token")));
+});
+
+test("electron bridge rejects unauthorized and unknown-command clients", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-"));
+  const socketPath = join(root, "bridge.sock");
+  const events: ChromeBridgeEventView[] = [];
+  const bridge = new ChromeExtensionBridge({
+    appSupportDir: root,
+    socketPath,
+    onEvent: (event: ChromeBridgeEventView) => events.push(event),
+  });
+  await bridge.start();
+
+  const unauthorized = await waitForSocket(socketPath);
+  const unauthorizedClosed = waitForClose(unauthorized);
+  unauthorized.write(encodeNativeMessage({ version: 1, kind: "hello", token: "0".repeat(64) }));
+  await waitForEvent(events, (event) => event.type === "rejected" && event.reason === "unauthorized");
+  await unauthorizedClosed;
+
+  const token = (await readFile(join(root, "native-host", "bridge-token"), "utf8")).trim();
+  const unknown = await waitForSocket(socketPath);
+  const unknownClosed = waitForClose(unknown);
+  unknown.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
+  unknown.write(encodeNativeMessage({ version: 1, kind: "command", requestId: "r2", command: "deleteEverything" }));
+  await waitForEvent(events, (event) => event.type === "rejected" && event.reason === "unknown-command");
+  unknown.destroy();
+  await unknownClosed;
+
+  await bridge.close();
 });

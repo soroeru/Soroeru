@@ -435,6 +435,18 @@ export type VisibilityEvent =
   | { type: "resumed"; siteAccountId: string }
   | { type: "run-finished"; result: VisibilityRunResultView };
 
+/**
+ * Sanitized Chrome-extension bridge lifecycle event. The renderer never
+ * receives socket messages, tokens, commands, or command payloads.
+ */
+export type ChromeBridgeConnectionEvent =
+  | { type: "connecting" }
+  | { type: "connected" }
+  | { type: "disconnected" }
+  | { type: "rejected"; reason: "unauthorized" | "invalid-message" | "unknown-command" | "socket-error" };
+
+export const CHROME_BRIDGE_EVENT_CHANNEL = "soroeru:chrome-bridge:event" as const;
+
 // --- Diagnostics log export (Issue #314) ---
 
 /**

@@ -63,6 +63,7 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   // onEvent only subscribes (no channel invoke); calling it must not throw and
   // returns an unsubscribe function even with no subscribe transport provided.
   assert.equal(typeof api.visibility.onEvent(() => {}), "function");
+  assert.equal(typeof api.chromeBridge.onEvent(() => {}), "function");
   await api.logs.export();
 
   for (const channel of invoked) {

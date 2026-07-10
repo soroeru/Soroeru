@@ -9,8 +9,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
 import { SoroeruSession } from "./session.js";
+import { ChromeExtensionBridge } from "./chrome-extension-bridge.js";
 import { createIpcBridge } from "./ipc/bridge.js";
-import { VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
+import { CHROME_BRIDGE_EVENT_CHANNEL, VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
 import { registerCrashLogging } from "./crash-logging.js";
 
 // Product name (issue #158): the userData path becomes
@@ -25,6 +26,7 @@ const appRoot = resolve(here, "..", "..", "..");
 const DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const PRELOAD_PATH = join(appRoot, "dist", "preload", "preload.cjs");
 const RENDERER_INDEX = join(appRoot, "dist", "renderer", "index.html");
+const CHROME_BRIDGE_ENABLED = process.env["SOROERU_ENABLE_CHROME_BRIDGE"] === "1";
 
 function configurePackagedPlaywrightBrowsers(): void {
   if (!app.isPackaged || process.env["PLAYWRIGHT_BROWSERS_PATH"]) return;
@@ -91,6 +93,18 @@ async function main(): Promise<void> {
     // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
     openExternal: (url) => shell.openExternal(url),
   });
+  const chromeBridge = CHROME_BRIDGE_ENABLED
+    ? new ChromeExtensionBridge({
+        appSupportDir: app.getPath("userData"),
+        socketPath: join(app.getPath("userData"), "native-host", "bridge.sock"),
+        onEvent: (event) => {
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.isDestroyed()) window.webContents.send(CHROME_BRIDGE_EVENT_CHANNEL, event);
+          }
+        },
+      })
+    : undefined;
+  if (chromeBridge) await chromeBridge.start();
   registerCrashLogging(session);
   session.log("info", "app", "app started", { version: app.getVersion(), platform: process.platform });
   registerIpc(session);
@@ -110,8 +124,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     event.preventDefault();
     shuttingDown = true;
-    void session
-      .shutdown()
+    void Promise.all([session.shutdown(), chromeBridge?.close()])
       .catch(() => {
         // Teardown is best-effort; never block the quit on a wedged browser.
       })
