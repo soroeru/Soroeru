@@ -32,6 +32,38 @@ One terminal outcome per site, from the diagnostics log (`soroeru.log`):
 
 <!-- Newest first. Categories/counts from `npm run diagnostics:analyze`. -->
 
+### Run 2 — 2026-07-10 (full: 267 of 267 sites)
+
+- App: packaged build from the Issue #318 branch (Electron 39.8.10).
+- Sites selected: 267 (all unique web logins from the password CSV).
+- Sites with a terminal outcome analyzed: **267** (100%).
+- **Collected: 52 / 267 = 19.5%.**
+
+The collection rate did **not** increase versus Run 1's 19.6% partial-run
+baseline. The `no-data` share fell slightly (45.7% → 43.4%), but the absolute
+count rose because this run covered 83 more sites; the two runs therefore have
+different denominators and are not a matched-site comparison.
+
+Raw analyzer ranking (per-site terminal outcome):
+
+| Rank | Cause | Count | Share |
+| --- | --- | --- | --- |
+| 1 | `no-data` | 116 | 43.4% |
+| 2 | `wall:captcha` | 29 | 10.9% |
+| 3 | `wall:identity-verification` | 15 | 5.6% |
+| 4 | `unreachable:dns-not-found` | 13 | 4.9% |
+| 5 | `unreachable:timeout` | 13 | 4.9% |
+| 6 | `unreachable:navigation-failed` | 12 | 4.5% |
+| 7 | `login-incomplete` | 11 | 4.1% |
+| 8 | `wall:ambiguous` | 3 | 1.1% |
+| 9 | `unreachable:certificate-error` | 2 | 0.7% |
+| 10 | `wall:email-verification` | 1 | 0.4% |
+
+The deterministic extractor regression tests pass, but this full real-site run
+does not yet demonstrate a measurable collection-rate gain. Follow-up work
+should use a matched fixture/site sample to separate extraction recall from
+the changed site population and other login/wall causes.
+
 ### Run 1 — 2026-07-06 (partial: 184 of 267 sites)
 
 - App: packaged build (`out/Soroeru-darwin-x64`, this branch, Electron 39.8.10).
