@@ -40,10 +40,11 @@ Branch examples:
 - `codex/issue-123-add-user-settings`
 - `claude/issue-124-fix-login-timeout`
 - `grok/issue-125-enable-local-ai-review`
+- `gemini/issue-330-add-gemini-local-ai-reviewer`
 
 Rules:
 
-- Use `codex/`, `claude/`, or `grok/` when work is performed by those tools.
+- Use `codex/`, `claude/`, `grok/`, or `gemini/` when work is performed by those tools.
 - Include the Issue number.
 - Keep the English slug short and descriptive.
 - Record the branch name in the GitHub Issue when useful.
@@ -82,9 +83,9 @@ misconfigure against the sandbox and force avoidable approval requests.
 - `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
   tree, so worktrees do not contend for the same review lock.
 - Branch-prefix routing already separates reviewers (see §8): keep the Codex CLI
-  on a `codex/*` worktree, the Claude CLI on a `claude/*` worktree, and the Grok
-  CLI on a `grok/*` worktree, and each commit is reviewed by the matching
-  reviewer automatically.
+  on a `codex/*` worktree, the Claude CLI on a `claude/*` worktree, the Grok
+  CLI on a `grok/*` worktree, and the Gemini CLI (`agy`) on a `gemini/*`
+  worktree, and each commit is reviewed by the matching reviewer automatically.
 
 Partition the backlog into **lanes with no cross-lane dependencies**, and hand
 each agent a single Issue from its lane. A cross-lane dependency would serialize
@@ -205,9 +206,9 @@ See §8 for the local AI review convention.
 Setup, branch rules, skip conditions, follow-up policy, cleanup policy, output,
 and troubleshooting live in [`local-ai-review.md`](local-ai-review.md). By
 default, `codex/*` branches run Codex review, `claude/*` branches run Claude
-review, and `grok/*` branches run Grok review when the matching CLI is
-available. Local AI review output under `state/ai-reviews/` is fast feedback,
-not a replacement for final judgment.
+review, `grok/*` branches run Grok review, and `gemini/*` branches run Gemini
+review when the matching CLI is available. Local AI review output under
+`state/ai-reviews/` is fast feedback, not a replacement for final judgment.
 
 GitHub Actions based AI review is not enabled by default. If a project adds it
 as fallback automation, keep PAT / secret requirements in that fallback

@@ -8,7 +8,7 @@
 #
 # Usage:
 #   LOCAL_AI_REVIEW_RUNNING=1 .githooks/lib/local-ai-review.sh <reviewer> <branch>
-#     reviewer: "claude" | "codex" | "grok"
+#     reviewer: "claude" | "codex" | "grok" | "gemini"
 #     branch:   the current branch name (passed in to avoid races
 #               if the user switches branches mid-run)
 
@@ -29,7 +29,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 
 cd "$REPO_ROOT"
 
-REVIEWER=${1:?reviewer required (claude|codex|grok)}
+REVIEWER=${1:?reviewer required (claude|codex|grok|gemini)}
 BRANCH=${2:?branch required}
 # Commit SHA is optional for backward compatibility with manual
 # invocations, but post-commit always passes it so the review is
@@ -191,6 +191,7 @@ case "$REVIEWER" in
   claude) CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-claude.md" ;;
   codex)  CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-codex.md" ;;
   grok)   CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-grok.md" ;;
+  gemini) CODE_PROMPT_FILE="$GITHOOKS_DIR/prompts/local-review-gemini.md" ;;
   *) fail "unknown reviewer: $REVIEWER"; exit 1 ;;
 esac
 
@@ -275,6 +276,7 @@ run_reviewer() {
     claude) local_ai_review_run_claude < "$PAYLOAD_FILE" ;;
     codex)  local_ai_review_run_codex < "$PAYLOAD_FILE" ;;
     grok)   local_ai_review_run_grok < "$PAYLOAD_FILE" ;;
+    gemini) local_ai_review_run_gemini < "$PAYLOAD_FILE" ;;
   esac
 }
 
