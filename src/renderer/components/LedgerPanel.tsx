@@ -148,16 +148,17 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
           setHandoff(undefined);
           break;
         case "run-finished":
+          // Batch progress owns ledger refresh (`refreshAfterSite`); this event
+          // only clears transient run UI so we do not re-fetch full siteDetails
+          // three extra times per site after folding collection into the ledger.
           setRunningSiteId(undefined);
           setHandoff(undefined);
           resumedHandoffSites.current.delete(event.result.siteAccountId);
-          void loadSites();
-          onCollectedRef.current();
           break;
       }
     });
     return unsubscribe;
-  }, [loadSites]);
+  }, []);
 
   const selectedVisibleIds = useMemo(() => collectVisibleSelectedSiteIds(sites, selected), [selected, sites]);
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
@@ -166,8 +167,9 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
 
   const refreshAfterSite = useCallback(
     async (siteAccountId: string, result: BatchResultEntry) => {
+      // Single owner of mid-batch ledger refresh — no parent reloadToken bump
+      // until the whole batch finishes (see startBatch).
       await loadSites();
-      onCollectedRef.current();
       setBatch((current) => ({
         ...current,
         completed: current.completed + 1,
@@ -202,6 +204,9 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
           completed: summary.completed,
           results: summary.results,
         }));
+        // One parent-level refresh after the batch so Insights and other tabs
+        // see the new disclosures without mid-batch reload storms.
+        onCollectedRef.current();
         if (!summary.canceled) {
           const content = buildCollectionResultModalContent(
             summary.results,
@@ -214,6 +219,7 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
       } catch {
         setLoadError(reasonMessage(undefined));
         setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
+        onCollectedRef.current();
       }
     },
     [batchBusy, refreshAfterSite, selectedVisibleIds],
@@ -242,6 +248,8 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
       await waitForVisibilityIdle();
       setRunningSiteId(undefined);
       setHandoff(undefined);
+      // Leave canceling so the saved-page guide / import controls are usable.
+      setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
       setGuideSiteId(siteAccountId);
       setSavedPageSiteId(siteAccountId);
     },
@@ -267,7 +275,15 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
     const result = await window.soroeru.savedPage.openSite(siteAccountId);
     if (!result.ok) setLoadError(reasonMessage(result.error));
   }, []);
-  const openDetail = useCallback(async (siteAccountId: string) => {
+  const openDetail = useCallback(async (siteAccountId: string, opts?: { refresh?: boolean }) => {
+    if (!opts?.refresh) {
+      const cached = sitesRef.current.find((site) => site.siteAccountId === siteAccountId);
+      if (cached) {
+        setDetailError(undefined);
+        setDetail(cached);
+        return;
+      }
+    }
     const result = await window.soroeru.ledger.site(siteAccountId);
     if (!result) {
       setDetail(undefined);
@@ -290,8 +306,10 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
         const firstFailure = summary.results.find((entry) => !entry.ok);
         setSessionPersistenceBulkError(reasonMessage(firstFailure?.error));
       }
-      if (detail && ids.includes(detail.siteAccountId)) await openDetail(detail.siteAccountId);
       await loadSites();
+      if (detail && ids.includes(detail.siteAccountId)) {
+        await openDetail(detail.siteAccountId, { refresh: true });
+      }
     } finally {
       setSessionPersistenceBulkRunning(false);
     }
@@ -544,7 +562,9 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
                       </span>
                     </td>
                     {columns.length === 0 ? (
-                      <td className="px-3 py-2 text-neutral-400">—</td>
+                      <td className="min-w-[12rem] px-3 py-2 align-top text-neutral-500">
+                        未収集 — 上の「選択したサイトを収集」で開示を集められます
+                      </td>
                     ) : site.collected ? (
                       columns.map((column) => (
                         <LedgerCell
@@ -587,7 +607,7 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
                             <SiteDetail
                               detail={detail}
                               onClose={() => setDetail(undefined)}
-                              onReload={() => openDetail(site.siteAccountId)}
+                              onReload={() => openDetail(site.siteAccountId, { refresh: true })}
                             />
                           )}
                         </div>
