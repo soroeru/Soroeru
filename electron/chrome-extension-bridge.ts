@@ -166,7 +166,19 @@ export class ChromeExtensionBridge {
   private async handleCommand(socket: Socket, command: ChromeBridgeCommand): Promise<void> {
     try {
       const response = await this.options.commandHandler?.(command);
-      if (response) socket.write(encodeNativeMessage(parseChromeBridgeMessage(response)));
+      if (!response) {
+        socket.write(
+          encodeNativeMessage({
+            version: 1,
+            kind: "result",
+            requestId: command.requestId,
+            ok: false,
+            error: "command handler unavailable",
+          }),
+        );
+        return;
+      }
+      socket.write(encodeNativeMessage(parseChromeBridgeMessage(response)));
     } catch {
       socket.destroy();
     }

@@ -198,6 +198,42 @@ test("electron bridge authenticates a host and forwards a validated command resu
   await assert.rejects(stat(join(root, "native-host", "bridge-token")));
 });
 
+test("electron bridge reports an unavailable command handler instead of leaving the client waiting", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-"));
+  const socketPath = join(root, "bridge.sock");
+  const bridge = new ChromeExtensionBridge({ appSupportDir: root, socketPath });
+  await bridge.start();
+
+  const socket = await waitForSocket(socketPath);
+  const token = (await readFile(join(root, "native-host", "bridge-token"), "utf8")).trim();
+  socket.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
+  socket.write(encodeNativeMessage({ version: 1, kind: "command", requestId: "no-handler", command: "snapshot" }));
+
+  let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  const messages = await new Promise<ReturnType<typeof decodeNativeMessages>["messages"]>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for bridge response")), 1000);
+    socket.on("data", (chunk: Buffer) => {
+      remainder = Buffer.concat([remainder, chunk]);
+      const decoded = decodeNativeMessages(remainder);
+      remainder = decoded.remainder;
+      if (decoded.messages.length >= 2) {
+        clearTimeout(timer);
+        resolve(decoded.messages);
+      }
+    });
+  });
+
+  assert.deepEqual(messages[1], {
+    version: 1,
+    kind: "result",
+    requestId: "no-handler",
+    ok: false,
+    error: "command handler unavailable",
+  });
+  socket.destroy();
+  await bridge.close();
+});
+
 test("electron bridge rejects unauthorized and unknown-command clients", async () => {
   const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-"));
   const socketPath = join(root, "bridge.sock");
