@@ -9,7 +9,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
 import { SoroeruSession } from "./session.js";
-import { ChromeExtensionBridge } from "./chrome-extension-bridge.js";
+import { createChromeExtensionBridge } from "./chrome-extension-bridge-runtime.js";
 import { createIpcBridge } from "./ipc/bridge.js";
 import { CHROME_BRIDGE_EVENT_CHANNEL, VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
 import { registerCrashLogging } from "./crash-logging.js";
@@ -93,17 +93,16 @@ async function main(): Promise<void> {
     // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
     openExternal: (url) => shell.openExternal(url),
   });
-  const chromeBridge = CHROME_BRIDGE_ENABLED
-    ? new ChromeExtensionBridge({
-        appSupportDir: app.getPath("userData"),
-        socketPath: join(app.getPath("userData"), "native-host", "bridge.sock"),
-        onEvent: (event) => {
-          for (const window of BrowserWindow.getAllWindows()) {
-            if (!window.isDestroyed()) window.webContents.send(CHROME_BRIDGE_EVENT_CHANNEL, event);
-          }
-        },
-      })
-    : undefined;
+  const chromeBridge = createChromeExtensionBridge({
+    enabled: CHROME_BRIDGE_ENABLED,
+    appSupportDir: app.getPath("userData"),
+    socketPath: join(app.getPath("userData"), "native-host", "bridge.sock"),
+    onEvent: (event) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(CHROME_BRIDGE_EVENT_CHANNEL, event);
+      }
+    },
+  });
   if (chromeBridge) await chromeBridge.start();
   registerCrashLogging(session);
   session.log("info", "app", "app started", { version: app.getVersion(), platform: process.platform });

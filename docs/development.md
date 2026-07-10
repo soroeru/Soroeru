@@ -65,9 +65,11 @@ bash scripts/setup-hooks.sh
 ```
 
 The Chrome extension bridge prototype is disabled by default and is not part of
-the MVP UI or DMG. Developer-only experiments may enable its Electron-side UNIX
-socket listener with `SOROERU_ENABLE_CHROME_BRIDGE=1`; the bridge still requires
-the native-host handshake token and rejects unknown commands.
+the MVP UI or DMG. The Electron-side UNIX socket listener remains unavailable
+until the command dispatcher is supplied by the later ExtensionPageDriver
+integration; `SOROERU_ENABLE_CHROME_BRIDGE=1` alone does not start a
+non-functional bridge. The transport still requires the native-host handshake
+token and rejects unknown commands.
 
 ## 3. Run Locally
 
@@ -499,9 +501,9 @@ unless the user explicitly changes it:
    the review-count cap and follow-up policy) rather than polling
    `state/ai-reviews/` turn-by-turn. This workflow allows up to two local AI
    review runs total: apply a fix pass for the first review's actionable
-   findings and commit it *without* `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
+  findings and commit it *without* `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
    second review runs on that fix commit); if that second review still has
-   actionable findings, apply one more fix pass and commit it *with*
+    actionable findings, apply one more fix pass and commit it *with*
    `LOCAL_AI_REVIEW_RUNNING=1` so a third review never starts.
 5. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
