@@ -474,22 +474,31 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
       <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
         <table className="border-collapse text-left text-sm">
           <colgroup>
-            <col className="w-10" />
-            <col className="w-56" />
-            <col className="w-64" />
+            <col className="ledger-col-select" />
+            <col className="ledger-col-site" />
+            <col className="ledger-col-actions" />
             {columns.map((column) => (
               <col key={column.attributeKey} />
             ))}
           </colgroup>
           <thead>
             <tr className="border-b border-neutral-200 bg-neutral-50">
-              <th scope="col" className="sticky left-0 top-0 z-20 bg-neutral-50 px-2 py-2">
+              <th
+                scope="col"
+                className="ledger-sticky-select ledger-col-select sticky top-0 bg-neutral-50 px-2 py-2"
+              >
                 <span className="sr-only">選択</span>
               </th>
-              <th scope="col" className="sticky left-10 top-0 z-20 w-56 bg-neutral-50 px-3 py-2 font-medium">
+              <th
+                scope="col"
+                className="ledger-sticky-site ledger-col-site sticky top-0 bg-neutral-50 px-3 py-2 font-medium"
+              >
                 サイト
               </th>
-              <th scope="col" className="sticky top-0 z-10 min-w-[16rem] bg-neutral-50 px-3 py-2 font-medium">
+              <th
+                scope="col"
+                className="ledger-sticky-actions ledger-col-actions sticky top-0 bg-neutral-50 px-3 py-2 font-medium"
+              >
                 操作
               </th>
               {columns.map((column) => (
@@ -513,7 +522,7 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
               return (
                 <Fragment key={site.siteAccountId}>
                   <tr className="border-b border-neutral-100">
-                    <td className="sticky left-0 z-10 bg-white px-2 py-2 align-top">
+                    <td className="ledger-sticky-select ledger-col-select bg-white px-2 py-2 align-top">
                       <input
                         type="checkbox"
                         checked={selected.has(site.siteAccountId)}
@@ -525,7 +534,7 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
                     </td>
                     <th
                       scope="row"
-                      className="sticky left-10 z-10 w-56 bg-white px-3 py-2 text-left align-top font-medium"
+                      className="ledger-sticky-site ledger-col-site bg-white px-3 py-2 text-left align-top font-medium"
                     >
                       <span className="flex flex-col gap-1">
                         <span>{site.displayName}</span>
@@ -535,7 +544,7 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
                         <SiteStatusChips site={site} running={runningSiteId === site.siteAccountId} />
                       </span>
                     </th>
-                    <td className="min-w-[16rem] px-3 py-2 align-top">
+                    <td className="ledger-sticky-actions ledger-col-actions bg-white px-3 py-2 align-top">
                       <span className="flex flex-wrap gap-2">
                         <button
                           type="button"
@@ -769,11 +778,11 @@ export function SiteDetail({
 }): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3 rounded border border-neutral-200 bg-white p-3 sm:p-4">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="font-medium">{detail.displayName}</h3>
-        <button type="button" onClick={onClose} className="text-sm underline">
+      <div className="flex flex-col gap-2">
+        <button type="button" onClick={onClose} className="self-start text-sm underline">
           閉じる
         </button>
+        <h3 className="font-medium">{detail.displayName}</h3>
       </div>
 
       {detail.disclosures.length === 0 ? (

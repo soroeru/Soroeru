@@ -21,7 +21,8 @@ body {
     sans-serif;
 }
 
-/* Spreadsheet ledger: viewport stays full-width; table fills it and scrolls when wider. */
+/* Spreadsheet ledger: viewport stays full-width; table fills it and scrolls when wider.
+ * Select + site + actions stay sticky on horizontal scroll (Issue #341 follow-up). */
 .ledger-table-viewport {
   display: block;
   width: 100%;
@@ -33,4 +34,51 @@ body {
 .ledger-table-viewport > table {
   width: max(100%, max-content);
   table-layout: fixed;
+}
+
+/* Checkbox column width (matches Tailwind w-10). */
+.ledger-col-select {
+  width: 2.5rem;
+  min-width: 2.5rem;
+  max-width: 2.5rem;
+}
+
+/* Site column width (matches Tailwind w-56). */
+.ledger-col-site {
+  width: 14rem;
+  min-width: 14rem;
+  max-width: 14rem;
+}
+
+/* Actions column (詳細 / 保存ページ / 削除). */
+.ledger-col-actions {
+  width: 16rem;
+  min-width: 16rem;
+}
+
+.ledger-sticky-select {
+  position: sticky;
+  left: 0;
+  z-index: 12;
+}
+
+.ledger-sticky-site {
+  position: sticky;
+  left: 2.5rem;
+  z-index: 12;
+}
+
+.ledger-sticky-actions {
+  position: sticky;
+  left: 16.5rem; /* select 2.5rem + site 14rem */
+  z-index: 12;
+  /* Edge line so scrolling attribute cells slide under a clear boundary. */
+  box-shadow: 1px 0 0 0 rgb(229 229 229);
+}
+
+.ledger-table-viewport thead .ledger-sticky-select,
+.ledger-table-viewport thead .ledger-sticky-site,
+.ledger-table-viewport thead .ledger-sticky-actions {
+  z-index: 22;
+  top: 0;
 }
