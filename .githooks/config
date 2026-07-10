@@ -42,6 +42,7 @@ LOCAL_AI_REVIEW_TARGET_PATHS=(
   ".githooks/"
   ".github/"
   "electron/"
+  "extension/"
   "src/"
   "run/"
   "sites/"
