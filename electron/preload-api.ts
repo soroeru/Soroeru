@@ -9,6 +9,7 @@
 import {
   IPC_CHANNELS,
   type ConfirmDynamicAttributeCandidateRequest,
+  type ChromeBridgeConnectionEvent,
   type ConfirmDynamicAttributeCandidateResult,
   type CsvImportResult,
   type DeleteSiteAccountRequest,
@@ -39,6 +40,9 @@ export type IpcInvoke = (channel: IpcChannel, ...args: unknown[]) => Promise<unk
 
 /** Subscribe to one-way Visibility events; returns an unsubscribe function. */
 export type VisibilityEventSubscribe = (listener: (event: VisibilityEvent) => void) => () => void;
+export type ChromeBridgeEventSubscribe = (
+  listener: (event: ChromeBridgeConnectionEvent) => void,
+) => () => void;
 
 export interface SoroeruApi {
   vault: {
@@ -83,6 +87,10 @@ export interface SoroeruApi {
     /** Subscribe to run progress / wall hand-off events; returns an unsubscribe function. */
     onEvent(listener: (event: VisibilityEvent) => void): () => void;
   };
+  chromeBridge: {
+    /** Subscribe to sanitized bridge lifecycle events; returns an unsubscribe function. */
+    onEvent(listener: (event: ChromeBridgeConnectionEvent) => void): () => void;
+  };
   logs: {
     /** Read the plain-text diagnostics log (Settings tab download button). */
     export(): Promise<LogsExportResult>;
@@ -92,6 +100,7 @@ export interface SoroeruApi {
 export function createSoroeruApi(
   invoke: IpcInvoke,
   subscribeVisibility?: VisibilityEventSubscribe,
+  subscribeChromeBridge?: ChromeBridgeEventSubscribe,
 ): SoroeruApi {
   return {
     vault: {
@@ -148,6 +157,9 @@ export function createSoroeruApi(
       abort: () => invoke(IPC_CHANNELS.visibilityAbort) as Promise<VisibilityHandoffAck>,
       status: () => invoke(IPC_CHANNELS.visibilityStatus) as Promise<VisibilityStatusView>,
       onEvent: (listener) => subscribeVisibility?.(listener) ?? (() => {}),
+    },
+    chromeBridge: {
+      onEvent: (listener) => subscribeChromeBridge?.(listener) ?? (() => {}),
     },
     logs: {
       export: () => invoke(IPC_CHANNELS.logsExport) as Promise<LogsExportResult>,
