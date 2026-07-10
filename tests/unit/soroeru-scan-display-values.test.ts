@@ -107,3 +107,37 @@ test("scanner surfaces read-only display values via sibling layout", async () =>
     await browser?.close();
   }
 });
+
+test("scanner extracts inline and nested label-value text without exposing values in the snapshot", async () => {
+  let browser: Browser | undefined;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    const html = `<!doctype html><html><body>
+      <p class="inline">氏名：<span class="value"><strong>山田 太郎</strong></span></p>
+      <div class="account-row">
+        <div class="key"><span>メールアドレス</span></div>
+        <div class="value"><span>nested@example.test</span></div>
+      </div>
+      <div class="account-row">
+        <span aria-label="電話番号"><span>090-1234-5678</span></span>
+      </div>
+      <section>
+        <h2>会員情報</h2>
+        <div><div>氏名</div><div>住所</div></div>
+      </section>
+    </body></html>`;
+    await page.setContent(html);
+
+    const snapshot = await snapshotPage(page);
+    const labels = (snapshot.displayValues ?? []).map((d) => d.labelText).sort();
+    assert.deepEqual(labels, ["メールアドレス", "氏名", "電話番号"].sort());
+
+    const structure = JSON.stringify(snapshot.displayValues);
+    assert.equal(structure.includes("山田 太郎"), false);
+    assert.equal(structure.includes("nested@example.test"), false);
+    assert.equal(structure.includes("090-1234-5678"), false);
+  } finally {
+    await browser?.close();
+  }
+});
