@@ -33,7 +33,7 @@ assert_skip() {
 assert_reviewer "codex/test-local-review" "codex"
 assert_reviewer "claude/test-local-review" "claude"
 assert_reviewer "grok/test-local-review" "grok"
+assert_reviewer "gemini/test-local-review" "gemini"
 assert_skip "feature/test-local-review"
-assert_skip "antigravity/test-local-review"
 
 printf 'local AI review branch mapping smoke check passed\n'

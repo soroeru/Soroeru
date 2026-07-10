@@ -435,5 +435,14 @@ Primary responsibilities:
 ## Gemini Response Expectations
 When finishing a task, keep the summary concise and factual: files changed, important implementation choices, quality gates run, checks not run, and any follow-up work.
 
+## Gemini Branch Naming and Local AI Review
+
+Use branch prefix **`gemini/`** for all Gemini-authored work (e.g.
+`gemini/issue-330-add-gemini-local-ai-reviewer`). This prefix triggers local AI
+review automatically on every commit via the post-commit hook: the hook invokes
+the Antigravity CLI (`agy --mode plan`) as the reviewer and writes results under
+`state/ai-reviews/`. See [`docs/local-ai-review.md`](docs/local-ai-review.md)
+for setup, skip conditions, follow-up policy, and waiting for completion.
+
 ## Gemini Safety Notes
 Same safety notes as Claude Code and Codex apply: do not bypass CAPTCHA, MFA, bot detection, or payment barriers. Always surface ToS constraints.

@@ -48,6 +48,7 @@ Reviewer CLIs:
 - `claude` for Claude review
 - `codex` for Codex review
 - `grok` for Grok review
+- `agy` for Gemini review
 
 The setup script warns if reviewer CLIs are missing, but does not fail.
 
@@ -65,6 +66,7 @@ Important settings:
   work;
 - `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX`: branch prefix for Codex-authored work;
 - `LOCAL_AI_REVIEW_AUTHOR_PREFIX_GROK`: branch prefix for Grok-authored work;
+- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_GEMINI`: branch prefix for Gemini-authored work;
 - `LOCAL_AI_REVIEW_BASE_REF`: base ref used to compute the branch-wide diff,
   usually `origin/main`;
 - `LOCAL_AI_REVIEW_TARGET_PATHS`: pathspecs reviewed as the `code` unit with
@@ -83,7 +85,9 @@ Reviewer CLI invocations:
 - `local_ai_review_run_codex`: Bash function that must `exec` the Codex
   reviewer command;
 - `local_ai_review_run_grok`: Bash function that must `exec` the Grok
-  reviewer command.
+  reviewer command;
+- `local_ai_review_run_gemini`: Bash function that must `exec` the Gemini
+  (`agy`) reviewer command.
 
 Prefer project-level changes in `.githooks/config` over editing hook library
 scripts.
@@ -95,13 +99,14 @@ Default reviewer mapping:
 - `codex/*` branches trigger Codex review
 - `claude/*` branches trigger Claude review
 - `grok/*` branches trigger Grok review
+- `gemini/*` branches trigger Gemini review
 - other branches are skipped
 
 This mapping keeps the branch agent prefix and reviewer CLI aligned. For the
 `code` unit, prompt files remain reviewer-specific: `local-review-codex.md`
-for Codex, `local-review-claude.md` for Claude, and `local-review-grok.md`
-for Grok. Documentation units use their review skill's `SKILL.md` as the
-prompt, shared by all reviewers.
+for Codex, `local-review-claude.md` for Claude, `local-review-grok.md`
+for Grok, and `local-review-gemini.md` for Gemini. Documentation units use
+their review skill's `SKILL.md` as the prompt, shared by all reviewers.
 
 ## 5. Review Target
 
@@ -239,6 +244,7 @@ Useful files:
 - `<timestamp>-claude-<unit>-<pid>.md`
 - `<timestamp>-codex-<unit>-<pid>.md`
 - `<timestamp>-grok-<unit>-<pid>.md`
+- `<timestamp>-gemini-<unit>-<pid>.md`
 - `last-run.log`
 - `last-error.log`
 - `last-reviewed.json` (per-unit diff hashes under `units`)
