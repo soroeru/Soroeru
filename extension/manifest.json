@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Soroeru Chrome Bridge (developer prototype)",
+  "version": "0.1.0",
+  "description": "Developer-only Soroeru bridge; visibly operates one user-selected tab.",
+  "permissions": ["nativeMessaging", "scripting", "activeTab", "storage"],
+  "optional_host_permissions": ["https://*/*"],
+  "background": { "service_worker": "worker.js", "type": "module" },
+  "action": { "default_title": "Soroeru", "default_popup": "popup.html" }
+}

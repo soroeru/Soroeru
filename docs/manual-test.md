@@ -33,6 +33,27 @@
 - [ ] `npx playwright install chromium`
 - [ ] `npm run typecheck`
 - [ ] `npm test`
+
+### 0.1 Chrome bridge developer prototype (Issue #337)
+
+This experiment is developer-only and is not part of the MVP DMG. Use a fake
+HTTPS fixture or a test account with fake values; never use another person's
+account or real personal data.
+
+- [ ] Run `npm run build:extension` and load `dist/compiled/extension/` with
+      Chrome's **Load unpacked** developer-mode flow.
+- [ ] Confirm the extension lists only `nativeMessaging`, `scripting`,
+      `activeTab`, and `storage`; no cookies/history/bookmarks/debugger access.
+- [ ] From the extension popup, approve one HTTPS origin with the explicit
+      button; confirm a different origin is not silently approved.
+- [ ] Start the Electron bridge and confirm the extension badge shows `ON` and
+      the selected page shows `Soroeruがこのタブを操作中` while a command runs.
+- [ ] Confirm a command for another tab, an unapproved origin, or an HTTP page
+      fails without navigation or DOM changes.
+- [ ] Close the bound tab or disconnect Chrome; confirm the command fails and a
+      later command does not silently bind a replacement tab.
+- [ ] Disconnect/unload the extension and confirm no extension-side values,
+      cookies, screenshots, or logs were persisted.
 - [ ] `npm run poc -- check-egress`（ネットワーク送信先のアローリスト）
 - [ ] `npm run poc -- check-persistence`（ローカル書き込み先のアローリスト）
 - [ ] `npm run poc -- check-bypass`（CAPTCHA 解決・ボット回避への依存がないこと）

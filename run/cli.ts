@@ -203,7 +203,7 @@ function aiMapperForUi(app: SoroeruApp): Mapper {
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
 function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
-  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/, run/ and electron/`);
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/, run/, electron/ and extension/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §6):");
     for (const v of result.violations) console.error(`  - ${v}`);
