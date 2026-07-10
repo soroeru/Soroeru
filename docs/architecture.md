@@ -161,6 +161,20 @@ known alternatives and concrete triggers for reconsideration:
   feedback shows a flat 30 days is wrong for high-risk sites (either direction changes the
   `sessionState` record shape and the ledger's session-persistence UI, so it is tracked here
   as a decision, not left implicit in the table row above).
+- **Soroeru-owned Chrome extension + Native Messaging + Electron bridge stays a designed,
+  unselected option** (Issue #291): a design spike
+  ([`design/issue-291-chrome-extension-bridge.md`](design/issue-291-chrome-extension-bridge.md))
+  compared it against the current Playwright path (with `channel: "chrome"` and encrypted
+  `storageState` above) and a localhost-WebSocket variant, and concluded it is a post-MVP
+  architecture option whose first implementation would be a developer-only, feature-flagged
+  prototype — not an MVP scope change; browser-extension distribution stays post-MVP (§1).
+  The extension would sit behind the same `PageDriver` seam as a second session surface, so
+  the Playwright path is preserved, not replaced. Reconsider (i.e. file the follow-up
+  implementation Issues listed in that design) once manual beta testing records **two or
+  more** sites that still fail collection due to bot/risk checks with `channel: "chrome"`
+  plus persisted `storageState`, with the failure attributed to the browser surface rather
+  than selector/flow mismatch. The design depends only on public Chrome extension /
+  Native Messaging APIs — never on the Codex extension or any undocumented protocol.
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
   matches the small private beta while making Gatekeeper friction explicit and avoiding
