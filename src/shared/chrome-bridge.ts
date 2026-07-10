@@ -64,7 +64,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function requireString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
-  if (typeof value !== "string" || value.length === 0) throw new ChromeBridgeProtocolError(`${key} must be a non-empty string`);
+  if (typeof value !== "string" || value.length === 0)
+    throw new ChromeBridgeProtocolError(`${key} must be a non-empty string`);
   return value;
 }
 
@@ -100,7 +101,8 @@ export function parseChromeBridgeMessage(value: unknown): ChromeBridgeMessage {
     case "result":
       rejectUnknownKeys(value, ["version", "kind", "requestId", "ok", "payload", "error"]);
       if (typeof value.ok !== "boolean") throw new ChromeBridgeProtocolError("ok must be a boolean");
-      if (value.error !== undefined && typeof value.error !== "string") throw new ChromeBridgeProtocolError("error must be a string");
+      if (value.error !== undefined && typeof value.error !== "string")
+        throw new ChromeBridgeProtocolError("error must be a string");
       return {
         version: CHROME_BRIDGE_PROTOCOL_VERSION,
         kind,
@@ -119,11 +121,22 @@ export function parseChromeBridgeMessage(value: unknown): ChromeBridgeMessage {
       };
     case "error": {
       rejectUnknownKeys(value, ["version", "kind", "code", "message"]);
-      const codes: ChromeBridgeError["code"][] = ["unsupported-version", "unknown-kind", "invalid-message", "unauthorized", "host-unavailable"];
+      const codes: ChromeBridgeError["code"][] = [
+        "unsupported-version",
+        "unknown-kind",
+        "invalid-message",
+        "unauthorized",
+        "host-unavailable",
+      ];
       if (typeof value.code !== "string" || !codes.includes(value.code as ChromeBridgeError["code"])) {
         throw new ChromeBridgeProtocolError("invalid error code");
       }
-      return { version: CHROME_BRIDGE_PROTOCOL_VERSION, kind, code: value.code as ChromeBridgeError["code"], message: requireString(value, "message") };
+      return {
+        version: CHROME_BRIDGE_PROTOCOL_VERSION,
+        kind,
+        code: value.code as ChromeBridgeError["code"],
+        message: requireString(value, "message"),
+      };
     }
   }
   throw new ChromeBridgeProtocolError("unsupported message kind");

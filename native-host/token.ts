@@ -2,7 +2,9 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export async function createHandshakeToken(appSupportDir: string): Promise<{ tokenPath: string; token: string }> {
+export async function createHandshakeToken(
+  appSupportDir: string,
+): Promise<{ tokenPath: string; token: string }> {
   const tokenDir = join(appSupportDir, "native-host");
   await mkdir(tokenDir, { recursive: true, mode: 0o700 });
   const tokenPath = join(tokenDir, "bridge-token");

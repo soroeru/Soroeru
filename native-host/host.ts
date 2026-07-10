@@ -7,7 +7,10 @@ import { readHandshakeToken } from "./token.js";
 import { decodeNativeMessages, encodeNativeMessage } from "./framing.js";
 import { parseChromeBridgeMessage, type ChromeBridgeMessage } from "../src/shared/chrome-bridge.js";
 
-interface HostOptions { socketPath: string; tokenPath: string }
+interface HostOptions {
+  socketPath: string;
+  tokenPath: string;
+}
 
 export function acceptsHandshakeResponse(message: ChromeBridgeMessage): boolean {
   return message.kind === "result" && message.requestId === "native-host-handshake" && message.ok;
@@ -15,7 +18,8 @@ export function acceptsHandshakeResponse(message: ChromeBridgeMessage): boolean 
 
 function optionsFromArgs(args: string[]): HostOptions {
   const defaults = join(homedir(), "Library", "Application Support", "Soroeru", "native-host");
-  if (args.length === 0) return { socketPath: join(defaults, "bridge.sock"), tokenPath: join(defaults, "bridge-token") };
+  if (args.length === 0)
+    return { socketPath: join(defaults, "bridge.sock"), tokenPath: join(defaults, "bridge-token") };
   const value = (name: string): string => {
     const index = args.indexOf(name);
     const result = index >= 0 ? args[index + 1] : undefined;
@@ -25,7 +29,9 @@ function optionsFromArgs(args: string[]): HostOptions {
   return { socketPath: value("--socket"), tokenPath: value("--token-file") };
 }
 
-function writeNative(message: ChromeBridgeMessage): void { stdout.write(encodeNativeMessage(message)); }
+function writeNative(message: ChromeBridgeMessage): void {
+  stdout.write(encodeNativeMessage(message));
+}
 
 export async function runNativeHost(options: HostOptions): Promise<void> {
   const token = await readHandshakeToken(options.tokenPath);
@@ -33,7 +39,10 @@ export async function runNativeHost(options: HostOptions): Promise<void> {
   let stdioRemainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let socketRemainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let handshakeComplete = false;
-  const close = (): void => { socket.destroy(); stdout.end(); };
+  const close = (): void => {
+    socket.destroy();
+    stdout.end();
+  };
   socket.on("data", (chunk: Buffer) => {
     try {
       socketRemainder = Buffer.concat([socketRemainder, chunk]);
@@ -41,15 +50,26 @@ export async function runNativeHost(options: HostOptions): Promise<void> {
       socketRemainder = decoded.remainder;
       for (const message of decoded.messages) {
         if (!handshakeComplete) {
-          if (!acceptsHandshakeResponse(message)) { close(); return; }
+          if (!acceptsHandshakeResponse(message)) {
+            close();
+            return;
+          }
           handshakeComplete = true;
         }
         writeNative(message);
       }
-    } catch { close(); }
+    } catch {
+      close();
+    }
   });
-  socket.on("error", () => { if (!handshakeComplete) writeNative({ version: 1, kind: "error", code: "host-unavailable", message: "Soroeru is not running" }); close(); });
-  socket.on("close", () => { stdout.end(); });
+  socket.on("error", () => {
+    if (!handshakeComplete)
+      writeNative({ version: 1, kind: "error", code: "host-unavailable", message: "Soroeru is not running" });
+    close();
+  });
+  socket.on("close", () => {
+    stdout.end();
+  });
   socket.on("connect", () => {
     socket.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
   });
@@ -59,16 +79,21 @@ export async function runNativeHost(options: HostOptions): Promise<void> {
       const decoded = decodeNativeMessages(stdioRemainder);
       stdioRemainder = decoded.remainder;
       for (const message of decoded.messages) {
-        if (!handshakeComplete) { close(); return; }
+        if (!handshakeComplete) {
+          close();
+          return;
+        }
         parseChromeBridgeMessage(message);
         socket.write(encodeNativeMessage(message));
       }
-    } catch { close(); }
+    } catch {
+      close();
+    }
   });
   stdin.on("end", close);
   await new Promise<void>((resolve) => socket.once("close", resolve));
 }
 
 if (process.argv[1]?.endsWith("host.js")) {
-  runNativeHost(optionsFromArgs(process.argv.slice(2))).catch(() => process.exitCode = 1);
+  runNativeHost(optionsFromArgs(process.argv.slice(2))).catch(() => (process.exitCode = 1));
 }
