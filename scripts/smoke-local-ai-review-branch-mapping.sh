@@ -35,5 +35,8 @@ assert_reviewer "claude/test-local-review" "claude"
 assert_reviewer "grok/test-local-review" "grok"
 assert_reviewer "gemini/test-local-review" "gemini"
 assert_skip "feature/test-local-review"
+# antigravity/ has no reviewer defined; keep this assertion to catch
+# accidental future mappings of this prefix.
+assert_skip "antigravity/test-local-review"
 
 printf 'local AI review branch mapping smoke check passed\n'
