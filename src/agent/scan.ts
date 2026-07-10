@@ -31,7 +31,12 @@ export async function waitForFields(page: Page, timeoutMs = 5000): Promise<PageS
   return snapshot;
 }
 
-function scanInPage(): {
+/**
+ * Browser-only structure scanner shared by Playwright and the developer-only
+ * Chrome extension content script. It must remain free of Node/Playwright
+ * runtime dependencies because Chrome serializes this function into the page.
+ */
+export function scanInPage(): {
   fields: PageSnapshot["fields"];
   buttons: PageSnapshot["buttons"];
   links: PageSnapshot["links"];
