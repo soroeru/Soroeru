@@ -78,9 +78,9 @@ export function App(): React.JSX.Element {
 
   const bumpReload = useCallback(() => setReloadToken((token) => token + 1), []);
 
-  // Keep the shell wide whenever the ledger is visible or a collection is in
-  // flight (panel stays mounted under other tabs during a run).
-  const shellWidthClass = tab === "ledger" || collectionBusy ? "max-w-none" : "max-w-2xl md:max-w-5xl";
+  // Collection busy disables other tabs, so the user stays on 開示台帳 while a
+  // run is active; width only needs to track the active tab.
+  const shellWidthClass = tab === "ledger" ? "max-w-none" : "max-w-2xl md:max-w-5xl";
 
   return (
     <main

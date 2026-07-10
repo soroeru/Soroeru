@@ -94,6 +94,8 @@ export function LedgerPanel({
   const [deletingSite, setDeletingSite] = useState(false);
   const resumedHandoffSites = useRef<Set<string>>(new Set());
   const cancelBatchRef = useRef(false);
+  /** True while `runVisibilityBatch` is in progress (including cancel unwind). */
+  const batchInFlightRef = useRef(false);
   const onCollectedRef = useRef(onCollected);
   const sitesRef = useRef(sites);
 
@@ -152,13 +154,23 @@ export function LedgerPanel({
     const unsubscribe = window.soroeru.visibility.onEvent((event: VisibilityEvent) => {
       switch (event.type) {
         case "run-started":
+          // Still track the site id so cancel/abort targets stay correct, but
+          // do not clear a guide the user opened after cancel.
           setRunningSiteId(event.siteAccountId);
-          setHandoff(undefined);
-          setGuideSiteId(undefined);
+          if (!cancelBatchRef.current) {
+            setHandoff(undefined);
+            setGuideSiteId(undefined);
+          }
           resumedHandoffSites.current.delete(event.siteAccountId);
           break;
         case "handoff":
-          setBatch((current) => ({ ...current, phase: "paused" }));
+          // Late hand-off after cancel / showGuide must not reopen the modal or
+          // pull the batch bar out of "canceling".
+          if (cancelBatchRef.current) break;
+          setBatch((current) => {
+            if (current.phase === "canceling") return current;
+            return { ...current, phase: "paused" };
+          });
           setHandoff({
             siteAccountId: event.siteAccountId,
             instruction: event.instruction,
@@ -172,11 +184,18 @@ export function LedgerPanel({
           }
           break;
         case "resumed":
+          if (cancelBatchRef.current) {
+            setHandoff(undefined);
+            break;
+          }
           resumedHandoffSites.current.add(event.siteAccountId);
-          setBatch((current) => ({
-            ...current,
-            phase: current.queue.length > 0 ? "running" : current.phase,
-          }));
+          setBatch((current) => {
+            if (current.phase === "canceling") return current;
+            return {
+              ...current,
+              phase: current.queue.length > 0 ? "running" : current.phase,
+            };
+          });
           setHandoff(undefined);
           break;
         case "run-finished":
@@ -221,15 +240,20 @@ export function LedgerPanel({
   const startBatch = useCallback(
     async (overrideIds?: string[]) => {
       const queue = overrideIds ?? [...selectedVisibleIds];
-      if (queue.length === 0 || batchBusy) return;
+      if (queue.length === 0 || batchBusy || batchInFlightRef.current) return;
       cancelBatchRef.current = false;
+      batchInFlightRef.current = true;
       setLoadError(undefined);
       setResultModal(undefined);
       setBatch({ phase: "running", queue, currentSiteId: queue[0], completed: 0, results: [] });
       try {
         const summary = await runVisibilityBatch(queue, {
           run: async (siteAccountId) => {
-            setBatch((current) => ({ ...current, phase: "running", currentSiteId: siteAccountId }));
+            setBatch((current) => {
+              // Do not leave "canceling" if the user already aborted this batch.
+              if (cancelBatchRef.current || current.phase === "canceling") return current;
+              return { ...current, phase: "running", currentSiteId: siteAccountId };
+            });
             return window.soroeru.visibility.run(siteAccountId);
           },
           refreshAfterSite,
@@ -242,8 +266,7 @@ export function LedgerPanel({
           completed: summary.completed,
           results: summary.results,
         }));
-        // One full ledger reload + parent token so Insights sees the new data.
-        await loadSites();
+        // Single full reload via parent reloadToken (avoids loadSites + token double-fetch).
         onCollectedRef.current();
         if (!summary.canceled) {
           const content = buildCollectionResultModalContent(
@@ -257,11 +280,12 @@ export function LedgerPanel({
       } catch {
         setLoadError(reasonMessage(undefined));
         setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
-        await loadSites();
         onCollectedRef.current();
+      } finally {
+        batchInFlightRef.current = false;
       }
     },
-    [batchBusy, loadSites, refreshAfterSite, selectedVisibleIds],
+    [batchBusy, refreshAfterSite, selectedVisibleIds],
   );
 
   const cancelBatch = useCallback(() => {
@@ -272,7 +296,10 @@ export function LedgerPanel({
     setBatch((current) => ({ ...current, phase: "canceling" }));
   }, [handoff, runningSiteId]);
 
-  const resume = useCallback(() => void window.soroeru.visibility.resume(), []);
+  const resume = useCallback(() => {
+    if (cancelBatchRef.current) return;
+    void window.soroeru.visibility.resume();
+  }, []);
   const skipCurrentSite = useCallback(() => void window.soroeru.visibility.abort(), []);
   /**
    * Poll until Visibility reports idle. Returns false if still running after
@@ -295,9 +322,23 @@ export function LedgerPanel({
       setBatch((current) => ({ ...current, phase: "canceling" }));
       setHandoff(undefined);
       await window.soroeru.visibility.abort();
-      const idle = await waitForVisibilityIdle();
+      let idle = await waitForVisibilityIdle();
       if (!idle) {
-        setLoadError("収集の停止を確認できませんでした。しばらくしてから再試行してください。");
+        // One more abort + shorter wait before giving up on opening the guide.
+        await window.soroeru.visibility.abort();
+        idle = await waitForVisibilityIdle(50, 100);
+      }
+      if (!idle) {
+        setRunningSiteId(undefined);
+        setHandoff(undefined);
+        setLoadError(
+          "収集の停止を確認できませんでした。停止が終わるまでお待ちください。終わらない場合はしばらくしてから再試行してください。",
+        );
+        // Unlock the shell only when no batch loop is still owning the phase;
+        // otherwise startBatch's finally will settle canceling → idle/done.
+        if (!batchInFlightRef.current) {
+          setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
+        }
         return;
       }
       setRunningSiteId(undefined);
@@ -309,9 +350,15 @@ export function LedgerPanel({
   const markManual = useCallback(
     async (siteAccountId: string) => {
       await window.soroeru.visibility.abort();
-      const idle = await waitForVisibilityIdle();
+      let idle = await waitForVisibilityIdle();
       if (!idle) {
-        setLoadError("収集の停止を確認できませんでした。しばらくしてから再試行してください。");
+        await window.soroeru.visibility.abort();
+        idle = await waitForVisibilityIdle(50, 100);
+      }
+      if (!idle) {
+        setLoadError(
+          "収集の停止を確認できませんでした。停止が終わるまでお待ちください。終わらない場合はしばらくしてから再試行してください。",
+        );
         return;
       }
       const result = await window.soroeru.savedPage.markManualCheck(siteAccountId);
@@ -596,7 +643,13 @@ export function LedgerPanel({
                       <span className="flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => void openDetail(site.siteAccountId)}
+                          onClick={() => {
+                            if (detail?.siteAccountId === site.siteAccountId) {
+                              setDetail(undefined);
+                              return;
+                            }
+                            void openDetail(site.siteAccountId);
+                          }}
                           className="rounded border border-neutral-300 px-3 py-1.5 text-sm"
                         >
                           詳細
