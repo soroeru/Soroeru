@@ -351,6 +351,7 @@ function scanInPage(): {
   for (const tag of labelTags) {
     for (const lbl of Array.from(document.querySelectorAll(tag))) {
       if (!(lbl instanceof HTMLElement) || !isVisible(lbl) || hasFormControl(lbl)) continue;
+      if (/^H[1-6]$/.test(lbl.tagName)) continue;
 
       // A label candidate must be a leaf element unless it's a standard label/header tag.
       const isStandardLabelTag = ["label", "th", "dt", "legend"].includes(lbl.tagName.toLowerCase());
@@ -360,7 +361,12 @@ function scanInPage(): {
       if (!isDisplayLabel(labelText)) continue;
 
       const val = lbl.nextElementSibling;
-      if (val instanceof HTMLElement && isVisible(val) && !hasFormControl(val)) {
+      if (
+        val instanceof HTMLElement &&
+        isVisible(val) &&
+        !hasFormControl(val) &&
+        !isDisplayLabel(val.textContent ?? "")
+      ) {
         pushDisplay(val, val.textContent ?? "", labelText, "");
       }
     }
@@ -370,14 +376,23 @@ function scanInPage(): {
   // value in separate wrappers, so the label element is not itself adjacent
   // to the value element. Restrict this to a two-column row and known labels
   // to avoid treating arbitrary page copy as personal data.
-  for (const row of Array.from(document.querySelectorAll("div, li, section, article"))) {
+  for (const row of Array.from(document.querySelectorAll("div, li"))) {
     if (!(row instanceof HTMLElement) || !isVisible(row) || hasFormControl(row)) continue;
     const children = Array.from(row.children).filter(
       (child): child is HTMLElement => child instanceof HTMLElement && isVisible(child),
     );
     if (children.length !== 2) continue;
     const [labelEl, valueEl] = children;
-    if (!labelEl || !valueEl || !isDisplayLabel(labelEl.textContent ?? "")) continue;
+    if (
+      !labelEl ||
+      !valueEl ||
+      /^H[1-6]$/.test(labelEl.tagName) ||
+      isDisplayLabel(valueEl.textContent ?? "")
+    ) continue;
+    const containsNestedLabel = Array.from(valueEl.querySelectorAll("*"))
+      .some((descendant) => isDisplayLabel(descendant.textContent ?? ""));
+    if (containsNestedLabel) continue;
+    if (!isDisplayLabel(labelEl.textContent ?? "")) continue;
     pushDisplay(valueEl, valueEl.textContent ?? "", labelEl.textContent ?? "", "");
   }
 

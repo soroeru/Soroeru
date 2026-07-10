@@ -122,6 +122,10 @@ test("scanner extracts inline and nested label-value text without exposing value
       <div class="account-row">
         <span aria-label="電話番号"><span>090-1234-5678</span></span>
       </div>
+      <section>
+        <h2>会員情報</h2>
+        <div><div>氏名</div><div>住所</div></div>
+      </section>
     </body></html>`;
     await page.setContent(html);
 
