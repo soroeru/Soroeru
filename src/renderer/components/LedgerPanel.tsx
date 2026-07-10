@@ -57,6 +57,12 @@ interface LedgerPanelProps {
   reloadToken: number;
   /** Notify the parent that collection/import/delete changed vault-backed data. */
   onCollected: () => void;
+  /**
+   * True while a Visibility batch is running, paused at a wall, or canceling.
+   * The parent uses this to keep other tabs disabled so this panel (and its
+   * hand-off subscription) is not abandoned mid-run.
+   */
+  onCollectionBusyChange?: (busy: boolean) => void;
 }
 
 /**
@@ -64,7 +70,11 @@ interface LedgerPanelProps {
  * (Issue #341). Rows are sites, columns are the union of every attribute
  * observed across all sites, plus selection, status, and row actions.
  */
-export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): React.JSX.Element {
+export function LedgerPanel({
+  reloadToken,
+  onCollected,
+  onCollectionBusyChange,
+}: LedgerPanelProps): React.JSX.Element {
   const [sites, setSites] = useState<SiteLedgerDetail[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loadError, setLoadError] = useState<string | undefined>();
@@ -112,6 +122,24 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
       setLoadError(reasonMessage(undefined));
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  /** Mid-batch: re-fetch one composed site row instead of the entire ledger. */
+  const patchSite = useCallback(async (siteAccountId: string) => {
+    try {
+      const next = await window.soroeru.ledger.site(siteAccountId);
+      if (!next) return;
+      setSites((current) => {
+        const index = current.findIndex((site) => site.siteAccountId === siteAccountId);
+        if (index < 0) return [...current, next];
+        const copy = current.slice();
+        copy[index] = next;
+        return copy;
+      });
+      setDetail((current) => (current?.siteAccountId === siteAccountId ? next : current));
+    } catch {
+      // Non-fatal for mid-batch progress; a full load at batch end reconciles.
     }
   }, []);
 
@@ -171,11 +199,15 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
   const allSelected = sites.length > 0 && selectedVisibleIds.length === sites.length;
 
+  useEffect(() => {
+    onCollectionBusyChange?.(batchBusy);
+    return () => onCollectionBusyChange?.(false);
+  }, [batchBusy, onCollectionBusyChange]);
+
   const refreshAfterSite = useCallback(
     async (siteAccountId: string, result: BatchResultEntry) => {
-      // Single owner of mid-batch ledger refresh — no parent reloadToken bump
-      // until the whole batch finishes (see startBatch).
-      await loadSites();
+      // Patch only this site mid-batch; full siteDetails runs once when the batch ends.
+      await patchSite(siteAccountId);
       setBatch((current) => ({
         ...current,
         completed: current.completed + 1,
@@ -183,7 +215,7 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
         currentSiteId: siteAccountId,
       }));
     },
-    [loadSites],
+    [patchSite],
   );
 
   const startBatch = useCallback(
@@ -210,8 +242,8 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
           completed: summary.completed,
           results: summary.results,
         }));
-        // One parent-level refresh after the batch so Insights and other tabs
-        // see the new disclosures without mid-batch reload storms.
+        // One full ledger reload + parent token so Insights sees the new data.
+        await loadSites();
         onCollectedRef.current();
         if (!summary.canceled) {
           const content = buildCollectionResultModalContent(
@@ -225,26 +257,34 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
       } catch {
         setLoadError(reasonMessage(undefined));
         setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
+        await loadSites();
         onCollectedRef.current();
       }
     },
-    [batchBusy, refreshAfterSite, selectedVisibleIds],
+    [batchBusy, loadSites, refreshAfterSite, selectedVisibleIds],
   );
 
   const cancelBatch = useCallback(() => {
     cancelBatchRef.current = true;
     if (runningSiteId !== undefined || handoff) void window.soroeru.visibility.abort();
+    // Drop the hand-off modal so 「解決して再開」 cannot race cancel.
+    setHandoff(undefined);
     setBatch((current) => ({ ...current, phase: "canceling" }));
   }, [handoff, runningSiteId]);
 
   const resume = useCallback(() => void window.soroeru.visibility.resume(), []);
   const skipCurrentSite = useCallback(() => void window.soroeru.visibility.abort(), []);
-  const waitForVisibilityIdle = useCallback(async () => {
-    for (let i = 0; i < 20; i++) {
+  /**
+   * Poll until Visibility reports idle. Returns false if still running after
+   * the timeout so callers do not open guide/import while a run is live.
+   */
+  const waitForVisibilityIdle = useCallback(async (maxAttempts = 100, intervalMs = 100): Promise<boolean> => {
+    for (let i = 0; i < maxAttempts; i++) {
       const status = await window.soroeru.visibility.status();
-      if (!status.running) return;
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (!status.running) return true;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
+    return false;
   }, []);
   const showGuide = useCallback(
     async (siteAccountId: string) => {
@@ -253,10 +293,14 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
       // Guide / import controls use guideInteractiveDisabled (false) instead of batchBusy.
       cancelBatchRef.current = true;
       setBatch((current) => ({ ...current, phase: "canceling" }));
-      await window.soroeru.visibility.abort();
-      await waitForVisibilityIdle();
-      setRunningSiteId(undefined);
       setHandoff(undefined);
+      await window.soroeru.visibility.abort();
+      const idle = await waitForVisibilityIdle();
+      if (!idle) {
+        setLoadError("収集の停止を確認できませんでした。しばらくしてから再試行してください。");
+        return;
+      }
+      setRunningSiteId(undefined);
       setGuideSiteId(siteAccountId);
       setSavedPageSiteId(siteAccountId);
     },
@@ -265,7 +309,11 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
   const markManual = useCallback(
     async (siteAccountId: string) => {
       await window.soroeru.visibility.abort();
-      await waitForVisibilityIdle();
+      const idle = await waitForVisibilityIdle();
+      if (!idle) {
+        setLoadError("収集の停止を確認できませんでした。しばらくしてから再試行してください。");
+        return;
+      }
       const result = await window.soroeru.savedPage.markManualCheck(siteAccountId);
       if (!result.ok) {
         setLoadError(reasonMessage(result.error));

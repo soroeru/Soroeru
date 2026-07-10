@@ -32,6 +32,8 @@ export function App(): React.JSX.Element {
   const [reloadToken, setReloadToken] = useState(0);
   const [recoveryError, setRecoveryError] = useState<string | undefined>();
   const [statusError, setStatusError] = useState<string | undefined>();
+  /** True while the ledger's Visibility batch is running / paused / canceling. */
+  const [collectionBusy, setCollectionBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     // Guard the status round trip: a rejected invoke must not leave the app stuck
@@ -76,7 +78,9 @@ export function App(): React.JSX.Element {
 
   const bumpReload = useCallback(() => setReloadToken((token) => token + 1), []);
 
-  const shellWidthClass = tab === "ledger" ? "max-w-none" : "max-w-2xl md:max-w-5xl";
+  // Keep the shell wide whenever the ledger is visible or a collection is in
+  // flight (panel stays mounted under other tabs during a run).
+  const shellWidthClass = tab === "ledger" || collectionBusy ? "max-w-none" : "max-w-2xl md:max-w-5xl";
 
   return (
     <main
@@ -114,15 +118,37 @@ export function App(): React.JSX.Element {
             <TabButton active={tab === "ledger"} onClick={() => setTab("ledger")}>
               開示台帳
             </TabButton>
-            <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>
+            <TabButton
+              active={tab === "insights"}
+              disabled={collectionBusy}
+              onClick={() => setTab("insights")}
+            >
               インサイト
             </TabButton>
-            <TabButton active={tab === "settings"} onClick={() => setTab("settings")}>
+            <TabButton
+              active={tab === "settings"}
+              disabled={collectionBusy}
+              onClick={() => setTab("settings")}
+            >
               設定
             </TabButton>
           </nav>
+          {collectionBusy && (
+            <p className="text-xs text-neutral-500">
+              収集の実行中は他のタブに切り替えられません（ウォールの解決や再開のため）。
+            </p>
+          )}
 
-          {tab === "ledger" && <LedgerPanel reloadToken={reloadToken} onCollected={bumpReload} />}
+          {/* Keep the ledger mounted so batch / hand-off state and the visibility
+              event subscription survive tab switches when not busy, and remain
+              available if a run is active. */}
+          <div className={tab === "ledger" ? undefined : "hidden"} aria-hidden={tab !== "ledger"}>
+            <LedgerPanel
+              reloadToken={reloadToken}
+              onCollected={bumpReload}
+              onCollectionBusyChange={setCollectionBusy}
+            />
+          </div>
           {tab === "insights" && <InsightsPanel reloadToken={reloadToken} />}
           {tab === "settings" && <SettingsPanel onImported={bumpReload} />}
         </>
@@ -134,17 +160,22 @@ export function App(): React.JSX.Element {
 function TabButton({
   active,
   onClick,
+  disabled = false,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`whitespace-nowrap px-2 py-2 text-sm sm:px-3 ${active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"}`}
+      disabled={disabled}
+      className={`whitespace-nowrap px-2 py-2 text-sm sm:px-3 ${
+        active ? "border-b-2 border-neutral-900 font-medium" : "text-neutral-500"
+      } disabled:cursor-not-allowed disabled:opacity-40`}
     >
       {children}
     </button>
