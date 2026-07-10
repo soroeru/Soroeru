@@ -137,7 +137,11 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
             fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
             credential: event.credential,
           });
-          if (resumedHandoffSites.current.has(event.siteAccountId)) setGuideSiteId(event.siteAccountId);
+          if (resumedHandoffSites.current.has(event.siteAccountId)) {
+            // Expand the saved-page strip so the nested guide is actually visible.
+            setGuideSiteId(event.siteAccountId);
+            setSavedPageSiteId(event.siteAccountId);
+          }
           break;
         case "resumed":
           resumedHandoffSites.current.add(event.siteAccountId);
@@ -162,6 +166,8 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
 
   const selectedVisibleIds = useMemo(() => collectVisibleSelectedSiteIds(sites, selected), [selected, sites]);
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
+  // Saved-page guide / import stay usable after showGuide even while the batch is canceling.
+  const guideInteractiveDisabled = batch.phase === "running" || batch.phase === "paused";
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
   const allSelected = sites.length > 0 && selectedVisibleIds.length === sites.length;
 
@@ -242,14 +248,15 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
   }, []);
   const showGuide = useCallback(
     async (siteAccountId: string) => {
+      // Stay in "canceling" until startBatch's runVisibilityBatch promise settles so
+      // "選択したサイトを収集" remains disabled and a second batch cannot overlap.
+      // Guide / import controls use guideInteractiveDisabled (false) instead of batchBusy.
       cancelBatchRef.current = true;
       setBatch((current) => ({ ...current, phase: "canceling" }));
       await window.soroeru.visibility.abort();
       await waitForVisibilityIdle();
       setRunningSiteId(undefined);
       setHandoff(undefined);
-      // Leave canceling so the saved-page guide / import controls are usable.
-      setBatch((current) => ({ ...current, phase: "idle", currentSiteId: undefined }));
       setGuideSiteId(siteAccountId);
       setSavedPageSiteId(siteAccountId);
     },
@@ -587,14 +594,14 @@ export function LedgerPanel({ reloadToken, onCollected }: LedgerPanelProps): Rea
                               {guideOpen && (
                                 <SavedPageImportGuide
                                   site={site}
-                                  disabled={batchBusy}
+                                  disabled={guideInteractiveDisabled}
                                   onOpenSite={() => void openSite(site.siteAccountId)}
                                   onSkip={() => void markManual(site.siteAccountId)}
                                 />
                               )}
                               <SavedPageImportPanel
                                 siteAccountId={site.siteAccountId}
-                                disabled={batchBusy}
+                                disabled={guideInteractiveDisabled}
                                 onImported={() => {
                                   setGuideSiteId(undefined);
                                   void loadSites();
