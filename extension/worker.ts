@@ -224,7 +224,10 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
     await chrome.tabs.update(payload.tabId, { url: payload.url as string });
     await navigation;
     await ensureContentScript(payload.tabId);
-    return result(command, true, { url: payload.url });
+    // Report the post-navigation tab URL so same-site redirects update the driver cache
+    // (request URL alone would leave currentUrl stale until waitForReady/snapshot).
+    const landed = await chrome.tabs.get(payload.tabId);
+    return result(command, true, { url: landed.url ?? "" });
   }
   if (!(await permissionFor(currentOrigin)))
     return result(command, false, undefined, "origin permission required");
