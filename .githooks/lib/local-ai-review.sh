@@ -141,7 +141,10 @@ cleanup_files=()
 cleanup() {
   local status=$?
   local f stored
-  for f in "${cleanup_files[@]}"; do
+  # Bash 3.2 + set -u: empty "${arr[@]}" is unbound. Guard like the
+  # DOC_UNITS loops below so early exits (before cleanup_files is
+  # populated) still release the lock.
+  for f in ${cleanup_files[@]+"${cleanup_files[@]}"}; do
     if [ -e "$f" ]; then
       rm -f "$f"
       warn "cleanup removed temp file=$f phase=$PHASE status=$status"
@@ -209,7 +212,8 @@ esac
 unit_pathspecs() {
   local unit=$1 entry name pathspec prompt
   if [ "$unit" = "code" ]; then
-    UNIT_PATHSPECS=("${LOCAL_AI_REVIEW_TARGET_PATHS[@]}")
+    # Bash 3.2 + set -u: guard empty TARGET_PATHS (misconfig).
+    UNIT_PATHSPECS=(${LOCAL_AI_REVIEW_TARGET_PATHS[@]+"${LOCAL_AI_REVIEW_TARGET_PATHS[@]}"})
     return 0
   fi
   for entry in ${LOCAL_AI_REVIEW_DOC_UNITS[@]+"${LOCAL_AI_REVIEW_DOC_UNITS[@]}"}; do
@@ -283,12 +287,15 @@ run_reviewer() {
 ANY_UNIT_DIFF=0
 ANY_REVIEWER_FAILED=0
 
-for UNIT in "${UNIT_ORDER[@]}"; do
+# UNIT_ORDER always starts with "code" (never empty); still use the
+# bash 3.2 set -u guard so a future reordering cannot reintroduce the
+# cleanup_files class of bug.
+for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   # --- Compute the unit's diff ----------------------------------
   set_phase "diff unit=$UNIT"
   unit_pathspecs "$UNIT" || { fail "unknown review unit: $UNIT"; ANY_REVIEWER_FAILED=1; continue; }
 
-  git diff "$MERGE_BASE" "$COMMIT_SHA" -- "${UNIT_PATHSPECS[@]}" > "$DIFF_FILE"
+  git diff "$MERGE_BASE" "$COMMIT_SHA" -- ${UNIT_PATHSPECS[@]+"${UNIT_PATHSPECS[@]}"} > "$DIFF_FILE"
   DIFF_SIZE=$(wc -c < "$DIFF_FILE" | tr -d ' ')
 
   if [ "$DIFF_SIZE" = "0" ]; then
@@ -321,7 +328,7 @@ for UNIT in "${UNIT_ORDER[@]}"; do
   fi
 
   set_phase "payload unit=$UNIT"
-  CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" "$COMMIT_SHA" -- "${UNIT_PATHSPECS[@]}")
+  CHANGED_FILES=$(git diff --name-only "$MERGE_BASE" "$COMMIT_SHA" -- ${UNIT_PATHSPECS[@]+"${UNIT_PATHSPECS[@]}"})
 
   {
     # The payload is passed to the reviewer CLI as a single argument;
