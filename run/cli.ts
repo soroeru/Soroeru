@@ -35,8 +35,12 @@ import { askSecret, AppUI } from "../src/app/ui.js";
 import { startWebUiServer, type WebUiServerHandle } from "../src/app/web-ui.js";
 import { defaultVaultStateDir } from "../src/store/vault.js";
 import { checkBypassDenylist } from "../src/dev/bypass-check.js";
-import { checkNetworkEgress } from "../src/dev/egress-check.js";
-import { ALLOWED_PERSIST_CATEGORIES, checkLocalPersistence } from "../src/dev/privacy-check.js";
+import { SCAN_DIRS as EGRESS_SCAN_DIRS, checkNetworkEgress } from "../src/dev/egress-check.js";
+import {
+  ALLOWED_PERSIST_CATEGORIES,
+  SCAN_DIRS as PERSIST_SCAN_DIRS,
+  checkLocalPersistence,
+} from "../src/dev/privacy-check.js";
 import { formatResult, hasFailures, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = defaultVaultStateDir({
@@ -203,7 +207,7 @@ function aiMapperForUi(app: SoroeruApp): Mapper {
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
 function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
-  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/, run/, electron/, extension/ and native-host/`);
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under ${EGRESS_SCAN_DIRS.map((dir) => `${dir}/`).join(", ")}`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §6):");
     for (const v of result.violations) console.error(`  - ${v}`);
@@ -216,7 +220,7 @@ function cmdCheckEgress(): void {
 /** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
 function cmdCheckPersistence(): void {
   const result = checkLocalPersistence(process.cwd());
-  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under src/, run/, electron/, extension/ and native-host/`);
+  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under ${PERSIST_SCAN_DIRS.map((dir) => `${dir}/`).join(", ")}`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §3):");
     for (const v of result.violations) console.error(`  - ${v}`);

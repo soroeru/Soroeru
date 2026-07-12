@@ -2,8 +2,8 @@
 // sites (docs/security.md §3, §12.1). `checkLocalPersistence` is the static
 // check behind `npm run poc -- check-persistence`: every local-write site in
 // src/, run/, electron/, extension/, or native-host/ must carry a
-// `// persist: <category>` annotation from the ALLOWED_CATEGORIES allowlist
-// in src/dev/privacy-check.ts.
+// `// persist: <category>` annotation from the ALLOWED_PERSIST_CATEGORIES
+// allowlist in src/dev/privacy-check.ts.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

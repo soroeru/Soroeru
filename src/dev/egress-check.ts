@@ -19,7 +19,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
+export const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// egress: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([

@@ -178,10 +178,10 @@ test("registration pins the installed host's shebang to an absolute Node path", 
     appSupportDir: join(root, "Application Support"),
     chromeNativeMessagingDir: join(root, "Chrome", "NativeMessagingHosts"),
   };
-  const result = await registerNativeHost(source, "a".repeat(32), paths);
+  const result = await registerNativeHost(source, "a".repeat(32), paths, async () => "/usr/bin/node");
   const installed = await readFile(result.binaryPath, "utf8");
   const [shebang, ...rest] = installed.split("\n");
-  assert.match(shebang!, /^#!\/.+\/node$/);
+  assert.equal(shebang, "#!/usr/bin/node");
   assert.equal(rest.join("\n"), "console.log('relay');\n");
 });
 
