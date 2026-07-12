@@ -194,7 +194,14 @@ export class ChromeExtensionBridge implements ChromeBridgeTransport {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         // Wording includes "timeout" so VisibilityRunner.unreachableReasonFor maps it.
-        reject(new Error(`chrome bridge command timeout: ${command}`));
+        const error = new Error(`chrome bridge command timeout: ${command}`);
+        // A result may still arrive after this point, but it no longer belongs
+        // to a usable command sequence. Tear down the transport before the
+        // queue advances so no later command can race that late side effect.
+        this.connected = false;
+        this.failPending(error);
+        this.socket?.destroy();
+        reject(error);
       }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       try {

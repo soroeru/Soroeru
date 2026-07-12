@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright";
 import type { PageSnapshot } from "../../src/types.js";
-import { scanPage } from "../../extension/content-script.js";
+import { readPageValues, scanPage } from "../../extension/content-script.js";
 import { snapshotPage } from "../../src/agent/scan.js";
 import { isAllowedExtensionOrigin, validateExtensionCommand } from "../../extension/worker.js";
 
@@ -68,6 +68,29 @@ test("content snapshot has the same structure-only shape as the Playwright scann
     assert.equal(extensionSnapshot.displayValues?.[0]?.labelText, "氏名");
     assert.equal(JSON.stringify(extensionSnapshot.fields).includes("山田 太郎"), false);
     assert.equal(JSON.stringify(extensionSnapshot.displayValues).includes("山田 太郎"), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("content value collection excludes unchecked choices and empty inputs like Playwright", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <input data-af-id="f-email" value="user@example.test">
+      <input data-af-id="f-checked" type="checkbox" value="newsletter" checked>
+      <input data-af-id="f-unchecked" type="checkbox" value="marketing">
+      <input data-af-id="f-radio-checked" type="radio" value="home" checked>
+      <input data-af-id="f-radio-unchecked" type="radio" value="office">
+      <input data-af-id="f-empty" value="">
+    `);
+
+    assert.deepEqual(await page.evaluate(readPageValues, undefined), {
+      "f-email": "user@example.test",
+      "f-checked": "newsletter",
+      "f-radio-checked": "home",
+    });
   } finally {
     await browser.close();
   }
