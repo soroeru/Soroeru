@@ -2,8 +2,8 @@
 // (docs/security.md §6) — the only allowed external destinations are (a) the
 // target sites the user acts on and (b) the user's configured AI provider.
 //
-// This scans `src/**/*.ts`, `run/**/*.ts`, `electron/**/*.ts`, and
-// `extension/**/*.ts`
+// This scans `src/**/*.ts`, `run/**/*.ts`, `electron/**/*.ts`,
+// `extension/**/*.ts`, and `native-host/**/*.ts`
 // (excluding `*.test.ts`) for lines that perform or configure a network call.
 // Every match must carry a `// egress: <category>` annotation (on the same line
 // or the line above) naming one of the allowed categories below; an
@@ -19,7 +19,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["src", "run", "electron", "extension"];
+const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// egress: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([

@@ -66,8 +66,9 @@ This UI is a developer-only prototype and remains hidden unless
 `SOROERU_ENABLE_CHROME_BRIDGE=1`. Use only a fake HTTPS fixture and fake values.
 Never enter a real credential, cookie, card value, or personal value during this test.
 
-- [ ] Build the extension, set `SOROERU_CHROME_EXTENSION_ID` to the unpacked extension ID and
-      `SOROERU_CHROME_BRIDGE_HOST_BINARY` to the local native-host executable, then start the app
+- [ ] Build the extension and host bundle (`npm run build:extension && npm run build:host`),
+      set `SOROERU_CHROME_EXTENSION_ID` to the unpacked extension ID and
+      `SOROERU_CHROME_BRIDGE_HOST_BINARY` to `dist/native-host/host.cjs`, then start the app
       with `SOROERU_ENABLE_CHROME_BRIDGE=1`. Without the flag, confirm the Chrome section is absent.
 - [ ] In **設定 → Chrome と接続**, choose **host を登録して接続を始める**. Confirm the UI first
       reports registration / extension-install guidance, then changes to **接続済み** only after the
@@ -92,6 +93,30 @@ Never enter a real credential, cookie, card value, or personal value during this
 - [ ] Inspect app/host/extension diagnostics using fake canaries and confirm renderer IPC events contain
       only connection state, origin, tab ID, counts, and masked wording — never raw values,
       credentials, cookies, socket tokens, or command payloads.
+
+### 0.3 Chrome bridge packaging and cleanup (Issue #340)
+
+DMG に同梱されるのは不活性なリレーファイルのみです（フィーチャーフラグなしでは何も登録・実行
+されない）。フェイクデータのみで確認します。
+
+- [ ] `npm run package:dmg` が成功し、マウントした DMG の
+      `Soroeru.app/Contents/Resources/native-host/host.cjs` に host バンドルが存在する
+- [ ] DMG（`Soroeru.app` 全体）に、ブラウザプロファイル・cookie・`state/` のボールト・`.env`・
+      ログ・実データが混入していない（`find`/`grep` による抜き取り検査。
+      [`security.md`](security.md) §12.1 のチェックリスト）
+- [ ] パッケージ版アプリを `SOROERU_ENABLE_CHROME_BRIDGE=1` と拡張 ID のみで起動し（
+      `SOROERU_CHROME_BRIDGE_HOST_BINARY` 未指定）、**host を登録して接続を始める** が
+      同梱の host バンドルから
+      `~/Library/Application Support/Soroeru/native-host/jp.soroeru.bridge` へのコピーと
+      manifest 登録を行うことを確認する（登録はこのユーザー操作までは一切起きない）
+- [ ] フラグなしでパッケージ版を起動した場合、Chrome 接続 UI が現れず、manifest
+      （`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`）
+      も host コピーも作成されないことを確認する
+- [ ] **切断して登録物を掃除** の後、manifest・host コピー・
+      `~/Library/Application Support/Soroeru/native-host/` の残骸が残らない（承認済み
+      オリジンは接続中なら取り消し、切断済みならベストエフォート + 手動案内、§0.2 と同じ）
+- [ ] `npm run release:check` が extension/・native-host/ を含めて通過する（egress・
+      persistence・bypass の各ゲートが両ディレクトリをスキャン対象に含む）
 
 ---
 

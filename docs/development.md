@@ -188,6 +188,66 @@ run, vault recovery, Add Site branches, registration, import, update, wall hand-
 support-bundle review, and beta release-note limitations. Keep this section focused on
 commands and packaging facts; keep the executable QA checklist in `manual-test.md`.
 
+## 3.2 Chrome Extension Bridge Developer Setup
+
+The Chrome extension bridge is a **developer-only prototype** (Issue #340) — not included in the
+MVP DMG — that enables automation via the user's actual Chrome profile instead of the
+sandboxed Playwright Chromium. To use it during local development:
+
+1. **Build the extension and the native-messaging host bundle:**
+   ```bash
+   npm run build:extension
+   npm run build:host
+   ```
+   `build:extension` bundles the extension to `dist/extension/`. `build:host` bundles the
+   native-messaging host relay into one self-contained file,
+   `dist/native-host/host.cjs` — required because setup copies a **single file** into
+   app-support and Chrome launches it from there (the per-module compiled output under
+   `dist/compiled/native-host/` cannot run standalone).
+
+2. **Load the extension in developer mode:**
+   - Open Chrome and navigate to `chrome://extensions/`.
+   - Enable **Developer mode** (toggle in the top right).
+   - Click **Load unpacked** and select the `dist/extension/` directory.
+   - Note the extension ID shown on the extension card (you will need it below).
+
+3. **Start the app with the bridge enabled:**
+   ```bash
+   SOROERU_ENABLE_CHROME_BRIDGE=1 SOROERU_CHROME_EXTENSION_ID=<extension-id-from-step-2> \
+   SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
+   npm run dev
+   ```
+   In a **packaged app** (`npm run package:dmg`), the host bundle ships inside the DMG at
+   `Soroeru.app/Contents/Resources/native-host/host.cjs` and is used automatically;
+   `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override. `SOROERU_ENABLE_CHROME_BRIDGE=1`
+   and the extension ID are still required — the bridge stays off and UI-hidden by default.
+
+4. **In the app:**
+   - Go to **設定 → Chrome と接続** and select **host を登録して接続を始める**.
+   - The manifest is registered at
+     `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`,
+     pointing at the copy in `~/Library/Application Support/Soroeru/native-host/` (never
+     into `.app`, which App Translocation can relocate).
+   - The handshake completes when the extension confirms the native-messaging connection.
+   - When done, choose **切断して登録物を掃除** to unregister and remove the host binary.
+
+**Runtime caveat:** Chrome launches the installed host with launchd's minimal `PATH`, so
+an `env node` shebang would fail silently on most machines. Registration therefore
+rewrites the installed copy's shebang to an **absolute Node path** (resolved from the
+app's `PATH`, then `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`) and **fails with a
+clear error** when no Node runtime is found. If you later move or upgrade your Node
+install, re-run the connection setup so the shebang is re-resolved. A system Node is
+required only for this developer prototype; it is revisited if the bridge is ever
+promoted to a user-facing feature.
+
+**Security note:** The unpacked extension ID is not stable across machines, so never commit
+a hardcoded ID. Chrome Web Store distribution (stable ID, auto-update) is a post-adoption
+Issue and out of scope for the MVP. The DMG bundles only the inert relay file; nothing is
+registered with Chrome until the user starts setup from settings.
+
+See [`manual-test.md`](manual-test.md) §0.1–0.2 for the full QA checklist, including
+permission verification, tab binding, cleanup, and policy compliance (`npm run poc -- check-egress` etc.).
+
 ## 4. Project Structure
 
 Current repository shape:

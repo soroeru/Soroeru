@@ -10,6 +10,7 @@ export async function createHandshakeToken(
   const tokenPath = join(tokenDir, "bridge-token");
   const token = randomBytes(32).toString("hex");
   const temporaryPath = `${tokenPath}.${process.pid}.tmp`;
+  // persist: native-host-registration
   await writeFile(temporaryPath, `${token}\n`, { mode: 0o600 });
   await chmod(temporaryPath, 0o600);
   await rename(temporaryPath, tokenPath);

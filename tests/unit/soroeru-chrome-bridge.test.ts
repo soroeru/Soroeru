@@ -14,6 +14,7 @@ import {
   defaultNativeHostPaths,
   nativeHostIsRegistered,
   registerNativeHost,
+  resolveNodeBinary,
   unregisterNativeHost,
 } from "../../native-host/registration.js";
 import { acceptsHandshakeResponse } from "../../native-host/host.js";
@@ -144,6 +145,39 @@ test("native host registration is idempotent and unregisters its files", async (
     /chrome-extension:\/\/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\//,
   );
   await unregisterNativeHost(paths);
+  assert.equal(await nativeHostIsRegistered(paths), false);
+});
+
+test("registration pins the installed host's shebang to an absolute Node path", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-bridge-"));
+  const source = join(root, "host-source");
+  await writeFile(source, "#!/usr/bin/env node\nconsole.log('relay');\n");
+  const paths = {
+    appSupportDir: join(root, "Application Support"),
+    chromeNativeMessagingDir: join(root, "Chrome", "NativeMessagingHosts"),
+  };
+  const result = await registerNativeHost(source, "a".repeat(32), paths);
+  const installed = await readFile(result.binaryPath, "utf8");
+  const [shebang, ...rest] = installed.split("\n");
+  assert.match(shebang!, /^#!\/.+\/node$/);
+  assert.equal(rest.join("\n"), "console.log('relay');\n");
+});
+
+test("registration fails closed when no Node runtime is reachable", async () => {
+  assert.equal(await resolveNodeBinary("", []), null);
+  assert.equal(await resolveNodeBinary("relative/dir:another", []), null);
+  const root = await mkdtemp(join(tmpdir(), "soroeru-bridge-"));
+  const source = join(root, "host-source");
+  await writeFile(source, "#!/usr/bin/env node\nconsole.log('relay');\n");
+  const paths = {
+    appSupportDir: join(root, "Application Support"),
+    chromeNativeMessagingDir: join(root, "Chrome", "NativeMessagingHosts"),
+  };
+  await assert.rejects(
+    registerNativeHost(source, "a".repeat(32), paths, async () => null),
+    /Node\.js runtime not found/,
+  );
+  // Fail closed: nothing half-installed.
   assert.equal(await nativeHostIsRegistered(paths), false);
 });
 

@@ -1,9 +1,9 @@
-// PRIV-002 (#21): local persistence is limited to the encrypted storage
-// abstraction, the encrypted export/import (SEC-003 / #44), and the masked
-// measurement output (docs/security.md §3). `checkLocalPersistence` is the
-// static check behind `npm run poc -- check-persistence`: every local-write
-// site in src/ or run/ must carry a
-// `// persist: encrypted-store|encrypted-export|measurement-output` annotation.
+// PRIV-002 (#21): local persistence is limited to reviewed, annotated write
+// sites (docs/security.md §3, §12.1). `checkLocalPersistence` is the static
+// check behind `npm run poc -- check-persistence`: every local-write site in
+// src/, run/, electron/, extension/, or native-host/ must carry a
+// `// persist: <category>` annotation from the ALLOWED_CATEGORIES allowlist
+// in src/dev/privacy-check.ts.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
