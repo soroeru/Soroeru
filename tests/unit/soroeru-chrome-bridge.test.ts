@@ -17,7 +17,7 @@ import {
   resolveNodeBinary,
   unregisterNativeHost,
 } from "../../native-host/registration.js";
-import { acceptsHandshakeResponse } from "../../native-host/host.js";
+import { acceptsHandshakeResponse, optionsFromArgs } from "../../native-host/host.js";
 import {
   ChromeBridgeProtocolError,
   encodeChromeBridgeMessage,
@@ -146,6 +146,28 @@ test("native host registration is idempotent and unregisters its files", async (
   );
   await unregisterNativeHost(paths);
   assert.equal(await nativeHostIsRegistered(paths), false);
+});
+
+test("host options ignore Chrome's origin argument and fall back to defaults", () => {
+  // Chrome (macOS/Linux) passes the calling extension's origin as argv.
+  const fromOrigin = optionsFromArgs(["chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"]);
+  const fromEmpty = optionsFromArgs([]);
+  assert.deepEqual(fromOrigin, fromEmpty);
+  assert.match(fromOrigin.socketPath, /native-host\/bridge\.sock$/);
+  assert.match(fromOrigin.tokenPath, /native-host\/bridge-token$/);
+});
+
+test("host options honor explicit flags, also when mixed with the origin argument", () => {
+  const flagsOnly = optionsFromArgs(["--socket", "/tmp/s.sock", "--token-file", "/tmp/t"]);
+  assert.deepEqual(flagsOnly, { socketPath: "/tmp/s.sock", tokenPath: "/tmp/t" });
+  const mixed = optionsFromArgs([
+    "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+    "--socket",
+    "/tmp/s.sock",
+  ]);
+  assert.equal(mixed.socketPath, "/tmp/s.sock");
+  assert.match(mixed.tokenPath, /native-host\/bridge-token$/);
+  assert.throws(() => optionsFromArgs(["--socket"]), /missing value for --socket/);
 });
 
 test("registration pins the installed host's shebang to an absolute Node path", async () => {
