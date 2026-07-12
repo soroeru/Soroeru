@@ -294,6 +294,13 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   # --- Compute the unit's diff ----------------------------------
   set_phase "diff unit=$UNIT"
   unit_pathspecs "$UNIT" || { fail "unknown review unit: $UNIT"; ANY_REVIEWER_FAILED=1; continue; }
+  # Empty pathspecs after -- would make git diff review the whole tree;
+  # fail closed instead (misconfig / empty TARGET_PATHS).
+  if [ "${#UNIT_PATHSPECS[@]}" -eq 0 ]; then
+    fail "empty pathspecs for unit=$UNIT"
+    ANY_REVIEWER_FAILED=1
+    continue
+  fi
 
   git diff "$MERGE_BASE" "$COMMIT_SHA" -- ${UNIT_PATHSPECS[@]+"${UNIT_PATHSPECS[@]}"} > "$DIFF_FILE"
   DIFF_SIZE=$(wc -c < "$DIFF_FILE" | tr -d ' ')
