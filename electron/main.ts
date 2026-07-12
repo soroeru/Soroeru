@@ -29,7 +29,11 @@ const PRELOAD_PATH = join(appRoot, "dist", "preload", "preload.cjs");
 const RENDERER_INDEX = join(appRoot, "dist", "renderer", "index.html");
 const CHROME_BRIDGE_ENABLED = process.env["SOROERU_ENABLE_CHROME_BRIDGE"] === "1";
 const CHROME_EXTENSION_ID = process.env["SOROERU_CHROME_EXTENSION_ID"] ?? "";
-const CHROME_HOST_BINARY = process.env["SOROERU_CHROME_BRIDGE_HOST_BINARY"] ?? "";
+// Packaged builds bundle the self-contained host at Resources/native-host/
+// (forge.config.cjs extraResource); dev builds pass an explicit path.
+const CHROME_HOST_BINARY =
+  process.env["SOROERU_CHROME_BRIDGE_HOST_BINARY"] ??
+  (app.isPackaged ? join(process.resourcesPath, "native-host", "host.cjs") : "");
 
 function configurePackagedPlaywrightBrowsers(): void {
   if (!app.isPackaged || process.env["PLAYWRIGHT_BROWSERS_PATH"]) return;

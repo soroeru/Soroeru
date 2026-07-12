@@ -203,7 +203,7 @@ function aiMapperForUi(app: SoroeruApp): Mapper {
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
 function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
-  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/, run/, electron/ and extension/`);
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under src/, run/, electron/, extension/ and native-host/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §6):");
     for (const v of result.violations) console.error(`  - ${v}`);
@@ -216,7 +216,7 @@ function cmdCheckEgress(): void {
 /** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
 function cmdCheckPersistence(): void {
   const result = checkLocalPersistence(process.cwd());
-  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under src/, run/ and electron/`);
+  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under src/, run/, electron/, extension/ and native-host/`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §3):");
     for (const v of result.violations) console.error(`  - ${v}`);
@@ -224,7 +224,7 @@ function cmdCheckPersistence(): void {
     return;
   }
   console.log(
-    "ok: every local write is annotated (encrypted-store / encrypted-export / measurement-output / diagnostics-log)",
+    "ok: every local write is annotated (encrypted-store / encrypted-export / measurement-output / diagnostics-log / native-host-registration)",
   );
 }
 

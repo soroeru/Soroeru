@@ -94,6 +94,10 @@ export async function runNativeHost(options: HostOptions): Promise<void> {
   await new Promise<void>((resolve) => socket.once("close", resolve));
 }
 
-if (process.argv[1]?.endsWith("host.js")) {
+// Run when invoked directly: as compiled output (host.js), as the bundled
+// single file (host.cjs), or as the installed copy Chrome launches
+// (jp.soroeru.bridge, see native-host/registration.ts).
+const invokedAs = process.argv[1] ?? "";
+if (/(?:host\.c?js|jp\.soroeru\.bridge)$/.test(invokedAs)) {
   runNativeHost(optionsFromArgs(process.argv.slice(2))).catch(() => (process.exitCode = 1));
 }

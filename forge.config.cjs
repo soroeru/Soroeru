@@ -13,7 +13,10 @@ module.exports = {
     icon: path.join(__dirname, "assets", "soroeru"),
     osxSign: false,
     asar: false,
-    extraResource: [path.join(__dirname, "dist", "compiled", "native-host", "host.js")],
+    // Self-contained native messaging host bundle (npm run build:host). Lands in
+    // Soroeru.app/Contents/Resources/native-host/; the app copies it to
+    // app-support on user-initiated Chrome-bridge setup (never auto-registered).
+    extraResource: [path.join(__dirname, "dist", "native-host")],
     extendInfo: {
       CFBundleDisplayName: "Soroeru",
       CFBundleName: "Soroeru",

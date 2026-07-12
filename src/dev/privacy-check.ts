@@ -2,7 +2,8 @@
 // encrypted storage abstraction, the encrypted export/import (SEC-003 / #44),
 // and the masked measurement output (docs/security.md §3).
 //
-// This scans `src/**/*.ts`, `run/**/*.ts`, and `electron/**/*.ts`
+// This scans `src/**/*.ts`, `run/**/*.ts`, `electron/**/*.ts`,
+// `extension/**/*.ts`, and `native-host/**/*.ts`
 // (excluding `*.test.ts`) for lines that write to the local filesystem. Every
 // match must carry a `// persist: <category>` annotation (on the same line or
 // the line above) naming one of the allowed categories below; an unannotated
@@ -15,7 +16,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["src", "run", "electron"];
+const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// persist: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([
@@ -23,6 +24,7 @@ const ALLOWED_CATEGORIES = new Set([
   "encrypted-export", // recovery export/import: same encrypted JSON shape as the on-disk store (§4)
   "measurement-output", // state/soroeru-poc/matrix-*.json, masked via maskForArtifact (§3)
   "diagnostics-log", // src/logging/file-logger.ts: unencrypted by design (Issue #314), structural facts only
+  "native-host-registration", // native-host/: Chrome native-messaging manifest + per-launch handshake token, no personal values (§12.1)
 ]);
 
 /** Patterns that indicate a line writes to the local filesystem. */

@@ -71,6 +71,7 @@ export async function registerNativeHost(
       type: "stdio",
       allowed_origins: [`chrome-extension://${extensionId}/`],
     };
+    // persist: native-host-registration
     await writeFile(temporaryManifest, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
     await rename(temporaryManifest, target.manifestPath);
     return { binaryPath: target.binaryPath, manifestPath: target.manifestPath };
