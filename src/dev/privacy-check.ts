@@ -80,7 +80,7 @@ export function checkLocalPersistence(repoRoot: string): PersistenceCheckResult 
         if (!WRITE_PATTERNS.some((re) => re.test(line))) return;
         if (!isAnnotated(lines, index)) {
           violations.push(
-            `${relative(repoRoot, file)}:${index + 1}: local write without "// persist: encrypted-store|encrypted-export|measurement-output" annotation: ${line.trim()}`,
+            `${relative(repoRoot, file)}:${index + 1}: local write without "// persist: ${[...ALLOWED_CATEGORIES].join("|")}" annotation: ${line.trim()}`,
           );
         }
       });

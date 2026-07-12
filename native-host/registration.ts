@@ -1,8 +1,37 @@
-import { chmod, copyFile, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 export const NATIVE_HOST_NAME = "jp.soroeru.bridge";
+
+/** Fallbacks for Node installs outside the app's PATH (Homebrew / installer). */
+const DEFAULT_NODE_FALLBACKS = ["/usr/local/bin/node", "/opt/homebrew/bin/node", "/usr/bin/node"];
+
+/**
+ * Locate an absolute Node.js binary for the installed host's shebang. Chrome
+ * launches the host with launchd's minimal PATH (no Homebrew, no nvm), so a
+ * `#!/usr/bin/env node` shebang would silently fail on most machines; the
+ * installed copy must pin an absolute interpreter path instead.
+ */
+export async function resolveNodeBinary(
+  searchPath = process.env["PATH"] ?? "",
+  fallbacks = DEFAULT_NODE_FALLBACKS,
+): Promise<string | null> {
+  const candidates = [
+    ...searchPath.split(delimiter).filter((dir) => dir.length > 0).map((dir) => join(dir, "node")),
+    ...fallbacks,
+  ];
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // not here; keep looking
+    }
+  }
+  return null;
+}
 
 export function defaultNativeHostPaths(home = homedir()): NativeHostPaths {
   return {
@@ -42,7 +71,12 @@ function pathsFor(paths: NativeHostPaths): { hostDir: string; binaryPath: string
   };
 }
 
-/** Install the host outside the .app and publish the manifest only after copying succeeds. */
+/**
+ * Install the host outside the .app and publish the manifest only after the
+ * copy succeeds. A `#!` shebang in the source is rewritten to an absolute
+ * Node path (see resolveNodeBinary); registration fails closed when no Node
+ * runtime can be found, instead of installing a host Chrome cannot launch.
+ */
 export async function registerNativeHost(
   sourceBinary: string,
   extensionId: string,
@@ -61,7 +95,20 @@ export async function registerNativeHost(
     .then(() => true)
     .catch(() => false);
   try {
-    await copyFile(sourceBinary, temporaryBinary);
+    const source = await readFile(sourceBinary, "utf8");
+    let installed = source;
+    if (source.startsWith("#!")) {
+      const nodeBinary = await resolveNodeBinary();
+      if (!nodeBinary)
+        throw new Error(
+          "Node.js runtime not found: Chrome launches the native host with a minimal PATH, " +
+            "so the installed host needs an absolute Node path. Install Node.js " +
+            "(e.g. /usr/local/bin/node) and run the connection setup again.",
+        );
+      installed = `#!${nodeBinary}\n${source.slice(source.indexOf("\n") + 1)}`;
+    }
+    // persist: native-host-registration
+    await writeFile(temporaryBinary, installed, { mode: 0o700 });
     await chmod(temporaryBinary, 0o700);
     await rename(temporaryBinary, target.binaryPath);
     const manifest = {

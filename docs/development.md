@@ -231,12 +231,14 @@ sandboxed Playwright Chromium. To use it during local development:
    - The handshake completes when the extension confirms the native-messaging connection.
    - When done, choose **切断して登録物を掃除** to unregister and remove the host binary.
 
-**Runtime caveat:** the installed host starts with `#!/usr/bin/env node`, so Chrome must be
-able to resolve `node` in its own environment. A Chrome launched from Finder gets the
-minimal GUI `PATH` (`/usr/bin:/bin:...`); if your Node lives only in an `nvm` directory,
-either symlink it into `/usr/local/bin` or launch Chrome from a terminal where `node`
-resolves. This is acceptable for the developer-only prototype and is revisited if the
-bridge is ever promoted to a user-facing feature.
+**Runtime caveat:** Chrome launches the installed host with launchd's minimal `PATH`, so
+an `env node` shebang would fail silently on most machines. Registration therefore
+rewrites the installed copy's shebang to an **absolute Node path** (resolved from the
+app's `PATH`, then `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`) and **fails with a
+clear error** when no Node runtime is found. If you later move or upgrade your Node
+install, re-run the connection setup so the shebang is re-resolved. A system Node is
+required only for this developer prototype; it is revisited if the bridge is ever
+promoted to a user-facing feature.
 
 **Security note:** The unpacked extension ID is not stable across machines, so never commit
 a hardcoded ID. Chrome Web Store distribution (stable ID, auto-update) is a post-adoption
