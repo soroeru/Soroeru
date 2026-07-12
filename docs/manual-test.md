@@ -60,6 +60,39 @@ account or real personal data.
 - [ ] `npm run poc:matrix -- deterministic chromium`（決定論的フィールドマッピング）
 - [ ] ブランチ / PR 上で GitHub の `ci / unit`・`ci / e2e-deterministic`・`shellcheck` がグリーン
 
+### 0.2 Chrome bridge UI flow (Issue #339)
+
+This UI is a developer-only prototype and remains hidden unless
+`SOROERU_ENABLE_CHROME_BRIDGE=1`. Use only a fake HTTPS fixture and fake values.
+Never enter a real credential, cookie, card value, or personal value during this test.
+
+- [ ] Build the extension, set `SOROERU_CHROME_EXTENSION_ID` to the unpacked extension ID and
+      `SOROERU_CHROME_BRIDGE_HOST_BINARY` to the local native-host executable, then start the app
+      with `SOROERU_ENABLE_CHROME_BRIDGE=1`. Without the flag, confirm the Chrome section is absent.
+- [ ] In **設定 → Chrome と接続**, choose **host を登録して接続を始める**. Confirm the UI first
+      reports registration / extension-install guidance, then changes to **接続済み** only after the
+      extension completes the native-messaging handshake.
+- [ ] Open one fake HTTPS site. In the app, confirm the instruction says to click the Chrome extension
+      icon. Click the icon and then the popup permission button; confirm Chrome's permission prompt is
+      caused by that popup gesture, not by an app/native-host message.
+- [ ] Confirm the approved origin appears in Soroeru settings. Choose **取り消す**, then confirm the
+      origin disappears and automation against it fails with permission required. Re-approve it from
+      the extension popup before continuing.
+- [ ] Select the fake site's row and start collection. Confirm **このタブで実行しますか？** shows only
+      the HTTPS origin and numeric tab ID (no title, path/query, field value, credential, or cookie).
+      Cancel once and confirm nothing starts; repeat and approve to start in that tab.
+- [ ] During the run, confirm the extension badge and in-page Soroeru banner are visible. Choose
+      **一括収集を中止** and confirm the app aborts immediately, the tab binding and badge/banner clear,
+      and no later command silently resumes or binds a different tab.
+- [ ] Choose **切断して登録物を掃除**. While connected, confirm approved origins are revoked before the
+      native-host manifest and copied host are removed. Confirm the cleanup result is shown.
+- [ ] Repeat disconnect with Chrome already closed. Confirm manifest/host cleanup still completes and
+      the UI explicitly instructs manual removal of remaining site permissions and the unpacked extension
+      from Chrome's extension management screen.
+- [ ] Inspect app/host/extension diagnostics using fake canaries and confirm renderer IPC events contain
+      only connection state, origin, tab ID, counts, and masked wording — never raw values,
+      credentials, cookies, socket tokens, or command payloads.
+
 ---
 
 ## 1. DMG パッケージングと初回起動（Node 不要）

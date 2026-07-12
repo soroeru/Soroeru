@@ -33,6 +33,10 @@ export const CHROME_BRIDGE_COMMANDS = [
   "click",
   "waitForReady",
   "unbind",
+  "listPermissions",
+  "removePermission",
+  "activeTab",
+  "stop",
 ] as const;
 
 export type ChromeBridgeCommandName = (typeof CHROME_BRIDGE_COMMANDS)[number];
@@ -84,6 +88,8 @@ export class ChromeExtensionBridge implements ChromeBridgeTransport {
   private closing = false;
   private connected = false;
   private readonly pending = new Map<string, PendingRequest>();
+  /** Stop is sticky until a fresh, explicitly confirmed tab session opens. */
+  private executionStopped = false;
   /** Serialize outbound commands (1 run · 1 tab · sequential; design §3.5 / §5). */
   private sendChain: Promise<void> = Promise.resolve();
 
@@ -154,7 +160,12 @@ export class ChromeExtensionBridge implements ChromeBridgeTransport {
     if (!(CHROME_BRIDGE_COMMANDS as readonly string[]).includes(command)) {
       throw new Error(`unknown chrome bridge command: ${command}`);
     }
-    const run = this.sendChain.then(() => this.sendCommandRaw(command, payload, options));
+    const run = this.sendChain.then(() => {
+      if (this.executionStopped && isAutomationCommand(command)) {
+        throw new Error("chrome bridge execution stopped");
+      }
+      return this.sendCommandRaw(command, payload, options);
+    });
     // Keep the chain alive after rejection so later commands still queue.
     this.sendChain = run.then(
       () => undefined,
@@ -163,11 +174,19 @@ export class ChromeExtensionBridge implements ChromeBridgeTransport {
     return run;
   }
 
+  /** Emergency shrink path: cancel waiters and bypass the normal command queue. */
+  async stopImmediately(): Promise<void> {
+    this.executionStopped = true;
+    this.failPending(new Error("chrome bridge stopped by user"));
+    await this.sendCommandRaw("stop", undefined, { timeoutMs: 5_000 });
+  }
+
   /**
    * Second session factory entry alongside BrowserEngine.openSession.
    * Binds automation to one already-selected tab; close() only unbinds.
    */
   openTabSession(tabId: number, options?: { commandTimeoutMs?: number; siteDomain?: string }): SiteSession {
+    this.executionStopped = false;
     return openExtensionTabSession(this, {
       tabId,
       ...(options?.commandTimeoutMs !== undefined ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
@@ -368,4 +387,8 @@ export class ChromeExtensionBridge implements ChromeBridgeTransport {
   private emit(event: ChromeBridgeEventView): void {
     this.options.onEvent?.(event);
   }
+}
+
+function isAutomationCommand(command: string): boolean {
+  return !["listPermissions", "removePermission", "activeTab", "stop"].includes(command);
 }

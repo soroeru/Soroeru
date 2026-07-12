@@ -29,6 +29,12 @@ import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-p
 import { FileLogger } from "../src/logging/file-logger.js";
 import type { LogFields, LogLevel, Logger } from "../src/logging/logger.js";
 import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
+import {
+  nativeHostIsRegistered,
+  registerNativeHost,
+  unregisterNativeHost,
+  type NativeHostPaths,
+} from "../native-host/registration.js";
 import type {
   AttributeSummary,
   ConfirmDynamicAttributeCandidateRequest,
@@ -115,6 +121,15 @@ export interface SoroeruSessionOptions {
    */
   chromeBridge?: ChromeBridgeTransport & {
     openTabSession?: (tabId: number, options?: { siteDomain?: string }) => SiteSession;
+    start?: () => Promise<void>;
+    close?: () => Promise<void>;
+    stopImmediately?: () => Promise<void>;
+  };
+  /** Developer-only install inputs. Absent when the feature flag is off. */
+  chromeBridgeSetup?: {
+    sourceBinary: string;
+    extensionId: string;
+    paths: NativeHostPaths;
   };
 }
 
@@ -164,8 +179,13 @@ export class SoroeruSession {
   private readonly chromeBridge:
     | (ChromeBridgeTransport & {
         openTabSession?: (tabId: number, options?: { siteDomain?: string }) => SiteSession;
+        start?: () => Promise<void>;
+        close?: () => Promise<void>;
+        stopImmediately?: () => Promise<void>;
       })
     | undefined;
+  private readonly chromeBridgeSetup: SoroeruSessionOptions["chromeBridgeSetup"];
+  private selectedChromeTab: { tabId: number; origin: string } | undefined;
   /**
    * Local-only value source for AI-prompt redaction (Issue #310, design §8):
    * canonical Personal Attribute values, read fresh on every call so lock/
@@ -184,6 +204,7 @@ export class SoroeruSession {
     this.closeInjectedEngine = options.closeEngine;
     this.openExternal = options.openExternal;
     this.chromeBridge = options.chromeBridge;
+    this.chromeBridgeSetup = options.chromeBridgeSetup;
     this.aiEngineOverride = options.aiEngine !== undefined;
     this.aiProviderFactory = options.aiProviderFactory ?? aiProviderFromEnv;
     this.logPath = options.logPath ?? join(dirname(vaultPath), "logs", "soroeru.log");
@@ -265,8 +286,8 @@ export class SoroeruSession {
     const bridge = this.chromeBridge;
     if (!bridge) return undefined;
     const raw = process.env["SOROERU_CHROME_BRIDGE_TAB_ID"];
-    if (!raw || raw.length === 0) return undefined;
-    const tabId = Number(raw);
+    const tabId = this.selectedChromeTab?.tabId ?? Number(raw);
+    if (!this.selectedChromeTab && (!raw || raw.length === 0)) return undefined;
     if (!Number.isInteger(tabId) || tabId < 1) {
       throw new Error("SOROERU_CHROME_BRIDGE_TAB_ID must be a positive integer");
     }
@@ -275,6 +296,120 @@ export class SoroeruSession {
     }
     if (bridge.openTabSession) return bridge.openTabSession(tabId, { siteDomain: site.domain });
     return openExtensionTabSession(bridge, { tabId, siteDomain: site.domain });
+  }
+
+  async chromeBridgeStatus() {
+    return {
+      enabled: this.chromeBridge !== undefined,
+      registered: this.chromeBridgeSetup ? await nativeHostIsRegistered(this.chromeBridgeSetup.paths) : false,
+      connected: this.chromeBridge?.isConnected() ?? false,
+      ...(this.selectedChromeTab ? { selectedTab: this.selectedChromeTab } : {}),
+    };
+  }
+
+  async connectChromeBridge() {
+    if (!this.chromeBridge || !this.chromeBridgeSetup) return { ok: false, error: "feature-disabled" };
+    try {
+      await registerNativeHost(
+        this.chromeBridgeSetup.sourceBinary,
+        this.chromeBridgeSetup.extensionId,
+        this.chromeBridgeSetup.paths,
+      );
+      await this.chromeBridge.start?.();
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "registration-failed" };
+    }
+  }
+
+  async disconnectChromeBridge() {
+    if (!this.chromeBridge || !this.chromeBridgeSetup) return { ok: false, error: "feature-disabled" };
+    const manualCleanupOrigins: string[] = [];
+    let permissionsCleanupUnknown = false;
+    try {
+      const response = (await this.chromeBridge.sendCommand("listPermissions")) as { origins?: string[] };
+      const approvedOrigins = (response.origins ?? [])
+        .map(normalizeChromePermissionOrigin)
+        .filter((origin): origin is string => origin !== undefined);
+      for (const origin of approvedOrigins) {
+        try {
+          const removal = (await this.chromeBridge.sendCommand("removePermission", { origin })) as {
+            removed?: boolean;
+          };
+          if (removal.removed !== true) manualCleanupOrigins.push(origin);
+        } catch {
+          manualCleanupOrigins.push(origin);
+        }
+      }
+    } catch {
+      // If Chrome is gone, extension-owned permissions require manual cleanup.
+      permissionsCleanupUnknown = true;
+    }
+    await this.chromeBridge.close?.();
+    await unregisterNativeHost(this.chromeBridgeSetup.paths);
+    this.selectedChromeTab = undefined;
+    return {
+      ok: true,
+      ...(manualCleanupOrigins.length ? { manualCleanupOrigins } : {}),
+      ...(permissionsCleanupUnknown ? { permissionsCleanupUnknown: true } : {}),
+    };
+  }
+
+  async chromeBridgePermissions() {
+    if (!this.chromeBridge?.isConnected()) return { origins: [], error: "not-connected" };
+    try {
+      const result = (await this.chromeBridge.sendCommand("listPermissions")) as { origins?: string[] };
+      return { origins: result.origins ?? [] };
+    } catch {
+      return { origins: [], error: "permission-read-failed" };
+    }
+  }
+
+  async revokeChromeBridgeOrigin(origin: string) {
+    if (!this.chromeBridge?.isConnected()) return { ok: false, error: "not-connected" };
+    if (!isSafeChromeOrigin(origin)) return { ok: false, error: "invalid-origin" };
+    try {
+      const removal = (await this.chromeBridge.sendCommand("removePermission", { origin })) as {
+        removed?: boolean;
+      };
+      return removal.removed === true ? { ok: true } : { ok: false, error: "permission-remove-failed" };
+    } catch {
+      return { ok: false, error: "permission-remove-failed" };
+    }
+  }
+
+  async chromeBridgeActiveTab() {
+    if (!this.chromeBridge?.isConnected()) return undefined;
+    try {
+      const tab = (await this.chromeBridge.sendCommand("activeTab")) as {
+        tabId?: number;
+        origin?: string;
+      };
+      if (!Number.isInteger(tab.tabId) || !tab.origin || !isSafeChromeOrigin(tab.origin)) return undefined;
+      return { tabId: tab.tabId as number, origin: tab.origin };
+    } catch {
+      return undefined;
+    }
+  }
+
+  async selectChromeBridgeTab(tabId: number) {
+    const tab = await this.chromeBridgeActiveTab();
+    if (!tab || tab.tabId !== tabId) return { ok: false, error: "tab-changed" };
+    this.selectedChromeTab = tab;
+    return { ok: true };
+  }
+
+  async stopChromeBridge() {
+    this.selectedChromeTab = undefined;
+    const stopExtension = this.chromeBridge?.isConnected()
+      ? (this.chromeBridge.stopImmediately?.() ?? this.chromeBridge.sendCommand("stop")).catch(
+          () => undefined,
+        )
+      : Promise.resolve();
+    // Unconditional shrink: release the extension binding and abort the runner
+    // concurrently, rather than waiting for the current command to unwind first.
+    await Promise.all([stopExtension, this.abortVisibility()]);
+    return { ok: true };
   }
 
   /**
@@ -853,6 +988,24 @@ export class SoroeruSession {
       constraintCount,
       collected: disclosures.length > 0 || checkpointDone,
     };
+  }
+}
+
+function isSafeChromeOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.origin === value;
+  } catch {
+    return false;
+  }
+}
+
+export function normalizeChromePermissionOrigin(pattern: string): string | undefined {
+  try {
+    const url = new URL(pattern.replace(/\/\*$/, "/"));
+    return url.protocol === "https:" ? url.origin : undefined;
+  } catch {
+    return undefined;
   }
 }
 

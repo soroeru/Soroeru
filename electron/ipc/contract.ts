@@ -61,6 +61,14 @@ export const IPC_CHANNELS = {
   visibilityResume: "soroeru:visibility:resume",
   visibilityAbort: "soroeru:visibility:abort",
   visibilityStatus: "soroeru:visibility:status",
+  chromeBridgeStatus: "soroeru:chrome-bridge:status",
+  chromeBridgeConnect: "soroeru:chrome-bridge:connect",
+  chromeBridgeDisconnect: "soroeru:chrome-bridge:disconnect",
+  chromeBridgePermissions: "soroeru:chrome-bridge:permissions",
+  chromeBridgeRevokeOrigin: "soroeru:chrome-bridge:revoke-origin",
+  chromeBridgeActiveTab: "soroeru:chrome-bridge:active-tab",
+  chromeBridgeSelectTab: "soroeru:chrome-bridge:select-tab",
+  chromeBridgeStop: "soroeru:chrome-bridge:stop",
   logsExport: "soroeru:logs:export",
 } as const;
 
@@ -446,6 +454,30 @@ export type ChromeBridgeConnectionEvent =
   | { type: "rejected"; reason: "unauthorized" | "invalid-message" | "unknown-command" | "socket-error" };
 
 export const CHROME_BRIDGE_EVENT_CHANNEL = "soroeru:chrome-bridge:event" as const;
+
+export interface ChromeBridgeStatusView {
+  enabled: boolean;
+  registered: boolean;
+  connected: boolean;
+  selectedTab?: ChromeBridgeTabView;
+}
+
+export interface ChromeBridgeTabView {
+  tabId: number;
+  origin: string;
+}
+
+export interface ChromeBridgeMutationResult {
+  ok: boolean;
+  error?: string;
+  manualCleanupOrigins?: string[];
+  permissionsCleanupUnknown?: boolean;
+}
+
+export interface ChromeBridgePermissionsView {
+  origins: string[];
+  error?: string;
+}
 
 // --- Diagnostics log export (Issue #314) ---
 

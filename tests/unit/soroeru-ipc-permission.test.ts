@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,7 +13,8 @@ import {
 } from "../../electron/ipc/contract.js";
 import { createSoroeruApi } from "../../electron/preload-api.js";
 import { createIpcBridge } from "../../electron/ipc/bridge.js";
-import { SoroeruSession } from "../../electron/session.js";
+import { normalizeChromePermissionOrigin, SoroeruSession } from "../../electron/session.js";
+import { nativeHostIsRegistered } from "../../native-host/registration.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
@@ -60,6 +61,14 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.visibility.resume();
   await api.visibility.abort();
   await api.visibility.status();
+  await api.chromeBridge.status();
+  await api.chromeBridge.connect();
+  await api.chromeBridge.disconnect();
+  await api.chromeBridge.permissions();
+  await api.chromeBridge.revokeOrigin("https://example.test");
+  await api.chromeBridge.activeTab();
+  await api.chromeBridge.selectTab(42);
+  await api.chromeBridge.stop();
   // onEvent only subscribes (no channel invoke); calling it must not throw and
   // returns an unsubscribe function even with no subscribe transport provided.
   assert.equal(typeof api.visibility.onEvent(() => {}), "function");
@@ -81,6 +90,104 @@ test("the main bridge registers exactly the allowlisted channels", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("connected Chrome disconnect normalizes and revokes every origin before host cleanup", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-ipc-chrome-cleanup-"));
+  const sourceBinary = join(dir, "host-source");
+  const paths = {
+    appSupportDir: join(dir, "Application Support"),
+    chromeNativeMessagingDir: join(dir, "Chrome", "NativeMessagingHosts"),
+  };
+  const commands: Array<{ command: string; payload?: unknown }> = [];
+  let connected = true;
+  const chromeBridge = {
+    isConnected: () => connected,
+    sendCommand: async (command: string, payload?: unknown) => {
+      commands.push({ command, ...(payload === undefined ? {} : { payload }) });
+      if (command === "listPermissions") {
+        return { origins: ["https://b.example/*", "https://a.example/*"] };
+      }
+      if (command === "removePermission") {
+        const origin = (payload as { origin: string }).origin;
+        return { removed: origin === "https://b.example" };
+      }
+      return undefined;
+    },
+    start: async () => undefined,
+    close: async () => {
+      connected = false;
+    },
+  };
+  try {
+    await writeFile(sourceBinary, "fake-host");
+    const session = new SoroeruSession(join(dir, "vault.json"), {
+      chromeBridge,
+      chromeBridgeSetup: { sourceBinary, extensionId: "a".repeat(32), paths },
+    });
+    assert.equal((await session.connectChromeBridge()).ok, true);
+    assert.equal(await nativeHostIsRegistered(paths), true);
+    const result = await session.disconnectChromeBridge();
+    assert.equal(result.ok, true);
+    assert.deepEqual("manualCleanupOrigins" in result ? result.manualCleanupOrigins : undefined, [
+      "https://a.example",
+    ]);
+    assert.deepEqual(commands, [
+      { command: "listPermissions" },
+      { command: "removePermission", payload: { origin: "https://b.example" } },
+      { command: "removePermission", payload: { origin: "https://a.example" } },
+    ]);
+    assert.equal(await nativeHostIsRegistered(paths), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Chrome permission patterns normalize to HTTPS origins only", () => {
+  assert.equal(normalizeChromePermissionOrigin("https://example.test/*"), "https://example.test");
+  assert.equal(normalizeChromePermissionOrigin("http://example.test/*"), undefined);
+  assert.equal(normalizeChromePermissionOrigin("not-a-pattern"), undefined);
+});
+
+test("Chrome disconnect reports permission state unknown when enumeration fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-ipc-chrome-unknown-"));
+  const sourceBinary = join(dir, "host-source");
+  const paths = {
+    appSupportDir: join(dir, "Application Support"),
+    chromeNativeMessagingDir: join(dir, "Chrome", "NativeMessagingHosts"),
+  };
+  try {
+    await writeFile(sourceBinary, "fake-host");
+    const session = new SoroeruSession(join(dir, "vault.json"), {
+      chromeBridge: {
+        isConnected: () => false,
+        sendCommand: async () => {
+          throw new Error("Chrome closed");
+        },
+        close: async () => undefined,
+      },
+      chromeBridgeSetup: { sourceBinary, extensionId: "a".repeat(32), paths },
+    });
+    assert.equal((await session.connectChromeBridge()).ok, true);
+    const result = await session.disconnectChromeBridge();
+    assert.equal("permissionsCleanupUnknown" in result && result.permissionsCleanupUnknown, true);
+    assert.equal(await nativeHostIsRegistered(paths), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("single-origin revoke fails when Chrome reports removed false", async () => {
+  const session = new SoroeruSession(join(tmpdir(), "unused-chrome-revoke-vault.json"), {
+    chromeBridge: {
+      isConnected: () => true,
+      sendCommand: async () => ({ removed: false }),
+    },
+  });
+  assert.deepEqual(await session.revokeChromeBridgeOrigin("https://example.test"), {
+    ok: false,
+    error: "permission-remove-failed",
+  });
 });
 
 test("status reports first-run before setup and unlocked after", async () => {

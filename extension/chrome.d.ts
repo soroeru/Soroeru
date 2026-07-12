@@ -7,6 +7,8 @@ declare namespace chrome {
   namespace permissions {
     function contains(details: { origins?: string[] }): Promise<boolean>;
     function request(details: { origins?: string[] }): Promise<boolean>;
+    function remove(details: { origins?: string[] }): Promise<boolean>;
+    function getAll(): Promise<{ origins?: string[] }>;
   }
 
   namespace storage {
@@ -19,6 +21,7 @@ declare namespace chrome {
     interface Tab {
       id?: number;
       url?: string;
+      id?: number;
       status?: "loading" | "complete";
     }
     function get(tabId: number): Promise<Tab>;
