@@ -40,7 +40,8 @@ function elementForField(fieldId: string): HTMLElement {
   return element;
 }
 
-function readValues(fieldIds?: string[]): Record<string, string> {
+/** Read form values with the same selected-choice and empty-value semantics as PlaywrightPageDriver. */
+export function readPageValues(fieldIds?: string[]): Record<string, string> {
   const ids =
     fieldIds ??
     Array.from(document.querySelectorAll<HTMLElement>("[data-af-id]"))
@@ -48,13 +49,19 @@ function readValues(fieldIds?: string[]): Record<string, string> {
       .filter((id): id is string => Boolean(id));
   const values: Record<string, string> = {};
   for (const fieldId of ids) {
-    const element = elementForField(fieldId);
+    if (!fieldId.startsWith("f")) continue;
+    const element = document.querySelector<HTMLElement>(`[data-af-id="${CSS.escape(fieldId)}"]`);
+    if (!element) throw new Error("field not found");
     if (
       element instanceof HTMLInputElement ||
       element instanceof HTMLTextAreaElement ||
       element instanceof HTMLSelectElement
     ) {
-      values[fieldId] = element.value;
+      if (element instanceof HTMLInputElement && (element.type === "radio" || element.type === "checkbox")) {
+        if (element.checked) values[fieldId] = element.value;
+        continue;
+      }
+      if (element.value !== "") values[fieldId] = element.value;
     }
   }
   return values;
@@ -91,7 +98,7 @@ async function execute(command: ContentCommand): Promise<unknown> {
     case "snapshot":
       return scanPage();
     case "readValues":
-      return readValues(command.fieldIds);
+      return readPageValues(command.fieldIds);
     case "readDisplayValues":
       return readDisplayValues(command.valueIds);
     case "waitForReady":

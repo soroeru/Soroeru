@@ -154,15 +154,24 @@ test("default native host paths are stable under the macOS application support l
   });
 });
 
-test("chrome bridge runtime stays disabled until a command dispatcher is supplied", () => {
+test("chrome bridge runtime is off by default and starts when the developer flag is enabled", () => {
   assert.equal(
     createChromeExtensionBridge({
-      enabled: true,
+      enabled: false,
       appSupportDir: "/tmp/soroeru",
       socketPath: "/tmp/soroeru/bridge.sock",
     }),
     undefined,
   );
+  // Outbound PageDriver dispatch is built into the bridge (Issue #338); no
+  // inbound commandHandler is required to create a functional transport.
+  const bridge = createChromeExtensionBridge({
+    enabled: true,
+    appSupportDir: "/tmp/soroeru",
+    socketPath: "/tmp/soroeru/bridge.sock",
+  });
+  assert.ok(bridge);
+  assert.equal(bridge.isConnected(), false);
 });
 
 test("electron bridge authenticates a host and forwards a validated command result", async () => {
@@ -419,6 +428,138 @@ test("electron bridge rejects an oversized incomplete frame buffer", async () =>
   await waitForEvent(events, (event) => event.type === "rejected" && event.reason === "invalid-message");
   await waitForClose(socket);
   await bridge.close();
+});
+
+test("electron bridge sendCommand round-trips a result from the host", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-send-"));
+  const socketPath = join(root, "bridge.sock");
+  const events: ChromeBridgeEventView[] = [];
+  const bridge = new ChromeExtensionBridge({
+    appSupportDir: root,
+    socketPath,
+    onEvent: (event: ChromeBridgeEventView) => events.push(event),
+  });
+  await bridge.start();
+
+  const socket = await waitForSocket(socketPath);
+  const token = (await readFile(join(root, "native-host", "bridge-token"), "utf8")).trim();
+  socket.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
+  await waitForEvent(events, (event) => event.type === "connected");
+  assert.equal(bridge.isConnected(), true);
+
+  let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  socket.on("data", (chunk: Buffer) => {
+    remainder = Buffer.concat([remainder, chunk]);
+    const decoded = decodeNativeMessages(remainder);
+    remainder = decoded.remainder;
+    for (const message of decoded.messages) {
+      if (message.kind === "result" && message.requestId === "native-host-handshake") continue;
+      if (message.kind === "command" && message.command === "snapshot") {
+        socket.write(
+          encodeNativeMessage({
+            version: 1,
+            kind: "result",
+            requestId: message.requestId,
+            ok: true,
+            payload: {
+              url: "https://example.test/",
+              title: "",
+              fields: [],
+              buttons: [],
+              links: [],
+              visibleText: "",
+              iframeSrcs: [],
+              wallMarkers: [],
+            },
+          }),
+        );
+      }
+    }
+  });
+
+  const session = bridge.openTabSession(11);
+  assert.equal(typeof session.exportStorageState, "undefined");
+  const snap = await session.page.snapshot();
+  assert.equal(snap.url, "https://example.test/");
+  await session.close();
+  await assert.rejects(() => session.page.snapshot(), /closed/);
+
+  await bridge.close();
+  assert.equal(bridge.isConnected(), false);
+});
+
+test("electron bridge sendCommand times out when the host never answers", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-timeout-"));
+  const socketPath = join(root, "bridge.sock");
+  const events: ChromeBridgeEventView[] = [];
+  const bridge = new ChromeExtensionBridge({
+    appSupportDir: root,
+    socketPath,
+    onEvent: (event: ChromeBridgeEventView) => events.push(event),
+  });
+  await bridge.start();
+
+  const socket = await waitForSocket(socketPath);
+  const token = (await readFile(join(root, "native-host", "bridge-token"), "utf8")).trim();
+  socket.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
+  await waitForEvent(events, (event) => event.type === "connected");
+
+  await assert.rejects(() => bridge.sendCommand("currentUrl", { tabId: 1 }, { timeoutMs: 30 }), /timeout/);
+
+  socket.destroy();
+  await bridge.close();
+});
+
+test("electron bridge disconnects after a command timeout so queued commands cannot run", async () => {
+  const root = await mkdtemp(join(tmpdir(), "soroeru-electron-bridge-timeout-"));
+  const socketPath = join(root, "bridge.sock");
+  const events: ChromeBridgeEventView[] = [];
+  const bridge = new ChromeExtensionBridge({
+    appSupportDir: root,
+    socketPath,
+    onEvent: (event: ChromeBridgeEventView) => events.push(event),
+  });
+  await bridge.start();
+
+  const socket = await waitForSocket(socketPath);
+  const token = (await readFile(join(root, "native-host", "bridge-token"), "utf8")).trim();
+  socket.write(encodeNativeMessage({ version: 1, kind: "hello", token }));
+  await waitForEvent(events, (event) => event.type === "connected");
+
+  const commands: ChromeBridgeCommand[] = [];
+  let resolveFirstCommand: (() => void) | undefined;
+  const firstCommand = new Promise<void>((resolve) => {
+    resolveFirstCommand = resolve;
+  });
+  let remainder: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  socket.on("data", (chunk: Buffer) => {
+    remainder = Buffer.concat([remainder, chunk]);
+    const decoded = decodeNativeMessages(remainder);
+    remainder = decoded.remainder;
+    for (const message of decoded.messages) {
+      if (message.kind === "command") {
+        commands.push(message);
+        resolveFirstCommand?.();
+      }
+    }
+  });
+
+  try {
+    const timedOut = bridge.sendCommand("snapshot", { tabId: 1 }, { timeoutMs: 30 });
+    await firstCommand;
+    const queued = bridge.sendCommand("click", { tabId: 1, selector: "button" }, { timeoutMs: 30 });
+
+    await assert.rejects(timedOut, /timeout/);
+    await assert.rejects(queued, /not connected/);
+    assert.deepEqual(
+      commands.map((command) => command.command),
+      ["snapshot"],
+    );
+    assert.equal(bridge.isConnected(), false);
+  } finally {
+    socket.destroy();
+    await bridge.close();
+  }
 });
 
 test("electron bridge rejects unauthorized and unknown-command clients", async () => {

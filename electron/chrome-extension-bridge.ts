@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
@@ -8,12 +9,20 @@ import {
   encodeNativeMessage,
 } from "../native-host/framing.js";
 import {
+  CHROME_BRIDGE_PROTOCOL_VERSION,
   parseChromeBridgeMessage,
   type ChromeBridgeCommand,
   type ChromeBridgeMessage,
+  type ChromeBridgeResult,
 } from "../src/shared/chrome-bridge.js";
+import {
+  DEFAULT_EXTENSION_COMMAND_TIMEOUT_MS,
+  openExtensionTabSession,
+  type ChromeBridgeTransport,
+} from "../src/automation/extension-page-driver.js";
+import type { SiteSession } from "../src/automation/page-driver.js";
 
-/** Commands that the future ExtensionPageDriver may dispatch through this bridge. */
+/** Commands that ExtensionPageDriver may dispatch through this bridge. */
 export const CHROME_BRIDGE_COMMANDS = [
   "goto",
   "currentUrl",
@@ -23,6 +32,7 @@ export const CHROME_BRIDGE_COMMANDS = [
   "fillField",
   "click",
   "waitForReady",
+  "unbind",
 ] as const;
 
 export type ChromeBridgeCommandName = (typeof CHROME_BRIDGE_COMMANDS)[number];
@@ -42,19 +52,29 @@ export type ChromeBridgeEventView =
 export interface ChromeExtensionBridgeOptions {
   appSupportDir: string;
   socketPath: string;
+  /**
+   * Optional host→Electron command handler (test/legacy inbound path).
+   * Production PageDriver traffic is Electron→extension via `sendCommand`.
+   */
   commandHandler?: (
     command: ChromeBridgeCommand,
   ) => Promise<ChromeBridgeMessage | undefined> | ChromeBridgeMessage | undefined;
   onEvent?: (event: ChromeBridgeEventView) => void;
 }
 
+interface PendingRequest {
+  resolve: (result: ChromeBridgeResult) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 /**
  * Authenticated Electron-side endpoint for the native messaging host.
  *
- * The bridge owns only transport and validation. It never logs or persists
- * message payloads; application behavior is supplied by commandHandler.
+ * Owns transport, validation, and timed command dispatch for ExtensionPageDriver.
+ * Never logs or persists message payloads.
  */
-export class ChromeExtensionBridge {
+export class ChromeExtensionBridge implements ChromeBridgeTransport {
   private server: Server | undefined;
   private socket: Socket | undefined;
   private readonly sockets = new Set<Socket>();
@@ -62,6 +82,10 @@ export class ChromeExtensionBridge {
   private readonly supersededSockets = new WeakSet<Socket>();
   private started = false;
   private closing = false;
+  private connected = false;
+  private readonly pending = new Map<string, PendingRequest>();
+  /** Serialize outbound commands (1 run · 1 tab · sequential; design §3.5 / §5). */
+  private sendChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: ChromeExtensionBridgeOptions) {}
 
@@ -92,6 +116,7 @@ export class ChromeExtensionBridge {
       for (const socket of this.sockets) socket.destroy();
       this.sockets.clear();
       this.socket = undefined;
+      this.connected = false;
       await this.closeServer(server);
       await rm(this.options.socketPath, { force: true });
       await removeHandshakeToken(token.tokenPath);
@@ -102,6 +127,8 @@ export class ChromeExtensionBridge {
   async close(): Promise<void> {
     if (this.closing) return;
     this.closing = true;
+    this.failPending(new Error("chrome bridge disconnected"));
+    this.connected = false;
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     this.socket = undefined;
@@ -115,6 +142,84 @@ export class ChromeExtensionBridge {
     this.closing = false;
   }
 
+  isConnected(): boolean {
+    return this.connected && this.socket !== undefined && !this.socket.destroyed;
+  }
+
+  /**
+   * Dispatch a PageDriver command to the extension and wait for its result.
+   * Commands are serialized; each waits up to `timeoutMs` (default 30s).
+   */
+  async sendCommand(command: string, payload?: unknown, options?: { timeoutMs?: number }): Promise<unknown> {
+    if (!(CHROME_BRIDGE_COMMANDS as readonly string[]).includes(command)) {
+      throw new Error(`unknown chrome bridge command: ${command}`);
+    }
+    const run = this.sendChain.then(() => this.sendCommandRaw(command, payload, options));
+    // Keep the chain alive after rejection so later commands still queue.
+    this.sendChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * Second session factory entry alongside BrowserEngine.openSession.
+   * Binds automation to one already-selected tab; close() only unbinds.
+   */
+  openTabSession(tabId: number, options?: { commandTimeoutMs?: number; siteDomain?: string }): SiteSession {
+    return openExtensionTabSession(this, {
+      tabId,
+      ...(options?.commandTimeoutMs !== undefined ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
+      ...(options?.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
+    });
+  }
+
+  private async sendCommandRaw(
+    command: string,
+    payload: unknown | undefined,
+    options?: { timeoutMs?: number },
+  ): Promise<unknown> {
+    if (!this.isConnected() || !this.socket) {
+      throw new Error("chrome bridge not connected");
+    }
+    const requestId = randomUUID();
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_EXTENSION_COMMAND_TIMEOUT_MS;
+    const message: ChromeBridgeCommand = {
+      version: CHROME_BRIDGE_PROTOCOL_VERSION,
+      kind: "command",
+      requestId,
+      command,
+      ...(payload === undefined ? {} : { payload }),
+    };
+    const result = await new Promise<ChromeBridgeResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        // Wording includes "timeout" so VisibilityRunner.unreachableReasonFor maps it.
+        const error = new Error(`chrome bridge command timeout: ${command}`);
+        // A result may still arrive after this point, but it no longer belongs
+        // to a usable command sequence. Tear down the transport before the
+        // queue advances so no later command can race that late side effect.
+        this.connected = false;
+        this.failPending(error);
+        this.socket?.destroy();
+        reject(error);
+      }, timeoutMs);
+      this.pending.set(requestId, { resolve, reject, timer });
+      try {
+        this.socket!.write(encodeNativeMessage(message));
+      } catch (err) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+    if (!result.ok) {
+      throw new Error(result.error ?? `chrome bridge command failed: ${command}`);
+    }
+    return result.payload;
+  }
+
   private accept(socket: Socket, expectedToken: string): void {
     this.sockets.add(socket);
     this.emit({ type: "connecting" });
@@ -125,6 +230,12 @@ export class ChromeExtensionBridge {
     const reject = (reason: ChromeBridgeRejectionReason): void => {
       if (rejected) return;
       rejected = true;
+      // Only tear down pending outbound work when the active authenticated
+      // client is the one being rejected (failed replacement must not kill it).
+      if (this.socket === socket) {
+        this.connected = false;
+        this.failPending(new Error("chrome bridge disconnected"));
+      }
       if (reason) this.emit({ type: "rejected", reason });
       socket.destroy();
     };
@@ -140,11 +251,15 @@ export class ChromeExtensionBridge {
             if (message.kind !== "hello") return reject("invalid-message");
             if (message.token !== expectedToken) return reject("unauthorized");
             authenticated = true;
+            // Promote only after a successful handshake. Fail in-flight commands
+            // against the previous active client (if any), then replace it.
             if (this.socket && this.socket !== socket) {
+              this.failPending(new Error("chrome bridge disconnected"));
               this.supersededSockets.add(this.socket);
               this.socket.destroy();
             }
             this.socket = socket;
+            this.connected = true;
             socket.write(
               encodeNativeMessage({
                 version: 1,
@@ -156,11 +271,25 @@ export class ChromeExtensionBridge {
             this.emit({ type: "connected" });
             continue;
           }
+          // Bidirectional: Electron may receive results (PageDriver replies),
+          // optional host→app commands (tests/legacy), or protocol errors/events.
+          if (message.kind === "result") {
+            this.resolvePending(message);
+            continue;
+          }
+          if (message.kind === "event") {
+            // Connection-state IPC stays sanitized; raw event payloads are not forwarded.
+            continue;
+          }
+          if (message.kind === "error") {
+            this.failPending(new Error(message.message || "chrome bridge error"));
+            continue;
+          }
           if (message.kind !== "command") return reject("invalid-message");
           if (!(CHROME_BRIDGE_COMMANDS as readonly string[]).includes(message.command)) {
             return reject("unknown-command");
           }
-          void this.handleCommand(socket, message);
+          void this.handleInboundCommand(socket, message);
         }
       } catch {
         reject("invalid-message");
@@ -175,6 +304,8 @@ export class ChromeExtensionBridge {
       this.sockets.delete(socket);
       if (this.socket === socket) {
         this.socket = undefined;
+        this.connected = false;
+        this.failPending(new Error("chrome bridge disconnected"));
         if (!this.closing) this.emit({ type: "disconnected" });
       }
     });
@@ -185,7 +316,23 @@ export class ChromeExtensionBridge {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
-  private async handleCommand(socket: Socket, command: ChromeBridgeCommand): Promise<void> {
+  private resolvePending(result: ChromeBridgeResult): void {
+    const pending = this.pending.get(result.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pending.delete(result.requestId);
+    pending.resolve(result);
+  }
+
+  private failPending(error: Error): void {
+    for (const [requestId, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      this.pending.delete(requestId);
+      pending.reject(error);
+    }
+  }
+
+  private async handleInboundCommand(socket: Socket, command: ChromeBridgeCommand): Promise<void> {
     try {
       const response = await this.options.commandHandler?.(command);
       if (!response) {

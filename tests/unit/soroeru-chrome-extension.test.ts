@@ -4,9 +4,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright";
 import type { PageSnapshot } from "../../src/types.js";
-import { scanPage } from "../../extension/content-script.js";
+import { readPageValues, scanPage } from "../../extension/content-script.js";
 import { snapshotPage } from "../../src/agent/scan.js";
-import { isAllowedExtensionOrigin, validateExtensionCommand } from "../../extension/worker.js";
+import {
+  isAllowedExtensionOrigin,
+  isExpectedNavigationOrigin,
+  isSameSiteExtensionOrigin,
+  unbindMatchesBinding,
+  validateExtensionCommand,
+} from "../../extension/worker.js";
 
 test("MV3 manifest requests only the bridge permissions and optional HTTPS hosts", async () => {
   const manifest = JSON.parse(
@@ -36,9 +42,71 @@ test("worker accepts only explicit bound tabs and HTTPS origins", () => {
     tabId: 7,
     url: "https://example.test/account",
   });
+  assert.deepEqual(
+    validateExtensionCommand("goto", {
+      tabId: 7,
+      url: "https://account.example.test/profile",
+      siteDomain: "example.test",
+    }),
+    {
+      tabId: 7,
+      url: "https://account.example.test/profile",
+      siteDomain: "example.test",
+    },
+  );
+  assert.deepEqual(validateExtensionCommand("unbind", { tabId: 7, siteDomain: "example.test" }), {
+    tabId: 7,
+    siteDomain: "example.test",
+  });
   assert.throws(() => validateExtensionCommand("snapshot", { tabId: 0 }), /tabId/);
   assert.throws(() => validateExtensionCommand("goto", { tabId: 7, url: "http://example.test" }), /HTTPS/);
   assert.throws(() => validateExtensionCommand("snapshot", { tabId: 7, extra: true }), /unknown payload/);
+  assert.throws(
+    () => validateExtensionCommand("unbind", { tabId: 7, url: "https://example.test/" }),
+    /unknown payload/,
+  );
+});
+
+test("same-site origin check accepts the site domain and its subdomains, never siblings", () => {
+  assert.equal(isSameSiteExtensionOrigin("https://example.test", "example.test"), true);
+  assert.equal(isSameSiteExtensionOrigin("https://account.example.test", "example.test"), true);
+  assert.equal(isSameSiteExtensionOrigin("https://www.example.test", "example.test"), true);
+  assert.equal(isSameSiteExtensionOrigin("https://EXAMPLE.TEST", "example.test"), true);
+  assert.equal(isSameSiteExtensionOrigin("https://evil-example.test", "example.test"), false);
+  assert.equal(isSameSiteExtensionOrigin("https://notexample.test", "example.test"), false);
+  assert.equal(isSameSiteExtensionOrigin("javascript:void(0)", "example.test"), false);
+  assert.equal(isSameSiteExtensionOrigin("not a url", "example.test"), false);
+});
+
+test("navigation origin check allows same-site redirects only when the tab is site-scoped", () => {
+  assert.equal(isExpectedNavigationOrigin("https://example.test/login", "https://example.test"), true);
+  assert.equal(
+    isExpectedNavigationOrigin("https://account.example.test/otp", "https://example.test", "example.test"),
+    true,
+  );
+  assert.equal(
+    isExpectedNavigationOrigin("https://account.example.test/otp", "https://example.test"),
+    false,
+  );
+  assert.equal(isExpectedNavigationOrigin("https://evil.test/", "https://example.test", "example.test"), false);
+  assert.equal(isExpectedNavigationOrigin("http://example.test/", "https://example.test", "example.test"), false);
+  assert.equal(isExpectedNavigationOrigin(undefined, "https://example.test", "example.test"), false);
+});
+
+test("unbind matches the bound tab and site scope without needing a live tab", () => {
+  assert.equal(unbindMatchesBinding(undefined, { tabId: 7 }), false);
+  assert.equal(unbindMatchesBinding({ tabId: 7 }, { tabId: 8 }), false);
+  // A binding created by a non-goto command has no siteDomain; unbind then matches on tabId alone.
+  assert.equal(unbindMatchesBinding({ tabId: 7 }, { tabId: 7, siteDomain: "example.test" }), true);
+  assert.equal(
+    unbindMatchesBinding({ tabId: 7, siteDomain: "example.test" }, { tabId: 7, siteDomain: "example.test" }),
+    true,
+  );
+  assert.equal(unbindMatchesBinding({ tabId: 7, siteDomain: "example.test" }, { tabId: 7 }), false);
+  assert.equal(
+    unbindMatchesBinding({ tabId: 7, siteDomain: "example.test" }, { tabId: 7, siteDomain: "other.test" }),
+    false,
+  );
 });
 
 test("content snapshot has the same structure-only shape as the Playwright scanner", async () => {
@@ -68,6 +136,29 @@ test("content snapshot has the same structure-only shape as the Playwright scann
     assert.equal(extensionSnapshot.displayValues?.[0]?.labelText, "氏名");
     assert.equal(JSON.stringify(extensionSnapshot.fields).includes("山田 太郎"), false);
     assert.equal(JSON.stringify(extensionSnapshot.displayValues).includes("山田 太郎"), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("content value collection excludes unchecked choices and empty inputs like Playwright", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <input data-af-id="f-email" value="user@example.test">
+      <input data-af-id="f-checked" type="checkbox" value="newsletter" checked>
+      <input data-af-id="f-unchecked" type="checkbox" value="marketing">
+      <input data-af-id="f-radio-checked" type="radio" value="home" checked>
+      <input data-af-id="f-radio-unchecked" type="radio" value="office">
+      <input data-af-id="f-empty" value="">
+    `);
+
+    assert.deepEqual(await page.evaluate(readPageValues, undefined), {
+      "f-email": "user@example.test",
+      "f-checked": "newsletter",
+      "f-radio-checked": "home",
+    });
   } finally {
     await browser.close();
   }
