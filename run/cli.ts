@@ -36,7 +36,7 @@ import { startWebUiServer, type WebUiServerHandle } from "../src/app/web-ui.js";
 import { defaultVaultStateDir } from "../src/store/vault.js";
 import { checkBypassDenylist } from "../src/dev/bypass-check.js";
 import { checkNetworkEgress } from "../src/dev/egress-check.js";
-import { checkLocalPersistence } from "../src/dev/privacy-check.js";
+import { ALLOWED_PERSIST_CATEGORIES, checkLocalPersistence } from "../src/dev/privacy-check.js";
 import { formatResult, hasFailures, runDemo, runVariant, type EngineName, type VariantRunResult } from "./measure.js";
 
 const STATE_ROOT = defaultVaultStateDir({
@@ -223,9 +223,7 @@ function cmdCheckPersistence(): void {
     process.exitCode = 1;
     return;
   }
-  console.log(
-    "ok: every local write is annotated (encrypted-store / encrypted-export / measurement-output / diagnostics-log / native-host-registration)",
-  );
+  console.log(`ok: every local write is annotated (${[...ALLOWED_PERSIST_CATEGORIES].join(" / ")})`);
 }
 
 /** SEC-002 (#23): fail if package.json gained a CAPTCHA-solving / anti-bot-evasion dependency. */

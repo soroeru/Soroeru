@@ -1,7 +1,7 @@
 import { access, chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 
 export const NATIVE_HOST_NAME = "jp.soroeru.bridge";
 
@@ -18,8 +18,9 @@ export async function resolveNodeBinary(
   searchPath = process.env["PATH"] ?? "",
   fallbacks = DEFAULT_NODE_FALLBACKS,
 ): Promise<string | null> {
+  // Only absolute candidates: a shebang interpreter path must be absolute.
   const candidates = [
-    ...searchPath.split(delimiter).filter((dir) => dir.length > 0).map((dir) => join(dir, "node")),
+    ...searchPath.split(delimiter).filter((dir) => isAbsolute(dir)).map((dir) => join(dir, "node")),
     ...fallbacks,
   ];
   for (const candidate of candidates) {
@@ -81,6 +82,7 @@ export async function registerNativeHost(
   sourceBinary: string,
   extensionId: string,
   paths: NativeHostPaths,
+  resolveNode: () => Promise<string | null> = resolveNodeBinary,
 ): Promise<RegistrationResult> {
   validateExtensionId(extensionId);
   const target = pathsFor(paths);
@@ -98,7 +100,7 @@ export async function registerNativeHost(
     const source = await readFile(sourceBinary, "utf8");
     let installed = source;
     if (source.startsWith("#!")) {
-      const nodeBinary = await resolveNodeBinary();
+      const nodeBinary = await resolveNode();
       if (!nodeBinary)
         throw new Error(
           "Node.js runtime not found: Chrome launches the native host with a minimal PATH, " +

@@ -19,7 +19,7 @@ import { join, relative } from "node:path";
 const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// persist: <category>` annotations for a flagged line. */
-const ALLOWED_CATEGORIES = new Set([
+export const ALLOWED_PERSIST_CATEGORIES = new Set([
   "encrypted-store", // src/store/store.ts: AES-256-GCM encrypted store + recovery rekey (docs/security.md §4)
   "encrypted-export", // recovery export/import: same encrypted JSON shape as the on-disk store (§4)
   "measurement-output", // state/soroeru-poc/matrix-*.json, masked via maskForArtifact (§3)
@@ -59,7 +59,7 @@ function* walkTsFiles(dir: string): Generator<string> {
 function isAnnotated(lines: string[], index: number): boolean {
   for (const line of [lines[index], lines[index - 1]]) {
     const category = line ? /\/\/\s*persist:\s*([a-z-]+)/.exec(line)?.[1] : undefined;
-    if (category && ALLOWED_CATEGORIES.has(category)) return true;
+    if (category && ALLOWED_PERSIST_CATEGORIES.has(category)) return true;
   }
   return false;
 }
@@ -80,7 +80,7 @@ export function checkLocalPersistence(repoRoot: string): PersistenceCheckResult 
         if (!WRITE_PATTERNS.some((re) => re.test(line))) return;
         if (!isAnnotated(lines, index)) {
           violations.push(
-            `${relative(repoRoot, file)}:${index + 1}: local write without "// persist: ${[...ALLOWED_CATEGORIES].join("|")}" annotation: ${line.trim()}`,
+            `${relative(repoRoot, file)}:${index + 1}: local write without "// persist: ${[...ALLOWED_PERSIST_CATEGORIES].join("|")}" annotation: ${line.trim()}`,
           );
         }
       });

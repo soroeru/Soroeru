@@ -163,19 +163,22 @@ test("registration pins the installed host's shebang to an absolute Node path", 
   assert.equal(rest.join("\n"), "console.log('relay');\n");
 });
 
-test("resolveNodeBinary fails closed when no Node runtime is reachable", async () => {
+test("registration fails closed when no Node runtime is reachable", async () => {
   assert.equal(await resolveNodeBinary("", []), null);
+  assert.equal(await resolveNodeBinary("relative/dir:another", []), null);
   const root = await mkdtemp(join(tmpdir(), "soroeru-bridge-"));
   const source = join(root, "host-source");
   await writeFile(source, "#!/usr/bin/env node\nconsole.log('relay');\n");
-  // The real resolution should find the Node running this test via PATH or a
-  // standard install location; a shebang-less source never needs resolution.
   const paths = {
     appSupportDir: join(root, "Application Support"),
     chromeNativeMessagingDir: join(root, "Chrome", "NativeMessagingHosts"),
   };
-  await registerNativeHost(source, "a".repeat(32), paths);
-  assert.equal(await nativeHostIsRegistered(paths), true);
+  await assert.rejects(
+    registerNativeHost(source, "a".repeat(32), paths, async () => null),
+    /Node\.js runtime not found/,
+  );
+  // Fail closed: nothing half-installed.
+  assert.equal(await nativeHostIsRegistered(paths), false);
 });
 
 test("default native host paths are stable under the macOS application support layout", () => {
