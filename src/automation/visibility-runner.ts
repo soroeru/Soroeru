@@ -3,7 +3,14 @@ import type { Credential, SiteAccount } from "../domain/entities.js";
 import type { PageSnapshot } from "../types.js";
 import { collectDuringExploration } from "./disclosure-collector.js";
 import { DecisionEngine, type AiEngine } from "./decision-engine.js";
-import { findLoginField, findLoginLink, findLoginSubmitButton, hasLoginFields } from "./login-handler.js";
+import {
+  findLoginField,
+  findLoginLink,
+  findLoginSubmitButton,
+  findSsoLoginOptions,
+  hasLoginFields,
+  type SsoLoginOption,
+} from "./login-handler.js";
 import { noopLogger, type Logger } from "../logging/logger.js";
 import { PageExplorer } from "./page-explorer.js";
 import { RuleEngine } from "./rule-engine.js";
@@ -103,8 +110,42 @@ export class VisibilityRunner {
         snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page", credential);
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
-        await this.login(session, credential, snapshot);
-        if (this.isCanceled()) return this.canceledResult(siteAccountId);
+
+        // Issue #351: SSO hand-off is single-shot per site run (independent of wall maxHandoffs).
+        let ssoHandoffOffered = false;
+        const loginPageSnapshot = snapshot;
+        const hasUsername = findLoginField(snapshot.fields, "username") !== undefined;
+        const hasPassword = findLoginField(snapshot.fields, "password") !== undefined;
+        // Full ID+PW form (Problem 2 / design hasLoginFields). Partial forms still get login().
+        const fullLoginForm = hasUsername && hasPassword;
+
+        // Problem 1: no credential fields at all, SSO buttons only → ask the user to complete SSO.
+        if (!hasUsername && !hasPassword) {
+          const ssoOptions = findSsoLoginOptions(snapshot);
+          if (ssoOptions.length > 0) {
+            ssoHandoffOffered = true;
+            const ssoOutcome = await this.offerSsoLoginHandoff({
+              siteAccount,
+              snapshot,
+              step: "login-page",
+              detailPrefix: "sso-login-required",
+              options: ssoOptions,
+              // Problem 1: no site password to re-try; do not offer the imported credential.
+              credential: undefined,
+              instruction: ssoLoginRequiredInstruction(ssoOptions),
+            });
+            if (ssoOutcome !== "resolved") return this.handoffResult(siteAccountId);
+            if (this.isCanceled()) return this.canceledResult(siteAccountId);
+            snapshot = await session.page.snapshot();
+          }
+        }
+
+        // Fill whatever credential fields exist (username-only / password-only multi-step pages).
+        // Skip when there are none (SSO-only after hand-off, or a page with no login form).
+        if (hasUsername || hasPassword) {
+          await this.login(session, credential, snapshot);
+          if (this.isCanceled()) return this.canceledResult(siteAccountId);
+        }
         await session.page.waitForReady();
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         snapshot = await this.clearOrPause(
@@ -116,6 +157,53 @@ export class VisibilityRunner {
         );
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
+
+        // Problem 2: full ID/PW was submitted but we are still on a login page and SSO exists.
+        if (fullLoginForm && hasLoginFields(snapshot) && !ssoHandoffOffered) {
+          const afterLoginSso = findSsoLoginOptions(snapshot);
+          const ssoOptions =
+            afterLoginSso.length > 0 ? afterLoginSso : findSsoLoginOptions(loginPageSnapshot);
+          if (ssoOptions.length > 0) {
+            ssoHandoffOffered = true;
+            const ssoOutcome = await this.offerSsoLoginHandoff({
+              siteAccount,
+              snapshot,
+              step: "after-login",
+              detailPrefix: "sso-fallback-suggested",
+              options: ssoOptions,
+              // Same spirit as wall hand-off on login: user may re-try ID/PW manually.
+              credential,
+              instruction: ssoFallbackInstruction(ssoOptions),
+            });
+            if (ssoOutcome !== "resolved") {
+              this.recordLoginFailed(siteAccount, snapshot);
+              const constraints = this.options.domain
+                .listConstraints()
+                .filter((c) => c.siteAccountId === siteAccountId).length;
+              return {
+                siteAccountId,
+                status: "login-failed",
+                disclosures: 0,
+                relationships: 0,
+                constraints,
+              };
+            }
+            // Same as post-login: wait, re-snapshot, and wall-check before collection
+            // so IdP-side CAPTCHA/MFA after SSO is still handed off (never bypassed).
+            if (this.isCanceled()) return this.canceledResult(siteAccountId);
+            await session.page.waitForReady();
+            if (this.isCanceled()) return this.canceledResult(siteAccountId);
+            snapshot = await this.clearOrPause(
+              siteAccount,
+              session,
+              await session.page.snapshot(),
+              "after-login",
+              credential,
+            );
+            if (this.isCanceled()) return this.canceledResult(siteAccountId);
+            if (!snapshot) return this.handoffResult(siteAccountId);
+          }
+        }
       }
 
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
@@ -440,6 +528,72 @@ export class VisibilityRunner {
     if (submit) await session.page.click(submit.selector);
   }
 
+  /**
+   * Issue #351: pause for the user to complete SSO in the same headed session.
+   * Never clicks SSO buttons, never navigates to IdPs, never selects accounts.
+   * Returns "resolved" only when the hand-off callback says so; missing handoff
+   * is treated like abort (caller decides terminal status).
+   */
+  private async offerSsoLoginHandoff(input: {
+    siteAccount: SiteAccount;
+    snapshot: PageSnapshot;
+    step: "login-page" | "after-login";
+    detailPrefix: "sso-login-required" | "sso-fallback-suggested";
+    options: SsoLoginOption[];
+    credential: Credential | undefined;
+    instruction: string;
+  }): Promise<"resolved" | "abort"> {
+    const providers = input.options.map((o) => o.provider);
+    const labels = input.options.map((o) => o.label).join(", ");
+    const evidence = this.options.domain.addEvidence({
+      siteAccountId: input.siteAccount.id,
+      pageUrl: input.snapshot.url,
+      observedAt: this.now(),
+      // Structure only: detected control labels, never account ids or secrets.
+      maskedSnippet: `sso login options: ${labels}`,
+    });
+    this.options.domain.addConstraint({
+      siteAccountId: input.siteAccount.id,
+      kind: "unknown-state",
+      detail: `${input.detailPrefix}: ${providers.join(",")}`,
+      evidenceIds: [evidence.id],
+      observedAt: this.now(),
+    });
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: input.siteAccount.id,
+      step: input.step,
+      status: "handoff",
+      resumeData: {
+        handoff: "sso-login",
+        providers: providers.join(","),
+        url: input.snapshot.url,
+      },
+    });
+    this.logger.warn("visibility", "sso login required", {
+      domain: input.siteAccount.domain,
+      providers: providers.join(","),
+      step: input.step,
+    });
+
+    if (!this.options.handoff) return "abort";
+    const outcome = await this.options.handoff({
+      siteAccount: input.siteAccount,
+      instruction: input.instruction,
+      evidence: labels,
+      ...(input.credential ? { credential: input.credential } : {}),
+    });
+    if (outcome !== "resolved") return "abort";
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: input.siteAccount.id,
+      step: `${input.step}:resume`,
+      status: "in-progress",
+      resumeData: { handoff: "sso-login", url: input.snapshot.url },
+    });
+    return "resolved";
+  }
+
   private recordUnreachable(siteAccount: SiteAccount, reason: string): void {
     const evidenceInput: Parameters<DomainService["addEvidence"]>[0] = {
       siteAccountId: siteAccount.id,
@@ -596,6 +750,46 @@ export class VisibilityRunner {
 
 function shouldOfferHandoffCredential(step: string, snapshot: PageSnapshot, wallKind: string): boolean {
   return step === "login-page" || hasLoginFields(snapshot) || wallKind === "mfa";
+}
+
+function formatSsoProviderList(options: SsoLoginOption[]): string {
+  const names = options.map((o) => {
+    switch (o.provider) {
+      case "google":
+        return "Google";
+      case "apple":
+        return "Apple";
+      case "facebook":
+        return "Facebook";
+      case "x":
+        return "X";
+      case "line":
+        return "LINE";
+      case "yahoo":
+        return "Yahoo";
+      case "other":
+        return "その他のSSO";
+    }
+  });
+  return names.join("、");
+}
+
+function ssoLoginRequiredInstruction(options: SsoLoginOption[]): string {
+  const providers = formatSsoProviderList(options);
+  return (
+    `このサイトにはIDとパスワードの入力欄が見つかりませんでした。${providers}でのログインが利用できます。` +
+    "開いているブラウザ画面で、あなた自身でSSOログインを行い、使用するアカウントを選択してください。" +
+    "ログイン完了後に続行すると、Soroeruが残りの収集を引き継ぎます。"
+  );
+}
+
+function ssoFallbackInstruction(options: SsoLoginOption[]): string {
+  const providers = formatSsoProviderList(options);
+  return (
+    `IDとパスワードでのログインができませんでした。${providers}でのSSOログインをお試しください。` +
+    "開いているブラウザ画面で、あなた自身でログインし、使用するアカウントを選択してください。" +
+    "完了後に続行すると、Soroeruが残りの収集を引き継ぎます。"
+  );
 }
 
 function isHttpUrl(url: string): boolean {

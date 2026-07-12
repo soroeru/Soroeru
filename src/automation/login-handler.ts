@@ -131,6 +131,117 @@ export function hasLoginFields(snapshot: PageSnapshot): boolean {
   );
 }
 
+/**
+ * Detected third-party SSO login control on a login page (structure only).
+ * Used only during the login stage — never as a wall signal (see Issue #351).
+ */
+export interface SsoLoginOption {
+  provider: "google" | "apple" | "facebook" | "x" | "line" | "yahoo" | "other";
+  /** Visible button/link label (no credentials or account identifiers). */
+  label: string;
+}
+
+/** Login/continue wording that, with a provider name, marks an SSO control. */
+const SSO_ACTION_RE = /ログイン|サインイン|続行|continue|sign[\s_-]?in|log[\s_-]?in/i;
+
+/** Share / social engagement — must not be treated as SSO login. */
+const SSO_NEGATIVE_RE = /シェア|\bshare\b|ツイート|\btweet\b|いいね|\blike\b|フォロー|\bfollow\b|ポスト|\bpost\b/i;
+
+const SSO_PROVIDER_NAME_RE: Array<{
+  provider: Exclude<SsoLoginOption["provider"], "other">;
+  name: RegExp;
+}> = [
+  { provider: "google", name: /google|グーグル/i },
+  { provider: "apple", name: /apple|アップル/i },
+  { provider: "facebook", name: /facebook|フェイスブック|\bmeta\b/i },
+  // "Xでログイン" / "Sign in with X" / Twitter — word-boundary so plain "x" in other words is skipped.
+  { provider: "x", name: /\bx\b|twitter|ツイッター/i },
+  { provider: "line", name: /\bline\b|ライン/i },
+  { provider: "yahoo", name: /yahoo|ヤフー/i },
+];
+
+/** Href shapes that indicate an OAuth / IdP entry (design Issue #351). */
+const OAUTH_HREF_RE = /oauth|openid/i;
+const IDP_HOST_RE =
+  /accounts\.google\.com|appleid\.apple\.com|facebook\.com|fb\.com|twitter\.com|(?:^|[/.])x\.com|line\.me|yahoo\.(?:co\.jp|com)/i;
+const AUTH_PROVIDER_PATH_RE = /\/auth\/(google|facebook|twitter|line|apple|yahoo|x)\b/i;
+
+/**
+ * Deterministic SSO login-button/link detection for the login stage only.
+ * Does not click, navigate to IdPs, or select accounts — detection only (Issue #351).
+ */
+export function findSsoLoginOptions(snapshot: PageSnapshot): SsoLoginOption[] {
+  const byProvider = new Map<SsoLoginOption["provider"], SsoLoginOption>();
+
+  const consider = (text: string, href: string | undefined): void => {
+    const label = text.trim() || (href ? href.trim() : "");
+    if (!label) return;
+    if (SSO_NEGATIVE_RE.test(`${text} ${href ?? ""}`)) return;
+
+    // Text: provider name × login/continue action (primary signal).
+    const textHit = matchProviderFromText(text);
+    if (textHit && SSO_ACTION_RE.test(text)) {
+      if (!byProvider.has(textHit)) byProvider.set(textHit, { provider: textHit, label });
+      return;
+    }
+
+    if (!href) return;
+
+    // Href assist: known IdP hosts, /auth/<provider>, or oauth+provider — not bare social profile links.
+    const hrefHit = matchProviderFromHref(href);
+    if (hrefHit) {
+      if (!byProvider.has(hrefHit)) byProvider.set(hrefHit, { provider: hrefHit, label });
+      return;
+    }
+    // Generic oauth without a named provider → "other".
+    if (OAUTH_HREF_RE.test(href)) {
+      if (!byProvider.has("other")) byProvider.set("other", { provider: "other", label });
+    }
+  };
+
+  for (const button of snapshot.buttons) {
+    consider(button.text, undefined);
+  }
+  for (const link of snapshot.links) {
+    consider(link.text, link.href);
+  }
+
+  return [...byProvider.values()];
+}
+
+function matchProviderFromText(text: string): Exclude<SsoLoginOption["provider"], "other"> | undefined {
+  for (const entry of SSO_PROVIDER_NAME_RE) {
+    if (entry.name.test(text)) return entry.provider;
+  }
+  return undefined;
+}
+
+/** Path tokens that indicate an auth/OAuth entry on an IdP host (not help/profile pages). */
+const IDP_AUTH_PATH_RE = /\/(o\/oauth|oauth2?|openid|signin|ServiceLogin|login|auth|authorize)\b/i;
+
+function matchProviderFromHref(href: string): Exclude<SsoLoginOption["provider"], "other"> | undefined {
+  const auth = href.match(AUTH_PROVIDER_PATH_RE);
+  if (auth) {
+    const key = auth[1]!.toLowerCase();
+    if (key === "twitter") return "x";
+    return key as Exclude<SsoLoginOption["provider"], "other">;
+  }
+  // oauth/openid URL that also names a provider (query or path).
+  if (OAUTH_HREF_RE.test(href)) {
+    return matchProviderFromText(href);
+  }
+  // Known IdP host only when the path looks like auth (not a public profile/share/help URL).
+  if (IDP_HOST_RE.test(href) && IDP_AUTH_PATH_RE.test(href)) {
+    if (/accounts\.google/i.test(href)) return "google";
+    if (/appleid\.apple/i.test(href)) return "apple";
+    if (/facebook|fb\.com/i.test(href)) return "facebook";
+    if (/twitter|\bx\.com\b/i.test(href)) return "x";
+    if (/line\.me/i.test(href)) return "line";
+    if (/yahoo\./i.test(href)) return "yahoo";
+  }
+  return undefined;
+}
+
 export function findLoginSubmitButton(buttons: PageButton[]): PageButton | undefined {
   return buttons.find((b) => /ログイン|login|sign in/i.test(b.text));
 }
