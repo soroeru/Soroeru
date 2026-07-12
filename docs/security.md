@@ -534,6 +534,26 @@ The first beta DMG is allowed to be unsigned / not notarized only for the invite
 10-user private beta, and release notes must say so. Wider distribution requires a
 separate signing/notarization issue and a repeat of the security checklist below.
 
+**Chrome extension bridge (developer-only prototype, Issue #340):** When included, the DMG
+bundles the native-host relay binary in `Soroeru.app/Resources/native-host/host.js`. The
+developer setup process copies this binary to register the manifest at
+`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`,
+as per the design (`docs/design/issue-291-chrome-extension-bridge.md` §3.3). Before
+distributing a DMG, confirm:
+
+- [ ] The native-host binary is built and bundled in the DMG (`npm run package:dmg`
+      completes successfully).
+- [ ] Extension and native-host code never log raw values, cookies, tokens, snapshots,
+      or credentials. Verify via inspection of `extension/` and `native-host/` source —
+      any `console.log`, `console.error`, `log()`, or `debug()` calls must be annotated
+      with `@egress-allowed` or absent from production paths (developer-only, never
+      persisted or transmitted).
+- [ ] The installed manifest and host binary do not remain after disconnect/uninstall.
+      Verify manually following `docs/manual-test.md` §0.2 cleanup verification.
+- [ ] When eventually signed/notarized (post-MVP), the manifest's `path` field must point
+      to a stable copy location (e.g., app-support) rather than directly into
+      `Soroeru.app`, to survive App Translocation and user `.app` relocation.
+
 ### 12.2 Local Diagnostics And Support Bundles
 
 Diagnostics are local-only and telemetry-free. `DiagnosticEvent` records are stored in

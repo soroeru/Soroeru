@@ -188,6 +188,53 @@ run, vault recovery, Add Site branches, registration, import, update, wall hand-
 support-bundle review, and beta release-note limitations. Keep this section focused on
 commands and packaging facts; keep the executable QA checklist in `manual-test.md`.
 
+## 3.2 Chrome Extension Bridge Developer Setup
+
+The Chrome extension bridge is a **developer-only prototype** (Issue #340) — not included in the
+MVP DMG — that enables automation via the user's actual Chrome profile instead of the
+sandboxed Playwright Chromium. To use it during local development:
+
+1. **Build the extension:**
+   ```bash
+   npm run build:extension
+   ```
+   This compiles TypeScript and bundles the extension to `dist/extension/`.
+
+2. **Load the extension in developer mode:**
+   - Open Chrome and navigate to `chrome://extensions/`.
+   - Enable **Developer mode** (toggle in the top right).
+   - Click **Load unpacked** and select the `dist/extension/` directory.
+   - Note the extension ID shown on the extension card (you will need it below).
+
+3. **Set environment variables for the app:**
+   ```bash
+   export SOROERU_ENABLE_CHROME_BRIDGE=1
+   export SOROERU_CHROME_EXTENSION_ID=<extension-id-from-step-2>
+   export SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/compiled/native-host/host.js
+   ```
+
+4. **Start the app:**
+   ```bash
+   SOROERU_ENABLE_CHROME_BRIDGE=1 SOROERU_CHROME_EXTENSION_ID=<id> \
+   SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/compiled/native-host/host.js \
+   npm run dev
+   ```
+
+5. **In the app:**
+   - Go to **設定 → Chrome と接続** and select **host を登録して接続を始める**.
+   - The manifest is registered at
+     `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`.
+   - The handshake completes when the extension confirms the native-messaging connection.
+   - When done, choose **切断して登録物を掃除** to unregister and remove the host binary.
+
+**Security note:** The extension is a developer-only tool and must not be included in
+production / beta distributions. The unpacked extension ID is not stable across dev sessions,
+so never commit a hardcoded ID. In packaged (signed/notarized) builds, the extension ID would
+be registered with the Chrome Web Store; that distribution path is out of scope for the MVP.
+
+See [`manual-test.md`](manual-test.md) §0.1–0.2 for the full QA checklist, including
+permission verification, tab binding, cleanup, and policy compliance (`npm run poc -- check-egress` etc.).
+
 ## 4. Project Structure
 
 Current repository shape:

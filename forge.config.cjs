@@ -13,6 +13,7 @@ module.exports = {
     icon: path.join(__dirname, "assets", "soroeru"),
     osxSign: false,
     asar: false,
+    extraResource: [path.join(__dirname, "dist", "compiled", "native-host", "host.js")],
     extendInfo: {
       CFBundleDisplayName: "Soroeru",
       CFBundleName: "Soroeru",
