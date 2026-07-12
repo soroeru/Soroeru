@@ -114,11 +114,31 @@ export function isSameSiteExtensionOrigin(origin: string, siteDomain: string): b
   }
 }
 
+/** A goto may land on its exact target origin, or on any same-site origin when the tab is site-scoped. */
+export function isExpectedNavigationOrigin(
+  url: string | undefined,
+  expectedOrigin: string,
+  siteDomain?: string,
+): boolean {
+  const origin = originOf(url);
+  if (!origin) return false;
+  return origin === expectedOrigin || (siteDomain !== undefined && isSameSiteExtensionOrigin(origin, siteDomain));
+}
+
+/** unbind needs no live tab: match the bound tabId and, when the binding is site-scoped, the same siteDomain. */
+export function unbindMatchesBinding(
+  binding: { tabId: number; siteDomain?: string } | undefined,
+  request: { tabId: number; siteDomain?: string },
+): boolean {
+  if (!binding || binding.tabId !== request.tabId) return false;
+  return binding.siteDomain === undefined || binding.siteDomain === request.siteDomain;
+}
+
 async function ensureContentScript(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["content-script.js"] });
 }
 
-function waitForNavigation(tabId: number, expectedOrigin: string): Promise<void> {
+function waitForNavigation(tabId: number, expectedOrigin: string, siteDomain?: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => finish(new Error("navigation timed out")), 15000);
     const finish = (error?: Error): void => {
@@ -130,7 +150,8 @@ function waitForNavigation(tabId: number, expectedOrigin: string): Promise<void>
     };
     const onUpdated = (updatedTabId: number, changeInfo: { status?: string }, tab: chrome.tabs.Tab): void => {
       if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
-      if (originOf(tab.url) !== expectedOrigin) finish(new Error("navigation left the bound origin"));
+      if (!isExpectedNavigationOrigin(tab.url, expectedOrigin, siteDomain))
+        finish(new Error("navigation left the bound origin"));
       else finish();
     };
     const onRemoved = (removedTabId: number): void => {
@@ -167,15 +188,16 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
   } catch (error) {
     return result(command, false, undefined, error instanceof Error ? error.message : "invalid command");
   }
-  const tab = await chrome.tabs.get(payload.tabId);
-  if (closedTabs.has(payload.tabId))
-    return result(command, false, undefined, "bound tab was closed; select a new tab");
   if (command.command === "unbind") {
-    if (!binding || binding.tabId !== payload.tabId || binding.siteDomain !== payload.siteDomain)
+    // Must stay ahead of the live-tab checks: unbind is the release path when the bound tab is gone.
+    if (!unbindMatchesBinding(binding, payload))
       return result(command, false, undefined, "tab binding mismatch");
     binding = undefined;
     return result(command, true);
   }
+  const tab = await chrome.tabs.get(payload.tabId);
+  if (closedTabs.has(payload.tabId))
+    return result(command, false, undefined, "bound tab was closed; select a new tab");
   const currentOrigin = originOf(tab.url);
   if (!currentOrigin) return result(command, false, undefined, "tab must be on an HTTPS origin");
   if (command.command === "goto") {
@@ -192,13 +214,13 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
     )
       return result(command, false, undefined, "tab binding mismatch");
     if (payload.siteDomain && !isSameSiteExtensionOrigin(targetOrigin, payload.siteDomain))
-      return result(command, false, undefined, "tab binding mismatch");
+      return result(command, false, undefined, "goto URL outside the site domain");
     binding ??= {
       tabId: payload.tabId,
       origin: targetOrigin,
       ...(payload.siteDomain === undefined ? {} : { siteDomain: payload.siteDomain }),
     };
-    const navigation = waitForNavigation(payload.tabId, targetOrigin);
+    const navigation = waitForNavigation(payload.tabId, targetOrigin, payload.siteDomain);
     await chrome.tabs.update(payload.tabId, { url: payload.url as string });
     await navigation;
     await ensureContentScript(payload.tabId);
