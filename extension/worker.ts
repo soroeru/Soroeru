@@ -332,9 +332,29 @@ async function executeCommand(
     tabId,
     contentCommand,
   );
-  return response.ok
-    ? result(command, true, response.payload)
-    : result(command, false, undefined, response.error ?? "content command failed");
+  if (!response.ok) return result(command, false, undefined, response.error ?? "content command failed");
+  if (command.command === "snapshot" || command.command === "waitForReady") {
+    // PageSnapshot requires the page URL and title, which the content script's
+    // scan result does not carry; attach the bound tab's actual values here,
+    // re-read after the scan so redirects during the command are reflected.
+    const scanned = await chrome.tabs.get(tabId);
+    return result(command, true, withPageIdentity(response.payload, scanned));
+  }
+  return result(command, true, response.payload);
+}
+
+/**
+ * Attach the bound tab's URL/title to a content-script scan payload so it
+ * satisfies the PageSnapshot shape the ExtensionPageDriver validates
+ * (Issue #360: the scan result itself is structure-only and has neither).
+ * The tab's values are authoritative and overwrite any payload keys.
+ */
+export function withPageIdentity(
+  payload: unknown,
+  tab: { url?: string; title?: string },
+): Record<string, unknown> {
+  const base = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  return { ...base, url: tab.url ?? "", title: tab.title ?? "" };
 }
 
 function connect(): void {
