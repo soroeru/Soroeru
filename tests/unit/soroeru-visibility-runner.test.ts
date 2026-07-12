@@ -844,6 +844,57 @@ test("visibility runner collects after SSO fallback resolve when ID/PW failed", 
   }
 });
 
+test("visibility runner still fills a username-only first step (partial login form regression)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "partial-login.example.test",
+      url: "https://partial-login.example.test/login",
+      displayName: "PartialLogin",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    // Username-only step with an incidental SSO-looking control must not steal the flow:
+    // we still fill the username field (multi-step login regression guard).
+    const usernameOnly = snapshot("https://partial-login.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+    ]);
+    usernameOnly.buttons = [
+      { selector: "button.next", text: "次へ" },
+      { selector: "button.google", text: "Googleでログイン" },
+    ];
+    const accountPage = snapshot("https://partial-login.example.test/account", [
+      field("email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    const page = new FakePageDriver([usernameOnly, accountPage, accountPage], {
+      email: "user@example.test",
+    });
+    let ssoHandoffs = 0;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async (input) => {
+        if (input.instruction.includes("SSO") || input.instruction.includes("SSOログイン")) {
+          ssoHandoffs++;
+        }
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(page.filled["email"], "user@example.test", "username-only step must still be filled");
+    assert.equal(ssoHandoffs, 0, "partial form with a username field is not Problem 1 SSO-only");
+    assert.ok(result.status === "collected" || result.status === "no-data" || result.status === "login-failed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner keeps login-failed without SSO handoff when ID/PW fails and no SSO exists (regression)", async () => {
   const { dir, service } = await openService();
   try {

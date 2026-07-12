@@ -114,10 +114,13 @@ export class VisibilityRunner {
         // Issue #351: SSO hand-off is single-shot per site run (independent of wall maxHandoffs).
         let ssoHandoffOffered = false;
         const loginPageSnapshot = snapshot;
-        const attemptedPasswordLogin = hasLoginFields(snapshot);
+        const hasUsername = findLoginField(snapshot.fields, "username") !== undefined;
+        const hasPassword = findLoginField(snapshot.fields, "password") !== undefined;
+        // Full ID+PW form (Problem 2 / design hasLoginFields). Partial forms still get login().
+        const fullLoginForm = hasUsername && hasPassword;
 
-        // Problem 1: no ID/PW fields, SSO buttons only → ask the user to complete SSO.
-        if (!attemptedPasswordLogin) {
+        // Problem 1: no credential fields at all, SSO buttons only → ask the user to complete SSO.
+        if (!hasUsername && !hasPassword) {
           const ssoOptions = findSsoLoginOptions(snapshot);
           if (ssoOptions.length > 0) {
             ssoHandoffOffered = true;
@@ -137,10 +140,9 @@ export class VisibilityRunner {
           }
         }
 
-        // Only attempt ID/PW fill when the pre-SSO login page actually had those fields.
-        // After an SSO-only hand-off the page may already be the account UI; do not
-        // re-fill or re-submit a login form on that page.
-        if (attemptedPasswordLogin) {
+        // Fill whatever credential fields exist (username-only / password-only multi-step pages).
+        // Skip when there are none (SSO-only after hand-off, or a page with no login form).
+        if (hasUsername || hasPassword) {
           await this.login(session, credential, snapshot);
           if (this.isCanceled()) return this.canceledResult(siteAccountId);
         }
@@ -156,8 +158,8 @@ export class VisibilityRunner {
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
 
-        // Problem 2: ID/PW was submitted but we are still on a login page and SSO exists.
-        if (attemptedPasswordLogin && hasLoginFields(snapshot) && !ssoHandoffOffered) {
+        // Problem 2: full ID/PW was submitted but we are still on a login page and SSO exists.
+        if (fullLoginForm && hasLoginFields(snapshot) && !ssoHandoffOffered) {
           const afterLoginSso = findSsoLoginOptions(snapshot);
           const ssoOptions =
             afterLoginSso.length > 0 ? afterLoginSso : findSsoLoginOptions(loginPageSnapshot);
