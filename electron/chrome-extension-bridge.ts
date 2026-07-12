@@ -32,6 +32,7 @@ export const CHROME_BRIDGE_COMMANDS = [
   "fillField",
   "click",
   "waitForReady",
+  "unbind",
 ] as const;
 
 export type ChromeBridgeCommandName = (typeof CHROME_BRIDGE_COMMANDS)[number];

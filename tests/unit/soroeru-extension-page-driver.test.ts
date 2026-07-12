@@ -171,11 +171,15 @@ test("ExtensionPageDriver supplies the site domain when navigating a bound tab",
   ]);
 });
 
-test("openExtensionTabSession close unbinds without further commands and has no exportStorageState", async () => {
+test("openExtensionTabSession close releases its tab binding and has no exportStorageState", async () => {
   const transport = new FakeBridgeTransport();
-  const session = openExtensionTabSession(transport, { tabId: 7 });
+  transport.enqueue("unbind", undefined);
+  const session = openExtensionTabSession(transport, { tabId: 7, siteDomain: "example.test" });
   assert.equal(typeof session.exportStorageState, "undefined");
   await session.close();
+  assert.deepEqual(transport.calls, [
+    { command: "unbind", payload: { tabId: 7, siteDomain: "example.test" } },
+  ]);
   await assert.rejects(
     () => session.page.snapshot(),
     (err: unknown) => {

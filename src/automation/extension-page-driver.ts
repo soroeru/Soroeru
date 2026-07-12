@@ -111,6 +111,14 @@ export class ExtensionPageDriver implements PageDriver {
     this.url = asCurrentUrl(await this.command("currentUrl", { tabId: this.tabId }));
   }
 
+  async unbind(): Promise<void> {
+    this.assertOpen();
+    await this.command("unbind", {
+      tabId: this.tabId,
+      ...(this.siteDomain === undefined ? {} : { siteDomain: this.siteDomain }),
+    });
+  }
+
   /** Mark this driver closed so further commands fail immediately (session unbind). */
   markClosed(): void {
     this.closed = true;
@@ -149,9 +157,15 @@ class ExtensionSiteSession implements SiteSession {
 
   async close(): Promise<void> {
     if (this.closed) return;
-    this.closed = true;
-    this.page.markClosed();
-    // Intentionally does not close the user's Chrome tab (design §5).
+    try {
+      await this.page.unbind();
+    } catch {
+      // A disconnected bridge cannot retain a live worker binding; teardown is best-effort.
+    } finally {
+      this.closed = true;
+      this.page.markClosed();
+      // Intentionally does not close the user's Chrome tab (design §5).
+    }
   }
 }
 

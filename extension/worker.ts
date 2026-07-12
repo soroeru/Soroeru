@@ -14,6 +14,7 @@ export const EXTENSION_COMMANDS = [
   "fillField",
   "click",
   "waitForReady",
+  "unbind",
 ] as const;
 type ExtensionCommandName = (typeof EXTENSION_COMMANDS)[number];
 
@@ -45,7 +46,8 @@ export function validateExtensionCommand(command: string, payload: unknown): Com
   if (!EXTENSION_COMMANDS.includes(command as ExtensionCommandName)) throw new Error("unknown command");
   if (!record(payload)) throw new Error("command payload must be an object");
   const allowed = new Set(["tabId"]);
-  if (command === "goto") allowed.add("url").add("siteDomain");
+  if (command === "goto" || command === "unbind") allowed.add("siteDomain");
+  if (command === "goto") allowed.add("url");
   if (command === "fillField") allowed.add("fieldId").add("value");
   if (command === "click") allowed.add("selector");
   if (command === "readValues") allowed.add("fieldIds");
@@ -168,6 +170,12 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
   const tab = await chrome.tabs.get(payload.tabId);
   if (closedTabs.has(payload.tabId))
     return result(command, false, undefined, "bound tab was closed; select a new tab");
+  if (command.command === "unbind") {
+    if (!binding || binding.tabId !== payload.tabId || binding.siteDomain !== payload.siteDomain)
+      return result(command, false, undefined, "tab binding mismatch");
+    binding = undefined;
+    return result(command, true);
+  }
   const currentOrigin = originOf(tab.url);
   if (!currentOrigin) return result(command, false, undefined, "tab must be on an HTTPS origin");
   if (command.command === "goto") {
