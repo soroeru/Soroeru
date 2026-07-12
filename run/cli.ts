@@ -204,10 +204,15 @@ function aiMapperForUi(app: SoroeruApp): Mapper {
   return new AiMapper(provider, app.store);
 }
 
+function formatScanDirs(dirs: string[]): string {
+  const slashed = dirs.map((dir) => `${dir}/`);
+  return slashed.length > 1 ? `${slashed.slice(0, -1).join(", ")} and ${slashed.at(-1)}` : (slashed[0] ?? "");
+}
+
 /** PRIV-001 (#20): fail if a network-call site is unannotated or a telemetry dependency was added. */
 function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
-  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under ${EGRESS_SCAN_DIRS.map((dir) => `${dir}/`).join(", ")}`);
+  console.log(`network egress check: ${result.scannedFiles} file(s) scanned under ${formatScanDirs(EGRESS_SCAN_DIRS)}`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §6):");
     for (const v of result.violations) console.error(`  - ${v}`);
@@ -220,7 +225,7 @@ function cmdCheckEgress(): void {
 /** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
 function cmdCheckPersistence(): void {
   const result = checkLocalPersistence(process.cwd());
-  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under ${PERSIST_SCAN_DIRS.map((dir) => `${dir}/`).join(", ")}`);
+  console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under ${formatScanDirs(PERSIST_SCAN_DIRS)}`);
   if (result.violations.length > 0) {
     console.error("violations (see docs/security.md §3):");
     for (const v of result.violations) console.error(`  - ${v}`);

@@ -25,13 +25,16 @@ export const ALLOWED_PERSIST_CATEGORIES = new Set([
   "measurement-output", // state/soroeru-poc/matrix-*.json, masked via maskForArtifact (§3)
   "diagnostics-log", // src/logging/file-logger.ts: unencrypted by design (Issue #314), structural facts only
   "native-host-registration", // native-host/: Chrome native-messaging manifest + per-launch handshake token, no personal values (§12.1)
+  "extension-connection-metadata", // extension/: chrome.storage connection state only — never values, credentials, or snapshots (design §3.1)
 ]);
 
-/** Patterns that indicate a line writes to the local filesystem. */
+/** Patterns that indicate a line writes to the local filesystem or extension storage. */
 const WRITE_PATTERNS: RegExp[] = [
   /\bwriteFile(?:Sync)?\(/,
   /\bappendFile(?:Sync)?\(/,
   /\bcreateWriteStream\(/,
+  // MV3 extension code cannot reach Node fs; its persistence surface is chrome.storage.
+  /\bchrome\.storage\.\w+\.set\(/,
 ];
 
 export interface PersistenceCheckResult {

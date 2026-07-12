@@ -337,6 +337,9 @@ async function executeCommand(
     // PageSnapshot requires the page URL and title, which the content script's
     // scan result does not carry; attach the bound tab's actual values here,
     // re-read after the scan so redirects during the command are reflected.
+    // The driver ignores the waitForReady payload today; both scan-shaped
+    // payloads are kept PageSnapshot-complete so a future consumer cannot
+    // reintroduce the missing-url failure (#360).
     const scanned = await chrome.tabs.get(tabId);
     return result(command, true, withPageIdentity(response.payload, scanned));
   }
@@ -359,6 +362,7 @@ export function withPageIdentity(
 
 function connect(): void {
   nativePort = chrome.runtime.connectNative("jp.soroeru.bridge");
+  // persist: extension-connection-metadata
   void chrome.storage.local.set({ chromeBridgeConnected: true });
   void chrome.action.setBadgeText({ text: "ON" });
   void chrome.action.setBadgeBackgroundColor({ color: "#7c2d12" });
@@ -386,6 +390,7 @@ function connect(): void {
   nativePort.onDisconnect.addListener(() => {
     nativePort = undefined;
     binding = undefined;
+    // persist: extension-connection-metadata
     void chrome.storage.local.set({ chromeBridgeConnected: false });
     void chrome.action.setBadgeText({ text: "" });
   });
