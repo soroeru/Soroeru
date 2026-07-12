@@ -9,7 +9,8 @@ type ContentCommand =
   | { command: "readDisplayValues"; valueIds?: string[] }
   | { command: "fill"; fieldId: string; value: string }
   | { command: "click"; selector: string }
-  | { command: "waitForReady" };
+  | { command: "waitForReady" }
+  | { command: "stop" };
 
 const BANNER_ID = "soroeru-extension-automation-banner";
 
@@ -32,6 +33,10 @@ function showAutomationBanner(): void {
     });
     document.documentElement.appendChild(banner);
   }
+}
+
+export function hideAutomationBanner(): void {
+  document.getElementById("soroeru-extension-automation-banner")?.remove();
 }
 
 function elementForField(fieldId: string): HTMLElement {
@@ -95,6 +100,9 @@ async function waitForReady(): Promise<ReturnType<typeof scanPage>> {
 async function execute(command: ContentCommand): Promise<unknown> {
   showAutomationBanner();
   switch (command.command) {
+    case "stop":
+      hideAutomationBanner();
+      return { ok: true };
     case "snapshot":
       return scanPage();
     case "readValues":

@@ -15,11 +15,15 @@ export const EXTENSION_COMMANDS = [
   "click",
   "waitForReady",
   "unbind",
+  "listPermissions",
+  "removePermission",
+  "activeTab",
+  "stop",
 ] as const;
 type ExtensionCommandName = (typeof EXTENSION_COMMANDS)[number];
 
 interface CommandPayload {
-  tabId: number;
+  tabId?: number;
   url?: string;
   fieldId?: string;
   value?: string;
@@ -27,6 +31,7 @@ interface CommandPayload {
   fieldIds?: string[];
   valueIds?: string[];
   siteDomain?: string;
+  origin?: string;
 }
 
 export function isAllowedExtensionOrigin(value: string): boolean {
@@ -44,8 +49,11 @@ function record(value: unknown): value is Record<string, unknown> {
 
 export function validateExtensionCommand(command: string, payload: unknown): CommandPayload {
   if (!EXTENSION_COMMANDS.includes(command as ExtensionCommandName)) throw new Error("unknown command");
+  const controlCommand = ["listPermissions", "activeTab", "stop"].includes(command);
+  if (controlCommand && payload === undefined) return {};
   if (!record(payload)) throw new Error("command payload must be an object");
-  const allowed = new Set(["tabId"]);
+  const allowed = new Set(controlCommand ? [] : ["tabId"]);
+  if (command === "removePermission") allowed.add("origin");
   if (command === "goto" || command === "unbind") allowed.add("siteDomain");
   if (command === "goto") allowed.add("url");
   if (command === "fillField") allowed.add("fieldId").add("value");
@@ -54,8 +62,17 @@ export function validateExtensionCommand(command: string, payload: unknown): Com
   if (command === "readDisplayValues") allowed.add("valueIds");
   const unknown = Object.keys(payload).find((key) => !allowed.has(key));
   if (unknown) throw new Error(`unknown payload field: ${unknown}`);
-  if (typeof payload.tabId !== "number" || !Number.isInteger(payload.tabId) || payload.tabId < 1)
+  if (
+    !controlCommand &&
+    command !== "removePermission" &&
+    (typeof payload.tabId !== "number" || !Number.isInteger(payload.tabId) || payload.tabId < 1)
+  )
     throw new Error("tabId must be a positive integer");
+  if (
+    command === "removePermission" &&
+    (typeof payload.origin !== "string" || !isAllowedExtensionOrigin(payload.origin))
+  )
+    throw new Error("origin must be HTTPS");
   if (
     command === "goto" &&
     (typeof payload.url !== "string" || !isAllowedExtensionOrigin(new URL(payload.url).origin))
@@ -89,6 +106,23 @@ interface Binding {
 let nativePort: chrome.runtime.Port | undefined;
 let binding: Binding | undefined;
 const closedTabs = new Set<number>();
+export class ExtensionExecutionEpoch {
+  private generation = 0;
+
+  current(): number {
+    return this.generation;
+  }
+
+  stop(): number {
+    this.generation += 1;
+    return this.generation;
+  }
+
+  isCurrent(commandGeneration: number): boolean {
+    return commandGeneration === this.generation;
+  }
+}
+const executionEpoch = new ExtensionExecutionEpoch();
 
 function originOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
@@ -122,7 +156,9 @@ export function isExpectedNavigationOrigin(
 ): boolean {
   const origin = originOf(url);
   if (!origin) return false;
-  return origin === expectedOrigin || (siteDomain !== undefined && isSameSiteExtensionOrigin(origin, siteDomain));
+  return (
+    origin === expectedOrigin || (siteDomain !== undefined && isSameSiteExtensionOrigin(origin, siteDomain))
+  );
 }
 
 /** unbind needs no live tab: match the bound tabId and, when the binding is site-scoped, the same siteDomain. */
@@ -181,22 +217,58 @@ function result(
   };
 }
 
-async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridgeResult> {
+async function executeCommand(
+  command: ChromeBridgeCommand,
+  commandGeneration = executionEpoch.current(),
+): Promise<ChromeBridgeResult> {
   let payload: CommandPayload;
   try {
     payload = validateExtensionCommand(command.command, command.payload);
   } catch (error) {
     return result(command, false, undefined, error instanceof Error ? error.message : "invalid command");
   }
+  if (command.command === "listPermissions") {
+    const permissions = await chrome.permissions.getAll();
+    return result(command, true, { origins: permissions.origins ?? [] });
+  }
+  if (command.command === "removePermission") {
+    const removed = await chrome.permissions.remove({ origins: [`${payload.origin}/*`] });
+    return result(command, true, { removed });
+  }
+  if (command.command === "activeTab") {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const origin = originOf(tab?.url);
+    if (!tab?.id || !origin) return result(command, false, undefined, "active tab must be HTTPS");
+    return result(command, true, { tabId: tab.id, origin });
+  }
+  if (command.command === "stop") {
+    const tabId = binding?.tabId;
+    binding = undefined;
+    if (tabId) {
+      await chrome.tabs.sendMessage(tabId, { command: "stop" }).catch(() => undefined);
+      await chrome.action.setBadgeText({ tabId, text: "" });
+    }
+    return result(command, true);
+  }
+  if (!executionEpoch.isCurrent(commandGeneration))
+    return result(command, false, undefined, "execution stopped");
   if (command.command === "unbind") {
     // Must stay ahead of the live-tab checks: unbind is the release path when the bound tab is gone.
-    if (!unbindMatchesBinding(binding, payload))
+    if (
+      !unbindMatchesBinding(binding, {
+        tabId: payload.tabId as number,
+        ...(payload.siteDomain === undefined ? {} : { siteDomain: payload.siteDomain }),
+      })
+    )
       return result(command, false, undefined, "tab binding mismatch");
     binding = undefined;
     return result(command, true);
   }
-  const tab = await chrome.tabs.get(payload.tabId);
-  if (closedTabs.has(payload.tabId))
+  const tabId = payload.tabId as number;
+  const tab = await chrome.tabs.get(tabId);
+  if (!executionEpoch.isCurrent(commandGeneration))
+    return result(command, false, undefined, "execution stopped");
+  if (closedTabs.has(tabId))
     return result(command, false, undefined, "bound tab was closed; select a new tab");
   const currentOrigin = originOf(tab.url);
   if (!currentOrigin) return result(command, false, undefined, "tab must be on an HTTPS origin");
@@ -204,9 +276,11 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
     const targetOrigin = new URL(payload.url as string).origin;
     if (!(await permissionFor(targetOrigin)))
       return result(command, false, undefined, "origin permission required");
+    if (!executionEpoch.isCurrent(commandGeneration))
+      return result(command, false, undefined, "execution stopped");
     if (
       binding &&
-      (binding.tabId !== payload.tabId ||
+      (binding.tabId !== tabId ||
         binding.siteDomain !== payload.siteDomain ||
         (binding.siteDomain
           ? !isSameSiteExtensionOrigin(targetOrigin, binding.siteDomain)
@@ -216,32 +290,38 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
     if (payload.siteDomain && !isSameSiteExtensionOrigin(targetOrigin, payload.siteDomain))
       return result(command, false, undefined, "goto URL outside the site domain");
     binding ??= {
-      tabId: payload.tabId,
+      tabId,
       origin: targetOrigin,
       ...(payload.siteDomain === undefined ? {} : { siteDomain: payload.siteDomain }),
     };
-    const navigation = waitForNavigation(payload.tabId, targetOrigin, payload.siteDomain);
-    await chrome.tabs.update(payload.tabId, { url: payload.url as string });
+    const navigation = waitForNavigation(tabId, targetOrigin, payload.siteDomain);
+    await chrome.tabs.update(tabId, { url: payload.url as string });
     await navigation;
-    await ensureContentScript(payload.tabId);
+    if (!executionEpoch.isCurrent(commandGeneration))
+      return result(command, false, undefined, "execution stopped");
+    await ensureContentScript(tabId);
     // Report the post-navigation tab URL so same-site redirects update the driver cache
     // (request URL alone would leave currentUrl stale until waitForReady/snapshot).
-    const landed = await chrome.tabs.get(payload.tabId);
+    const landed = await chrome.tabs.get(tabId);
     return result(command, true, { url: landed.url ?? "" });
   }
   if (!(await permissionFor(currentOrigin)))
     return result(command, false, undefined, "origin permission required");
+  if (!executionEpoch.isCurrent(commandGeneration))
+    return result(command, false, undefined, "execution stopped");
   if (
     binding &&
-    (binding.tabId !== payload.tabId ||
+    (binding.tabId !== tabId ||
       (binding.siteDomain
         ? !isSameSiteExtensionOrigin(currentOrigin, binding.siteDomain)
         : binding.origin !== currentOrigin))
   )
     return result(command, false, undefined, "tab binding mismatch");
-  binding ??= { tabId: payload.tabId, origin: currentOrigin };
+  binding ??= { tabId, origin: currentOrigin };
   if (command.command === "currentUrl") return result(command, true, { url: tab.url ?? "" });
-  await ensureContentScript(payload.tabId);
+  await ensureContentScript(tabId);
+  if (!executionEpoch.isCurrent(commandGeneration))
+    return result(command, false, undefined, "execution stopped");
   const contentCommand =
     command.command === "fillField"
       ? { command: "fill", fieldId: payload.fieldId, value: payload.value }
@@ -249,7 +329,7 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
         ? { command: "click", selector: payload.selector }
         : { command: command.command, fieldIds: payload.fieldIds, valueIds: payload.valueIds };
   const response = await chrome.tabs.sendMessage<{ ok: boolean; payload?: unknown; error?: string }>(
-    payload.tabId,
+    tabId,
     contentCommand,
   );
   return response.ok
@@ -266,7 +346,9 @@ function connect(): void {
     try {
       const message = parseChromeBridgeMessage(raw);
       if (message.kind === "command") {
-        void executeCommand(message)
+        if (message.command === "stop") executionEpoch.stop();
+        const commandGeneration = executionEpoch.current();
+        void executeCommand(message, commandGeneration)
           .catch((error: unknown) =>
             result(message, false, undefined, error instanceof Error ? error.message : "command failed"),
           )

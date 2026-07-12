@@ -4,11 +4,12 @@ import { join } from "node:path";
 import test from "node:test";
 import { chromium } from "playwright";
 import type { PageSnapshot } from "../../src/types.js";
-import { readPageValues, scanPage } from "../../extension/content-script.js";
+import { hideAutomationBanner, readPageValues, scanPage } from "../../extension/content-script.js";
 import { snapshotPage } from "../../src/agent/scan.js";
 import {
   isAllowedExtensionOrigin,
   isExpectedNavigationOrigin,
+  ExtensionExecutionEpoch,
   isSameSiteExtensionOrigin,
   unbindMatchesBinding,
   validateExtensionCommand,
@@ -58,6 +59,17 @@ test("worker accepts only explicit bound tabs and HTTPS origins", () => {
     tabId: 7,
     siteDomain: "example.test",
   });
+  assert.deepEqual(validateExtensionCommand("listPermissions", undefined), {});
+  assert.deepEqual(validateExtensionCommand("activeTab", undefined), {});
+  assert.deepEqual(validateExtensionCommand("stop", undefined), {});
+  assert.deepEqual(validateExtensionCommand("removePermission", { origin: "https://example.test" }), {
+    origin: "https://example.test",
+  });
+  assert.throws(
+    () => validateExtensionCommand("removePermission", { origin: "http://example.test" }),
+    /HTTPS/,
+  );
+  assert.throws(() => validateExtensionCommand("activeTab", { credential: "CANARY" }), /unknown payload/);
   assert.throws(() => validateExtensionCommand("snapshot", { tabId: 0 }), /tabId/);
   assert.throws(() => validateExtensionCommand("goto", { tabId: 7, url: "http://example.test" }), /HTTPS/);
   assert.throws(() => validateExtensionCommand("snapshot", { tabId: 7, extra: true }), /unknown payload/);
@@ -84,12 +96,15 @@ test("navigation origin check allows same-site redirects only when the tab is si
     isExpectedNavigationOrigin("https://account.example.test/otp", "https://example.test", "example.test"),
     true,
   );
+  assert.equal(isExpectedNavigationOrigin("https://account.example.test/otp", "https://example.test"), false);
   assert.equal(
-    isExpectedNavigationOrigin("https://account.example.test/otp", "https://example.test"),
+    isExpectedNavigationOrigin("https://evil.test/", "https://example.test", "example.test"),
     false,
   );
-  assert.equal(isExpectedNavigationOrigin("https://evil.test/", "https://example.test", "example.test"), false);
-  assert.equal(isExpectedNavigationOrigin("http://example.test/", "https://example.test", "example.test"), false);
+  assert.equal(
+    isExpectedNavigationOrigin("http://example.test/", "https://example.test", "example.test"),
+    false,
+  );
   assert.equal(isExpectedNavigationOrigin(undefined, "https://example.test", "example.test"), false);
 });
 
@@ -107,6 +122,38 @@ test("unbind matches the bound tab and site scope without needing a live tab", (
     unbindMatchesBinding({ tabId: 7, siteDomain: "example.test" }, { tabId: 7, siteDomain: "other.test" }),
     false,
   );
+});
+
+test("a stop generation invalidates a slower command before it can apply late state", async () => {
+  const epoch = new ExtensionExecutionEpoch();
+  const startedAt = epoch.current();
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let appliedLateState = false;
+  const command = (async () => {
+    await delayed;
+    if (epoch.isCurrent(startedAt)) appliedLateState = true;
+  })();
+
+  epoch.stop();
+  release();
+  await command;
+
+  assert.equal(appliedLateState, false);
+});
+
+test("stop removes the visible automation banner", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<div id="soroeru-extension-automation-banner">running</div>');
+    await page.evaluate(hideAutomationBanner);
+    assert.equal(await page.locator("#soroeru-extension-automation-banner").count(), 0);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("content snapshot has the same structure-only shape as the Playwright scanner", async () => {

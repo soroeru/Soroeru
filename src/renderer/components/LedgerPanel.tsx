@@ -27,6 +27,7 @@ import {
 } from "../collection-result-summary.js";
 import { buildLedgerColumns, disclosureFor } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
+import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
 import {
   collectVisibleSelectedSiteIds,
   enableSessionPersistenceForSites,
@@ -241,6 +242,15 @@ export function LedgerPanel({
     async (overrideIds?: string[]) => {
       const queue = overrideIds ?? [...selectedVisibleIds];
       if (queue.length === 0 || batchBusy || batchInFlightRef.current) return;
+      const ready = await prepareChromeBridgeRun(window.soroeru.chromeBridge, (message) =>
+        window.confirm(message),
+      );
+      if (!ready) {
+        setLoadError(
+          "Chrome の対象タブを確認できませんでした。対象サイトを開き、拡張アイコンからオリジンを許可してから再実行してください。",
+        );
+        return;
+      }
       cancelBatchRef.current = false;
       batchInFlightRef.current = true;
       setLoadError(undefined);
@@ -291,6 +301,7 @@ export function LedgerPanel({
   const cancelBatch = useCallback(() => {
     cancelBatchRef.current = true;
     if (runningSiteId !== undefined || handoff) void window.soroeru.visibility.abort();
+    void window.soroeru.chromeBridge.stop();
     // Drop the hand-off modal so 「解決して再開」 cannot race cancel.
     setHandoff(undefined);
     setBatch((current) => ({ ...current, phase: "canceling" }));

@@ -11,6 +11,7 @@
 import { useCallback, useState } from "react";
 import { reasonMessage } from "../messages.js";
 import { CsvImportPanel } from "./CsvImportPanel.js";
+import { ChromeBridgePanel } from "./ChromeBridgePanel.js";
 
 type DownloadState = "idle" | "downloading" | "done";
 
@@ -48,6 +49,7 @@ export function SettingsPanel({ onImported }: SettingsPanelProps): React.JSX.Ele
 
   return (
     <div className="flex flex-col gap-6">
+      <ChromeBridgePanel />
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-medium">パスワード CSV の取り込み</h2>
         <p className="text-sm text-neutral-600">

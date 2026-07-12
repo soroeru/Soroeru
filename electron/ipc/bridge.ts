@@ -49,6 +49,15 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.visibilityResume]: () => session.resumeVisibility(),
     [IPC_CHANNELS.visibilityAbort]: () => session.abortVisibility(),
     [IPC_CHANNELS.visibilityStatus]: () => session.visibilityStatus(),
+    [IPC_CHANNELS.chromeBridgeStatus]: () => session.chromeBridgeStatus(),
+    [IPC_CHANNELS.chromeBridgeConnect]: () => session.connectChromeBridge(),
+    [IPC_CHANNELS.chromeBridgeDisconnect]: () => session.disconnectChromeBridge(),
+    [IPC_CHANNELS.chromeBridgePermissions]: () => session.chromeBridgePermissions(),
+    [IPC_CHANNELS.chromeBridgeRevokeOrigin]: (origin: unknown) =>
+      session.revokeChromeBridgeOrigin(String(origin ?? "")),
+    [IPC_CHANNELS.chromeBridgeActiveTab]: () => session.chromeBridgeActiveTab(),
+    [IPC_CHANNELS.chromeBridgeSelectTab]: (tabId: unknown) => session.selectChromeBridgeTab(Number(tabId)),
+    [IPC_CHANNELS.chromeBridgeStop]: () => session.stopChromeBridge(),
     [IPC_CHANNELS.logsExport]: () => session.exportLogs(),
   };
 }

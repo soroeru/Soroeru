@@ -10,6 +10,10 @@ import {
   IPC_CHANNELS,
   type ConfirmDynamicAttributeCandidateRequest,
   type ChromeBridgeConnectionEvent,
+  type ChromeBridgeMutationResult,
+  type ChromeBridgePermissionsView,
+  type ChromeBridgeStatusView,
+  type ChromeBridgeTabView,
   type ConfirmDynamicAttributeCandidateResult,
   type CsvImportResult,
   type DeleteSiteAccountRequest,
@@ -88,6 +92,14 @@ export interface SoroeruApi {
     onEvent(listener: (event: VisibilityEvent) => void): () => void;
   };
   chromeBridge: {
+    status(): Promise<ChromeBridgeStatusView>;
+    connect(): Promise<ChromeBridgeMutationResult>;
+    disconnect(): Promise<ChromeBridgeMutationResult>;
+    permissions(): Promise<ChromeBridgePermissionsView>;
+    revokeOrigin(origin: string): Promise<ChromeBridgeMutationResult>;
+    activeTab(): Promise<ChromeBridgeTabView | undefined>;
+    selectTab(tabId: number): Promise<ChromeBridgeMutationResult>;
+    stop(): Promise<ChromeBridgeMutationResult>;
     /** Subscribe to sanitized bridge lifecycle events; returns an unsubscribe function. */
     onEvent(listener: (event: ChromeBridgeConnectionEvent) => void): () => void;
   };
@@ -159,6 +171,16 @@ export function createSoroeruApi(
       onEvent: (listener) => subscribeVisibility?.(listener) ?? (() => {}),
     },
     chromeBridge: {
+      status: () => invoke(IPC_CHANNELS.chromeBridgeStatus) as Promise<ChromeBridgeStatusView>,
+      connect: () => invoke(IPC_CHANNELS.chromeBridgeConnect) as Promise<ChromeBridgeMutationResult>,
+      disconnect: () => invoke(IPC_CHANNELS.chromeBridgeDisconnect) as Promise<ChromeBridgeMutationResult>,
+      permissions: () => invoke(IPC_CHANNELS.chromeBridgePermissions) as Promise<ChromeBridgePermissionsView>,
+      revokeOrigin: (origin) =>
+        invoke(IPC_CHANNELS.chromeBridgeRevokeOrigin, origin) as Promise<ChromeBridgeMutationResult>,
+      activeTab: () => invoke(IPC_CHANNELS.chromeBridgeActiveTab) as Promise<ChromeBridgeTabView | undefined>,
+      selectTab: (tabId) =>
+        invoke(IPC_CHANNELS.chromeBridgeSelectTab, tabId) as Promise<ChromeBridgeMutationResult>,
+      stop: () => invoke(IPC_CHANNELS.chromeBridgeStop) as Promise<ChromeBridgeMutationResult>,
       onEvent: (listener) => subscribeChromeBridge?.(listener) ?? (() => {}),
     },
     logs: {
