@@ -139,7 +139,10 @@ DEADLINE=$((START + TIMEOUT_SEC))
 while :; do
   ALL_FOUND=1
   MATCHED=""
-  for unit in "${UNIT_LIST[@]}"; do
+  # Bash 3.2 + set -u: empty "${arr[@]}" is unbound. --unit is required
+  # and non-empty above, so UNIT_LIST should never be empty; guard for
+  # the same class of EXIT-path bug as local-ai-review.sh cleanup_files.
+  for unit in ${UNIT_LIST[@]+"${UNIT_LIST[@]}"}; do
     if FOUND_FILE=$(find_unit_output "$unit"); then
       MATCHED="$MATCHED $FOUND_FILE"
     else
