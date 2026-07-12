@@ -166,10 +166,11 @@ export class ChromeExtensionBridge implements ChromeBridgeTransport {
    * Second session factory entry alongside BrowserEngine.openSession.
    * Binds automation to one already-selected tab; close() only unbinds.
    */
-  openTabSession(tabId: number, options?: { commandTimeoutMs?: number }): SiteSession {
+  openTabSession(tabId: number, options?: { commandTimeoutMs?: number; siteDomain?: string }): SiteSession {
     return openExtensionTabSession(this, {
       tabId,
       ...(options?.commandTimeoutMs !== undefined ? { commandTimeoutMs: options.commandTimeoutMs } : {}),
+      ...(options?.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
     });
   }
 

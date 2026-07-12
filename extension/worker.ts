@@ -25,6 +25,7 @@ interface CommandPayload {
   selector?: string;
   fieldIds?: string[];
   valueIds?: string[];
+  siteDomain?: string;
 }
 
 export function isAllowedExtensionOrigin(value: string): boolean {
@@ -44,7 +45,7 @@ export function validateExtensionCommand(command: string, payload: unknown): Com
   if (!EXTENSION_COMMANDS.includes(command as ExtensionCommandName)) throw new Error("unknown command");
   if (!record(payload)) throw new Error("command payload must be an object");
   const allowed = new Set(["tabId"]);
-  if (command === "goto") allowed.add("url");
+  if (command === "goto") allowed.add("url").add("siteDomain");
   if (command === "fillField") allowed.add("fieldId").add("value");
   if (command === "click") allowed.add("selector");
   if (command === "readValues") allowed.add("fieldIds");
@@ -62,6 +63,9 @@ export function validateExtensionCommand(command: string, payload: unknown): Com
     if (Object.hasOwn(payload, key) && typeof payload[key] !== "string")
       throw new Error(`${key} must be a string`);
   }
+  if (Object.hasOwn(payload, "siteDomain") && typeof payload.siteDomain !== "string") {
+    throw new Error("siteDomain must be a string");
+  }
   for (const key of ["fieldIds", "valueIds"] as const) {
     if (
       Object.hasOwn(payload, key) &&
@@ -78,6 +82,7 @@ export function validateExtensionCommand(command: string, payload: unknown): Com
 interface Binding {
   tabId: number;
   origin: string;
+  siteDomain?: string;
 }
 let nativePort: chrome.runtime.Port | undefined;
 let binding: Binding | undefined;
@@ -95,6 +100,16 @@ function originOf(url: string | undefined): string | undefined {
 
 async function permissionFor(origin: string): Promise<boolean> {
   return chrome.permissions.contains({ origins: [`${origin}/*`] });
+}
+
+/** Match PageExplorer's site boundary: a domain and its subdomains, never a sibling domain. */
+export function isSameSiteExtensionOrigin(origin: string, siteDomain: string): boolean {
+  try {
+    const host = new URL(origin).hostname.toLowerCase().replace(/^www\./, "");
+    return host === siteDomain || host.endsWith(`.${siteDomain}`);
+  } catch {
+    return false;
+  }
 }
 
 async function ensureContentScript(tabId: number): Promise<void> {
@@ -159,9 +174,22 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
     const targetOrigin = new URL(payload.url as string).origin;
     if (!(await permissionFor(targetOrigin)))
       return result(command, false, undefined, "origin permission required");
-    if (binding && (binding.tabId !== payload.tabId || binding.origin !== targetOrigin))
+    if (
+      binding &&
+      (binding.tabId !== payload.tabId ||
+        binding.siteDomain !== payload.siteDomain ||
+        (binding.siteDomain
+          ? !isSameSiteExtensionOrigin(targetOrigin, binding.siteDomain)
+          : binding.origin !== targetOrigin))
+    )
       return result(command, false, undefined, "tab binding mismatch");
-    binding ??= { tabId: payload.tabId, origin: targetOrigin };
+    if (payload.siteDomain && !isSameSiteExtensionOrigin(targetOrigin, payload.siteDomain))
+      return result(command, false, undefined, "tab binding mismatch");
+    binding ??= {
+      tabId: payload.tabId,
+      origin: targetOrigin,
+      ...(payload.siteDomain === undefined ? {} : { siteDomain: payload.siteDomain }),
+    };
     const navigation = waitForNavigation(payload.tabId, targetOrigin);
     await chrome.tabs.update(payload.tabId, { url: payload.url as string });
     await navigation;
@@ -170,7 +198,13 @@ async function executeCommand(command: ChromeBridgeCommand): Promise<ChromeBridg
   }
   if (!(await permissionFor(currentOrigin)))
     return result(command, false, undefined, "origin permission required");
-  if (binding && (binding.tabId !== payload.tabId || binding.origin !== currentOrigin))
+  if (
+    binding &&
+    (binding.tabId !== payload.tabId ||
+      (binding.siteDomain
+        ? !isSameSiteExtensionOrigin(currentOrigin, binding.siteDomain)
+        : binding.origin !== currentOrigin))
+  )
     return result(command, false, undefined, "tab binding mismatch");
   binding ??= { tabId: payload.tabId, origin: currentOrigin };
   if (command.command === "currentUrl") return result(command, true, { url: tab.url ?? "" });

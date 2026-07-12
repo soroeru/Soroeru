@@ -36,6 +36,18 @@ test("worker accepts only explicit bound tabs and HTTPS origins", () => {
     tabId: 7,
     url: "https://example.test/account",
   });
+  assert.deepEqual(
+    validateExtensionCommand("goto", {
+      tabId: 7,
+      url: "https://account.example.test/profile",
+      siteDomain: "example.test",
+    }),
+    {
+      tabId: 7,
+      url: "https://account.example.test/profile",
+      siteDomain: "example.test",
+    },
+  );
   assert.throws(() => validateExtensionCommand("snapshot", { tabId: 0 }), /tabId/);
   assert.throws(() => validateExtensionCommand("goto", { tabId: 7, url: "http://example.test" }), /HTTPS/);
   assert.throws(() => validateExtensionCommand("snapshot", { tabId: 7, extra: true }), /unknown payload/);

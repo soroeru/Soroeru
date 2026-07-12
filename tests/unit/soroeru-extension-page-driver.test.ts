@@ -116,6 +116,7 @@ test("ExtensionPageDriver maps PageDriver methods onto bridge commands with tabI
   });
   transport.enqueue("goto", { url: "https://shop.example.test/account" });
   transport.enqueue("waitForReady", undefined);
+  transport.enqueue("currentUrl", { url: "https://shop.example.test/account/redirected" });
   transport.enqueue("snapshot", pageSnap);
   transport.enqueue("readValues", { "f-email": "user@example.test" });
   transport.enqueue("readDisplayValues", { "d-phone": "03-0000-0000" });
@@ -126,6 +127,7 @@ test("ExtensionPageDriver maps PageDriver methods onto bridge commands with tabI
   await driver.goto("https://shop.example.test/account");
   assert.equal(driver.currentUrl(), "https://shop.example.test/account");
   await driver.waitForReady();
+  assert.equal(driver.currentUrl(), "https://shop.example.test/account/redirected");
   assert.deepEqual(await driver.snapshot(), pageSnap);
   assert.deepEqual(await driver.readValues(), { "f-email": "user@example.test" });
   assert.deepEqual(await driver.readDisplayValues(), { "d-phone": "03-0000-0000" });
@@ -134,11 +136,39 @@ test("ExtensionPageDriver maps PageDriver methods onto bridge commands with tabI
 
   assert.deepEqual(
     transport.calls.map((c) => c.command),
-    ["goto", "waitForReady", "snapshot", "readValues", "readDisplayValues", "fillField", "click"],
+    [
+      "goto",
+      "waitForReady",
+      "currentUrl",
+      "snapshot",
+      "readValues",
+      "readDisplayValues",
+      "fillField",
+      "click",
+    ],
   );
   assert.equal((transport.calls[0]?.payload as { tabId: number }).tabId, 42);
-  assert.equal((transport.calls[5]?.payload as { fieldId: string; value: string }).fieldId, "f-email");
-  assert.equal((transport.calls[5]?.payload as { value: string }).value, "user@example.test");
+  assert.equal((transport.calls[6]?.payload as { fieldId: string; value: string }).fieldId, "f-email");
+  assert.equal((transport.calls[6]?.payload as { value: string }).value, "user@example.test");
+});
+
+test("ExtensionPageDriver supplies the site domain when navigating a bound tab", async () => {
+  const transport = new FakeBridgeTransport();
+  transport.enqueue("goto", { url: "https://account.example.test/profile" });
+  const session = openExtensionTabSession(transport, { tabId: 42, siteDomain: "example.test" });
+
+  await session.page.goto("https://account.example.test/profile");
+
+  assert.deepEqual(transport.calls, [
+    {
+      command: "goto",
+      payload: {
+        tabId: 42,
+        url: "https://account.example.test/profile",
+        siteDomain: "example.test",
+      },
+    },
+  ]);
 });
 
 test("openExtensionTabSession close unbinds without further commands and has no exportStorageState", async () => {
@@ -146,11 +176,14 @@ test("openExtensionTabSession close unbinds without further commands and has no 
   const session = openExtensionTabSession(transport, { tabId: 7 });
   assert.equal(typeof session.exportStorageState, "undefined");
   await session.close();
-  await assert.rejects(() => session.page.snapshot(), (err: unknown) => {
-    assert.ok(err instanceof ExtensionBridgeError);
-    assert.match(err.message, /closed/);
-    return true;
-  });
+  await assert.rejects(
+    () => session.page.snapshot(),
+    (err: unknown) => {
+      assert.ok(err instanceof ExtensionBridgeError);
+      assert.match(err.message, /closed/);
+      return true;
+    },
+  );
   // Second close is idempotent.
   await session.close();
 });
@@ -202,14 +235,16 @@ test("VisibilityRunner login + collection works through ExtensionPageDriver", as
     });
 
     const transport = new FakeBridgeTransport();
-    // goto login → wait → snapshot (login) → fill x2 → click → wait → snapshot (account) → collect reads
+    // goto login → wait/currentUrl → snapshot (login) → fill x2 → click → wait/currentUrl → snapshot (account) → collect reads
     transport.enqueue("goto", { url: site.url });
     transport.enqueue("waitForReady", undefined);
+    transport.enqueue("currentUrl", { url: site.url });
     transport.enqueue("snapshot", loginSnap);
     transport.enqueue("fillField", { ok: true });
     transport.enqueue("fillField", { ok: true });
     transport.enqueue("click", { ok: true });
     transport.enqueue("waitForReady", undefined);
+    transport.enqueue("currentUrl", { url: accountSnap.url });
     transport.enqueue("snapshot", accountSnap);
     // PageExplorer / collector may snapshot and read values for the landing page.
     transport.enqueue("readValues", { "f-email": "user@example.test" });
@@ -262,11 +297,13 @@ test("VisibilityRunner wall hand-off works through ExtensionPageDriver", async (
     const transport = new FakeBridgeTransport();
     transport.enqueue("goto", { url: site.url });
     transport.enqueue("waitForReady", undefined);
+    transport.enqueue("currentUrl", { url: site.url });
     transport.enqueue("snapshot", loginSnap);
     transport.enqueue("fillField", { ok: true });
     transport.enqueue("fillField", { ok: true });
     transport.enqueue("click", { ok: true });
     transport.enqueue("waitForReady", undefined);
+    transport.enqueue("currentUrl", { url: otpSnap.url });
     transport.enqueue("snapshot", otpSnap);
     // After handoff resume, re-snapshot account page
     transport.enqueue("snapshot", afterSnap);
@@ -288,9 +325,7 @@ test("VisibilityRunner wall hand-off works through ExtensionPageDriver", async (
     assert.ok(result.disclosures >= 1);
     // Checkpoint is upserted per site; final status is done after resume+collect.
     // Wall path is proven by handoff callback + a wall constraint record.
-    assert.ok(
-      domain.listConstraints().some((c) => c.siteAccountId === site.id && c.kind === "wall"),
-    );
+    assert.ok(domain.listConstraints().some((c) => c.siteAccountId === site.id && c.kind === "wall"));
     assert.equal(domain.getCheckpoint("visibility", site.id)?.status, "done");
   });
 });

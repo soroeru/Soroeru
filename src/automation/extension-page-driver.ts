@@ -24,11 +24,7 @@ export interface ChromeBridgeTransport {
    * Rejects on transport disconnect, timeout, or `ok: false` result.
    * Returns the result payload (may be undefined when the command has none).
    */
-  sendCommand(
-    command: string,
-    payload?: unknown,
-    options?: { timeoutMs?: number },
-  ): Promise<unknown>;
+  sendCommand(command: string, payload?: unknown, options?: { timeoutMs?: number }): Promise<unknown>;
   /** Whether a host/extension socket is currently authenticated and open. */
   isConnected(): boolean;
 }
@@ -36,6 +32,8 @@ export interface ChromeBridgeTransport {
 export interface ExtensionTabSessionOptions {
   /** Bound Chrome tab id (positive integer). */
   tabId: number;
+  /** SiteAccount domain; permits this domain and its subdomains only. */
+  siteDomain?: string;
   /** Override the per-command timeout (ms). */
   commandTimeoutMs?: number;
 }
@@ -56,6 +54,7 @@ export class ExtensionPageDriver implements PageDriver {
     private readonly transport: ChromeBridgeTransport,
     private readonly tabId: number,
     private readonly commandTimeoutMs: number = DEFAULT_EXTENSION_COMMAND_TIMEOUT_MS,
+    private readonly siteDomain?: string,
   ) {
     if (!Number.isInteger(tabId) || tabId < 1) {
       throw new ExtensionBridgeError("tabId must be a positive integer");
@@ -64,7 +63,11 @@ export class ExtensionPageDriver implements PageDriver {
 
   async goto(url: string): Promise<void> {
     this.assertOpen();
-    await this.command("goto", { tabId: this.tabId, url });
+    await this.command("goto", {
+      tabId: this.tabId,
+      url,
+      ...(this.siteDomain === undefined ? {} : { siteDomain: this.siteDomain }),
+    });
     this.url = url;
   }
 
@@ -105,6 +108,7 @@ export class ExtensionPageDriver implements PageDriver {
   async waitForReady(): Promise<void> {
     this.assertOpen();
     await this.command("waitForReady", { tabId: this.tabId });
+    this.url = asCurrentUrl(await this.command("currentUrl", { tabId: this.tabId }));
   }
 
   /** Mark this driver closed so further commands fail immediately (session unbind). */
@@ -162,7 +166,12 @@ export function openExtensionTabSession(
   if (!transport.isConnected()) {
     throw new ExtensionBridgeError("chrome bridge not connected");
   }
-  const page = new ExtensionPageDriver(transport, options.tabId, options.commandTimeoutMs);
+  const page = new ExtensionPageDriver(
+    transport,
+    options.tabId,
+    options.commandTimeoutMs,
+    options.siteDomain,
+  );
   return new ExtensionSiteSession(page);
 }
 
@@ -188,6 +197,13 @@ function asStringRecord(payload: unknown): Record<string, string> {
     if (typeof value === "string") out[key] = value;
   }
   return out;
+}
+
+function asCurrentUrl(payload: unknown): string {
+  if (!isRecord(payload) || typeof payload.url !== "string") {
+    throw new ExtensionBridgeError("invalid current-url payload");
+  }
+  return payload.url;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

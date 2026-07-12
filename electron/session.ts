@@ -114,7 +114,7 @@ export interface SoroeruSessionOptions {
    * Renderer tab-selection UI is a later Issue (#339).
    */
   chromeBridge?: ChromeBridgeTransport & {
-    openTabSession?: (tabId: number) => SiteSession;
+    openTabSession?: (tabId: number, options?: { siteDomain?: string }) => SiteSession;
   };
 }
 
@@ -162,7 +162,9 @@ export class SoroeruSession {
   private readonly logger: Logger;
   /** Optional Chrome extension bridge for the developer-only extension automation path (Issue #338). */
   private readonly chromeBridge:
-    | (ChromeBridgeTransport & { openTabSession?: (tabId: number) => SiteSession })
+    | (ChromeBridgeTransport & {
+        openTabSession?: (tabId: number, options?: { siteDomain?: string }) => SiteSession;
+      })
     | undefined;
   /**
    * Local-only value source for AI-prompt redaction (Issue #310, design §8):
@@ -233,7 +235,7 @@ export class SoroeruSession {
 
   /** Default production session opener: a headed Chromium BrowserEngine, created on first use. */
   private async defaultOpenSession(site: SiteAccount): Promise<SiteSession> {
-    const extensionSession = this.tryOpenExtensionSession();
+    const extensionSession = this.tryOpenExtensionSession(site);
     if (extensionSession) return extensionSession;
 
     if (!this.engine) {
@@ -259,7 +261,7 @@ export class SoroeruSession {
    * ExtensionPageDriver session. No storageState export — real-profile sessions
    * are never sucked out (design §4 / §5). Returns undefined to keep Playwright.
    */
-  private tryOpenExtensionSession(): SiteSession | undefined {
+  private tryOpenExtensionSession(site: SiteAccount): SiteSession | undefined {
     const bridge = this.chromeBridge;
     if (!bridge) return undefined;
     const raw = process.env["SOROERU_CHROME_BRIDGE_TAB_ID"];
@@ -271,8 +273,8 @@ export class SoroeruSession {
     if (!bridge.isConnected()) {
       throw new Error("chrome bridge not connected");
     }
-    if (bridge.openTabSession) return bridge.openTabSession(tabId);
-    return openExtensionTabSession(bridge, { tabId });
+    if (bridge.openTabSession) return bridge.openTabSession(tabId, { siteDomain: site.domain });
+    return openExtensionTabSession(bridge, { tabId, siteDomain: site.domain });
   }
 
   /**
