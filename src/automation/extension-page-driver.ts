@@ -63,12 +63,13 @@ export class ExtensionPageDriver implements PageDriver {
 
   async goto(url: string): Promise<void> {
     this.assertOpen();
-    await this.command("goto", {
+    const payload = await this.command("goto", {
       tabId: this.tabId,
       url,
       ...(this.siteDomain === undefined ? {} : { siteDomain: this.siteDomain }),
     });
-    this.url = url;
+    // Prefer the worker's post-navigation tab URL (handles same-site redirects).
+    this.url = asCurrentUrl(payload);
   }
 
   currentUrl(): string {

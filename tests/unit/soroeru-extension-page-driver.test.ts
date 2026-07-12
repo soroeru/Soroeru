@@ -171,6 +171,28 @@ test("ExtensionPageDriver supplies the site domain when navigating a bound tab",
   ]);
 });
 
+test("ExtensionPageDriver.currentUrl uses post-goto landing URL after same-site redirect", async () => {
+  // Issue #349: worker reports the real tab URL after waitForNavigation; driver must
+  // cache that landing URL, not the request URL (e.g. example.test → account.example.test).
+  const transport = new FakeBridgeTransport();
+  transport.enqueue("goto", { url: "https://account.example.test/login" });
+  const driver = new ExtensionPageDriver(transport, 7, undefined, "example.test");
+
+  await driver.goto("https://example.test/login");
+
+  assert.equal(driver.currentUrl(), "https://account.example.test/login");
+  assert.deepEqual(transport.calls, [
+    {
+      command: "goto",
+      payload: {
+        tabId: 7,
+        url: "https://example.test/login",
+        siteDomain: "example.test",
+      },
+    },
+  ]);
+});
+
 test("openExtensionTabSession close releases its tab binding and has no exportStorageState", async () => {
   const transport = new FakeBridgeTransport();
   transport.enqueue("unbind", undefined);
