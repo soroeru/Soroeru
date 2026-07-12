@@ -288,6 +288,18 @@ test("findSsoLoginOptions uses oauth /auth href assist and maps unknown oauth to
   assert.deepEqual(providers, ["google", "other"]);
 });
 
+test("findSsoLoginOptions ignores bare IdP host links without an auth path", () => {
+  const page = snapshot("https://sso.example.test/login", {
+    buttons: [],
+    links: [
+      { text: "Googleアカウントヘルプ", href: "https://accounts.google.com/support" },
+      { text: "Apple ID について", href: "https://appleid.apple.com/" },
+    ],
+  });
+
+  assert.deepEqual(findSsoLoginOptions(page), []);
+});
+
 test("findSsoLoginOptions rejects share / follow / tweet controls", () => {
   const page = snapshot("https://social.example.test/article", {
     buttons: [

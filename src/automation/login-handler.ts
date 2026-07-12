@@ -145,7 +145,7 @@ export interface SsoLoginOption {
 const SSO_ACTION_RE = /ログイン|サインイン|続行|continue|sign[\s_-]?in|log[\s_-]?in/i;
 
 /** Share / social engagement — must not be treated as SSO login. */
-const SSO_NEGATIVE_RE = /シェア|share|ツイート|tweet|いいね|like|フォロー|follow|ポスト\b|post\b/i;
+const SSO_NEGATIVE_RE = /シェア|\bshare\b|ツイート|\btweet\b|いいね|\blike\b|フォロー|\bfollow\b|ポスト|\bpost\b/i;
 
 const SSO_PROVIDER_NAME_RE: Array<{
   provider: Exclude<SsoLoginOption["provider"], "other">;
@@ -216,6 +216,9 @@ function matchProviderFromText(text: string): Exclude<SsoLoginOption["provider"]
   return undefined;
 }
 
+/** Path tokens that indicate an auth/OAuth entry on an IdP host (not help/profile pages). */
+const IDP_AUTH_PATH_RE = /\/(o\/oauth|oauth2?|openid|signin|ServiceLogin|login|auth|authorize)\b/i;
+
 function matchProviderFromHref(href: string): Exclude<SsoLoginOption["provider"], "other"> | undefined {
   const auth = href.match(AUTH_PROVIDER_PATH_RE);
   if (auth) {
@@ -223,18 +226,16 @@ function matchProviderFromHref(href: string): Exclude<SsoLoginOption["provider"]
     if (key === "twitter") return "x";
     return key as Exclude<SsoLoginOption["provider"], "other">;
   }
-  if (/accounts\.google\.com/i.test(href)) return "google";
-  if (/appleid\.apple\.com/i.test(href)) return "apple";
   // oauth/openid URL that also names a provider (query or path).
   if (OAUTH_HREF_RE.test(href)) {
     return matchProviderFromText(href);
   }
-  // Known IdP host only when the path looks like auth (not a public profile/share URL).
-  if (IDP_HOST_RE.test(href) && /\/(o\/oauth|oauth|signin|login|auth)\b/i.test(href)) {
-    if (/accounts\.google|google/i.test(href)) return "google";
-    if (/appleid\.apple|apple/i.test(href)) return "apple";
+  // Known IdP host only when the path looks like auth (not a public profile/share/help URL).
+  if (IDP_HOST_RE.test(href) && IDP_AUTH_PATH_RE.test(href)) {
+    if (/accounts\.google/i.test(href)) return "google";
+    if (/appleid\.apple/i.test(href)) return "apple";
     if (/facebook|fb\.com/i.test(href)) return "facebook";
-    if (/twitter|x\.com/i.test(href)) return "x";
+    if (/twitter|\bx\.com\b/i.test(href)) return "x";
     if (/line\.me/i.test(href)) return "line";
     if (/yahoo\./i.test(href)) return "yahoo";
   }

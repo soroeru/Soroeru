@@ -789,6 +789,61 @@ test("visibility runner offers SSO fallback with credential after ID/PW failure;
   }
 });
 
+test("visibility runner collects after SSO fallback resolve when ID/PW failed", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "sso-fallback-ok.example.test",
+      url: "https://sso-fallback-ok.example.test/login",
+      displayName: "SsoFallbackOk",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const loginWithSso = snapshot("https://sso-fallback-ok.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+    ]);
+    loginWithSso.buttons = [
+      { selector: "button[type=submit]", text: "ログイン" },
+      { selector: "button.google", text: "Googleでログイン" },
+    ];
+    const accountPage = snapshot("https://sso-fallback-ok.example.test/account", [
+      field("email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    // initial login-page, after-login still login, post-SSO resolve, after-login wall check, explore
+    const page = new FakePageDriver(
+      [loginWithSso, loginWithSso, accountPage, accountPage, accountPage],
+      { email: "user@example.test" },
+    );
+    let handoffs = 0;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async (input) => {
+        handoffs++;
+        assert.match(input.instruction, /IDとパスワードでのログインができませんでした/);
+        assert.ok(input.credential);
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(handoffs, 1);
+    assert.equal(page.clicked.includes("button.google"), false);
+    const ssoConstraint = service.listConstraints().find((c) => c.detail.startsWith("sso-fallback-suggested:"));
+    assert.ok(ssoConstraint);
+    assert.match(ssoConstraint.detail, /google/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner keeps login-failed without SSO handoff when ID/PW fails and no SSO exists (regression)", async () => {
   const { dir, service } = await openService();
   try {

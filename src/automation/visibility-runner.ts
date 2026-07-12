@@ -186,8 +186,20 @@ export class VisibilityRunner {
                 constraints,
               };
             }
+            // Same as post-login: wait, re-snapshot, and wall-check before collection
+            // so IdP-side CAPTCHA/MFA after SSO is still handed off (never bypassed).
             if (this.isCanceled()) return this.canceledResult(siteAccountId);
-            snapshot = await session.page.snapshot();
+            await session.page.waitForReady();
+            if (this.isCanceled()) return this.canceledResult(siteAccountId);
+            snapshot = await this.clearOrPause(
+              siteAccount,
+              session,
+              await session.page.snapshot(),
+              "after-login",
+              credential,
+            );
+            if (this.isCanceled()) return this.canceledResult(siteAccountId);
+            if (!snapshot) return this.handoffResult(siteAccountId);
           }
         }
       }
