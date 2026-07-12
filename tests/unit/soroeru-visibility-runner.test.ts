@@ -641,6 +641,237 @@ test("visibility runner skips a non-web credential (e.g. android://) without mar
   }
 });
 
+// --- Issue #351: SSO login hand-off (Problem 1 / Problem 2) ---
+
+test("visibility runner hands off on SSO-only login page and collects after resolve", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "sso-only.example.test",
+      url: "https://sso-only.example.test/login",
+      displayName: "SsoOnly",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const ssoPage = snapshot("https://sso-only.example.test/login", [], "SSOログイン");
+    ssoPage.buttons = [{ selector: "button.google", text: "Googleでログイン" }];
+    const accountPage = snapshot("https://sso-only.example.test/account", [
+      field("email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    const page = new FakePageDriver([ssoPage, accountPage, accountPage], { email: "user@example.test" });
+    let handoffs = 0;
+    let offeredCredential = false;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async (input) => {
+        handoffs++;
+        assert.match(input.instruction, /IDとパスワードの入力欄が見つかりませんでした/);
+        assert.match(input.instruction, /Google/);
+        assert.match(input.instruction, /あなた自身でSSOログイン/);
+        assert.equal(input.credential, undefined);
+        if (input.credential) offeredCredential = true;
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(handoffs, 1);
+    assert.equal(offeredCredential, false);
+    assert.equal(
+      page.clicked.includes("button.google"),
+      false,
+      "SSO controls must never be auto-clicked",
+    );
+    const constraint = service.listConstraints().find((c) => c.detail.startsWith("sso-login-required:"));
+    assert.ok(constraint);
+    assert.match(constraint.detail, /google/);
+    const checkpoint = service.getCheckpoint("visibility", site.id);
+    assert.equal(checkpoint?.status, "done");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner reports handoff when SSO-only login is aborted", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "sso-abort.example.test",
+      url: "https://sso-abort.example.test/login",
+      displayName: "SsoAbort",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const ssoPage = snapshot("https://sso-abort.example.test/login", [], "login");
+    ssoPage.buttons = [{ selector: "a.apple", text: "Appleでサインイン" }];
+    const page = new FakePageDriver([ssoPage, ssoPage]);
+    const { logger, entries } = recordingLogger();
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => "abort",
+      logger,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "handoff");
+    const constraint = service.listConstraints().find((c) => c.detail.startsWith("sso-login-required:"));
+    assert.ok(constraint);
+    assert.match(constraint.detail, /apple/);
+    const log = entries.find((e) => e.message === "sso login required");
+    assert.equal(log?.fields?.["domain"], "sso-abort.example.test");
+    assert.equal(typeof log?.fields?.["providers"], "string");
+    assert.match(String(log?.fields?.["providers"]), /apple/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner offers SSO fallback with credential after ID/PW failure; abort is login-failed", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "sso-fallback.example.test",
+      url: "https://sso-fallback.example.test/login",
+      displayName: "SsoFallback",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const loginWithSso = snapshot("https://sso-fallback.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+    ]);
+    loginWithSso.buttons = [
+      { selector: "button[type=submit]", text: "ログイン" },
+      { selector: "button.line", text: "LINEでログイン" },
+    ];
+    const page = new FakePageDriver([loginWithSso, loginWithSso, loginWithSso]);
+    let handoffInput: { instruction: string; credential?: unknown } | undefined;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async (input) => {
+        handoffInput = input;
+        return "abort";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "login-failed");
+    assert.ok(handoffInput);
+    assert.match(handoffInput.instruction, /IDとパスワードでのログインができませんでした/);
+    assert.match(handoffInput.instruction, /LINE/);
+    assert.ok(handoffInput.credential, "Problem 2 must offer the imported credential for manual re-try");
+    const ssoConstraint = service.listConstraints().find((c) => c.detail.startsWith("sso-fallback-suggested:"));
+    assert.ok(ssoConstraint);
+    assert.match(ssoConstraint.detail, /line/);
+    const loginConstraint = service.listConstraints().find((c) => c.detail.startsWith("login-incomplete:"));
+    assert.ok(loginConstraint);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner keeps login-failed without SSO handoff when ID/PW fails and no SSO exists (regression)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "no-sso-stuck.example.test",
+      url: "https://no-sso-stuck.example.test/login",
+      displayName: "NoSsoStuck",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const loginOnly = snapshot("https://no-sso-stuck.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+    ]);
+    let handoffs = 0;
+    const page = new FakePageDriver([loginOnly, loginOnly]);
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => {
+        handoffs++;
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "login-failed");
+    assert.equal(handoffs, 0, "must not invent an SSO hand-off when no SSO control exists");
+    assert.equal(
+      service.listConstraints().some((c) => c.detail.includes("sso-")),
+      false,
+    );
+    const constraint = service.listConstraints().find((c) => c.detail.startsWith("login-incomplete:"));
+    assert.ok(constraint);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner offers SSO handoff at most once per site run", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "sso-once.example.test",
+      url: "https://sso-once.example.test/login",
+      displayName: "SsoOnce",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    // SSO-only page; after "resolve" still the same SSO login page (user did not finish).
+    const ssoPage = snapshot("https://sso-once.example.test/login", [], "SSO");
+    ssoPage.buttons = [{ selector: "button.google", text: "Googleでログイン" }];
+    const page = new FakePageDriver([ssoPage, ssoPage, ssoPage, ssoPage]);
+    let handoffs = 0;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => {
+        handoffs++;
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(handoffs, 1, "SSO hand-off is single-shot; do not re-prompt in the same run");
+    // Still on login with no collectable data after a no-op "resolve".
+    assert.ok(result.status === "no-data" || result.status === "collected");
+    assert.equal(result.disclosures, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner reports login-failed (not collected) when a password field remains and nothing was collected", async () => {
   const { dir, service } = await openService();
   try {

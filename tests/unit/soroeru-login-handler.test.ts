@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DecisionEngine } from "../../src/automation/decision-engine.js";
-import { LoginHandler } from "../../src/automation/login-handler.js";
+import { findSsoLoginOptions, LoginHandler } from "../../src/automation/login-handler.js";
 import type { PageDriver } from "../../src/automation/page-driver.js";
 import { RuleEngine } from "../../src/automation/rule-engine.js";
 import { WallDetectionService } from "../../src/automation/wall-detection.js";
@@ -243,4 +243,64 @@ test("login treats an ambiguous post-login page as failed (safe default)", async
   const result = await handler().login(page, credential(), siteAccount());
 
   assert.deepEqual(result, { success: false, error: "login-failed" });
+});
+
+// --- Issue #351: findSsoLoginOptions (login-stage only; never a wall signal) ---
+
+test("findSsoLoginOptions accepts Japanese and English major-provider labels", () => {
+  const page = snapshot("https://sso.example.test/login", {
+    buttons: [
+      { selector: "button.google", text: "Googleでログイン" },
+      { selector: "button.apple", text: "Appleでサインイン" },
+      { selector: "button.fb", text: "Facebookで続行" },
+      { selector: "button.x", text: "Xでログイン" },
+      { selector: "button.line", text: "LINEでログイン" },
+      { selector: "button.en", text: "Sign in with Google" },
+      { selector: "button.en2", text: "Continue with Apple" },
+    ],
+    links: [{ text: "Yahooでログイン", href: "/auth/yahoo" }],
+  });
+
+  const options = findSsoLoginOptions(page);
+  const providers = new Set(options.map((o) => o.provider));
+  assert.ok(providers.has("google"));
+  assert.ok(providers.has("apple"));
+  assert.ok(providers.has("facebook"));
+  assert.ok(providers.has("x"));
+  assert.ok(providers.has("line"));
+  assert.ok(providers.has("yahoo"));
+  // Deduped by provider (two Google labels → one entry).
+  assert.equal(options.filter((o) => o.provider === "google").length, 1);
+});
+
+test("findSsoLoginOptions uses oauth /auth href assist and maps unknown oauth to other", () => {
+  const page = snapshot("https://sso.example.test/login", {
+    buttons: [],
+    links: [
+      { text: "外部アカウント", href: "https://example.test/auth/google" },
+      { text: "別の方法", href: "https://accounts.google.com/o/oauth2/auth?client_id=x" },
+      { text: "連携", href: "https://idp.example.test/oauth/authorize" },
+    ],
+  });
+
+  const options = findSsoLoginOptions(page);
+  const providers = options.map((o) => o.provider).sort();
+  assert.deepEqual(providers, ["google", "other"]);
+});
+
+test("findSsoLoginOptions rejects share / follow / tweet controls", () => {
+  const page = snapshot("https://social.example.test/article", {
+    buttons: [
+      { selector: "b1", text: "Xでシェア" },
+      { selector: "b2", text: "ツイート" },
+      { selector: "b3", text: "いいね" },
+      { selector: "b4", text: "Share on Facebook" },
+    ],
+    links: [
+      { text: "フォローする", href: "https://twitter.com/someone" },
+      { text: "公式X", href: "https://x.com/brand" },
+    ],
+  });
+
+  assert.deepEqual(findSsoLoginOptions(page), []);
 });
