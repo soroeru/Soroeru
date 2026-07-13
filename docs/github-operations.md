@@ -16,13 +16,70 @@ Out of scope here: local setup and quality gate commands (see
 - Avoid direct pushes to `main`.
 - Use feature flags or safe incremental changes for unfinished work that must
   merge early.
-- Multiple agents may work in parallel, each in its own `git worktree` (see §2,
-  *Parallel multi-agent development*).
+- Multiple agents may work in parallel, each in its own dedicated `git worktree`
+  (see §2, *Parallel multi-agent development*).
+- **Primary working tree is human-only (MUST).** The main clone (the primary
+  worktree that owns `.git/`) is for the Product Owner: review, merge,
+  triage, and cross-lane inspection. **Agents must never commit** (or create
+  branches, amend, or otherwise perform git writes) on the primary tree.
+- **Agent git writes only on dedicated lanes (MUST).** Codex, Claude, Grok, and
+  Gemini perform all implementation commits only under
+  `.worktrees/{codex,claude,grok,gemini}`.
 
 ## 2. Starting Work
 
-Create the Issue branch directly from the latest `origin/main`, without checking
-out local `main`:
+### 2.1 Agent lane worktrees (MUST for agents)
+
+| Agent  | Worktree path (under primary) | Branch prefix | Typical CLI   |
+| ------ | ----------------------------- | ------------- | ------------- |
+| Codex  | `.worktrees/codex`            | `codex/`      | Codex CLI     |
+| Claude | `.worktrees/claude`           | `claude/`     | Claude Code   |
+| Grok   | `.worktrees/grok`             | `grok/`       | Grok Build    |
+| Gemini | `.worktrees/gemini`           | `gemini/`     | `agy` (Antigravity is the Gemini lane — do **not** invent `antigravity/`) |
+
+These four paths are the **only** official agent homes. They are **persistent**
+across Issues: do **not** create a new worktree per Issue. Switch Issue branches
+inside the same lane worktree.
+
+#### Bootstrap / ensure script
+
+Use the repository helper (idempotent):
+
+```bash
+# From the primary clone or any worktree of this repo:
+bash scripts/ensure-agent-worktree.sh --all
+# Or one lane:
+bash scripts/ensure-agent-worktree.sh grok
+```
+
+The script creates `.worktrees/<agent>` at `origin/main` (detached HEAD) when
+missing, and prints the absolute worktree path on stdout.
+
+#### Start-of-implementation gate (MUST)
+
+Before any agent creates a branch or edits files for Issue work — including the
+`issue-implementation` skill path — the agent **MUST**:
+
+1. Decide the lane from the branch prefix it will use (`codex` / `claude` /
+   `grok` / `gemini`).
+2. Run `git worktree list` and
+   `bash scripts/ensure-agent-worktree.sh <agent>` so the lane exists.
+3. Confirm cwd is inside that worktree (root or subdirectory), e.g.
+   `bash scripts/ensure-agent-worktree.sh --require-cwd <agent>`.
+4. If cwd is **not** inside the dedicated worktree: **move** all subsequent git
+   and file operations to that absolute path (re-launch the agent there, or
+   `cd` and use that root for every tool call). Do **not** continue on the
+   primary clone or another agent's worktree.
+5. If the lane cannot be created or entered: **stop** and report to the user.
+   **No fallback** to the primary tree.
+
+`issue-implementation` and equivalent skill paths treat dedicated worktree
+presence as **MUST**, not optional. Single-agent convenience does not waive this.
+
+### 2.2 Create the Issue branch (inside the agent worktree)
+
+After the gate above, create the Issue branch from the latest `origin/main`,
+**without** checking out local `main`:
 
 ```bash
 git fetch origin
@@ -30,10 +87,8 @@ git switch -c <agent>/issue-<number>-<short-english-slug> origin/main
 ```
 
 Do not check out local `main` to start work. Git refuses to check out the same
-`main` in two working trees at once, and a `git switch main` in a shared working
-tree would disrupt another agent working in parallel (see "Parallel multi-agent
-development" below). The recipe above is also fully backward compatible for
-single-working-tree work.
+branch in two working trees at once, and a `git switch main` in a shared working
+tree would disrupt another agent working in parallel.
 
 Branch examples:
 
@@ -48,44 +103,46 @@ Rules:
 - Include the Issue number.
 - Keep the English slug short and descriptive.
 - Record the branch name in the GitHub Issue when useful.
+- Humans working alone on the **primary** tree may use the same branch-naming
+  recipe without an agent prefix when not using an agent; agents always use a
+  prefix and always use a lane worktree.
 
-### Parallel multi-agent development (worktrees)
+### 2.3 Parallel multi-agent development (worktrees)
 
-Claude and Codex can run Issue implementation work at the same time. The
-repository-local Issue implementation skill defers branch creation to this
-section, so the recipe above is all the skill needs.
+Codex, Claude, Grok, and Gemini may run Issue implementation at the same time.
+The repository-local Issue implementation skill defers branch creation and the
+worktree gate to this section.
 
-Give each agent its own working tree with `git worktree` so branch switches and
-working-tree state never collide:
+Each lane worktree starts (or is reset via ensure) at `origin/main` in detached
+HEAD when first created (Git prints a "detached HEAD" notice — expected). The
+§2.2 recipe then creates the per-Issue branch **inside that worktree**. For the
+next Issue, re-run §2.2 from the **same** worktree
+(`git fetch origin && git switch -c <new-branch> origin/main`).
 
-```bash
-git fetch origin
-mkdir -p .worktrees
-git worktree add .worktrees/codex  origin/main
-git worktree add .worktrees/claude origin/main
-```
+Keep agent worktrees **inside** the primary repository root under `.worktrees/`,
+so they stay within sandbox write roots (especially Codex). Avoid sibling paths
+such as `../Soroeru-codex`; they are easy to misconfigure against the sandbox and
+force avoidable approval requests.
 
-Each worktree starts in detached HEAD at `origin/main` (Git prints a "detached
-HEAD" notice — this is expected); the §2 recipe then creates the per-Issue
-branch inside that worktree. The worktree is a persistent home for the agent
-across Issues, so it is not pinned to any single Issue branch — for another
-Issue, re-run the §2 recipe (`git fetch origin && git switch -c <new-branch>
-origin/main`) from the same worktree.
-
-Keep the Codex worktree inside the repository root, for example
-`.worktrees/codex`, so it stays within the sandbox write root in this
-environment. Avoid sibling paths such as `../Soroeru-codex`; they are easy to
-misconfigure against the sandbox and force avoidable approval requests.
+Operational notes:
 
 - `core.hooksPath` is set with `git config --local` (stored in the shared common
   git dir, not per-worktree), so running `scripts/setup-hooks.sh` once enables
   the local AI review hook in every worktree.
 - `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
-  tree, so worktrees do not contend for the same review lock.
+  tree, so worktrees do not contend for the same review lock. Wait for reviews
+  only under the worktree where the commit was made.
 - Branch-prefix routing already separates reviewers (see §8): keep the Codex CLI
-  on a `codex/*` worktree, the Claude CLI on a `claude/*` worktree, the Grok
-  CLI on a `grok/*` worktree, and the Gemini CLI (`agy`) on a `gemini/*`
-  worktree, and each commit is reviewed by the matching reviewer automatically.
+  on the `codex` worktree, Claude on `claude`, Grok on `grok`, and Gemini/`agy`
+  (Antigravity) on `gemini`, and each commit is reviewed by the matching
+  reviewer automatically.
+- Each worktree needs its own `node_modules` / tool installs if you run quality
+  gates there; they are not shared automatically.
+- Do not leave a lane worktree dirty with another Issue's uncommitted work and
+  then start a new Issue on top — finish, stash only with explicit user intent,
+  or stop and ask.
+- Official lanes are only the four paths above. Other worktrees (tool-internal
+  paths, one-off experiments) are not agent homes for skill workflows.
 
 Partition the backlog into **lanes with no cross-lane dependencies**, and hand
 each agent a single Issue from its lane. A cross-lane dependency would serialize
