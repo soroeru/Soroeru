@@ -21,7 +21,7 @@ declare namespace chrome {
     interface Tab {
       id?: number;
       url?: string;
-      id?: number;
+      title?: string;
       status?: "loading" | "complete";
     }
     function get(tabId: number): Promise<Tab>;

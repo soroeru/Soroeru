@@ -332,13 +332,37 @@ async function executeCommand(
     tabId,
     contentCommand,
   );
-  return response.ok
-    ? result(command, true, response.payload)
-    : result(command, false, undefined, response.error ?? "content command failed");
+  if (!response.ok) return result(command, false, undefined, response.error ?? "content command failed");
+  if (command.command === "snapshot" || command.command === "waitForReady") {
+    // PageSnapshot requires the page URL and title, which the content script's
+    // scan result does not carry; attach the bound tab's actual values here,
+    // re-read after the scan so redirects during the command are reflected.
+    // The driver ignores the waitForReady payload today; both scan-shaped
+    // payloads are kept PageSnapshot-complete so a future consumer cannot
+    // reintroduce the missing-url failure (#360).
+    const scanned = await chrome.tabs.get(tabId);
+    return result(command, true, withPageIdentity(response.payload, scanned));
+  }
+  return result(command, true, response.payload);
+}
+
+/**
+ * Attach the bound tab's URL/title to a content-script scan payload so it
+ * satisfies the PageSnapshot shape the ExtensionPageDriver validates
+ * (Issue #360: the scan result itself is structure-only and has neither).
+ * The tab's values are authoritative and overwrite any payload keys.
+ */
+export function withPageIdentity(
+  payload: unknown,
+  tab: { url?: string; title?: string },
+): Record<string, unknown> {
+  const base = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  return { ...base, url: tab.url ?? "", title: tab.title ?? "" };
 }
 
 function connect(): void {
   nativePort = chrome.runtime.connectNative("jp.soroeru.bridge");
+  // persist: extension-connection-metadata
   void chrome.storage.local.set({ chromeBridgeConnected: true });
   void chrome.action.setBadgeText({ text: "ON" });
   void chrome.action.setBadgeBackgroundColor({ color: "#7c2d12" });
@@ -366,6 +390,7 @@ function connect(): void {
   nativePort.onDisconnect.addListener(() => {
     nativePort = undefined;
     binding = undefined;
+    // persist: extension-connection-metadata
     void chrome.storage.local.set({ chromeBridgeConnected: false });
     void chrome.action.setBadgeText({ text: "" });
   });

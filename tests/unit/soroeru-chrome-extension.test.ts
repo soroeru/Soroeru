@@ -13,7 +13,12 @@ import {
   isSameSiteExtensionOrigin,
   unbindMatchesBinding,
   validateExtensionCommand,
+  withPageIdentity,
 } from "../../extension/worker.js";
+import {
+  ExtensionPageDriver,
+  type ChromeBridgeTransport,
+} from "../../src/automation/extension-page-driver.js";
 
 test("MV3 manifest requests only the bridge permissions and optional HTTPS hosts", async () => {
   const manifest = JSON.parse(
@@ -183,6 +188,48 @@ test("content snapshot has the same structure-only shape as the Playwright scann
     assert.equal(extensionSnapshot.displayValues?.[0]?.labelText, "氏名");
     assert.equal(JSON.stringify(extensionSnapshot.fields).includes("山田 太郎"), false);
     assert.equal(JSON.stringify(extensionSnapshot.displayValues).includes("山田 太郎"), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("the real scan payload passes driver validation only after the worker attaches url/title (Issue #360)", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <label for="email">メールアドレス</label>
+      <input id="email" name="email" autocomplete="email" required>
+      <button>ログイン</button>
+    `);
+    // Exactly what the content script sends back for a snapshot command.
+    const rawScanPayload = await page.evaluate(scanPage);
+
+    const driverFor = (payload: unknown): ExtensionPageDriver => {
+      const transport: ChromeBridgeTransport = {
+        sendCommand: async () => payload,
+        isConnected: () => true,
+      };
+      return new ExtensionPageDriver(transport, 7);
+    };
+
+    // Without the worker-side merge the driver must reject the scan result —
+    // this is the exact "invalid snapshot payload" failure seen on a real site.
+    await assert.rejects(driverFor(rawScanPayload).snapshot(), /invalid snapshot payload/);
+
+    const merged = withPageIdentity(rawScanPayload, {
+      url: "https://login.example.test/",
+      title: "ログイン",
+    });
+    const snapshot = await driverFor(merged).snapshot();
+    assert.equal(snapshot.url, "https://login.example.test/");
+    assert.equal(snapshot.title, "ログイン");
+    assert.equal(snapshot.fields[0]?.name, "email");
+    // The tab's identity is authoritative even if a payload smuggles its own.
+    assert.equal(
+      (withPageIdentity({ url: "https://evil.example.test/" }, { url: "https://ok.example.test/" }) as { url: string }).url,
+      "https://ok.example.test/",
+    );
   } finally {
     await browser.close();
   }
