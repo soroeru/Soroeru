@@ -272,6 +272,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
                         void loadSites();
                         onCollected();
                       }}
+                      onClose={() => setSavedPageSiteId(undefined)}
                     />
                   </div>
                 )}
