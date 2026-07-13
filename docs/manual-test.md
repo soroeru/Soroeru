@@ -71,8 +71,12 @@ Never enter a real credential, cookie, card value, or personal value during this
       `SOROERU_CHROME_BRIDGE_HOST_BINARY` to `dist/native-host/host.cjs`, then start the app
       with `SOROERU_ENABLE_CHROME_BRIDGE=1`. Without the flag, confirm the Chrome section is absent.
 - [ ] In **設定 → Chrome と接続**, choose **host を登録して接続を始める**. Confirm the UI first
-      reports registration / extension-install guidance, then changes to **接続済み** only after the
-      extension completes the native-messaging handshake.
+      reports registration / extension-install guidance and explicitly includes instructions to reload the
+      extension (or restart the service worker) in chrome://extensions if it was already loaded. Confirm the UI changes
+      to **接続済み** only after the extension completes the native-messaging handshake.
+- [ ] Open the extension popup in Chrome when disconnected. Confirm that it displays a **CONNECTED/OFFLINE** badge
+      and a **アプリに再接続** (Reconnect) button when offline. Click **アプリに再接続** and confirm it successfully reconnects.
+- [ ] Verify that all connection transitions (connecting, connected, disconnected, rejected, registration success, registration failure) are recorded in the sanitized diagnostic log file (`~/Library/Application Support/Soroeru/logs/soroeru.log`) under the `chrome-bridge` category without leaking raw secrets, tokens, or credentials.
 - [ ] Open one fake HTTPS site. In the app, confirm the instruction says to click the Chrome extension
       icon. Click the icon and then the popup permission button; confirm Chrome's permission prompt is
       caused by that popup gesture, not by an app/native-host message.

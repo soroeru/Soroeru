@@ -403,5 +403,21 @@ if (typeof chrome !== "undefined") {
       void chrome.action.setBadgeText({ tabId, text: "" });
     }
   });
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    const msg = message as { command?: string } | undefined;
+    if (msg && msg.command === "reconnect") {
+      if (!nativePort) {
+        try {
+          connect();
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      } else {
+        sendResponse({ ok: true, message: "already connected" });
+      }
+      return true; // Keep message channel open for asynchronous sendResponse
+    }
+  });
   connect();
 }

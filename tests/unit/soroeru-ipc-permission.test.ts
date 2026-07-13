@@ -119,16 +119,33 @@ test("connected Chrome disconnect normalizes and revokes every origin before hos
       connected = false;
     },
   };
+  const logged: any[] = [];
+  const logger = {
+    info: (category: string, message: string, fields?: any) => {
+      logged.push({ level: "info", category, message, fields });
+    },
+    warn: (category: string, message: string, fields?: any) => {
+      logged.push({ level: "warn", category, message, fields });
+    },
+    error: (category: string, message: string, fields?: any) => {
+      logged.push({ level: "error", category, message, fields });
+    },
+  };
   try {
     await writeFile(sourceBinary, "fake-host");
     const session = new SoroeruSession(join(dir, "vault.json"), {
       chromeBridge,
       chromeBridgeSetup: { sourceBinary, extensionId: "a".repeat(32), paths },
+      logger,
     });
     assert.equal((await session.connectChromeBridge()).ok, true);
+    assert.ok(logged.some(e => e.level === "info" && e.category === "chrome-bridge" && e.message === "native host registered successfully"));
+    assert.ok(logged.some(e => e.level === "info" && e.category === "chrome-bridge" && e.message === "chrome bridge started successfully"));
     assert.equal(await nativeHostIsRegistered(paths), true);
     const result = await session.disconnectChromeBridge();
     assert.equal(result.ok, true);
+    assert.ok(logged.some(e => e.level === "info" && e.category === "chrome-bridge" && e.message === "chrome bridge closed"));
+    assert.ok(logged.some(e => e.level === "info" && e.category === "chrome-bridge" && e.message === "native host unregistered successfully"));
     assert.deepEqual("manualCleanupOrigins" in result ? result.manualCleanupOrigins : undefined, [
       "https://a.example",
     ]);
@@ -138,6 +155,52 @@ test("connected Chrome disconnect normalizes and revokes every origin before hos
       { command: "removePermission", payload: { origin: "https://a.example" } },
     ]);
     assert.equal(await nativeHostIsRegistered(paths), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Chrome bridge registration failure logs detailed error", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-ipc-chrome-fail-"));
+  const sourceBinary = join(dir, "host-source");
+  const paths = {
+    appSupportDir: join(dir, "Application Support"),
+    chromeNativeMessagingDir: join(dir, "Chrome", "NativeMessagingHosts"),
+  };
+  const logged: any[] = [];
+  const logger = {
+    info: (category: string, message: string, fields?: any) => {
+      logged.push({ level: "info", category, message, fields });
+    },
+    warn: (category: string, message: string, fields?: any) => {
+      logged.push({ level: "warn", category, message, fields });
+    },
+    error: (category: string, message: string, fields?: any) => {
+      logged.push({ level: "error", category, message, fields });
+    },
+  };
+  try {
+    await writeFile(sourceBinary, "fake-host");
+    const session = new SoroeruSession(join(dir, "vault.json"), {
+      chromeBridge: {
+        isConnected: () => false,
+        sendCommand: async () => { throw new Error("not connected"); },
+        start: async () => { throw new Error("failed to start"); }
+      },
+      // Pass 31 characters to trigger extension ID validation failure
+      chromeBridgeSetup: { sourceBinary, extensionId: "a".repeat(31), paths },
+      logger,
+    });
+    const result = await session.connectChromeBridge();
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "registration-failed");
+    
+    const failLog = logged.find(e => e.level === "error" && e.category === "chrome-bridge" && e.message === "native host registration failed");
+    assert.ok(failLog);
+    assert.equal(failLog.fields.reason, "invalid-extension-id");
+    assert.equal(failLog.fields.hasSourceBinary, true);
+    assert.equal(failLog.fields.hasExtensionId, true);
+    assert.equal(failLog.fields.hasPaths, true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
