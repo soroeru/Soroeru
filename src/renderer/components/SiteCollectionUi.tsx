@@ -238,16 +238,10 @@ function CopyableCredential({
   const displayValue = concealed && !revealed ? "••••••••••••" : value;
 
   const clearCopiedValue = useCallback(async (expectedValue: string) => {
-    let shouldClear = false;
     try {
       if (typeof navigator.clipboard.readText !== "function") return;
       const current = await navigator.clipboard.readText();
-      shouldClear = current === expectedValue;
-    } catch {
-      shouldClear = false;
-    }
-    if (!shouldClear) return;
-    try {
+      if (current !== expectedValue) return;
       await navigator.clipboard.writeText("");
     } catch {
       // Clipboard permissions differ by platform; failing closed here must not block the hand-off.
