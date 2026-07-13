@@ -288,7 +288,6 @@ run_reviewer() {
 
 ANY_UNIT_DIFF=0
 ANY_REVIEWER_FAILED=0
-ANY_REVIEWER_RAN=0
 
 # UNIT_ORDER always starts with "code" (never empty); still use the
 # bash 3.2 set -u guard so a future reordering cannot reintroduce the
@@ -367,7 +366,6 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   TS=$(date +%Y%m%d-%H%M%S)
   OUTPUT="$STATE_DIR/${TS}-${REVIEWER}-${UNIT}-$$.md"
 
-  ANY_REVIEWER_RAN=1
   (run_reviewer > "$REVIEWER_OUT" 2> "$REVIEWER_ERR") &
   REVIEWER_PID=$!
   log "reviewer spawned unit=$UNIT pid=$REVIEWER_PID timeout=${LOCAL_AI_REVIEW_REVIEWER_TIMEOUT_SEC}s"
@@ -441,24 +439,4 @@ if [ "$ANY_REVIEWER_FAILED" != "0" ]; then
   log "done with failed units reviewer=$REVIEWER (see last-error.log)"
 else
   log "done reviewer=$REVIEWER"
-fi
-
-# Count one completed orchestrator run per Issue epoch, regardless of how many
-# review units it contained. A stale worker may not mutate a newer epoch.
-if [ -n "$REVIEW_ISSUE" ] && [ "$ANY_REVIEWER_FAILED" = "0" ] && [ "$ANY_REVIEWER_RAN" = "1" ]; then
-  COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
-  META="$COMMON/soroeru-issue-worktrees/$REVIEW_ISSUE.json"
-  META_LOCK="$COMMON/soroeru-issue-worktrees/$REVIEW_ISSUE.lock"
-  if [ -f "$META" ] && mkdir "$META_LOCK" 2>/dev/null; then
-    META_TMP="$META.tmp.$$"
-    if jq -e --argjson epoch "$REVIEW_EPOCH" '.review.epoch == $epoch' "$META" >/dev/null 2>&1; then
-      jq -c --argjson epoch "$REVIEW_EPOCH" \
-        'if .review.epoch == $epoch and .review.used < .review.limit then .review.used += 1 else . end' \
-        "$META" > "$META_TMP" && mv "$META_TMP" "$META"
-    fi
-    rm -f "$META_TMP"
-    rmdir "$META_LOCK" 2>/dev/null || true
-  else
-    warn "could not update Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH review budget"
-  fi
 fi

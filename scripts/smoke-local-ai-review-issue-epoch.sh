@@ -32,6 +32,10 @@ cat > "$COMMON/soroeru-issue-worktrees/365.json" <<EOF
 EOF
 
 cd "$WORK"
+# post-commit reserves the run atomically before launching the worker.
+. .githooks/config
+. .githooks/lib/reviewer-selection.sh
+[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "1" ]
 LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh codex issue-365-review-epoch HEAD 365 4
 [ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
 ARTIFACT=$(find state/ai-reviews -name '*-codex-code-*.md' -print -quit)
@@ -45,5 +49,12 @@ USED=$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")
   printf 'expected idempotent rerun to keep review usage at 1, got %s\n' "$USED" >&2
   exit 1
 }
+
+# A second queue reservation succeeds; a third is atomically refused.
+[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
+if local_ai_review_reserve_budget 365 4 "$WORK" >/dev/null 2>&1; then
+  printf 'expected exhausted epoch budget to reject a third reservation\n' >&2
+  exit 1
+fi
 
 printf 'local AI review Issue epoch smoke check passed\n'

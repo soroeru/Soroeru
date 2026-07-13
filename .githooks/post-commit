@@ -84,6 +84,13 @@ if [ "$REVIEW_USED" -ge "$REVIEW_LIMIT" ]; then
     "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_USED" "$REVIEW_LIMIT" >&2
   exit 0
 fi
+if [ -n "$REVIEW_ISSUE" ]; then
+  if ! REVIEW_USED=$(local_ai_review_reserve_budget "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT"); then
+    printf '[local-ai-review] could not reserve review budget for Issue #%s epoch %s; review not queued\n' \
+      "$REVIEW_ISSUE" "$REVIEW_EPOCH" >&2
+    exit 0
+  fi
+fi
 
 # Pin the commit that triggered this hook so the background review
 # always covers the same diff, even if HEAD moves before the
@@ -198,7 +205,7 @@ else
   fallback_nohup
 fi
 
-printf '[local-ai-review] queued %s review for %s (commit=%s issue=%s epoch=%s budget=%s/%s)\n' \
+printf '[local-ai-review] queued %s review for %s (commit=%s issue=%s epoch=%s reserved=%s/%s)\n' \
   "$REVIEWER" "$BRANCH" "$SHORT_SHA" "${REVIEW_ISSUE:-legacy}" "$REVIEW_EPOCH" "$REVIEW_USED" "$REVIEW_LIMIT" >&2
 
 exit 0

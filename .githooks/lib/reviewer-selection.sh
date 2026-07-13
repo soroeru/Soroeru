@@ -50,3 +50,32 @@ local_ai_review_select_context() {
       ;;
   esac
 }
+
+# Atomically reserve one review run for an Issue epoch. Print the new used
+# count. A queue that cannot reserve must not launch a reviewer.
+local_ai_review_reserve_budget() {
+  local issue=$1 epoch=$2 repo_root=${3:-.}
+  local common state lock tmp used limit
+  common=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  state="$common/soroeru-issue-worktrees/$issue.json"
+  lock="$common/soroeru-issue-worktrees/$issue.lock"
+  [ -f "$state" ] || return 1
+  mkdir "$lock" 2>/dev/null || return 1
+  tmp="$state.reserve.$$"
+  if ! jq -e --argjson epoch "$epoch" '.review.epoch == $epoch and .review.used < .review.limit' "$state" >/dev/null 2>&1; then
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+  if ! jq -c --argjson epoch "$epoch" \
+      'if .review.epoch == $epoch and .review.used < .review.limit then .review.used += 1 else . end' \
+      "$state" > "$tmp" || ! mv "$tmp" "$state"; then
+    rm -f "$tmp"
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+  used=$(jq -r .review.used "$state")
+  limit=$(jq -r .review.limit "$state")
+  rmdir "$lock" 2>/dev/null || true
+  [ "$used" -le "$limit" ] || return 1
+  printf '%s\n' "$used"
+}

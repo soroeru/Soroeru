@@ -134,7 +134,33 @@ write_state() {
 
 review_lock_present() {
   local worktree=$1
-  [ -e "$worktree/state/ai-reviews/.lock" ] || [ -e "$worktree/state/ai-reviews/local-ai-review.lock" ]
+  local lock="$worktree/state/ai-reviews/.lock" pid timestamp now age mtime
+  [ -e "$lock" ] || return 1
+  pid=''
+  timestamp=''
+  IFS=':' read -r pid timestamp < "$lock" || true
+  case "$pid:$timestamp" in
+    *[!0-9:]*|::*|*:)
+      if mtime=$(stat -f %m "$lock" 2>/dev/null); then :
+      elif mtime=$(stat -c %Y "$lock" 2>/dev/null); then :
+      else return 0
+      fi
+      now=$(date +%s)
+      age=$((now - mtime))
+      if [ "$age" -lt 5 ]; then
+        return 0
+      fi
+      rm -f "$lock"
+      note "removed malformed stale local AI review lock"
+      return 1
+      ;;
+  esac
+  if kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$lock"
+  note "removed stale local AI review lock from dead pid=$pid"
+  return 1
 }
 
 git_operation() {

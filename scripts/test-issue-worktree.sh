@@ -83,7 +83,11 @@ mkdir -p "$WORKTREE/state/ai-reviews"
 : > "$WORKTREE/state/ai-reviews/.lock"
 OUT=$(assert_fails "$HELPER" handoff 365 --agent claude --session session-c --repo "$REPO")
 assert_contains "$OUT" "local AI review"
-rm "$WORKTREE/state/ai-reviews/.lock"
+
+# A dead-PID lock is reclaimed instead of permanently stranding the Issue.
+printf '999999:1\n' > "$WORKTREE/state/ai-reviews/.lock"
+"$HELPER" handoff 365 --agent codex --session session-b --repo "$REPO" >/dev/null
+[ ! -e "$WORKTREE/state/ai-reviews/.lock" ] || fail "stale review lock was not removed"
 
 "$HELPER" release 365 --session session-b --repo "$REPO" >/dev/null
 printf 'dirty\n' > "$WORKTREE/dirty.txt"
