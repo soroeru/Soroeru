@@ -897,10 +897,11 @@ export class SoroeruSession {
         ...(c.resolution !== undefined ? { resolution: c.resolution } : {}),
         observedAt: c.observedAt,
       }));
+    // Preserve vault list order — Visibility uses listCredentialsForSite(...)[0]
+    // with no sort (Issue #362: edit UI must target the same primary credential).
     const credentials: SiteCredentialView[] = this.domain
       .listCredentialsForSite(siteAccountId)
-      .map((credential) => toSiteCredentialView(credential))
-      .sort((a, b) => a.username.localeCompare(b.username));
+      .map((credential) => toSiteCredentialView(credential));
     return {
       ...summary,
       disclosures,

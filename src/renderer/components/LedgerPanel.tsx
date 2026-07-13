@@ -971,11 +971,12 @@ function SiteCredentialUpdateControl({
     );
   }
 
-  // Remount the form when the credential identity or server-side revision changes
-  // so local fields reset without a setState-in-effect.
+  // Remount only when the credential id changes (site switch / different row).
+  // Do not key on updatedAt — a successful save reloads detail and would wipe
+  // the success banner if the form remounted.
   return (
     <SiteCredentialUpdateForm
-      key={`${primary.credentialId}:${primary.updatedAt}`}
+      key={primary.credentialId}
       siteAccountId={siteAccountId}
       credential={primary}
       credentialCount={credentials.length}
@@ -1001,6 +1002,10 @@ function SiteCredentialUpdateForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [savedAt, setSavedAt] = useState<number | undefined>();
+  // Local mirror of last-known server metadata so "最終更新" updates after save
+  // even though the form is keyed only by credentialId.
+  const [metaUpdatedAt, setMetaUpdatedAt] = useState(credential.updatedAt);
+  const [metaSource, setMetaSource] = useState(credential.source);
 
   const save = useCallback(async () => {
     const trimmedUsername = username.trim();
@@ -1033,11 +1038,17 @@ function SiteCredentialUpdateForm({
       setPassword("");
       setConfirmed(false);
       setSavedAt(result.credential?.updatedAt ?? Date.now());
-      if (result.credential) setUsername(result.credential.username);
+      if (result.credential) {
+        setUsername(result.credential.username);
+        setMetaUpdatedAt(result.credential.updatedAt);
+        setMetaSource(result.credential.source);
+      }
+      // Reload parent list after painting success so the banner is not wiped by
+      // a remount (form key is credentialId only).
+      await onReload();
     } catch {
       setError(reasonMessage(undefined));
     } finally {
-      await onReload();
       setBusy(false);
     }
   }, [confirmed, credential.credentialId, credential.username, onReload, password, siteAccountId, username]);
@@ -1101,8 +1112,8 @@ function SiteCredentialUpdateForm({
       )}
       {error && <p className="text-red-600">{error}</p>}
       <p className="text-neutral-400">
-        最終更新: {new Date(credential.updatedAt).toLocaleString("ja-JP")}
-        {credential.source === "csv-import" ? "（CSV 取り込み）" : "（手動更新）"}
+        最終更新: {new Date(metaUpdatedAt).toLocaleString("ja-JP")}
+        {metaSource === "csv-import" ? "（CSV 取り込み）" : "（手動更新）"}
       </p>
     </div>
   );
