@@ -298,13 +298,17 @@ export class DomainService {
     if (!existing) return { ok: false, error: "not-found" };
 
     const nextUsername = input.username !== undefined ? input.username.trim() : undefined;
+    // Passwords are not trimmed for content (spaces may be intentional) but a
+    // whitespace-only string is treated as empty / invalid, same as username.
     const nextPassword = input.password !== undefined ? input.password : undefined;
+    const passwordMeaningful =
+      nextPassword !== undefined && nextPassword !== "" && nextPassword.trim() !== "";
 
     // Only count a username rewrite when it actually differs from the stored value
     // (no-op same-id updates must not flip source / bump updatedAt alone).
     const usernameChange =
       nextUsername !== undefined && nextUsername !== "" && nextUsername !== existing.username;
-    const passwordChange = nextPassword !== undefined && nextPassword !== "";
+    const passwordChange = passwordMeaningful;
     if (!usernameChange && !passwordChange) return { ok: false, error: "invalid-request" };
 
     const credential: Credential = {
