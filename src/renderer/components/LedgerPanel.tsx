@@ -729,6 +729,7 @@ export function LedgerPanel({
                                   void loadSites();
                                   onCollectedRef.current();
                                 }}
+                                onClose={() => setSavedPageSiteId(undefined)}
                               />
                             </div>
                           )}

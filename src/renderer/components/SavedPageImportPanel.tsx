@@ -8,6 +8,8 @@ interface SavedPageImportPanelProps {
   siteAccountId: string;
   disabled?: boolean;
   onImported: () => Promise<void> | void;
+  /** Close the panel (the caller owns the open/closed state). */
+  onClose?: () => void;
 }
 
 function isSavedPageFile(file: File): boolean {
@@ -18,6 +20,7 @@ export function SavedPageImportPanel({
   siteAccountId,
   disabled = false,
   onImported,
+  onClose,
 }: SavedPageImportPanelProps): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -53,12 +56,24 @@ export function SavedPageImportPanel({
   );
 
   return (
-    <div className="flex flex-col gap-3 rounded border border-neutral-200 p-3">
-      <div className="flex flex-col gap-1">
-        <p className="text-sm font-medium">保存したページから読み取る</p>
-        <p className="text-xs text-neutral-500">
-          ご自身のブラウザでログイン後に保存した HTML を、ローカルで解析して開示台帳に記録します。
-        </p>
+    <div className="flex max-w-2xl flex-col gap-3 rounded border border-neutral-200 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium">保存したページから読み取る</p>
+          <p className="text-xs text-neutral-500">
+            ご自身のブラウザでログイン後に保存した HTML を、ローカルで解析して開示台帳に記録します。
+          </p>
+        </div>
+        {onClose && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClose}
+            className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            閉じる
+          </button>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
