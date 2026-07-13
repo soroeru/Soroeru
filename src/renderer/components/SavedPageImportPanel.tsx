@@ -71,7 +71,7 @@ export function SavedPageImportPanel({
             onClick={onClose}
             className="shrink-0 rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           >
-            読み取りをキャンセル
+            閉じる
           </button>
         )}
       </div>
