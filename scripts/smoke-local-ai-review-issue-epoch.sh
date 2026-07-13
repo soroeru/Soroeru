@@ -52,6 +52,9 @@ USED=$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")
 
 # A second queue reservation succeeds; a third is atomically refused.
 [ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
+local_ai_review_refund_budget 365 4 "$WORK"
+[ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
+[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
 if local_ai_review_reserve_budget 365 4 "$WORK" >/dev/null 2>&1; then
   printf 'expected exhausted epoch budget to reject a third reservation\n' >&2
   exit 1

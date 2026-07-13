@@ -79,3 +79,26 @@ local_ai_review_reserve_budget() {
   [ "$used" -le "$limit" ] || return 1
   printf '%s\n' "$used"
 }
+
+# Refund one queue reservation when the launcher never reaches its entrypoint.
+# The epoch check prevents an old failed launch from mutating a newer handoff.
+local_ai_review_refund_budget() {
+  local issue=$1 epoch=$2 repo_root=${3:-.}
+  local common state lock tmp
+  common=$(git -C "$repo_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  state="$common/soroeru-issue-worktrees/$issue.json"
+  lock="$common/soroeru-issue-worktrees/$issue.lock"
+  [ -f "$state" ] || return 1
+  mkdir "$lock" 2>/dev/null || return 1
+  tmp="$state.refund.$$"
+  if ! jq -e --argjson epoch "$epoch" '.review.epoch == $epoch and .review.used > 0' "$state" >/dev/null 2>&1 \
+     || ! jq -c --argjson epoch "$epoch" \
+       'if .review.epoch == $epoch and .review.used > 0 then .review.used -= 1 else . end' \
+       "$state" > "$tmp" \
+     || ! mv "$tmp" "$state"; then
+    rm -f "$tmp"
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  fi
+  rmdir "$lock" 2>/dev/null || true
+}

@@ -172,6 +172,12 @@ or restore budget. Artifact bodies and `last-reviewed.json` record the epoch;
 the established artifact filename shape remains unchanged for wait-script
 compatibility.
 
+The post-commit hook reserves an Issue epoch budget slot atomically before
+launching its background worker, so rapid commits cannot over-queue reviews.
+The launcher must create a startup handshake after validating its repository
+and orchestrator; if startup is not confirmed, the hook refunds that epoch's
+reservation atomically.
+
 ### Temporarily disabling the hook (e.g. during acceptance testing)
 
 For a session where the hook should not fire **at all** (such as the Product

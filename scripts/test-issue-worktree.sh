@@ -62,7 +62,7 @@ assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_used)" "0"
 assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_limit)" "2"
 
 OUT=$(assert_fails "$HELPER" acquire 365 --agent claude --session session-b --repo "$REPO")
-assert_contains "$OUT" "active lease"
+assert_contains "$OUT" "use handoff"
 
 "$HELPER" handoff 365 --agent codex --session session-a --repo "$REPO" >/dev/null
 assert_eq "$("$HELPER" status 365 --repo "$REPO" --json | jq -r .handoff_epoch)" "1"
@@ -90,6 +90,8 @@ printf '999999:1\n' > "$WORKTREE/state/ai-reviews/.lock"
 [ ! -e "$WORKTREE/state/ai-reviews/.lock" ] || fail "stale review lock was not removed"
 
 "$HELPER" release 365 --session session-b --repo "$REPO" >/dev/null
+OUT=$(assert_fails "$HELPER" acquire 365 --agent claude --session session-c --repo "$REPO")
+assert_contains "$OUT" "use handoff"
 printf 'dirty\n' > "$WORKTREE/dirty.txt"
 OUT=$(assert_fails env ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 365 --pr 999 --repo "$REPO")
 assert_contains "$OUT" "dirty"

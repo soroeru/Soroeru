@@ -278,8 +278,8 @@ case "$COMMAND" in
     HASH=$(session_hash "$SESSION")
     ACTIVE=$(jq -r .owner.active "$STATE_FILE")
     OLD_HASH=$(jq -r .owner.session_hash "$STATE_FILE")
-    if [ "$ACTIVE" = "true" ] && [ "$OLD_HASH" != "$HASH" ]; then
-      die "active lease belongs to another session; use an explicit handoff after diagnostics"
+    if [ "$OLD_HASH" != "$HASH" ]; then
+      die "lease belongs to another session; use handoff so the epoch and review budget are reset"
     fi
     NOW=$(utc_now)
     HOST=$(hostname 2>/dev/null || printf unknown)
