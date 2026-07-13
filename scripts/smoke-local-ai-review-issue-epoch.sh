@@ -33,14 +33,15 @@ EOF
 
 cd "$WORK"
 # post-commit reserves the run atomically before launching the worker.
+# shellcheck source=/dev/null
 . .githooks/config
 . .githooks/lib/reviewer-selection.sh
 [ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "1" ]
 LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh codex issue-365-review-epoch HEAD 365 4
 [ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
 ARTIFACT=$(find state/ai-reviews -name '*-codex-code-*.md' -print -quit)
-grep -q 'handoff_epoch: `4`' "$ARTIFACT"
-grep -q 'issue: `365`' "$ARTIFACT"
+grep -Fq "handoff_epoch: \`4\`" "$ARTIFACT"
+grep -Fq "issue: \`365\`" "$ARTIFACT"
 
 # Same diff/epoch is idempotently skipped and must not consume a second run.
 LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh codex issue-365-review-epoch HEAD 365 4

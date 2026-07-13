@@ -62,7 +62,10 @@ lease_expiry() {
 
 COMMAND=${1:-}
 ISSUE=${2:-}
-[ -n "$COMMAND" ] && [ -n "$ISSUE" ] || { usage >&2; exit 2; }
+if [ -z "$COMMAND" ] || [ -z "$ISSUE" ]; then
+  usage >&2
+  exit 2
+fi
 is_uint "$ISSUE" || die "Issue must be one positive integer"
 shift 2
 
@@ -276,7 +279,6 @@ case "$COMMAND" in
     lock_state
     require_state
     HASH=$(session_hash "$SESSION")
-    ACTIVE=$(jq -r .owner.active "$STATE_FILE")
     OLD_HASH=$(jq -r .owner.session_hash "$STATE_FILE")
     if [ "$OLD_HASH" != "$HASH" ]; then
       die "lease belongs to another session; use handoff so the epoch and review budget are reset"
