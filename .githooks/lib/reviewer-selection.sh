@@ -1,6 +1,69 @@
 #!/usr/bin/env bash
 # Sourced by .githooks/post-commit and smoke checks.
 
+local_ai_review_state_lock_mtime() {
+  local path=$1
+  if stat -f %m "$path" 2>/dev/null; then return 0; fi
+  stat -c %Y "$path" 2>/dev/null
+}
+
+local_ai_review_state_lock_inode() {
+  local path=$1
+  if stat -f %i "$path" 2>/dev/null; then return 0; fi
+  stat -c %i "$path" 2>/dev/null
+}
+
+local_ai_review_reclaim_state_lock() {
+  local lock=$1 owner="$1/owner" pid timestamp now age mtime
+  pid=''
+  timestamp=''
+  IFS=':' read -r pid timestamp _ < "$owner" 2>/dev/null || true
+  case "$pid:$timestamp" in
+    *[!0-9:]*|::*|*:)
+      mtime=$(local_ai_review_state_lock_mtime "$lock") || return 1
+      now=$(date +%s)
+      age=$((now - mtime))
+      [ "$age" -ge "${LOCAL_AI_REVIEW_STATE_LOCK_TIMEOUT_SEC:-600}" ] || return 1
+      ;;
+    *)
+      now=$(date +%s)
+      age=$((now - timestamp))
+      if kill -0 "$pid" 2>/dev/null \
+         && [ "$age" -lt "${LOCAL_AI_REVIEW_STATE_LOCK_TIMEOUT_SEC:-30}" ]; then
+        return 1
+      fi
+      ;;
+  esac
+  rm -f "$owner"
+  rmdir "$lock" 2>/dev/null
+}
+
+local_ai_review_acquire_state_lock() {
+  local lock=$1 pid now generation
+  if ! mkdir "$lock" 2>/dev/null; then
+    local_ai_review_reclaim_state_lock "$lock" || return 1
+    mkdir "$lock" 2>/dev/null || return 1
+  fi
+  pid=$$
+  now=$(date +%s)
+  generation=$(local_ai_review_state_lock_inode "$lock") || {
+    rmdir "$lock" 2>/dev/null || true
+    return 1
+  }
+  LOCAL_AI_REVIEW_STATE_LOCK_TOKEN="$pid:$now:$generation"
+  printf '%s\n' "$LOCAL_AI_REVIEW_STATE_LOCK_TOKEN" > "$lock/owner"
+}
+
+local_ai_review_release_state_lock() {
+  local lock=$1 stored
+  stored=$(cat "$lock/owner" 2>/dev/null || true)
+  if [ "${LOCAL_AI_REVIEW_STATE_LOCK_TOKEN:-}" = "$stored" ]; then
+    rm -f "$lock/owner"
+    rmdir "$lock" 2>/dev/null || true
+  fi
+  LOCAL_AI_REVIEW_STATE_LOCK_TOKEN=''
+}
+
 local_ai_review_select_reviewer() {
   local branch=$1
   case "$branch" in
@@ -60,10 +123,10 @@ local_ai_review_reserve_budget() {
   state="$common/soroeru-issue-worktrees/$issue.json"
   lock="$common/soroeru-issue-worktrees/$issue.lock"
   [ -f "$state" ] || return 1
-  mkdir "$lock" 2>/dev/null || return 1
+  local_ai_review_acquire_state_lock "$lock" || return 1
   tmp="$state.reserve.$$"
   if ! jq -e --argjson epoch "$epoch" '.review.epoch == $epoch and .review.used < .review.limit' "$state" >/dev/null 2>&1; then
-    rmdir "$lock" 2>/dev/null || true
+    local_ai_review_release_state_lock "$lock"
     return 1
   fi
   if ! jq -c --argjson epoch "$epoch" \
@@ -72,12 +135,12 @@ local_ai_review_reserve_budget() {
        else . end' \
       "$state" > "$tmp" || ! mv "$tmp" "$state"; then
     rm -f "$tmp"
-    rmdir "$lock" 2>/dev/null || true
+    local_ai_review_release_state_lock "$lock"
     return 1
   fi
   used=$(jq -r .review.used "$state")
   limit=$(jq -r .review.limit "$state")
-  rmdir "$lock" 2>/dev/null || true
+  local_ai_review_release_state_lock "$lock"
   [ "$used" -le "$limit" ] || return 1
   printf '%s\n' "$used"
 }
@@ -92,7 +155,7 @@ local_ai_review_mark_started() {
   state="$common/soroeru-issue-worktrees/$issue.json"
   lock="$common/soroeru-issue-worktrees/$issue.lock"
   [ -f "$state" ] || return 1
-  mkdir "$lock" 2>/dev/null || return 1
+  local_ai_review_acquire_state_lock "$lock" || return 1
   tmp="$state.started.$$"
   if ! jq -e --argjson epoch "$epoch" \
        '.review.epoch == $epoch and (.review.pending // 0) > 0' "$state" >/dev/null 2>&1 \
@@ -101,10 +164,10 @@ local_ai_review_mark_started() {
         then .review.pending -= 1 else . end' "$state" > "$tmp" \
      || ! mv "$tmp" "$state"; then
     rm -f "$tmp"
-    rmdir "$lock" 2>/dev/null || true
+    local_ai_review_release_state_lock "$lock"
     return 1
   fi
-  rmdir "$lock" 2>/dev/null || true
+  local_ai_review_release_state_lock "$lock"
 }
 
 # Refund one queue reservation when the launcher never reaches its entrypoint.
@@ -116,7 +179,7 @@ local_ai_review_refund_budget() {
   state="$common/soroeru-issue-worktrees/$issue.json"
   lock="$common/soroeru-issue-worktrees/$issue.lock"
   [ -f "$state" ] || return 1
-  mkdir "$lock" 2>/dev/null || return 1
+  local_ai_review_acquire_state_lock "$lock" || return 1
   tmp="$state.refund.$$"
   if ! jq -e --argjson epoch "$epoch" \
        '.review.epoch == $epoch and .review.used > 0 and (.review.pending // 0) > 0' "$state" >/dev/null 2>&1 \
@@ -126,8 +189,8 @@ local_ai_review_refund_budget() {
        "$state" > "$tmp" \
      || ! mv "$tmp" "$state"; then
     rm -f "$tmp"
-    rmdir "$lock" 2>/dev/null || true
+    local_ai_review_release_state_lock "$lock"
     return 1
   fi
-  rmdir "$lock" 2>/dev/null || true
+  local_ai_review_release_state_lock "$lock"
 }

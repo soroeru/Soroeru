@@ -67,8 +67,10 @@ Keep both skill copies in sync when editing this file:
 Follow this workflow:
 
 1. **Issue worktree start gate** (MUST — see above). Do not skip.
-2. The lifecycle helper fetches `origin/main` and atomically creates the named
-   Issue branch/worktree. Do not create either one with ad hoc Git commands.
+2. The lifecycle helper attempts to fetch `origin/main` and atomically creates
+   the named Issue branch/worktree. During a temporary fetch failure it may use
+   an existing local `origin/main`, then local `main`; do not create either one
+   with ad hoc Git commands.
 3. Implement the Issue (all edits and commits stay in the Issue worktree).
 4. After committing, check the commit command's own output for
    `[local-ai-review] queued ...`. If present, wait for that result by

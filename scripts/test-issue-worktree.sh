@@ -50,6 +50,22 @@ REMOTE="$TMP_ROOT/remote.git"
 REPO="$TMP_ROOT/repo with spaces"
 setup_repo "$REMOTE" "$REPO"
 
+# A temporary fetch failure must not block creation when the last fetched
+# origin/main is already available locally.
+git -C "$REPO" remote set-url origin "$TMP_ROOT/unavailable-remote.git"
+ISSUE_WORKTREE_SKIP_GITHUB=1 "$HELPER" create 366 offline-base --agent codex --session offline-session --repo "$REPO"
+OFFLINE_WORKTREE="$REPO/.worktrees/issue-366-offline-base"
+[ -d "$OFFLINE_WORKTREE" ] || fail "offline worktree was not created from cached origin/main"
+
+# If the remote-tracking ref is also absent, local main is the final safe
+# fallback rather than creating a branch from an unrelated ref.
+git -C "$REPO" update-ref -d refs/remotes/origin/main
+ISSUE_WORKTREE_SKIP_GITHUB=1 "$HELPER" create 367 local-main-base --agent codex --session local-main-session --repo "$REPO"
+LOCAL_MAIN_WORKTREE="$REPO/.worktrees/issue-367-local-main-base"
+[ -d "$LOCAL_MAIN_WORKTREE" ] || fail "worktree was not created from local main"
+git -C "$REPO" remote set-url origin "$REMOTE"
+git -C "$REPO" fetch origin
+
 ISSUE_WORKTREE_SKIP_GITHUB=1 "$HELPER" create 365 demo --agent codex --session session-a --repo "$REPO"
 WORKTREE="$REPO/.worktrees/issue-365-demo"
 [ -d "$WORKTREE" ] || fail "worktree was not created"
@@ -72,6 +88,20 @@ assert_contains "$OUT" "owner process is still running"
 
 COMMON=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
 STATE_FILE="$COMMON/soroeru-issue-worktrees/365.json"
+
+# A lifecycle lock abandoned by a dead process is reclaimed safely.
+mkdir "$COMMON/soroeru-issue-worktrees/365.lock"
+printf '999999:%s\n' "$(date +%s)" > "$COMMON/soroeru-issue-worktrees/365.lock/owner"
+"$HELPER" acquire 365 --agent codex --session session-a --repo "$REPO"
+[ ! -e "$COMMON/soroeru-issue-worktrees/365.lock" ] || fail "dead lifecycle lock was not reclaimed"
+
+# Review helpers may run in a command-substitution child while their parent PID
+# remains alive. Their generation-bearing lock is reclaimable after timeout.
+mkdir "$COMMON/soroeru-issue-worktrees/365.lock"
+printf '%s:0:1\n' "$$" > "$COMMON/soroeru-issue-worktrees/365.lock/owner"
+"$HELPER" acquire 365 --agent codex --session session-a --repo "$REPO"
+[ ! -e "$COMMON/soroeru-issue-worktrees/365.lock" ] || fail "expired review state lock was not reclaimed"
+
 jq '.owner.pid=999999' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
 
 jq '.review.pending=1' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
@@ -111,5 +141,13 @@ ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 365 --pr 999 --repo "$REPO"
 if git -C "$REPO" show-ref --verify --quiet refs/heads/issue-365-demo; then
   fail "local branch still exists after cleanup"
 fi
+
+"$HELPER" release 366 --session offline-session --repo "$REPO" >/dev/null
+ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 366 --pr 998 --repo "$REPO"
+[ ! -e "$OFFLINE_WORKTREE" ] || fail "offline worktree still exists after cleanup"
+
+"$HELPER" release 367 --session local-main-session --repo "$REPO" >/dev/null
+ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 367 --pr 997 --repo "$REPO"
+[ ! -e "$LOCAL_MAIN_WORKTREE" ] || fail "local-main worktree still exists after cleanup"
 
 printf 'issue worktree lifecycle tests passed\n'

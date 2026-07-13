@@ -178,6 +178,9 @@ The reservation is recorded as pending until the orchestrator acquires the
 review lock. Handoff is refused while either a launch is pending or a review
 lock is active, preventing an older epoch's queued review from crossing the
 handoff boundary.
+Issue-state lock directories record an owner token and reclaim dead or expired
+owners, so an interrupted reserve/start/refund critical section does not wedge
+future reviews or handoffs indefinitely.
 The launcher must create a startup handshake after validating its repository
 and orchestrator. If the orchestrator exits before acquiring the review lock,
 the launcher refunds that epoch's pending reservation atomically.

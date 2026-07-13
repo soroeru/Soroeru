@@ -36,7 +36,12 @@ cd "$WORK"
 # shellcheck source=/dev/null
 . .githooks/config
 . .githooks/lib/reviewer-selection.sh
+
+# Review budget operations reclaim a state lock abandoned by a dead process.
+mkdir "$COMMON/soroeru-issue-worktrees/365.lock"
+printf '%s:0:1\n' "$$" > "$COMMON/soroeru-issue-worktrees/365.lock/owner"
 [ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "1" ]
+[ ! -e "$COMMON/soroeru-issue-worktrees/365.lock" ]
 [ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
 STARTED_MARKER="$WORK/review-started"
 LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh codex issue-365-review-epoch HEAD 365 4 "$STARTED_MARKER"

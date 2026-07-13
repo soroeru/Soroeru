@@ -68,10 +68,12 @@ Before any agent creates a branch or edits files for Issue work — including th
 
 ### 2.2 Create the Issue branch and worktree
 
-`issue-worktree.sh create` verifies the GitHub Issue, fetches `origin/main`,
-rejects partial or duplicate state, creates the named branch/worktree, and
-starts epoch 1 with a `0/2` review budget. Do not implement on detached HEAD or
-check out local `main` in an agent worktree.
+`issue-worktree.sh create` verifies the GitHub Issue, attempts to fetch
+`origin/main`, rejects partial or duplicate state, creates the named
+branch/worktree, and starts epoch 1 with a `0/2` review budget. If the fetch is
+temporarily unavailable, it may use an existing local `origin/main`, then local
+`main` as a last-resort base; creation fails when none is available. Do not
+implement on detached HEAD or check out local `main` in an agent worktree.
 
 ### 2.3 Parallel multi-agent development (worktrees)
 

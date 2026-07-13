@@ -110,16 +110,62 @@ STATE_FILE="$STATE_ROOT/$ISSUE.json"
 LOCK_DIR="$STATE_ROOT/$ISSUE.lock"
 mkdir -p "$STATE_ROOT"
 
-lock_state() {
-  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-    die "Issue #$ISSUE lifecycle state is locked by another process"
+state_lock_mtime() {
+  local path=$1
+  if stat -f %m "$path" 2>/dev/null; then return 0; fi
+  stat -c %Y "$path" 2>/dev/null
+}
+
+reclaim_stale_state_lock() {
+  local owner="$LOCK_DIR/owner" pid timestamp generation now age mtime
+  pid=''
+  timestamp=''
+  generation=''
+  IFS=':' read -r pid timestamp generation < "$owner" 2>/dev/null || true
+  case "$pid:$timestamp" in
+    *[!0-9:]*|::*|*:)
+      mtime=$(state_lock_mtime "$LOCK_DIR") || return 1
+      now=$(date +%s)
+      age=$((now - mtime))
+      [ "$age" -ge "${ISSUE_WORKTREE_STATE_LOCK_TIMEOUT_SEC:-600}" ] || return 1
+      ;;
+    *)
+      now=$(date +%s)
+      age=$((now - timestamp))
+      if kill -0 "$pid" 2>/dev/null; then
+        [ -n "$generation" ] || return 1
+        [ "$age" -ge "${ISSUE_WORKTREE_REVIEW_STATE_LOCK_TIMEOUT_SEC:-30}" ] || return 1
+      fi
+      ;;
+  esac
+  rm -f "$owner"
+  if rmdir "$LOCK_DIR" 2>/dev/null; then
+    note "reclaimed stale lifecycle state lock for Issue #$ISSUE"
+    return 0
   fi
-  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
+  return 1
+}
+
+lock_state() {
+  local now
+  if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    reclaim_stale_state_lock || die "Issue #$ISSUE lifecycle state is locked by another process"
+    mkdir "$LOCK_DIR" 2>/dev/null || die "Issue #$ISSUE lifecycle state is locked by another process"
+  fi
+  now=$(date +%s)
+  LOCK_TOKEN="$$:$now"
+  printf '%s\n' "$LOCK_TOKEN" > "$LOCK_DIR/owner"
+  trap 'unlock_state' EXIT INT TERM
 }
 
 unlock_state() {
-  rmdir "$LOCK_DIR" 2>/dev/null || true
+  local stored
   trap - EXIT INT TERM
+  stored=$(cat "$LOCK_DIR/owner" 2>/dev/null || true)
+  if [ "${LOCK_TOKEN:-}" = "$stored" ]; then
+    rm -f "$LOCK_DIR/owner"
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
 }
 
 require_state() {
@@ -245,10 +291,19 @@ case "$COMMAND" in
     if worktree_registered "$WORKTREE" || [ -e "$WORKTREE" ]; then
       die "partial state: worktree path already exists without lifecycle metadata: $WORKTREE"
     fi
-    git -C "$PRIMARY" fetch origin
-    git -C "$PRIMARY" rev-parse --verify origin/main >/dev/null 2>&1 || die "origin/main is unavailable"
+    if ! git -C "$PRIMARY" fetch origin; then
+      note "fetch origin failed; checking existing local base refs"
+    fi
+    if git -C "$PRIMARY" rev-parse --verify origin/main >/dev/null 2>&1; then
+      BASE_REF=origin/main
+    elif git -C "$PRIMARY" rev-parse --verify main >/dev/null 2>&1; then
+      BASE_REF=main
+      note "origin/main is unavailable; using local main as the worktree base"
+    else
+      die "neither origin/main nor local main is available"
+    fi
     mkdir -p "$PRIMARY/.worktrees"
-    git -C "$PRIMARY" worktree add -b "$BRANCH" "$WORKTREE" origin/main
+    git -C "$PRIMARY" worktree add -b "$BRANCH" "$WORKTREE" "$BASE_REF"
     NOW=$(utc_now)
     HASH=$(session_hash "$SESSION")
     HOST=$(hostname 2>/dev/null || printf unknown)
