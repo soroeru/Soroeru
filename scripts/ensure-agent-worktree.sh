@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ensure-agent-worktree.sh — bootstrap or resolve a persistent agent-lane worktree.
+# ensure-agent-worktree.sh — diagnose a legacy persistent agent-lane worktree.
 #
 # Official agent lanes (under the primary working tree):
 #   codex  → .worktrees/codex
@@ -7,15 +7,12 @@
 #   grok   → .worktrees/grok
 #   gemini → .worktrees/gemini
 #
-# New lanes are checked out at origin/main (usually detached HEAD). That is
-# expected: skill / github-operations §2.2 always create a named issue branch
-# before implementation. Do not implement while still detached.
-#
-# Idempotent. Safe to re-run.
+# Migration-only. It never creates a missing fixed lane; new work uses
+# scripts/issue-worktree.sh.
 #
 # MUST rules (docs/github-operations.md §2):
 #   - Primary working tree is human-only; agents never commit there.
-#   - issue-implementation always runs inside the matching agent worktree.
+#   - issue-implementation uses an Issue worktree, never a fixed lane.
 
 set -euo pipefail
 
@@ -23,7 +20,7 @@ VALID_AGENTS="codex claude grok gemini"
 
 usage() {
   cat <<'EOF'
-ensure-agent-worktree.sh — bootstrap or resolve a persistent agent-lane worktree.
+ensure-agent-worktree.sh — diagnose a legacy persistent agent-lane worktree.
 
 Official lanes (under the primary working tree):
   codex  → .worktrees/codex
@@ -33,11 +30,10 @@ Official lanes (under the primary working tree):
 
 Usage:
   scripts/ensure-agent-worktree.sh <codex|claude|grok|gemini>
-      Ensure the lane worktree exists (create if missing). Print its absolute
-      path on stdout. Messages go to stderr.
+      Print an existing legacy lane path. Refuse to create a missing lane.
 
   scripts/ensure-agent-worktree.sh --all
-      Ensure all four lanes. Print each absolute path on its own line.
+      Diagnose all four legacy lanes. Print existing paths; fail if missing.
 
   scripts/ensure-agent-worktree.sh --require-cwd <agent>
       Ensure the lane exists, then exit 0 only if cwd is that worktree root or
@@ -46,8 +42,8 @@ Usage:
 
   scripts/ensure-agent-worktree.sh --help
 
-New lanes start at origin/main (often detached HEAD). Create the issue branch
-with git switch -c <agent>/issue-… origin/main before implementing.
+Do not use this helper for new work. Use scripts/issue-worktree.sh and the
+issue-implementation or handoff-issue skill.
 EOF
 }
 
@@ -126,33 +122,25 @@ is_registered_worktree() {
   return 1
 }
 
-# If Git still registers $path but the directory is gone, drop the stale entry.
-repair_stale_registration() {
+# Diagnose stale legacy registration without mutating it.
+reject_stale_registration() {
   local primary=$1 path=$2
   if is_registered_worktree "$primary" "$path" && [ ! -d "$path" ]; then
-    printf 'ensure-agent-worktree: stale registration for %s (dir missing); repairing\n' \
-      "$path" >&2
-    # Prefer remove; fall back to prune of dead entries.
-    if ! git -C "$primary" worktree remove --force "$path" 2>/dev/null; then
-      git -C "$primary" worktree prune -v >&2 || true
-    fi
-    if is_registered_worktree "$primary" "$path"; then
-      printf 'error: could not clear stale worktree registration for %s\n' "$path" >&2
-      printf 'error: try: git worktree remove --force %s && git worktree prune\n' "$path" >&2
-      exit 1
-    fi
+    printf 'error: stale legacy worktree registration: %s (directory missing)\n' "$path" >&2
+    printf 'error: inspect WIP and registration manually; diagnosis mode does not prune or force-remove.\n' >&2
+    exit 1
   fi
 }
 
-# Ensure lane exists; print absolute path on stdout.
+# Diagnose an existing legacy lane; print absolute path on stdout.
 ensure_one() {
   local agent=$1
-  local primary path tip
+  local primary path
   primary=$(primary_root)
   path=$(worktree_path_for "$primary" "$agent")
   path=$(canonicalize_path "$path")
 
-  repair_stale_registration "$primary" "$path"
+  reject_stale_registration "$primary" "$path"
 
   if [ -d "$path" ] && is_registered_worktree "$primary" "$path"; then
     printf 'ensure-agent-worktree: %s already present at %s\n' "$agent" "$path" >&2
@@ -167,33 +155,13 @@ ensure_one() {
   fi
 
   if is_registered_worktree "$primary" "$path" && [ ! -d "$path" ]; then
-    # Should have been repaired; belt-and-suspenders.
-    repair_stale_registration "$primary" "$path"
+    reject_stale_registration "$primary" "$path"
   fi
 
-  mkdir -p "$(dirname "$path")"
-  if ! git -C "$primary" fetch origin 2>/dev/null; then
-    printf 'ensure-agent-worktree: warning: git fetch origin failed; using local refs\n' >&2
-  fi
-
-  # Always --detach so we never try to check out a branch already held by the
-  # primary tree (local `main` is almost always checked out there).
-  # Detached HEAD at trunk tip is expected; skills create named issue branches next.
-  if git -C "$primary" rev-parse --verify origin/main >/dev/null 2>&1; then
-    tip=origin/main
-  elif git -C "$primary" rev-parse --verify main >/dev/null 2>&1; then
-    printf 'ensure-agent-worktree: warning: origin/main missing; detaching at local main\n' >&2
-    tip=main
-  else
-    printf 'error: neither origin/main nor main is available to create %s\n' "$path" >&2
-    exit 1
-  fi
-  git -C "$primary" worktree add --detach "$path" "$tip"
-
-  path=$(canonicalize_path "$path")
-  printf 'ensure-agent-worktree: created %s at %s (detached at %s; create an issue branch before implementing)\n' \
-    "$agent" "$path" "$tip" >&2
-  printf '%s\n' "$path"
+  printf 'error: legacy %s lane is missing: %s\n' "$agent" "$path" >&2
+  printf 'error: fixed lanes are migration-only and are not recreated.\n' >&2
+  printf 'error: use scripts/issue-worktree.sh for new Issue work.\n' >&2
+  exit 1
 }
 
 require_cwd() {

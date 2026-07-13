@@ -4,7 +4,7 @@
 # Triggers a background reviewer CLI on the just-created commit.
 # Skips on:
 #   - LOCAL_AI_REVIEW_RUNNING=1 (recursion guard)
-#   - branch not matching codex/* , claude/* , or grok/* prefix
+#   - branch has neither valid Issue metadata nor a legacy agent prefix
 #   - merge / rebase / cherry-pick in progress
 #   - commit message contains [skip-review]
 #
@@ -66,11 +66,24 @@ case "$HEAD_MSG" in
   *'[skip-review]'*) exit 0 ;;
 esac
 
-# Detect reviewer from branch prefix. The branch's agent prefix maps
-# to the same reviewer CLI.
+# Issue branches resolve reviewer and review budget from shared lifecycle
+# metadata. Agent-prefixed branches use migration-only prefix fallback.
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-REVIEWER=$(local_ai_review_select_reviewer "$BRANCH") || exit 0
-
+if ! REVIEW_CONTEXT=$(local_ai_review_select_context "$BRANCH" "$REPO_ROOT"); then
+  case "$BRANCH" in
+    issue-*) printf '[local-ai-review] ERROR: Issue branch metadata is unavailable; review not queued\n' >&2 ;;
+  esac
+  exit 0
+fi
+IFS=$'\t' read -r REVIEWER REVIEW_ISSUE REVIEW_EPOCH REVIEW_USED REVIEW_LIMIT <<< "$REVIEW_CONTEXT"
+if [ "$REVIEW_ISSUE" = "legacy" ]; then
+  REVIEW_ISSUE=''
+fi
+if [ "$REVIEW_USED" -ge "$REVIEW_LIMIT" ]; then
+  printf '[local-ai-review] review budget exhausted for Issue #%s epoch %s (%s/%s)\n' \
+    "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_USED" "$REVIEW_LIMIT" >&2
+  exit 0
+fi
 # Pin the commit that triggered this hook so the background review
 # always covers the same diff, even if HEAD moves before the
 # orchestrator gets to it.
@@ -92,14 +105,46 @@ log_launch() {
 
 LAUNCHER="$GITHOOKS_DIR/lib/local-ai-review-launch.sh"
 SHORT_SHA=$(git rev-parse --short "$HEAD_SHA" 2>/dev/null || echo unknown)
+LAUNCH_HANDSHAKE="$STATE_DIR/.launch-started.$SHORT_SHA.$$"
+REVIEW_STARTED_MARKER="$STATE_DIR/.review-started.$SHORT_SHA.$$"
+
+wait_for_launch_handshake() {
+  local attempts=0
+  while [ "$attempts" -lt "${LOCAL_AI_REVIEW_LAUNCH_HANDSHAKE_ATTEMPTS:-50}" ]; do
+    [ -f "$LAUNCH_HANDSHAKE" ] && return 0
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
+
+refund_launch_reservation() {
+  rm -f "$LAUNCH_HANDSHAKE"
+  if [ -n "$REVIEW_ISSUE" ]; then
+    local_ai_review_refund_budget "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT" || \
+      printf '[local-ai-review] ERROR: failed to refund launch reservation for Issue #%s epoch %s\n' \
+        "$REVIEW_ISSUE" "$REVIEW_EPOCH" >&2
+  fi
+}
 
 fallback_nohup() {
   [ -n "${LAUNCH_PLIST:-}" ] && rm -f "$LAUNCH_PLIST"
   env LOCAL_AI_REVIEW_LAUNCH_METHOD=nohup \
-    nohup "$LAUNCHER" "$REPO_ROOT" "$GITHOOKS_DIR" "$STATE_DIR" "$REVIEWER" "$BRANCH" "$HEAD_SHA" \
+    nohup "$LAUNCHER" "$REPO_ROOT" "$GITHOOKS_DIR" "$STATE_DIR" "$REVIEWER" "$BRANCH" "$HEAD_SHA" "" "" "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$LAUNCH_HANDSHAKE" "$REVIEW_STARTED_MARKER" \
     >/dev/null 2>> "$LAUNCH_ERR" </dev/null &
   LAUNCH_PID=$!
   disown "$LAUNCH_PID" 2>/dev/null || true
+  if ! wait_for_launch_handshake; then
+    log_launch "launcher did not start reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA pid=$LAUNCH_PID"
+    kill -TERM "$LAUNCH_PID" 2>/dev/null || true
+    wait "$LAUNCH_PID" 2>/dev/null || true
+    if kill -0 "$LAUNCH_PID" 2>/dev/null; then
+      log_launch "launcher cancellation could not be confirmed reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA pid=$LAUNCH_PID"
+      return 2
+    fi
+    return 1
+  fi
+  rm -f "$LAUNCH_HANDSHAKE"
   log_launch "queued reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA method=nohup pid=$LAUNCH_PID"
 }
 
@@ -115,6 +160,14 @@ xml_escape() {
 plist_string() {
   printf '    <string>%s</string>\n' "$(xml_escape "$1")"
 }
+
+if [ -n "$REVIEW_ISSUE" ]; then
+  if ! REVIEW_USED=$(local_ai_review_reserve_budget "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT"); then
+    printf '[local-ai-review] could not reserve review budget for Issue #%s epoch %s; review not queued\n' \
+      "$REVIEW_ISSUE" "$REVIEW_EPOCH" >&2
+    exit 0
+  fi
+fi
 
 # On macOS, Codex non-interactive command sessions can terminate
 # child process groups started with plain `nohup ... &` before the
@@ -146,6 +199,10 @@ if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ] \
     plist_string "$HEAD_SHA"
     plist_string "$LAUNCH_SERVICE"
     plist_string "$LAUNCH_PLIST"
+    plist_string "$REVIEW_ISSUE"
+    plist_string "$REVIEW_EPOCH"
+    plist_string "$LAUNCH_HANDSHAKE"
+    plist_string "$REVIEW_STARTED_MARKER"
     printf '  </array>\n'
     printf '  <key>EnvironmentVariables</key>\n'
     printf '  <dict>\n'
@@ -172,17 +229,45 @@ if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ] \
     printf '%s\n' '</plist>'
   } > "$LAUNCH_PLIST"
   if launchctl bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_PLIST" 2>> "$LAUNCH_ERR"; then
-    rm -f "$LAUNCH_PLIST"
-    log_launch "queued reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA method=launchctl label=$LABEL"
+    if wait_for_launch_handshake; then
+      rm -f "$LAUNCH_HANDSHAKE"
+      rm -f "$LAUNCH_PLIST"
+      log_launch "queued reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA method=launchctl label=$LABEL"
+    else
+      log_launch "launchctl handshake timed out reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA"
+      if ! launchctl bootout "$LAUNCH_SERVICE" >/dev/null 2>&1; then
+        log_launch "launchctl cancellation could not be confirmed; reservation remains pending reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA"
+        rm -f "$LAUNCH_HANDSHAKE"
+        exit 0
+      fi
+      rm -f "$LAUNCH_HANDSHAKE"
+      fallback_nohup
+      FALLBACK_STATUS=$?
+      if [ "$FALLBACK_STATUS" -ne 0 ]; then
+        [ "$FALLBACK_STATUS" -eq 1 ] && refund_launch_reservation
+        exit 0
+      fi
+    fi
   else
     log_launch "launchctl bootstrap failed reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA; falling back to nohup"
+    rm -f "$LAUNCH_HANDSHAKE"
     fallback_nohup
+    FALLBACK_STATUS=$?
+    if [ "$FALLBACK_STATUS" -ne 0 ]; then
+      [ "$FALLBACK_STATUS" -eq 1 ] && refund_launch_reservation
+      exit 0
+    fi
   fi
 else
   fallback_nohup
+  FALLBACK_STATUS=$?
+  if [ "$FALLBACK_STATUS" -ne 0 ]; then
+    [ "$FALLBACK_STATUS" -eq 1 ] && refund_launch_reservation
+    exit 0
+  fi
 fi
 
-printf '[local-ai-review] queued %s review for %s (commit=%s)\n' \
-  "$REVIEWER" "$BRANCH" "$SHORT_SHA" >&2
+printf '[local-ai-review] queued %s review for %s (commit=%s issue=%s epoch=%s reserved=%s/%s)\n' \
+  "$REVIEWER" "$BRANCH" "$SHORT_SHA" "${REVIEW_ISSUE:-legacy}" "$REVIEW_EPOCH" "$REVIEW_USED" "$REVIEW_LIMIT" >&2
 
 exit 0

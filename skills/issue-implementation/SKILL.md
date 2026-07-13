@@ -34,40 +34,28 @@ Issue before starting.
 Fetch the Issue body and comments first, then derive the branch name and
 implementation scope from that Issue content.
 
-## Agent worktree (MUST)
+## Issue worktree (MUST)
 
 Canonical rules: [`docs/github-operations.md`](../../docs/github-operations.md)
 §2.
 
-| Agent  | Worktree path           | Branch prefix |
-| ------ | ----------------------- | ------------- |
-| Codex  | `.worktrees/codex`      | `codex/`      |
-| Claude | `.worktrees/claude`     | `claude/`     |
-| Grok   | `.worktrees/grok`       | `grok/`       |
-| Gemini | `.worktrees/gemini`     | `gemini/`     |
-
-- **Dedicated worktree is MUST** on this skill path. Never implement, create a
-  branch, or commit on the primary clone.
+- **One dedicated Issue worktree is MUST** on this skill path. Never implement,
+  create a branch, or commit on the primary clone.
 - **Primary clone is human-only.** Agents must not perform git writes there.
-- Antigravity uses the **Gemini** lane (`gemini/`, `.worktrees/gemini`).
-- Choose the lane from the branch prefix you will create. If the session host
-  CLI and the prefix disagree, prefer the prefix you will push.
+- Worktree: `.worktrees/issue-<number>-<short-english-slug>`.
+- Branch: `issue-<number>-<short-english-slug>`.
+- Agent identity is lifecycle metadata, not part of the path or branch.
 
 ### Start gate (before any implementation write)
 
-1. Run `git worktree list`.
-2. Ensure the lane exists:
-   `bash scripts/ensure-agent-worktree.sh <agent>`
-   (or `bash scripts/ensure-agent-worktree.sh --all` once when bootstrapping).
-3. Verify cwd is inside that worktree:
-   `bash scripts/ensure-agent-worktree.sh --require-cwd <agent>`
-4. If not inside the lane: move **all** subsequent git and file operations to
-   the absolute path printed by the script (do not keep using the primary tree).
-5. If ensure or require-cwd fails: **stop** and report. **No fallback** to the
-   primary working tree or another agent's worktree.
-
-After the gate, branch creation follows github-operations §2.2 from **inside**
-the agent worktree only.
+1. Run `git worktree list` and inspect `scripts/issue-worktree.sh status <issue> --json`.
+2. If lifecycle metadata, an Issue worktree, or an Issue branch already exists,
+   do not create another. Use `handoff-issue`.
+3. Create and acquire the Issue worktree with the lifecycle helper, passing the
+   current agent and a non-sensitive stable session identifier:
+   `bash scripts/issue-worktree.sh create <issue> <slug> --agent <agent> --session <session-id>`.
+4. Move **all** subsequent operations to the absolute path printed by the helper.
+5. If creation or validation fails: stop and report. No primary-tree fallback.
 
 Keep both skill copies in sync when editing this file:
 
@@ -78,13 +66,13 @@ Keep both skill copies in sync when editing this file:
 
 Follow this workflow:
 
-1. **Agent worktree start gate** (MUST — see above). Do not skip.
-2. Fetch the latest `main` branch (`git fetch origin`).
-3. Create a new branch named from the Issue content, from inside the agent
-   worktree only:
-   `git switch -c <agent>/issue-<number>-<short-english-slug> origin/main`
-4. Implement the Issue (all edits and commits stay in the agent worktree).
-5. After committing, check the commit command's own output for
+1. **Issue worktree start gate** (MUST — see above). Do not skip.
+2. The lifecycle helper attempts to fetch `origin/main` and atomically creates
+   the named Issue branch/worktree. During a temporary fetch failure it may use
+   an existing local `origin/main`, then local `main`; do not create either one
+   with ad hoc Git commands.
+3. Implement the Issue (all edits and commits stay in the Issue worktree).
+4. After committing, check the commit command's own output for
    `[local-ai-review] queued ...`. If present, wait for that result by
    running `scripts/wait-for-local-ai-review.sh --unit <unit[,unit...]>` via a
    single backgrounded shell command (Claude Code: `Bash` with
@@ -94,8 +82,9 @@ Follow this workflow:
    exactly one long fallback wakeup (comfortably above the script's
    `--timeout`) as a dead-man's switch only, not a second poll loop. See
    `docs/local-ai-review.md` §10 for the script's flags and matching
-   mechanics. This workflow allows **up to two local AI review runs total**
-   (never open-ended, see `docs/local-ai-review.md` §6): apply a fix pass for
+   mechanics. This workflow allows **up to two local AI review runs in the
+   current handoff epoch** (never open-ended, see `docs/local-ai-review.md`
+   §6): apply a fix pass for
    the first review's actionable findings and commit it *without*
    `LOCAL_AI_REVIEW_RUNNING=1`, so the hook reviews that fix commit too (a
    confirming second review). If that second review still has actionable
@@ -105,7 +94,7 @@ Follow this workflow:
    already comes back with nothing actionable (`PASS`, or `NIT_ONLY` handled
    per `docs/local-ai-review.md` §7), no second review is needed.
    Wait for reviews under **this** worktree's `state/ai-reviews/` only.
-6. When local development is complete, push the branch to GitHub and create a
+5. When local development is complete, push the branch to GitHub and create a
    PR. Include `Closes #<issue>` in the PR body so GitHub closes the Issue
    automatically when the PR is merged. Also include the local AI review status
    for each run, the actionable findings, and what was fixed. If a review did
@@ -116,11 +105,11 @@ Follow this workflow:
 
 - Respect repository instructions, sandbox rules, external-network approval
   requirements, and destructive-command safety boundaries.
-- Do not skip the agent worktree start gate. Do not commit on the primary clone.
+- Do not skip the Issue worktree start gate. Do not commit on the primary clone.
 - Do not skip local AI review unless the repository instructions explicitly
   allow it.
 - Do not run an open-ended local AI review loop. This workflow allows at most
-  two local AI review runs total (an initial review and one confirming
+  two local AI review runs per handoff epoch (an initial review and one confirming
   re-review after a fix pass) — the second follow-up commit always suppresses
   further review with `LOCAL_AI_REVIEW_RUNNING=1`.
 - Treat PR close as distinct from merge. Close a PR only when the user or the

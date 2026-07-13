@@ -26,6 +26,8 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 . "$GITHOOKS_DIR/config"
 # shellcheck source=/dev/null
 . "$GITHOOKS_DIR/lib/last-reviewed.sh"
+# shellcheck source=/dev/null
+. "$GITHOOKS_DIR/lib/reviewer-selection.sh"
 
 cd "$REPO_ROOT"
 
@@ -35,6 +37,9 @@ BRANCH=${2:?branch required}
 # invocations, but post-commit always passes it so the review is
 # pinned to the commit that triggered the hook.
 COMMIT_SHA=${3:-HEAD}
+REVIEW_ISSUE=${4:-}
+REVIEW_EPOCH=${5:-0}
+REVIEW_STARTED_MARKER=${6:-}
 
 STATE_DIR="$LOCAL_AI_REVIEW_STATE_DIR"
 mkdir -p "$STATE_DIR"
@@ -286,6 +291,7 @@ run_reviewer() {
 
 ANY_UNIT_DIFF=0
 ANY_REVIEWER_FAILED=0
+REVIEW_STARTED=0
 
 # UNIT_ORDER always starts with "code" (never empty); still use the
 # bash 3.2 set -u guard so a future reordering cannot reintroduce the
@@ -316,7 +322,7 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
 
   # --- Idempotency check -----------------------------------------
   set_phase "idempotency unit=$UNIT"
-  if last_reviewed_matches "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA"; then
+  if last_reviewed_matches "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA" "$REVIEW_EPOCH"; then
     log "skip unit=$UNIT: same as last-reviewed (sha=$(printf '%s' "$DIFF_SHA" | cut -c1-12))"
     continue
   fi
@@ -359,6 +365,18 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   # --- Run reviewer with watchdog timeout (bash 3.2-safe) ---------
   set_phase "reviewer-start unit=$UNIT"
   refresh_lock
+  if [ "$REVIEW_STARTED" = "0" ] && [ -n "$REVIEW_ISSUE" ]; then
+    if [ -n "$REVIEW_STARTED_MARKER" ] && ! : > "$REVIEW_STARTED_MARKER"; then
+      fail "could not create review-started marker for Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH"
+      exit 1
+    fi
+    if ! local_ai_review_mark_started "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT"; then
+      [ -n "$REVIEW_STARTED_MARKER" ] && rm -f "$REVIEW_STARTED_MARKER"
+      fail "could not mark review as started for Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH"
+      exit 1
+    fi
+    REVIEW_STARTED=1
+  fi
   # $$ suffix keeps two runs of the same unit within one second (e.g.
   # under the smoke test's instant stub reviewer) from colliding.
   TS=$(date +%Y%m%d-%H%M%S)
@@ -397,6 +415,8 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
     printf -- '- timestamp: %s\n' "$(date -u +%FT%TZ)"
     printf -- "- review unit: \`%s\`\n" "$UNIT"
     printf -- "- branch: \`%s\`\n" "$BRANCH"
+    [ -n "$REVIEW_ISSUE" ] && printf -- "- issue: \`%s\`\n" "$REVIEW_ISSUE"
+    printf -- "- handoff_epoch: \`%s\`\n" "$REVIEW_EPOCH"
     printf -- "- commit: \`%s\`\n" "$COMMIT_SHA"
     printf -- "- merge_base: \`%s\`\n" "$MERGE_BASE"
     printf -- "- diff_sha256: \`%s\`\n" "$DIFF_SHA"
@@ -421,7 +441,7 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   fi
 
   set_phase "save-last-reviewed unit=$UNIT"
-  last_reviewed_save "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA" "$REVIEWER"
+  last_reviewed_save "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA" "$REVIEWER" "$REVIEW_EPOCH"
   log "done unit=$UNIT reviewer=$REVIEWER output=$OUTPUT"
 done
 

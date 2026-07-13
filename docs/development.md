@@ -17,7 +17,8 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 
 - Keep changes small enough to review as one coherent behavior, document, or
   workflow update.
-- Prefer issue-driven branches named `<agent>/issue-<number>-<short-slug>`.
+- Use Issue branches named `issue-<number>-<short-slug>` in matching
+  `.worktrees/issue-<number>-<short-slug>` worktrees.
 - Keep product requirements, application architecture, test strategy, and
   security assumptions in the owning docs rather than repeating them in `README.md`.
 - Playwright browser automation and the user's configured AI provider are the
@@ -433,7 +434,9 @@ For code changes, run the available gates:
 - `npm run typecheck`
 - `npm test`
 - `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review
-  branch mapping changes
+  reviewer routing changes
+- `bash scripts/smoke-local-ai-review-issue-epoch.sh` for Issue epoch and
+  review-budget changes
 - `bash scripts/smoke-wait-for-local-ai-review.sh` for changes to the local AI
   review completion-waiting script (see
   [`local-ai-review.md`](local-ai-review.md) §10)
@@ -553,16 +556,17 @@ matching Codex Skill lives in
 When the user asks an agent to implement one GitHub Issue, use this workflow
 unless the user explicitly changes it:
 
-1. Fetch the latest `main` branch.
-2. Create a new branch named for the Issue content.
-3. Implement the Issue.
+1. Inspect lifecycle state. Existing work uses `handoff-issue`; new work uses
+   `scripts/issue-worktree.sh create` through `issue-implementation`.
+2. Move every operation to the helper's absolute Issue worktree path.
+3. Implement the Issue there; the primary clone remains human-only.
 4. After committing, check the commit command's own output for
    `[local-ai-review] queued ...`. If present, wait for that result by
    running `scripts/wait-for-local-ai-review.sh` (see
    [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
    the review-count cap and follow-up policy) rather than polling
    `state/ai-reviews/` turn-by-turn. This workflow allows up to two local AI
-   review runs total: apply a fix pass for the first review's actionable
+   review runs per handoff epoch: apply a fix pass for the first review's actionable
   findings and commit it *without* `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
    second review runs on that fix commit); if that second review still has
     actionable findings, apply one more fix pass and commit it *with*
@@ -575,8 +579,10 @@ unless the user explicitly changes it:
    clearly.
 
 The workflow intentionally avoids an open-ended review loop, capped at two
-review runs total. If the user gives multiple Issue numbers, ask which single
-Issue to implement first.
+review runs per handoff epoch. A successful new-session handoff (including the
+same agent after a session limit) starts a fresh `0/2` epoch; same-session
+re-entry is idempotent. If the user gives multiple Issue numbers, ask which
+single Issue to implement first.
 
 ## 11. Operational Notes
 

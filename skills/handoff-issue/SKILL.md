@@ -1,0 +1,68 @@
+---
+name: handoff-issue
+description: Use when resuming an existing Soroeru GitHub Issue after a session limit, new agent session, CLI interruption, rate limit, or agent change, where the Issue worktree and branch should already exist.
+---
+
+# Handoff Issue
+
+## Overview
+
+Resume one existing Issue in its existing worktree without losing inherited WIP or allowing concurrent edits. A successful new-session handoff starts a new audit epoch and restores that epoch's local AI review allowance to two runs.
+
+## Input
+
+Accept exactly one explicit GitHub Issue number, such as `#365` or `365`. If the request has no Issue number, multiple numbers, or could mean a PR number, ask for one Issue number before mutating local or GitHub state.
+
+Use `issue-implementation` instead when the Issue worktree and branch have not been created.
+
+## Workflow
+
+1. Fetch the Issue body and comments. Find its PR if one exists.
+2. Run read-only lifecycle diagnostics from any checkout:
+
+   ```bash
+   bash scripts/issue-worktree.sh status <issue> --json
+   ```
+
+3. Stop if metadata, worktree, branch, or Issue identity is missing, corrupt, duplicated, or mismatched. Never create a replacement worktree in this skill.
+4. Inspect the reported HEAD, dirty state, upstream/ahead/behind, Git operation, review lock, owner, epoch, and review budget. Also inspect the Issue, PR state, diff, commits, CI, unresolved review threads, and saved local review results.
+5. Stop while merge, rebase, cherry-pick, bisect, or local AI review is active. An expired timestamp alone is not permission to discard or overwrite work.
+6. Preserve inherited files exactly. Do not stash, commit, reset, clean, switch branches, copy the WIP, or force-remove anything merely to make takeover convenient.
+7. Choose a stable session identifier available to the current runtime. It must distinguish a new session but must not contain credentials or personal data. Run:
+
+   ```bash
+   bash scripts/issue-worktree.sh handoff <issue> \
+     --agent <codex|claude|grok|gemini> \
+     --session <session-id>
+   ```
+
+8. Re-run `status --json`. Verify the owner and reviewer match the current agent.
+   - A different session MUST increment `handoff_epoch` and set review budget to `0/2`, including when the agent name is unchanged.
+   - Re-running from the same session MUST keep the same epoch and budget. It must not manufacture extra reviews.
+9. Move every subsequent git and file operation to the absolute `worktree` path returned by status. The primary clone remains human-only.
+10. Post a concise audit comment to the Issue before a PR exists, or to the PR once one exists. Include epoch, old/new agent and redacted session identifiers, HEAD, dirty/unpushed/operation/review-lock status, prior epoch review usage, new `0/2` budget, and the next known step.
+11. Summarize current state, inherited changes, unresolved findings, remaining work, and risks to the user. Then continue the Issue workflow in the same worktree.
+
+## Stop Conditions
+
+Stop and report evidence when any of these is true:
+
+- Issue worktree or branch was never created: route to `issue-implementation`.
+- PR state is `MERGED`: route to merge cleanup; do not resume implementation.
+- Another live session or local AI review still owns the worktree.
+- Metadata points to a different Issue or branch.
+- A Git operation is incomplete.
+- Safe state cannot be established from local and GitHub evidence.
+
+`CLOSED` is not `MERGED`. Never delete a branch or worktree merely because the Issue/PR is closed or the remote branch is absent.
+
+## Red Flags
+
+| Temptation | Required response |
+| --- | --- |
+| “The remote branch is gone, so start over.” | Preserve and inspect the local worktree; it may contain unpublished work. |
+| “The lease expired, so takeover is automatically safe.” | Diagnose owner, Git operation, and review process before explicit handoff. |
+| “Stash or reset the dirty files first.” | Leave inherited WIP in place until it is understood. |
+| “Reuse the old review remainder.” | A successful new-session handoff gets a new epoch with two runs. |
+| “Run handoff again to get two more reviews.” | Same-session invocation is idempotent and must not reset the budget. |
+| “PR is closed, so cleanup is safe.” | Cleanup requires GitHub state `MERGED` and all local safety checks. |

@@ -16,7 +16,7 @@ review issues before or alongside PR review without depending on GitHub Actions.
 
 The hook:
 
-- runs after local commits on configured branch prefixes;
+- runs after local commits on Issue branches with valid lifecycle metadata;
 - reviews the branch-wide diff rather than only the latest commit;
 - saves review output under local state;
 - does not replace human judgment or final PR review;
@@ -62,11 +62,8 @@ Edit `.githooks/config`.
 
 Important settings:
 
-- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE`: branch prefix for Claude-authored
-  work;
-- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX`: branch prefix for Codex-authored work;
-- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_GROK`: branch prefix for Grok-authored work;
-- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_GEMINI`: branch prefix for Gemini-authored work;
+- `LOCAL_AI_REVIEW_AUTHOR_PREFIX_*`: migration-only reviewer mappings for
+  agent-prefixed branches created before Issue worktrees;
 - `LOCAL_AI_REVIEW_BASE_REF`: base ref used to compute the branch-wide diff,
   usually `origin/main`;
 - `LOCAL_AI_REVIEW_TARGET_PATHS`: pathspecs reviewed as the `code` unit with
@@ -94,15 +91,14 @@ scripts.
 
 ## 4. Branch Rules
 
-Default reviewer mapping:
+For `issue-<number>-<slug>` branches, the hook reads the Issue lifecycle
+metadata stored under the shared Git common directory. The current owner
+selects Claude, Codex, Grok, or Gemini and the metadata supplies the handoff
+epoch plus its used/limit review budget. Missing, corrupt, or branch-mismatched
+metadata produces an explicit hook diagnostic instead of a silent skip.
 
-- `codex/*` branches trigger Codex review
-- `claude/*` branches trigger Claude review
-- `grok/*` branches trigger Grok review
-- `gemini/*` branches trigger Gemini review
-- other branches are skipped
-
-This mapping keeps the branch agent prefix and reviewer CLI aligned. For the
+Legacy `codex/*`, `claude/*`, `grok/*`, and `gemini/*` branches retain prefix
+routing only during fixed-lane migration. Other branches are skipped. For the
 `code` unit, prompt files remain reviewer-specific: `local-review-codex.md`
 for Codex, `local-review-claude.md` for Claude, `local-review-grok.md`
 for Grok, and `local-review-gemini.md` for Gemini. Documentation units use
@@ -143,21 +139,22 @@ every unit's pathspecs changed, the hook skips review.
 The hook skips when:
 
 - `LOCAL_AI_REVIEW_RUNNING=1`
-- branch prefix does not match the configured AI prefixes
+- branch is neither a valid Issue lifecycle branch nor a legacy configured prefix
+- the current handoff epoch has consumed its two-review budget
 - the commit is a merge commit
 - rebase or cherry-pick is in progress
 - commit message contains `[skip-review]`
 - every unit's pathspec diff is empty
 - merge-base cannot be resolved
-- (per unit) the same branch / merge-base / diff hash has already been
-  reviewed for that unit
+- (per unit) the same branch / merge-base / handoff epoch / diff hash has
+  already been reviewed for that unit
 
 `LOCAL_AI_REVIEW_RUNNING=1` is normally reserved for hook recursion prevention.
 Do not use it manually to suppress review for ordinary commits; use
 `[skip-review]` when the skip should be visible in Git history.
 
-The repository's single-Issue implementation workflow is the narrow exception,
-capped at **two** local AI review runs total (never open-ended): after the
+The repository's single-Issue implementation workflow is capped at **two**
+local AI review runs per handoff epoch (never open-ended within an epoch): after the
 first review, commit a fix pass for its actionable findings *without*
 `LOCAL_AI_REVIEW_RUNNING=1`, so the hook reviews that fix commit too (a
 confirming second review). If that second review still has actionable
@@ -166,6 +163,30 @@ hook does not start a third review — the cap holds regardless of what the
 second review finds. If the first review already comes back with nothing
 actionable, no second review is needed. Record the review status, findings,
 and fixes in the PR body instead of extending the loop further.
+
+A successful handoff from a different session starts a new monotonically
+increasing epoch with a `0/2` budget, including same-agent recovery after a
+session limit. Review artifacts from earlier epochs remain audit history. A
+same-session repeated handoff is idempotent and does not create another epoch
+or restore budget. Artifact bodies and `last-reviewed.json` record the epoch;
+the established artifact filename shape remains unchanged for wait-script
+compatibility.
+
+The post-commit hook reserves an Issue epoch budget slot atomically before
+launching its background worker, so rapid commits cannot over-queue reviews.
+The reservation is recorded as pending until the orchestrator acquires the
+review lock. Handoff is refused while either a launch is pending or a review
+lock is active, preventing an older epoch's queued review from crossing the
+handoff boundary.
+Issue-state lock directories record an owner token and reclaim dead or expired
+owners, so an interrupted reserve/start/refund critical section does not wedge
+future reviews or handoffs indefinitely.
+The launcher must create a startup handshake after validating its repository
+and orchestrator. If the orchestrator exits before acquiring the review lock,
+the launcher refunds that epoch's pending reservation atomically. A handshake
+timeout first cancels and waits for the background launcher; the reservation is
+refunded only after cancellation is confirmed, otherwise it remains pending
+for safe diagnosis instead of allowing a late unbudgeted review.
 
 ### Temporarily disabling the hook (e.g. during acceptance testing)
 
@@ -307,7 +328,7 @@ Claude Code: `CLAUDE.md`'s "Fable 5 Session Conventions → Tooling"; the
 
 | Symptom | Check |
 | --- | --- |
-| No review runs | Branch prefix, `core.hooksPath`, and target path diff |
+| No review runs | Issue lifecycle metadata (or legacy prefix), epoch budget, `core.hooksPath`, and target path diff |
 | Reviewer exits immediately | CLI login status and PATH |
 | Repeated reviews | `last-reviewed.json` and diff hash changes |
 | Hook blocks unexpectedly | `last-run.log`, lock file age, reviewer timeout |
@@ -322,6 +343,15 @@ bash scripts/smoke-local-ai-review-branch-mapping.sh
 
 This checks the shared reviewer-selection helper without launching reviewer
 CLIs.
+
+For Issue epoch accounting changes, run:
+
+```bash
+bash scripts/smoke-local-ai-review-issue-epoch.sh
+```
+
+This uses a throwaway repository and stub reviewer to verify epoch-bearing
+artifacts, budget consumption, and idempotent same-diff re-entry.
 
 For review-unit dispatch changes (which document triggers which review
 skill), run:

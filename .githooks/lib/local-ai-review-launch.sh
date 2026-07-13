@@ -16,6 +16,10 @@ BRANCH=${5:?branch required}
 COMMIT_SHA=${6:?commit sha required}
 LAUNCH_SERVICE=${7:-}
 LAUNCH_PLIST=${8:-}
+REVIEW_ISSUE=${9:-}
+REVIEW_EPOCH=${10:-0}
+LAUNCH_HANDSHAKE=${11:-}
+REVIEW_STARTED_MARKER=${12:-}
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR" 2>/dev/null || true
@@ -34,10 +38,32 @@ if ! cd "$REPO_ROOT"; then
     "$(date -u +%FT%TZ)" "$REPO_ROOT" >> "$ERR"
   exit 1
 fi
+if [ ! -x "$GITHOOKS_DIR/lib/local-ai-review.sh" ]; then
+  printf '[%s] ERROR: local AI review orchestrator is missing or not executable: %s\n' \
+    "$(date -u +%FT%TZ)" "$GITHOOKS_DIR/lib/local-ai-review.sh" >> "$ERR"
+  exit 1
+fi
 
 export LOCAL_AI_REVIEW_RUNNING=1
-"$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA"
-STATUS=$?
+if [ -n "$LAUNCH_HANDSHAKE" ] && ! : > "$LAUNCH_HANDSHAKE"; then
+  printf '[%s] ERROR: could not create launch handshake: %s\n' \
+    "$(date -u +%FT%TZ)" "$LAUNCH_HANDSHAKE" >> "$ERR"
+  STATUS=1
+else
+  "$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA" "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_STARTED_MARKER"
+  STATUS=$?
+fi
+
+if [ -n "$REVIEW_ISSUE" ] && [ ! -f "$REVIEW_STARTED_MARKER" ]; then
+  # shellcheck source=/dev/null
+  . "$GITHOOKS_DIR/config"
+  # shellcheck source=/dev/null
+  . "$GITHOOKS_DIR/lib/reviewer-selection.sh"
+  local_ai_review_refund_budget "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT" || \
+    printf '[%s] ERROR: failed to refund unstarted review for Issue #%s epoch %s\n' \
+      "$(date -u +%FT%TZ)" "$REVIEW_ISSUE" "$REVIEW_EPOCH" >> "$ERR"
+fi
+[ -n "$REVIEW_STARTED_MARKER" ] && rm -f "$REVIEW_STARTED_MARKER"
 
 if [ -n "$LAUNCH_SERVICE" ]; then
   # shellcheck disable=SC2016

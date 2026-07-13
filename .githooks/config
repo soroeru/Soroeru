@@ -11,10 +11,9 @@
 # exits early). Set to 0 (default) to run the review.
 LOCAL_AI_REVIEW_DISABLED=0
 
-# --- Branch prefix mapping --------------------------------------
-# When the current branch starts with one of these prefixes, the
-# reviewer is the AI named by the prefix. Branches that match
-# none of the prefixes are skipped entirely.
+# --- Legacy branch prefix mapping -------------------------------
+# Issue branches resolve the reviewer from shared lifecycle metadata.
+# These prefixes remain only for branches created before Issue worktrees.
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_CLAUDE="claude/"
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_CODEX="codex/"
 LOCAL_AI_REVIEW_AUTHOR_PREFIX_GROK="grok/"
