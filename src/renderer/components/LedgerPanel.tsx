@@ -1010,7 +1010,8 @@ function SiteCredentialUpdateForm({
   const save = useCallback(async () => {
     const trimmedUsername = username.trim();
     const usernameChanged = trimmedUsername !== "" && trimmedUsername !== credential.username;
-    const passwordChanged = password !== "";
+    // Match domain: non-empty after trim only (spaces-only is not a password change).
+    const passwordChanged = password !== "" && password.trim() !== "";
     if (!usernameChanged && !passwordChanged) {
       setError(reasonMessage("invalid-request"));
       return;

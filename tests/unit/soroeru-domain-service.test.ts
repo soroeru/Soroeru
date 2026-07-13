@@ -274,7 +274,12 @@ test("updateCredential rejects empty changes and missing ids", async () => {
       ok: false,
       error: "invalid-request",
     });
+    assert.deepEqual(service.updateCredential({ credentialId: created.id, password: "   " }), {
+      ok: false,
+      error: "invalid-request",
+    });
     assert.equal(service.getCredential(created.id)?.source, "csv-import");
+    assert.equal(service.getCredential(created.id)?.password, "fake-pass");
     // Unchanged password field alone with blank username is invalid; password-only works.
     const passwordOnly = service.updateCredential({ credentialId: created.id, password: "only-new-pass" });
     assert.equal(passwordOnly.ok, true);
