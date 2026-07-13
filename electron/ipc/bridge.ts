@@ -40,6 +40,8 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
       session.confirmDynamicAttributeCandidate(toConfirmDynamicCandidateRequest(request)),
     [IPC_CHANNELS.ledgerDeleteSite]: (request: unknown) =>
       session.deleteSiteAccount(toDeleteSiteAccountRequest(request)),
+    [IPC_CHANNELS.ledgerUpdateCredential]: (request: unknown) =>
+      session.updateSiteCredential(toUpdateSiteCredentialRequest(request)),
     [IPC_CHANNELS.sessionPersistenceSet]: (request: unknown) =>
       session.setSessionPersistence(toSetSessionPersistenceRequest(request)),
     [IPC_CHANNELS.sessionPersistenceClear]: (siteAccountId: unknown) =>
@@ -99,6 +101,25 @@ function toDeleteSiteAccountRequest(request: unknown): {
   return {
     siteAccountId: String(input["siteAccountId"] ?? ""),
     confirmedFourthBoundary: input["confirmedFourthBoundary"] === true,
+  };
+}
+
+function toUpdateSiteCredentialRequest(request: unknown): {
+  siteAccountId: string;
+  credentialId: string;
+  username?: string;
+  password?: string;
+  confirmedOverwrite: boolean;
+} {
+  const input = request && typeof request === "object" ? (request as Record<string, unknown>) : {};
+  const username = typeof input["username"] === "string" ? input["username"] : undefined;
+  const password = typeof input["password"] === "string" ? input["password"] : undefined;
+  return {
+    siteAccountId: String(input["siteAccountId"] ?? ""),
+    credentialId: String(input["credentialId"] ?? ""),
+    ...(username !== undefined ? { username } : {}),
+    ...(password !== undefined ? { password } : {}),
+    confirmedOverwrite: input["confirmedOverwrite"] === true,
   };
 }
 

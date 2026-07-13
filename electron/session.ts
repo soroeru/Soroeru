@@ -18,6 +18,7 @@ import { computeLedgerInsights } from "../src/domain/ledger-insights.js";
 import {
   isSensitiveAttributeKey,
   MOST_SENSITIVE_ATTRIBUTE_KEY,
+  type Credential,
   type SiteAccount,
   type Sensitivity,
 } from "../src/domain/entities.js";
@@ -54,9 +55,12 @@ import type {
   SessionPersistenceMutationResult,
   SessionPersistenceView,
   SetSessionPersistenceRequest,
+  SiteCredentialView,
   SiteLedgerDetail,
   SiteLedgerSummary,
   StaleTally,
+  UpdateSiteCredentialRequest,
+  UpdateSiteCredentialResultView,
   VaultMutationResult,
   VaultStatus,
   VisibilityEvent,
@@ -893,12 +897,18 @@ export class SoroeruSession {
         ...(c.resolution !== undefined ? { resolution: c.resolution } : {}),
         observedAt: c.observedAt,
       }));
+    // Preserve vault list order — Visibility uses listCredentialsForSite(...)[0]
+    // with no sort (Issue #362: edit UI must target the same primary credential).
+    const credentials: SiteCredentialView[] = this.domain
+      .listCredentialsForSite(siteAccountId)
+      .map((credential) => toSiteCredentialView(credential));
     return {
       ...summary,
       disclosures,
       relationships,
       constraints,
       pendingAttributeCandidates,
+      credentials,
       sessionPersistence: this.sessionPersistenceView(siteAccountId),
     };
   }
@@ -947,6 +957,34 @@ export class SoroeruSession {
       return result;
     } catch {
       return { ok: false, error: "delete-failed" };
+    }
+  }
+
+  /**
+   * Update a site's stored login credential (username and/or password) from the
+   * ledger (Issue #362). Requires explicit overwrite acknowledgement. The
+   * password never appears in the response or logs.
+   */
+  async updateSiteCredential(request: UpdateSiteCredentialRequest): Promise<UpdateSiteCredentialResultView> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    if (!request.confirmedOverwrite) return { ok: false, error: "confirmation-required" };
+    if (!request.credentialId) return { ok: false, error: "invalid-request" };
+
+    const existing = this.domain.getCredential(request.credentialId);
+    if (!existing) return { ok: false, error: "not-found" };
+    if (existing.siteAccountId !== request.siteAccountId) return { ok: false, error: "not-found" };
+
+    try {
+      const result = this.domain.updateCredential({
+        credentialId: request.credentialId,
+        ...(request.username !== undefined ? { username: request.username } : {}),
+        ...(request.password !== undefined ? { password: request.password } : {}),
+      });
+      if (!result.ok) return { ok: false, error: result.error };
+      await this.vault.save();
+      return { ok: true, credential: toSiteCredentialView(result.credential) };
+    } catch {
+      return { ok: false, error: "update-failed" };
     }
   }
 
@@ -1030,6 +1068,16 @@ export class SoroeruSession {
       collected: disclosures.length > 0 || checkpointDone,
     };
   }
+}
+
+/** Masked credential summary for IPC — never includes the password. */
+function toSiteCredentialView(credential: Credential): SiteCredentialView {
+  return {
+    credentialId: credential.id,
+    username: credential.username,
+    updatedAt: credential.updatedAt,
+    source: credential.source,
+  };
 }
 
 function isSafeChromeOrigin(value: string): boolean {

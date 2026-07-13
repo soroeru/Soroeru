@@ -71,6 +71,19 @@ export interface AddCredentialInput {
   source?: Credential["source"];
 }
 
+/** Update an existing site login credential (password and/or username). Issue #362. */
+export interface UpdateCredentialInput {
+  credentialId: string;
+  /** When set (after trim non-empty), replaces the stored login id. */
+  username?: string;
+  /** When set (non-empty), replaces the stored password. Empty string is rejected. */
+  password?: string;
+}
+
+export type UpdateCredentialResult =
+  | { ok: true; credential: Credential }
+  | { ok: false; error: "not-found" | "invalid-request" };
+
 export interface AddDisclosureInput {
   siteAccountId: string;
   attributeKey: string;
@@ -200,7 +213,9 @@ export class DomainService {
     const credentials = this.listCredentialsForSite(siteAccountId);
     const disclosures = this.listDisclosuresForSite(siteAccountId);
     const relationships = this.listAccountRelationshipsForSite(siteAccountId);
-    const constraints = this.listConstraints().filter((constraint) => constraint.siteAccountId === siteAccountId);
+    const constraints = this.listConstraints().filter(
+      (constraint) => constraint.siteAccountId === siteAccountId,
+    );
     const mandates = this.vault.list("mandate").filter((mandate) => mandate.siteAccountId === siteAccountId);
     const evidenceIds = new Set<string>();
     for (const evidence of this.listEvidence()) {
@@ -271,6 +286,47 @@ export class DomainService {
     return credential;
   }
 
+  /**
+   * Overwrite username and/or password on an existing credential. This is
+   * Soroeru-internal data edit (not deletion / not the fourth absolute
+   * boundary). The previous secret is replaced in the encrypted vault; callers
+   * must not log the password. At least one of username or password must be a
+   * non-empty change.
+   */
+  updateCredential(input: UpdateCredentialInput): UpdateCredentialResult {
+    const existing = this.vault.get("credential", input.credentialId);
+    if (!existing) return { ok: false, error: "not-found" };
+
+    const nextUsername = input.username !== undefined ? input.username.trim() : undefined;
+    // Passwords are not trimmed for content (spaces may be intentional) but a
+    // whitespace-only string is treated as empty / invalid, same as username.
+    const nextPassword = input.password !== undefined ? input.password : undefined;
+    const passwordMeaningful =
+      nextPassword !== undefined && nextPassword !== "" && nextPassword.trim() !== "";
+
+    // Only count a username rewrite when it actually differs from the stored value
+    // (no-op same-id updates must not flip source / bump updatedAt alone).
+    const usernameChange =
+      nextUsername !== undefined && nextUsername !== "" && nextUsername !== existing.username;
+    const passwordChange = passwordMeaningful;
+    if (!usernameChange && !passwordChange) return { ok: false, error: "invalid-request" };
+
+    const credential: Credential = {
+      ...existing,
+      ...(usernameChange ? { username: nextUsername } : {}),
+      ...(passwordChange ? { password: nextPassword } : {}),
+      // User-initiated edit (even when the row was originally csv-import).
+      source: "user",
+      updatedAt: Date.now(),
+    };
+    this.vault.put("credential", credential);
+    return { ok: true, credential };
+  }
+
+  getCredential(credentialId: string): Credential | undefined {
+    return this.vault.get("credential", credentialId);
+  }
+
   listCredentialsForSite(siteAccountId: string): Credential[] {
     return this.vault.list("credential").filter((c) => c.siteAccountId === siteAccountId);
   }
@@ -298,7 +354,11 @@ export class DomainService {
    * `expiresAt` forward from `now`, so a session that keeps getting reused
    * never silently expires mid-use.
    */
-  savePersistedSessionState(input: { siteAccountId: string; storageState: string; now?: number }): SessionState {
+  savePersistedSessionState(input: {
+    siteAccountId: string;
+    storageState: string;
+    now?: number;
+  }): SessionState {
     const now = input.now ?? Date.now();
     const existing = this.vault.get("sessionState", input.siteAccountId);
     const state: SessionState = {
@@ -367,7 +427,10 @@ export class DomainService {
     if (storedSiteHeldValue !== undefined) {
       disclosure.siteHeldValue = storedSiteHeldValue;
       disclosure.normalizedValueHash = normalizedValueHash(input.attributeKey, storedSiteHeldValue);
-    } else if (input.attributeKey !== MOST_SENSITIVE_ATTRIBUTE_KEY && input.normalizedValueHash !== undefined) {
+    } else if (
+      input.attributeKey !== MOST_SENSITIVE_ATTRIBUTE_KEY &&
+      input.normalizedValueHash !== undefined
+    ) {
       disclosure.normalizedValueHash = input.normalizedValueHash;
     }
     if (input.sourcePageUrl !== undefined) disclosure.sourcePageUrl = input.sourcePageUrl;
@@ -536,7 +599,9 @@ export class DomainService {
 
   // --- Dynamic attribute candidates (user-confirmed schema growth) ---
 
-  recordDynamicAttributeCandidate(input: RecordDynamicAttributeCandidateInput): DynamicAttributeCandidateView {
+  recordDynamicAttributeCandidate(
+    input: RecordDynamicAttributeCandidateInput,
+  ): DynamicAttributeCandidateView {
     const now = input.now ?? Date.now;
     const label = input.label.trim() || input.fieldId;
     const id = dynamicAttributeDefinitionId(input.proposedAttributeKey);
@@ -548,7 +613,10 @@ export class DomainService {
     // later collection on the *other* site re-map via its own original label,
     // and (b) confirming relevance for one site never makes the candidate
     // vanish from another site's still-unconfirmed pending list.
-    const matchTerms = uniqueTerms([...stringArrayData(existing?.data["matchTerms"]), ...(input.matchTerms ?? [label])]);
+    const matchTerms = uniqueTerms([
+      ...stringArrayData(existing?.data["matchTerms"]),
+      ...(input.matchTerms ?? [label]),
+    ]);
     const siteAccountIds = uniqueTerms([
       ...legacyCompatibleSiteAccountIds(existing?.data ?? {}),
       input.siteAccountId,
@@ -574,7 +642,9 @@ export class DomainService {
     return dynamicAttributeView(definition)!;
   }
 
-  confirmDynamicAttributeCandidate(input: ConfirmDynamicAttributeCandidateInput): DynamicAttributeCandidateView {
+  confirmDynamicAttributeCandidate(
+    input: ConfirmDynamicAttributeCandidateInput,
+  ): DynamicAttributeCandidateView {
     const now = input.now ?? Date.now;
     const label = input.label.trim() || input.attributeKey;
     const matchTerms = uniqueTerms(input.matchTerms.length > 0 ? input.matchTerms : [label]);
@@ -648,7 +718,10 @@ export class DomainService {
     return checkpoint;
   }
 
-  getCheckpoint(workflow: WorkflowCheckpoint["workflow"], siteAccountId?: string): WorkflowCheckpoint | undefined {
+  getCheckpoint(
+    workflow: WorkflowCheckpoint["workflow"],
+    siteAccountId?: string,
+  ): WorkflowCheckpoint | undefined {
     return this.vault.get("workflowCheckpoint", checkpointId(workflow, siteAccountId));
   }
 
@@ -749,7 +822,9 @@ function stringData(value: unknown): string | undefined {
 }
 
 function stringArrayData(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "") : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim() !== "")
+    : [];
 }
 
 /**
@@ -761,7 +836,10 @@ function stringArrayData(value: unknown): string[] {
  */
 function legacyCompatibleSiteAccountIds(data: Record<string, unknown>): string[] {
   const legacySingular = stringData(data["siteAccountId"]);
-  return uniqueTerms([...stringArrayData(data["siteAccountIds"]), ...(legacySingular ? [legacySingular] : [])]);
+  return uniqueTerms([
+    ...stringArrayData(data["siteAccountIds"]),
+    ...(legacySingular ? [legacySingular] : []),
+  ]);
 }
 
 function uniqueTerms(terms: string[]): string[] {

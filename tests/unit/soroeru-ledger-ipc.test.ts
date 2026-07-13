@@ -128,6 +128,10 @@ test("the composed ledger detail shows normal disclosures plainly and masks only
 
     const detail = session.ledgerSite(siteId);
     assert.ok(detail);
+    // Credential summaries list username only — never the password (Issue #362).
+    assert.equal(detail.credentials.length, 1);
+    assert.equal(detail.credentials[0]?.username, "user@example.test");
+    assert.equal("password" in detail.credentials[0]!, false);
     // "normal" sensitivity (email, phone, address, custom fields): shown
     // plainly and immediately, no reveal gate (Issue #300).
     const email = detail.disclosures.find((d) => d.disclosureId === emailDisclosureId);
@@ -301,6 +305,74 @@ test("ledger and import refuse to operate while locked", async () => {
       "locked",
     );
     assert.equal((await session.deleteSiteAccount({ siteAccountId: "anything", confirmedFourthBoundary: true })).error, "locked");
+    assert.equal(
+      (
+        await session.updateSiteCredential({
+          siteAccountId: "anything",
+          credentialId: "c",
+          password: "x",
+          confirmedOverwrite: true,
+        })
+      ).error,
+      "locked",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("updateSiteCredential persists a new password, uses it on listCredentials, and never leaks it to ledger views", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const { siteId } = await seedLedger(path);
+    const session = new SoroeruSession(path);
+    await session.unlock(PASSPHRASE);
+
+    const detailBefore = session.ledgerSite(siteId);
+    assert.ok(detailBefore);
+    assert.equal(detailBefore.credentials.length, 1);
+    const credentialId = detailBefore.credentials[0]?.credentialId;
+    assert.ok(credentialId);
+    assert.equal(detailBefore.credentials[0]?.username, "user@example.test");
+
+    const missingConfirm = await session.updateSiteCredential({
+      siteAccountId: siteId,
+      credentialId,
+      password: "rotated-secret-pass",
+      confirmedOverwrite: false,
+    });
+    assert.equal(missingConfirm.ok, false);
+    assert.equal(missingConfirm.error, "confirmation-required");
+
+    const updated = await session.updateSiteCredential({
+      siteAccountId: siteId,
+      credentialId,
+      username: "rotated@example.test",
+      password: "rotated-secret-pass",
+      confirmedOverwrite: true,
+    });
+    assert.equal(updated.ok, true);
+    assert.equal(updated.credential?.username, "rotated@example.test");
+    assert.equal("password" in (updated.credential ?? {}), false);
+
+    const detailAfter = session.ledgerSite(siteId);
+    assert.ok(detailAfter);
+    assert.equal(detailAfter.credentials[0]?.username, "rotated@example.test");
+    const serialized = JSON.stringify({ result: updated, detail: detailAfter });
+    assert.equal(serialized.includes("rotated-secret-pass"), false);
+    assert.equal(serialized.includes("fake-pass"), false);
+
+    // Re-open vault: collection path reads DomainService.listCredentialsForSite.
+    const reopened = new SoroeruSession(path);
+    await reopened.unlock(PASSPHRASE);
+    // Access via a temporary domain-side check through visibility: password must be the new one.
+    // Session does not expose raw credentials; re-open vault directly for the domain assertion.
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const creds = domain.listCredentialsForSite(siteId);
+    assert.equal(creds[0]?.password, "rotated-secret-pass");
+    assert.equal(creds[0]?.username, "rotated@example.test");
+    vault.lock();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

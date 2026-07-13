@@ -17,18 +17,35 @@ async function openService(): Promise<{ dir: string; service: DomainService; vau
 }
 
 test("normalizeValue absorbs separators so equal values hash equally", () => {
-  assert.equal(normalizedValueHash("phone.full", "090-1234-5678"), normalizedValueHash("phone.full", "09012345678"));
-  assert.equal(normalizedValueHash("email", "User@Example.test"), normalizedValueHash("email", "user@example.test"));
-  assert.notEqual(normalizedValueHash("email", "a@example.test"), normalizedValueHash("email", "b@example.test"));
+  assert.equal(
+    normalizedValueHash("phone.full", "090-1234-5678"),
+    normalizedValueHash("phone.full", "09012345678"),
+  );
+  assert.equal(
+    normalizedValueHash("email", "User@Example.test"),
+    normalizedValueHash("email", "user@example.test"),
+  );
+  assert.notEqual(
+    normalizedValueHash("email", "a@example.test"),
+    normalizedValueHash("email", "b@example.test"),
+  );
 });
 
 test("setPersonalAttribute uses the attribute key as id and defaults sensitivity", async () => {
   const { dir, service } = await openService();
   try {
-    const cvv = service.setPersonalAttribute({ attributeKey: MOST_SENSITIVE_ATTRIBUTE_KEY, label: "CVV", value: "123" });
+    const cvv = service.setPersonalAttribute({
+      attributeKey: MOST_SENSITIVE_ATTRIBUTE_KEY,
+      label: "CVV",
+      value: "123",
+    });
     assert.equal(cvv.id, MOST_SENSITIVE_ATTRIBUTE_KEY);
     assert.equal(cvv.sensitivity, "most-sensitive");
-    const email = service.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "u@example.test" });
+    const email = service.setPersonalAttribute({
+      attributeKey: "email",
+      label: "メール",
+      value: "u@example.test",
+    });
     assert.equal(email.sensitivity, "normal");
     assert.equal(service.getPersonalAttribute("email")?.value, "u@example.test");
   } finally {
@@ -169,12 +186,104 @@ test("changing a canonical attribute recomputes stale-state of its disclosures",
 test("credentials and disclosures are queryable per site", async () => {
   const { dir, service } = await openService();
   try {
-    const site = service.upsertSiteAccount({ domain: "ex.com", displayName: "Ex", url: "https://ex.com/login" });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
-    service.addDisclosure({ siteAccountId: site.id, attributeKey: "email", siteHeldValue: "u@ex.test", sourceKind: "form-field" });
+    const site = service.upsertSiteAccount({
+      domain: "ex.com",
+      displayName: "Ex",
+      url: "https://ex.com/login",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "email",
+      siteHeldValue: "u@ex.test",
+      sourceKind: "form-field",
+    });
     assert.equal(service.listCredentialsForSite(site.id).length, 1);
     assert.equal(service.listDisclosuresForSite(site.id).length, 1);
     assert.equal(service.getSiteAccount(site.id)?.url, "https://ex.com/login");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("updateCredential overwrites password and username without leaving the old secret", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "ex.com", displayName: "Ex" });
+    const created = service.addCredential({
+      siteAccountId: site.id,
+      username: "old-user",
+      password: "old-secret-pass",
+      source: "csv-import",
+    });
+    const before = created.updatedAt;
+
+    const updated = service.updateCredential({
+      credentialId: created.id,
+      username: "  new-user  ",
+      password: "new-secret-pass",
+    });
+    assert.equal(updated.ok, true);
+    if (!updated.ok) return;
+    assert.equal(updated.credential.username, "new-user");
+    assert.equal(updated.credential.password, "new-secret-pass");
+    assert.equal(updated.credential.source, "user");
+    assert.ok(updated.credential.updatedAt >= before);
+
+    // Visibility picks listCredentialsForSite(...)[0] — must see the new secret.
+    const listed = service.listCredentialsForSite(site.id);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.password, "new-secret-pass");
+    assert.equal(listed[0]?.username, "new-user");
+    assert.equal(service.getCredential(created.id)?.password, "new-secret-pass");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("updateCredential rejects empty changes and missing ids", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "ex.com", displayName: "Ex" });
+    const created = service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+
+    assert.deepEqual(service.updateCredential({ credentialId: "missing" }), {
+      ok: false,
+      error: "not-found",
+    });
+    assert.deepEqual(service.updateCredential({ credentialId: created.id }), {
+      ok: false,
+      error: "invalid-request",
+    });
+    assert.deepEqual(service.updateCredential({ credentialId: created.id, username: "   ", password: "" }), {
+      ok: false,
+      error: "invalid-request",
+    });
+    // Same username with no password is a no-op, not a source flip.
+    assert.deepEqual(service.updateCredential({ credentialId: created.id, username: "user" }), {
+      ok: false,
+      error: "invalid-request",
+    });
+    assert.deepEqual(service.updateCredential({ credentialId: created.id, password: "   " }), {
+      ok: false,
+      error: "invalid-request",
+    });
+    assert.equal(service.getCredential(created.id)?.source, "csv-import");
+    assert.equal(service.getCredential(created.id)?.password, "fake-pass");
+    // Unchanged password field alone with blank username is invalid; password-only works.
+    const passwordOnly = service.updateCredential({ credentialId: created.id, password: "only-new-pass" });
+    assert.equal(passwordOnly.ok, true);
+    if (passwordOnly.ok) assert.equal(passwordOnly.credential.password, "only-new-pass");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -200,8 +309,18 @@ test("deleteSiteAccount cascades the Soroeru-internal site records without touch
       maskedSnippet: "••••",
     });
 
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
-    service.addCredential({ siteAccountId: other.id, username: "other", password: "fake-pass-2", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    service.addCredential({
+      siteAccountId: other.id,
+      username: "other",
+      password: "fake-pass-2",
+      source: "csv-import",
+    });
     service.addDisclosure({
       siteAccountId: site.id,
       attributeKey: "email",
@@ -234,9 +353,24 @@ test("deleteSiteAccount cascades the Soroeru-internal site records without touch
       detail: "site disappeared",
       evidenceIds: [sharedEvidence.id],
     });
-    service.addConstraint({ siteAccountId: other.id, kind: "wall", detail: "MFA", evidenceIds: [otherEvidence.id] });
-    vault.put("mandate", { id: "site-mandate", siteAccountId: site.id, operation: "collection", authorizedAt: 1 });
-    vault.put("mandate", { id: "other-mandate", siteAccountId: other.id, operation: "collection", authorizedAt: 1 });
+    service.addConstraint({
+      siteAccountId: other.id,
+      kind: "wall",
+      detail: "MFA",
+      evidenceIds: [otherEvidence.id],
+    });
+    vault.put("mandate", {
+      id: "site-mandate",
+      siteAccountId: site.id,
+      operation: "collection",
+      authorizedAt: 1,
+    });
+    vault.put("mandate", {
+      id: "other-mandate",
+      siteAccountId: other.id,
+      operation: "collection",
+      authorizedAt: 1,
+    });
     vault.put("mandate", { id: "global-mandate", operation: "policy-expansion", authorizedAt: 1 });
 
     const result = service.deleteSiteAccount(site.id);
@@ -257,16 +391,31 @@ test("deleteSiteAccount cascades the Soroeru-internal site records without touch
     assert.equal(service.listCredentialsForSite(site.id).length, 0);
     assert.equal(service.listDisclosuresForSite(site.id).length, 0);
     assert.equal(service.listAccountRelationshipsForSite(site.id).length, 0);
-    assert.equal(service.listConstraints().some((constraint) => constraint.siteAccountId === site.id), false);
-    assert.equal(service.listEvidence().some((evidence) => evidence.id === siteEvidence.id), false);
-    assert.equal(service.listEvidence().some((evidence) => evidence.id === sharedEvidence.id), false);
+    assert.equal(
+      service.listConstraints().some((constraint) => constraint.siteAccountId === site.id),
+      false,
+    );
+    assert.equal(
+      service.listEvidence().some((evidence) => evidence.id === siteEvidence.id),
+      false,
+    );
+    assert.equal(
+      service.listEvidence().some((evidence) => evidence.id === sharedEvidence.id),
+      false,
+    );
 
     assert.equal(service.getSiteAccount(other.id)?.displayName, "Kept");
     assert.equal(service.listCredentialsForSite(other.id).length, 1);
     assert.equal(service.listDisclosuresForSite(other.id).length, 1);
     assert.equal(service.listAccountRelationshipsForSite(other.id).length, 1);
-    assert.equal(service.listConstraints().filter((constraint) => constraint.siteAccountId === other.id).length, 1);
-    assert.equal(service.listEvidence().some((evidence) => evidence.id === otherEvidence.id), true);
+    assert.equal(
+      service.listConstraints().filter((constraint) => constraint.siteAccountId === other.id).length,
+      1,
+    );
+    assert.equal(
+      service.listEvidence().some((evidence) => evidence.id === otherEvidence.id),
+      true,
+    );
     assert.equal(vault.get("mandate", "site-mandate"), undefined);
     assert.equal(vault.get("mandate", "other-mandate")?.siteAccountId, other.id);
     assert.equal(vault.get("mandate", "global-mandate")?.operation, "policy-expansion");
@@ -279,7 +428,12 @@ test("deleteSiteAccount reports not-found without deleting anything", async () =
   const { dir, service } = await openService();
   try {
     const site = service.upsertSiteAccount({ domain: "kept.example.test", displayName: "Kept" });
-    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
 
     assert.deepEqual(service.deleteSiteAccount("missing-site"), { ok: false, error: "not-found" });
     assert.equal(service.getSiteAccount(site.id)?.displayName, "Kept");
@@ -299,7 +453,10 @@ test("savePersistedSessionState round-trips through vault encryption and save/re
     const service = new DomainService(vault);
     const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
     service.setSessionPersistenceEnabled(site.id, true);
-    service.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[],"origins":[]}' });
+    service.savePersistedSessionState({
+      siteAccountId: site.id,
+      storageState: '{"cookies":[],"origins":[]}',
+    });
     await vault.save();
     vault.lock();
 
@@ -344,7 +501,10 @@ test("peekPersistedSessionState reports expiry without discarding the expired re
     assert.ok(service.peekPersistedSessionState(site.id, stillValidAt));
     // Peeking past expiry reports absent but must not mutate the vault.
     assert.equal(service.peekPersistedSessionState(site.id, expiredAt), undefined);
-    assert.ok(service.getPersistedSessionState(site.id, stillValidAt), "peek must not have discarded the record");
+    assert.ok(
+      service.getPersistedSessionState(site.id, stillValidAt),
+      "peek must not have discarded the record",
+    );
     // The mutating getPersistedSessionState does discard it once actually read as expired.
     assert.equal(service.getPersistedSessionState(site.id, expiredAt), undefined);
     assert.equal(service.getPersistedSessionState(site.id, stillValidAt), undefined);
@@ -361,7 +521,11 @@ test("savePersistedSessionState slides expiresAt forward on every re-export", as
     const first = Date.now();
     service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}", now: first });
     const later = first + 10 * 24 * 60 * 60 * 1000;
-    const refreshed = service.savePersistedSessionState({ siteAccountId: site.id, storageState: "{}", now: later });
+    const refreshed = service.savePersistedSessionState({
+      siteAccountId: site.id,
+      storageState: "{}",
+      now: later,
+    });
     assert.equal(refreshed.expiresAt, later + 30 * 24 * 60 * 60 * 1000);
     assert.equal(refreshed.createdAt, first);
   } finally {
