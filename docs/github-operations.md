@@ -16,96 +16,62 @@ Out of scope here: local setup and quality gate commands (see
 - Avoid direct pushes to `main`.
 - Use feature flags or safe incremental changes for unfinished work that must
   merge early.
-- Multiple agents may work in parallel, each in its own dedicated `git worktree`
-  (see §2, *Parallel multi-agent development*).
+- Multiple agents may work in parallel on different Issues, each in that
+  Issue's dedicated `git worktree` (see §2).
 - **Primary working tree is human-only (MUST).** The main clone (the primary
   worktree that owns `.git/`) is for the Product Owner: review, merge,
   triage, and cross-lane inspection. **Agents must never commit** (or create
   branches, amend, or otherwise perform git writes) on the primary tree.
-- **Agent git writes only on dedicated lanes (MUST).** Codex, Claude, Grok, and
-  Gemini perform all implementation commits only under
-  `.worktrees/{codex,claude,grok,gemini}`.
+- **Agent git writes only in Issue worktrees (MUST).** Agents perform all
+  implementation writes under `.worktrees/issue-<number>-<slug>`.
 
 ## 2. Starting Work
 
-### 2.1 Agent lane worktrees (MUST for agents)
+### 2.1 Issue worktrees (MUST for agents)
 
-| Agent  | Worktree path (under primary) | Branch prefix | Typical CLI   |
-| ------ | ----------------------------- | ------------- | ------------- |
-| Codex  | `.worktrees/codex`            | `codex/`      | Codex CLI     |
-| Claude | `.worktrees/claude`           | `claude/`     | Claude Code   |
-| Grok   | `.worktrees/grok`             | `grok/`       | Grok Build    |
-| Gemini | `.worktrees/gemini`           | `gemini/`     | `agy` (Antigravity is the Gemini lane — do **not** invent `antigravity/`) |
+Each Issue owns one agent-independent path and branch:
 
-These four paths are the **only** official agent homes. They are **persistent**
-across Issues: do **not** create a new worktree per Issue. Switch Issue branches
-inside the same lane worktree.
+- worktree: `.worktrees/issue-<number>-<short-english-slug>`
+- branch: `issue-<number>-<short-english-slug>`
 
-#### Bootstrap / ensure script
+The Issue number is the identity key. Agent/session ownership lives in
+versioned lifecycle metadata under the shared Git common directory, not in the
+path or branch name. This lets another session or another AI agent resume the
+same local WIP without copying it.
 
-Use the repository helper (idempotent):
+Use `scripts/issue-worktree.sh` for lifecycle operations. Do not reproduce its
+Git mutations by hand:
 
 ```bash
-# From the primary clone or any worktree of this repo:
-bash scripts/ensure-agent-worktree.sh --all
-# Or one lane:
-bash scripts/ensure-agent-worktree.sh grok
+bash scripts/issue-worktree.sh create 365 issue-worktree-handoff \
+  --agent codex --session <non-sensitive-session-id>
+bash scripts/issue-worktree.sh status 365 --json
 ```
-
-The script creates `.worktrees/<agent>` at `origin/main` (detached HEAD) when
-missing, and prints the absolute worktree path on stdout.
 
 #### Start-of-implementation gate (MUST)
 
 Before any agent creates a branch or edits files for Issue work — including the
 `issue-implementation` skill path — the agent **MUST**:
 
-1. Decide the lane from the branch prefix it will use (`codex` / `claude` /
-   `grok` / `gemini`).
-2. Run `git worktree list` and
-   `bash scripts/ensure-agent-worktree.sh <agent>` so the lane exists.
-3. Confirm cwd is inside that worktree (root or subdirectory), e.g.
-   `bash scripts/ensure-agent-worktree.sh --require-cwd <agent>`.
-4. If cwd is **not** inside the dedicated worktree: **move** all subsequent git
-   and file operations to that absolute path (re-launch the agent there, or
-   `cd` and use that root for every tool call). Do **not** continue on the
-   primary clone or another agent's worktree.
-5. If the lane cannot be created or entered: **stop** and report to the user.
-   **No fallback** to the primary tree.
+1. Read the Issue and run `git worktree list` plus
+   `scripts/issue-worktree.sh status <issue> --json`.
+2. If that Issue already has lifecycle state, branch, or worktree, stop the new
+   work flow and use the `handoff-issue` skill. Never create a duplicate.
+3. Otherwise use `issue-worktree.sh create` with the current agent and a
+   non-sensitive session identifier.
+4. Move every subsequent git and file operation to the absolute path printed by
+   the helper. Do not continue on the primary clone or another Issue worktree.
+5. If creation, metadata validation, or cwd transition fails: stop and report.
+   There is no primary-tree fallback.
 
-`issue-implementation` and equivalent skill paths treat dedicated worktree
-presence as **MUST**, not optional. Single-agent convenience does not waive this.
+`issue-implementation` treats the Issue worktree as **MUST**, not optional.
 
-### 2.2 Create the Issue branch (inside the agent worktree)
+### 2.2 Create the Issue branch and worktree
 
-After the gate above, create the Issue branch from the latest `origin/main`,
-**without** checking out local `main`:
-
-```bash
-git fetch origin
-git switch -c <agent>/issue-<number>-<short-english-slug> origin/main
-```
-
-Do not check out local `main` to start work. Git refuses to check out the same
-branch in two working trees at once, and a `git switch main` in a shared working
-tree would disrupt another agent working in parallel.
-
-Branch examples:
-
-- `codex/issue-123-add-user-settings`
-- `claude/issue-124-fix-login-timeout`
-- `grok/issue-125-enable-local-ai-review`
-- `gemini/issue-330-add-gemini-local-ai-reviewer`
-
-Rules:
-
-- Use `codex/`, `claude/`, `grok/`, or `gemini/` when work is performed by those tools.
-- Include the Issue number.
-- Keep the English slug short and descriptive.
-- Record the branch name in the GitHub Issue when useful.
-- Humans working alone on the **primary** tree may use the same branch-naming
-  recipe without an agent prefix when not using an agent; agents always use a
-  prefix and always use a lane worktree.
+`issue-worktree.sh create` verifies the GitHub Issue, fetches `origin/main`,
+rejects partial or duplicate state, creates the named branch/worktree, and
+starts epoch 1 with a `0/2` review budget. Do not implement on detached HEAD or
+check out local `main` in an agent worktree.
 
 ### 2.3 Parallel multi-agent development (worktrees)
 
@@ -113,11 +79,8 @@ Codex, Claude, Grok, and Gemini may run Issue implementation at the same time.
 The repository-local Issue implementation skill defers branch creation and the
 worktree gate to this section.
 
-Each lane worktree starts (or is reset via ensure) at `origin/main` in detached
-HEAD when first created (Git prints a "detached HEAD" notice — expected). The
-§2.2 recipe then creates the per-Issue branch **inside that worktree**. For the
-next Issue, re-run §2.2 from the **same** worktree
-(`git fetch origin && git switch -c <new-branch> origin/main`).
+Parallelism is across different Issue worktrees. The same Issue worktree is
+single-owner and guarded by a session lease; simultaneous editing is forbidden.
 
 Keep agent worktrees **inside** the primary repository root under `.worktrees/`,
 so they stay within sandbox write roots (especially Codex). Avoid sibling paths
@@ -132,29 +95,49 @@ Operational notes:
 - `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
   tree, so worktrees do not contend for the same review lock. Wait for reviews
   only under the worktree where the commit was made.
-- Branch-prefix routing already separates reviewers (see §8): keep the Codex CLI
-  on the `codex` worktree, Claude on `claude`, Grok on `grok`, and Gemini/`agy`
-  (Antigravity) on `gemini`, and each commit is reviewed by the matching
-  reviewer automatically.
+- Issue lifecycle metadata selects the current reviewer and handoff epoch (see
+  §8 and `local-ai-review.md`). Agent prefixes remain a migration fallback only
+  for branches created before this policy.
 - Each worktree needs its own `node_modules` / tool installs if you run quality
   gates there; they are not shared automatically.
-- Do not leave a lane worktree dirty with another Issue's uncommitted work and
-  then start a new Issue on top — finish, stash only with explicit user intent,
-  or stop and ask.
-- Official lanes are only the four paths above. Other worktrees (tool-internal
-  paths, one-off experiments) are not agent homes for skill workflows.
+- Never repurpose a dirty Issue worktree for another Issue. Never auto-stash,
+  reset, clean, or copy inherited WIP during handoff.
 
-Partition the backlog into **lanes with no cross-lane dependencies**, and hand
-each agent a single Issue from its lane. A cross-lane dependency would serialize
-the two agents — zero cross-lane dependencies is what keeps them truly
-parallel. Use the Issues' `blocked_by` relationships to find disjoint lanes; the
-dependency-ordered list within a lane is then safe because each blocker merges
-before its dependent.
+Use Issues' `blocked_by` relationships to choose genuinely independent work for
+parallel agents. Shared-file conflicts still require coordination.
 
-If a lane needs to change a repo-wide shared file that both lanes touch —
+If an Issue needs to change a repo-wide shared file that another Issue touches —
 dependency manifests (`package.json` / `package-lock.json`), shared config
 (`tsconfig.json`, `.githooks/config`), or this workflow doc — coordinate with
-the other lane first to avoid merge/lockfile conflicts.
+the other Issue first to avoid merge/lockfile conflicts.
+
+### 2.4 Session handoff
+
+Use the repository-local `handoff-issue` skill with exactly one Issue number.
+It must diagnose the existing lifecycle state before mutation and then call:
+
+```bash
+bash scripts/issue-worktree.sh handoff <issue> \
+  --agent <codex|claude|grok|gemini> --session <non-sensitive-session-id>
+```
+
+A successful different-session handoff increments `handoff_epoch`, selects the
+new current reviewer, and resets that epoch's review budget to `0/2`. This also
+applies when the agent name is unchanged after a session limit. Repeating the
+command from the same session is idempotent and does not reset the budget.
+
+Do not hand off while a Git operation or local AI review is active. Preserve a
+dirty worktree in place; never auto-stash, auto-commit, reset, clean, or copy it.
+Record the handoff epoch, agents, redacted session identifiers, HEAD, local
+state, review usage, and next step in the Issue or PR.
+
+### 2.5 Fixed-lane migration
+
+`.worktrees/{codex,claude,grok,gemini}` and agent-prefixed branches may remain
+while existing WIP is inventoried. They are not valid starts for new Issues.
+`scripts/ensure-agent-worktree.sh` is diagnosis-only during migration and must
+not create a missing fixed lane. Remove legacy worktrees only after their WIP,
+push state, PR state, and review processes have been checked individually.
 
 ## 3. Issue Workflow
 
@@ -299,7 +282,7 @@ obscure which work is still in flight.
 
   ```bash
   git fetch origin --prune          # drop remote-tracking refs for deleted branches
-  git branch -D <agent>/issue-<n>-<slug>
+  git branch -D issue-<n>-<slug>
   ```
 
   For a non-squash (true) merge the branch is a `main` ancestor, so plain
@@ -309,6 +292,17 @@ obscure which work is still in flight.
   `state/ai-reviews/` per the cleanup policy in
   [`local-ai-review.md`](local-ai-review.md) §8 (delete the review `*.md` and
   logs; keep `last-reviewed.json`).
+
+For Issue worktrees, prefer the guarded command below. It requires GitHub PR
+state `MERGED`, a released lease, a clean tree, no in-progress Git operation,
+no active review lock, and a PR head matching the worktree HEAD:
+
+```bash
+bash scripts/issue-worktree.sh cleanup <issue> --pr <pr-number>
+```
+
+`CLOSED`, a closed Issue, deleted remote branch, or branch ancestry alone is
+not proof of merge. The normal cleanup flow never force-removes a worktree.
 
 ## 10. Learned Operational Notes
 

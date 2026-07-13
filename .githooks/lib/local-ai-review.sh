@@ -35,6 +35,8 @@ BRANCH=${2:?branch required}
 # invocations, but post-commit always passes it so the review is
 # pinned to the commit that triggered the hook.
 COMMIT_SHA=${3:-HEAD}
+REVIEW_ISSUE=${4:-}
+REVIEW_EPOCH=${5:-0}
 
 STATE_DIR="$LOCAL_AI_REVIEW_STATE_DIR"
 mkdir -p "$STATE_DIR"
@@ -286,6 +288,7 @@ run_reviewer() {
 
 ANY_UNIT_DIFF=0
 ANY_REVIEWER_FAILED=0
+ANY_REVIEWER_RAN=0
 
 # UNIT_ORDER always starts with "code" (never empty); still use the
 # bash 3.2 set -u guard so a future reordering cannot reintroduce the
@@ -316,7 +319,7 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
 
   # --- Idempotency check -----------------------------------------
   set_phase "idempotency unit=$UNIT"
-  if last_reviewed_matches "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA"; then
+  if last_reviewed_matches "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA" "$REVIEW_EPOCH"; then
     log "skip unit=$UNIT: same as last-reviewed (sha=$(printf '%s' "$DIFF_SHA" | cut -c1-12))"
     continue
   fi
@@ -364,6 +367,7 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   TS=$(date +%Y%m%d-%H%M%S)
   OUTPUT="$STATE_DIR/${TS}-${REVIEWER}-${UNIT}-$$.md"
 
+  ANY_REVIEWER_RAN=1
   (run_reviewer > "$REVIEWER_OUT" 2> "$REVIEWER_ERR") &
   REVIEWER_PID=$!
   log "reviewer spawned unit=$UNIT pid=$REVIEWER_PID timeout=${LOCAL_AI_REVIEW_REVIEWER_TIMEOUT_SEC}s"
@@ -397,6 +401,8 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
     printf -- '- timestamp: %s\n' "$(date -u +%FT%TZ)"
     printf -- "- review unit: \`%s\`\n" "$UNIT"
     printf -- "- branch: \`%s\`\n" "$BRANCH"
+    [ -n "$REVIEW_ISSUE" ] && printf -- '- issue: `%s`\n' "$REVIEW_ISSUE"
+    printf -- '- handoff_epoch: `%s`\n' "$REVIEW_EPOCH"
     printf -- "- commit: \`%s\`\n" "$COMMIT_SHA"
     printf -- "- merge_base: \`%s\`\n" "$MERGE_BASE"
     printf -- "- diff_sha256: \`%s\`\n" "$DIFF_SHA"
@@ -421,7 +427,7 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   fi
 
   set_phase "save-last-reviewed unit=$UNIT"
-  last_reviewed_save "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA" "$REVIEWER"
+  last_reviewed_save "$BRANCH" "$MERGE_BASE" "$UNIT" "$DIFF_SHA" "$REVIEWER" "$REVIEW_EPOCH"
   log "done unit=$UNIT reviewer=$REVIEWER output=$OUTPUT"
 done
 
@@ -435,4 +441,24 @@ if [ "$ANY_REVIEWER_FAILED" != "0" ]; then
   log "done with failed units reviewer=$REVIEWER (see last-error.log)"
 else
   log "done reviewer=$REVIEWER"
+fi
+
+# Count one completed orchestrator run per Issue epoch, regardless of how many
+# review units it contained. A stale worker may not mutate a newer epoch.
+if [ -n "$REVIEW_ISSUE" ] && [ "$ANY_REVIEWER_FAILED" = "0" ] && [ "$ANY_REVIEWER_RAN" = "1" ]; then
+  COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+  META="$COMMON/soroeru-issue-worktrees/$REVIEW_ISSUE.json"
+  META_LOCK="$COMMON/soroeru-issue-worktrees/$REVIEW_ISSUE.lock"
+  if [ -f "$META" ] && mkdir "$META_LOCK" 2>/dev/null; then
+    META_TMP="$META.tmp.$$"
+    if jq -e --argjson epoch "$REVIEW_EPOCH" '.review.epoch == $epoch' "$META" >/dev/null 2>&1; then
+      jq -c --argjson epoch "$REVIEW_EPOCH" \
+        'if .review.epoch == $epoch and .review.used < .review.limit then .review.used += 1 else . end' \
+        "$META" > "$META_TMP" && mv "$META_TMP" "$META"
+    fi
+    rm -f "$META_TMP"
+    rmdir "$META_LOCK" 2>/dev/null || true
+  else
+    warn "could not update Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH review budget"
+  fi
 fi

@@ -16,6 +16,8 @@ BRANCH=${5:?branch required}
 COMMIT_SHA=${6:?commit sha required}
 LAUNCH_SERVICE=${7:-}
 LAUNCH_PLIST=${8:-}
+REVIEW_ISSUE=${9:-}
+REVIEW_EPOCH=${10:-0}
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR" 2>/dev/null || true
@@ -36,7 +38,7 @@ if ! cd "$REPO_ROOT"; then
 fi
 
 export LOCAL_AI_REVIEW_RUNNING=1
-"$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA"
+"$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA" "$REVIEW_ISSUE" "$REVIEW_EPOCH"
 STATUS=$?
 
 if [ -n "$LAUNCH_SERVICE" ]; then

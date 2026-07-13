@@ -362,11 +362,13 @@ and merge policy live in [`docs/github-operations.md`](docs/github-operations.md
 Quick reminders for agent sessions:
 
 - Keep changes small and reviewable, and prefer issue-driven work when a GitHub Issue exists.
-- Use short-lived branches named `<agent>/issue-<number>-<short-slug>`.
-- **MUST** work only in the dedicated agent worktree
-  (`.worktrees/{codex,claude,grok,gemini}` via `scripts/ensure-agent-worktree.sh`);
+- Use short-lived branches named `issue-<number>-<short-slug>`.
+- **MUST** work only in the matching Issue worktree
+  (`.worktrees/issue-<number>-<short-slug>` via `scripts/issue-worktree.sh`);
   the primary clone is human-only — agents never commit there. See
   [`docs/github-operations.md`](docs/github-operations.md) §2.
+- Use `handoff-issue` to resume an existing Issue worktree after a session or
+  agent change; never create a duplicate worktree or discard inherited WIP.
 - Do not commit secrets, local state, generated caches, or AI review artifacts.
 - Do not commit real personal information in fixtures, screenshots, tests, or docs.
 

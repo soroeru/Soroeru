@@ -4,7 +4,7 @@
 # Triggers a background reviewer CLI on the just-created commit.
 # Skips on:
 #   - LOCAL_AI_REVIEW_RUNNING=1 (recursion guard)
-#   - branch not matching codex/* , claude/* , or grok/* prefix
+#   - branch has neither valid Issue metadata nor a legacy agent prefix
 #   - merge / rebase / cherry-pick in progress
 #   - commit message contains [skip-review]
 #
@@ -66,10 +66,24 @@ case "$HEAD_MSG" in
   *'[skip-review]'*) exit 0 ;;
 esac
 
-# Detect reviewer from branch prefix. The branch's agent prefix maps
-# to the same reviewer CLI.
+# Issue branches resolve reviewer and review budget from shared lifecycle
+# metadata. Agent-prefixed branches use migration-only prefix fallback.
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-REVIEWER=$(local_ai_review_select_reviewer "$BRANCH") || exit 0
+if ! REVIEW_CONTEXT=$(local_ai_review_select_context "$BRANCH" "$REPO_ROOT"); then
+  case "$BRANCH" in
+    issue-*) printf '[local-ai-review] ERROR: Issue branch metadata is unavailable; review not queued\n' >&2 ;;
+  esac
+  exit 0
+fi
+IFS=$'\t' read -r REVIEWER REVIEW_ISSUE REVIEW_EPOCH REVIEW_USED REVIEW_LIMIT <<< "$REVIEW_CONTEXT"
+if [ "$REVIEW_ISSUE" = "legacy" ]; then
+  REVIEW_ISSUE=''
+fi
+if [ "$REVIEW_USED" -ge "$REVIEW_LIMIT" ]; then
+  printf '[local-ai-review] review budget exhausted for Issue #%s epoch %s (%s/%s)\n' \
+    "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_USED" "$REVIEW_LIMIT" >&2
+  exit 0
+fi
 
 # Pin the commit that triggered this hook so the background review
 # always covers the same diff, even if HEAD moves before the
@@ -96,7 +110,7 @@ SHORT_SHA=$(git rev-parse --short "$HEAD_SHA" 2>/dev/null || echo unknown)
 fallback_nohup() {
   [ -n "${LAUNCH_PLIST:-}" ] && rm -f "$LAUNCH_PLIST"
   env LOCAL_AI_REVIEW_LAUNCH_METHOD=nohup \
-    nohup "$LAUNCHER" "$REPO_ROOT" "$GITHOOKS_DIR" "$STATE_DIR" "$REVIEWER" "$BRANCH" "$HEAD_SHA" \
+    nohup "$LAUNCHER" "$REPO_ROOT" "$GITHOOKS_DIR" "$STATE_DIR" "$REVIEWER" "$BRANCH" "$HEAD_SHA" "" "" "$REVIEW_ISSUE" "$REVIEW_EPOCH" \
     >/dev/null 2>> "$LAUNCH_ERR" </dev/null &
   LAUNCH_PID=$!
   disown "$LAUNCH_PID" 2>/dev/null || true
@@ -146,6 +160,8 @@ if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ] \
     plist_string "$HEAD_SHA"
     plist_string "$LAUNCH_SERVICE"
     plist_string "$LAUNCH_PLIST"
+    plist_string "$REVIEW_ISSUE"
+    plist_string "$REVIEW_EPOCH"
     printf '  </array>\n'
     printf '  <key>EnvironmentVariables</key>\n'
     printf '  <dict>\n'
@@ -182,7 +198,7 @@ else
   fallback_nohup
 fi
 
-printf '[local-ai-review] queued %s review for %s (commit=%s)\n' \
-  "$REVIEWER" "$BRANCH" "$SHORT_SHA" >&2
+printf '[local-ai-review] queued %s review for %s (commit=%s issue=%s epoch=%s budget=%s/%s)\n' \
+  "$REVIEWER" "$BRANCH" "$SHORT_SHA" "${REVIEW_ISSUE:-legacy}" "$REVIEW_EPOCH" "$REVIEW_USED" "$REVIEW_LIMIT" >&2
 
 exit 0
