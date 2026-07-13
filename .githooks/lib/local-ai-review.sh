@@ -26,6 +26,8 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 . "$GITHOOKS_DIR/config"
 # shellcheck source=/dev/null
 . "$GITHOOKS_DIR/lib/last-reviewed.sh"
+# shellcheck source=/dev/null
+. "$GITHOOKS_DIR/lib/reviewer-selection.sh"
 
 cd "$REPO_ROOT"
 
@@ -37,6 +39,7 @@ BRANCH=${2:?branch required}
 COMMIT_SHA=${3:-HEAD}
 REVIEW_ISSUE=${4:-}
 REVIEW_EPOCH=${5:-0}
+REVIEW_STARTED_MARKER=${6:-}
 
 STATE_DIR="$LOCAL_AI_REVIEW_STATE_DIR"
 mkdir -p "$STATE_DIR"
@@ -288,6 +291,7 @@ run_reviewer() {
 
 ANY_UNIT_DIFF=0
 ANY_REVIEWER_FAILED=0
+REVIEW_STARTED=0
 
 # UNIT_ORDER always starts with "code" (never empty); still use the
 # bash 3.2 set -u guard so a future reordering cannot reintroduce the
@@ -361,6 +365,14 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   # --- Run reviewer with watchdog timeout (bash 3.2-safe) ---------
   set_phase "reviewer-start unit=$UNIT"
   refresh_lock
+  if [ "$REVIEW_STARTED" = "0" ] && [ -n "$REVIEW_ISSUE" ]; then
+    if ! local_ai_review_mark_started "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT"; then
+      fail "could not mark review as started for Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH"
+      exit 1
+    fi
+    REVIEW_STARTED=1
+    [ -n "$REVIEW_STARTED_MARKER" ] && : > "$REVIEW_STARTED_MARKER"
+  fi
   # $$ suffix keeps two runs of the same unit within one second (e.g.
   # under the smoke test's instant stub reviewer) from colliding.
   TS=$(date +%Y%m%d-%H%M%S)

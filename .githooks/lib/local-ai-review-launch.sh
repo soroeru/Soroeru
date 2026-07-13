@@ -19,6 +19,7 @@ LAUNCH_PLIST=${8:-}
 REVIEW_ISSUE=${9:-}
 REVIEW_EPOCH=${10:-0}
 LAUNCH_HANDSHAKE=${11:-}
+REVIEW_STARTED_MARKER=${12:-}
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR" 2>/dev/null || true
@@ -45,8 +46,19 @@ fi
 
 export LOCAL_AI_REVIEW_RUNNING=1
 [ -n "$LAUNCH_HANDSHAKE" ] && : > "$LAUNCH_HANDSHAKE"
-"$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA" "$REVIEW_ISSUE" "$REVIEW_EPOCH"
+"$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA" "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_STARTED_MARKER"
 STATUS=$?
+
+if [ -n "$REVIEW_ISSUE" ] && [ ! -f "$REVIEW_STARTED_MARKER" ]; then
+  # shellcheck source=/dev/null
+  . "$GITHOOKS_DIR/config"
+  # shellcheck source=/dev/null
+  . "$GITHOOKS_DIR/lib/reviewer-selection.sh"
+  local_ai_review_refund_budget "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT" || \
+    printf '[%s] ERROR: failed to refund unstarted review for Issue #%s epoch %s\n' \
+      "$(date -u +%FT%TZ)" "$REVIEW_ISSUE" "$REVIEW_EPOCH" >> "$ERR"
+fi
+[ -n "$REVIEW_STARTED_MARKER" ] && rm -f "$REVIEW_STARTED_MARKER"
 
 if [ -n "$LAUNCH_SERVICE" ]; then
   # shellcheck disable=SC2016

@@ -37,7 +37,11 @@ cd "$WORK"
 . .githooks/config
 . .githooks/lib/reviewer-selection.sh
 [ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "1" ]
-LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh codex issue-365-review-epoch HEAD 365 4
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
+STARTED_MARKER="$WORK/review-started"
+LOCAL_AI_REVIEW_RUNNING=1 bash .githooks/lib/local-ai-review.sh codex issue-365-review-epoch HEAD 365 4 "$STARTED_MARKER"
+[ -f "$STARTED_MARKER" ]
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
 [ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
 ARTIFACT=$(find state/ai-reviews -name '*-codex-code-*.md' -print -quit)
 grep -Fq "handoff_epoch: \`4\`" "$ARTIFACT"
@@ -55,10 +59,26 @@ USED=$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")
 [ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
 local_ai_review_refund_budget 365 4 "$WORK"
 [ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
 [ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
 if local_ai_review_reserve_budget 365 4 "$WORK" >/dev/null 2>&1; then
   printf 'expected exhausted epoch budget to reject a third reservation\n' >&2
   exit 1
 fi
+
+# A worker that launches but cannot acquire the review lock refunds both the
+# pending counter and the consumed budget slot.
+jq '.review.used=1 | .review.pending=1' \
+  "$COMMON/soroeru-issue-worktrees/365.json" > "$COMMON/soroeru-issue-worktrees/365.json.tmp"
+mv "$COMMON/soroeru-issue-worktrees/365.json.tmp" "$COMMON/soroeru-issue-worktrees/365.json"
+printf '%s:%s\n' "$$" "$(date +%s)" > "$WORK/state/ai-reviews/.lock"
+bash .githooks/lib/local-ai-review-launch.sh \
+  "$WORK" "$WORK/.githooks" "$WORK/state/ai-reviews" codex issue-365-review-epoch HEAD \
+  "" "" 365 4 "$WORK/launch-started" "$WORK/review-started-failure"
+[ -f "$WORK/launch-started" ]
+[ ! -f "$WORK/review-started-failure" ]
+[ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+rm -f "$WORK/state/ai-reviews/.lock" "$WORK/launch-started"
 
 printf 'local AI review Issue epoch smoke check passed\n'

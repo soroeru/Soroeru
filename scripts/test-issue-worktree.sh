@@ -73,6 +73,12 @@ assert_contains "$OUT" "owner process is still running"
 COMMON=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir)
 STATE_FILE="$COMMON/soroeru-issue-worktrees/365.json"
 jq '.owner.pid=999999' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+
+jq '.review.pending=1' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+OUT=$(assert_fails "$HELPER" handoff 365 --agent codex --session session-b --repo "$REPO")
+assert_contains "$OUT" "review launch is pending"
+jq '.review.pending=0' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
+
 "$HELPER" handoff 365 --agent codex --session session-b --repo "$REPO" >/dev/null
 STATUS=$("$HELPER" status 365 --repo "$REPO" --json)
 assert_eq "$(printf '%s' "$STATUS" | jq -r .handoff_epoch)" "2"

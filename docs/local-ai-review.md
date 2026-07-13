@@ -174,9 +174,13 @@ compatibility.
 
 The post-commit hook reserves an Issue epoch budget slot atomically before
 launching its background worker, so rapid commits cannot over-queue reviews.
+The reservation is recorded as pending until the orchestrator acquires the
+review lock. Handoff is refused while either a launch is pending or a review
+lock is active, preventing an older epoch's queued review from crossing the
+handoff boundary.
 The launcher must create a startup handshake after validating its repository
-and orchestrator; if startup is not confirmed, the hook refunds that epoch's
-reservation atomically.
+and orchestrator. If the orchestrator exits before acquiring the review lock,
+the launcher refunds that epoch's pending reservation atomically.
 
 ### Temporarily disabling the hook (e.g. during acceptance testing)
 
