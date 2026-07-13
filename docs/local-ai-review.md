@@ -183,7 +183,10 @@ owners, so an interrupted reserve/start/refund critical section does not wedge
 future reviews or handoffs indefinitely.
 The launcher must create a startup handshake after validating its repository
 and orchestrator. If the orchestrator exits before acquiring the review lock,
-the launcher refunds that epoch's pending reservation atomically.
+the launcher refunds that epoch's pending reservation atomically. A handshake
+timeout first cancels and waits for the background launcher; the reservation is
+refunded only after cancellation is confirmed, otherwise it remains pending
+for safe diagnosis instead of allowing a late unbudgeted review.
 
 ### Temporarily disabling the hook (e.g. during acceptance testing)
 

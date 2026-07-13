@@ -110,7 +110,7 @@ REVIEW_STARTED_MARKER="$STATE_DIR/.review-started.$SHORT_SHA.$$"
 
 wait_for_launch_handshake() {
   local attempts=0
-  while [ "$attempts" -lt 50 ]; do
+  while [ "$attempts" -lt "${LOCAL_AI_REVIEW_LAUNCH_HANDSHAKE_ATTEMPTS:-50}" ]; do
     [ -f "$LAUNCH_HANDSHAKE" ] && return 0
     sleep 0.1
     attempts=$((attempts + 1))
@@ -136,6 +136,12 @@ fallback_nohup() {
   disown "$LAUNCH_PID" 2>/dev/null || true
   if ! wait_for_launch_handshake; then
     log_launch "launcher did not start reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA pid=$LAUNCH_PID"
+    kill -TERM "$LAUNCH_PID" 2>/dev/null || true
+    wait "$LAUNCH_PID" 2>/dev/null || true
+    if kill -0 "$LAUNCH_PID" 2>/dev/null; then
+      log_launch "launcher cancellation could not be confirmed reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA pid=$LAUNCH_PID"
+      return 2
+    fi
     return 1
   fi
   rm -f "$LAUNCH_HANDSHAKE"
@@ -222,23 +228,41 @@ if [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ] \
     printf '%s\n' '</dict>'
     printf '%s\n' '</plist>'
   } > "$LAUNCH_PLIST"
-  if launchctl bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_PLIST" 2>> "$LAUNCH_ERR" \
-     && wait_for_launch_handshake; then
-    rm -f "$LAUNCH_HANDSHAKE"
-    rm -f "$LAUNCH_PLIST"
-    log_launch "queued reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA method=launchctl label=$LABEL"
+  if launchctl bootstrap "$LAUNCH_DOMAIN" "$LAUNCH_PLIST" 2>> "$LAUNCH_ERR"; then
+    if wait_for_launch_handshake; then
+      rm -f "$LAUNCH_HANDSHAKE"
+      rm -f "$LAUNCH_PLIST"
+      log_launch "queued reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA method=launchctl label=$LABEL"
+    else
+      log_launch "launchctl handshake timed out reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA"
+      if ! launchctl bootout "$LAUNCH_SERVICE" >/dev/null 2>&1; then
+        log_launch "launchctl cancellation could not be confirmed; reservation remains pending reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA"
+        rm -f "$LAUNCH_HANDSHAKE"
+        exit 0
+      fi
+      rm -f "$LAUNCH_HANDSHAKE"
+      fallback_nohup
+      FALLBACK_STATUS=$?
+      if [ "$FALLBACK_STATUS" -ne 0 ]; then
+        [ "$FALLBACK_STATUS" -eq 1 ] && refund_launch_reservation
+        exit 0
+      fi
+    fi
   else
     log_launch "launchctl bootstrap failed reviewer=$REVIEWER branch=$BRANCH commit=$HEAD_SHA; falling back to nohup"
-    launchctl bootout "$LAUNCH_SERVICE" >/dev/null 2>&1 || true
     rm -f "$LAUNCH_HANDSHAKE"
-    if ! fallback_nohup; then
-      refund_launch_reservation
+    fallback_nohup
+    FALLBACK_STATUS=$?
+    if [ "$FALLBACK_STATUS" -ne 0 ]; then
+      [ "$FALLBACK_STATUS" -eq 1 ] && refund_launch_reservation
       exit 0
     fi
   fi
 else
-  if ! fallback_nohup; then
-    refund_launch_reservation
+  fallback_nohup
+  FALLBACK_STATUS=$?
+  if [ "$FALLBACK_STATUS" -ne 0 ]; then
+    [ "$FALLBACK_STATUS" -eq 1 ] && refund_launch_reservation
     exit 0
   fi
 fi

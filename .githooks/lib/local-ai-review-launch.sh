@@ -45,9 +45,14 @@ if [ ! -x "$GITHOOKS_DIR/lib/local-ai-review.sh" ]; then
 fi
 
 export LOCAL_AI_REVIEW_RUNNING=1
-[ -n "$LAUNCH_HANDSHAKE" ] && : > "$LAUNCH_HANDSHAKE"
-"$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA" "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_STARTED_MARKER"
-STATUS=$?
+if [ -n "$LAUNCH_HANDSHAKE" ] && ! : > "$LAUNCH_HANDSHAKE"; then
+  printf '[%s] ERROR: could not create launch handshake: %s\n' \
+    "$(date -u +%FT%TZ)" "$LAUNCH_HANDSHAKE" >> "$ERR"
+  STATUS=1
+else
+  "$GITHOOKS_DIR/lib/local-ai-review.sh" "$REVIEWER" "$BRANCH" "$COMMIT_SHA" "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REVIEW_STARTED_MARKER"
+  STATUS=$?
+fi
 
 if [ -n "$REVIEW_ISSUE" ] && [ ! -f "$REVIEW_STARTED_MARKER" ]; then
   # shellcheck source=/dev/null

@@ -86,4 +86,48 @@ bash .githooks/lib/local-ai-review-launch.sh \
 [ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
 rm -f "$WORK/state/ai-reviews/.lock" "$WORK/launch-started"
 
+# A start marker that cannot be created must abort before reviewer execution
+# and refund the pending reservation.
+rm -f "$WORK/state/ai-reviews/last-reviewed.json"
+jq '.review.used=1 | .review.pending=1' \
+  "$COMMON/soroeru-issue-worktrees/365.json" > "$COMMON/soroeru-issue-worktrees/365.json.tmp"
+mv "$COMMON/soroeru-issue-worktrees/365.json.tmp" "$COMMON/soroeru-issue-worktrees/365.json"
+BEFORE_ARTIFACTS=$(find "$WORK/state/ai-reviews" -name '*-codex-code-*.md' | wc -l | tr -d ' ')
+if bash .githooks/lib/local-ai-review-launch.sh \
+  "$WORK" "$WORK/.githooks" "$WORK/state/ai-reviews" codex issue-365-review-epoch HEAD \
+  "" "" 365 4 "$WORK/launch-started-marker-failure" "$WORK/missing/review-started"; then
+  printf 'expected an unwritable review-started marker to fail the launcher\n' >&2
+  exit 1
+fi
+AFTER_ARTIFACTS=$(find "$WORK/state/ai-reviews" -name '*-codex-code-*.md' | wc -l | tr -d ' ')
+[ "$AFTER_ARTIFACTS" = "$BEFORE_ARTIFACTS" ]
+[ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+
+# A launcher that misses the handshake deadline is terminated before its
+# reservation is refunded. Two seconds is intentional: the fake launcher
+# would create the marker after one second if it survived cancellation.
+jq '.review.used=0 | .review.pending=0' \
+  "$COMMON/soroeru-issue-worktrees/365.json" > "$COMMON/soroeru-issue-worktrees/365.json.tmp"
+mv "$COMMON/soroeru-issue-worktrees/365.json.tmp" "$COMMON/soroeru-issue-worktrees/365.json"
+mkdir "$WORK/fake-bin"
+cat > "$WORK/fake-bin/uname" <<'EOF'
+#!/usr/bin/env bash
+printf 'Linux\n'
+EOF
+chmod +x "$WORK/fake-bin/uname"
+cat > "$WORK/.githooks/lib/local-ai-review-launch.sh" <<'EOF'
+#!/usr/bin/env bash
+sleep 1
+: > "${11}"
+: > "$1/late-launch-survived"
+EOF
+chmod +x "$WORK/.githooks/lib/local-ai-review-launch.sh"
+PATH="$WORK/fake-bin:$PATH" LOCAL_AI_REVIEW_LAUNCH_HANDSHAKE_ATTEMPTS=1 \
+  bash "$WORK/.githooks/post-commit"
+sleep 2
+[ ! -e "$WORK/late-launch-survived" ]
+[ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+
 printf 'local AI review Issue epoch smoke check passed\n'

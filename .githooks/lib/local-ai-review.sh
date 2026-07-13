@@ -366,12 +366,16 @@ for UNIT in ${UNIT_ORDER[@]+"${UNIT_ORDER[@]}"}; do
   set_phase "reviewer-start unit=$UNIT"
   refresh_lock
   if [ "$REVIEW_STARTED" = "0" ] && [ -n "$REVIEW_ISSUE" ]; then
+    if [ -n "$REVIEW_STARTED_MARKER" ] && ! : > "$REVIEW_STARTED_MARKER"; then
+      fail "could not create review-started marker for Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH"
+      exit 1
+    fi
     if ! local_ai_review_mark_started "$REVIEW_ISSUE" "$REVIEW_EPOCH" "$REPO_ROOT"; then
+      [ -n "$REVIEW_STARTED_MARKER" ] && rm -f "$REVIEW_STARTED_MARKER"
       fail "could not mark review as started for Issue #$REVIEW_ISSUE epoch $REVIEW_EPOCH"
       exit 1
     fi
     REVIEW_STARTED=1
-    [ -n "$REVIEW_STARTED_MARKER" ] && : > "$REVIEW_STARTED_MARKER"
   fi
   # $$ suffix keeps two runs of the same unit within one second (e.g.
   # under the smoke test's instant stub reviewer) from colliding.
