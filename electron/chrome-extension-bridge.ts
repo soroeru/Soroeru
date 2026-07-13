@@ -42,7 +42,10 @@ export const CHROME_BRIDGE_COMMANDS = [
 export type ChromeBridgeCommandName = (typeof CHROME_BRIDGE_COMMANDS)[number];
 
 export type ChromeBridgeRejectionReason =
-  "unauthorized" | "invalid-message" | "unknown-command" | "socket-error";
+  | "unauthorized"
+  | "invalid-message"
+  | "unknown-command"
+  | "socket-error";
 
 export type ChromeBridgeEventView =
   | { type: "connecting" }
