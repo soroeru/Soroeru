@@ -71,6 +71,19 @@ export interface AddCredentialInput {
   source?: Credential["source"];
 }
 
+/** Update an existing site login credential (password and/or username). Issue #362. */
+export interface UpdateCredentialInput {
+  credentialId: string;
+  /** When set (after trim non-empty), replaces the stored login id. */
+  username?: string;
+  /** When set (non-empty), replaces the stored password. Empty string is rejected. */
+  password?: string;
+}
+
+export type UpdateCredentialResult =
+  | { ok: true; credential: Credential }
+  | { ok: false; error: "not-found" | "invalid-request" };
+
 export interface AddDisclosureInput {
   siteAccountId: string;
   attributeKey: string;
@@ -269,6 +282,41 @@ export class DomainService {
     if (input.note !== undefined) credential.note = input.note;
     this.vault.put("credential", credential);
     return credential;
+  }
+
+  /**
+   * Overwrite username and/or password on an existing credential. This is
+   * Soroeru-internal data edit (not deletion / not the fourth absolute
+   * boundary). The previous secret is replaced in the encrypted vault; callers
+   * must not log the password. At least one of username or password must be a
+   * non-empty change.
+   */
+  updateCredential(input: UpdateCredentialInput): UpdateCredentialResult {
+    const existing = this.vault.get("credential", input.credentialId);
+    if (!existing) return { ok: false, error: "not-found" };
+
+    const nextUsername =
+      input.username !== undefined ? input.username.trim() : undefined;
+    const nextPassword = input.password !== undefined ? input.password : undefined;
+
+    const usernameChange = nextUsername !== undefined && nextUsername !== "";
+    const passwordChange = nextPassword !== undefined && nextPassword !== "";
+    if (!usernameChange && !passwordChange) return { ok: false, error: "invalid-request" };
+
+    const credential: Credential = {
+      ...existing,
+      ...(usernameChange ? { username: nextUsername } : {}),
+      ...(passwordChange ? { password: nextPassword } : {}),
+      // User-initiated edit (even when the row was originally csv-import).
+      source: "user",
+      updatedAt: Date.now(),
+    };
+    this.vault.put("credential", credential);
+    return { ok: true, credential };
+  }
+
+  getCredential(credentialId: string): Credential | undefined {
+    return this.vault.get("credential", credentialId);
   }
 
   listCredentialsForSite(siteAccountId: string): Credential[] {

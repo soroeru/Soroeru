@@ -34,6 +34,7 @@ function siteDetail(siteAccountId: string, disclosures: DisclosureView[]): SiteL
     relationships: [],
     constraints: [],
     pendingAttributeCandidates: [],
+    credentials: [],
     sessionPersistence: { enabled: false, hasPersistedSession: false },
   };
 }

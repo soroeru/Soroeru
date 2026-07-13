@@ -180,6 +180,73 @@ test("credentials and disclosures are queryable per site", async () => {
   }
 });
 
+test("updateCredential overwrites password and username without leaving the old secret", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "ex.com", displayName: "Ex" });
+    const created = service.addCredential({
+      siteAccountId: site.id,
+      username: "old-user",
+      password: "old-secret-pass",
+      source: "csv-import",
+    });
+    const before = created.updatedAt;
+
+    const updated = service.updateCredential({
+      credentialId: created.id,
+      username: "  new-user  ",
+      password: "new-secret-pass",
+    });
+    assert.equal(updated.ok, true);
+    if (!updated.ok) return;
+    assert.equal(updated.credential.username, "new-user");
+    assert.equal(updated.credential.password, "new-secret-pass");
+    assert.equal(updated.credential.source, "user");
+    assert.ok(updated.credential.updatedAt >= before);
+
+    // Visibility picks listCredentialsForSite(...)[0] — must see the new secret.
+    const listed = service.listCredentialsForSite(site.id);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.password, "new-secret-pass");
+    assert.equal(listed[0]?.username, "new-user");
+    assert.equal(service.getCredential(created.id)?.password, "new-secret-pass");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("updateCredential rejects empty changes and missing ids", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "ex.com", displayName: "Ex" });
+    const created = service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+
+    assert.deepEqual(service.updateCredential({ credentialId: "missing" }), {
+      ok: false,
+      error: "not-found",
+    });
+    assert.deepEqual(service.updateCredential({ credentialId: created.id }), {
+      ok: false,
+      error: "invalid-request",
+    });
+    assert.deepEqual(service.updateCredential({ credentialId: created.id, username: "   ", password: "" }), {
+      ok: false,
+      error: "invalid-request",
+    });
+    // Unchanged password field alone with blank username is invalid; password-only works.
+    const passwordOnly = service.updateCredential({ credentialId: created.id, password: "only-new-pass" });
+    assert.equal(passwordOnly.ok, true);
+    if (passwordOnly.ok) assert.equal(passwordOnly.credential.password, "only-new-pass");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("deleteSiteAccount cascades the Soroeru-internal site records without touching other sites", async () => {
   const { dir, service, vault } = await openService();
   try {

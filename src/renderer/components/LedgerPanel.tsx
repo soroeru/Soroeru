@@ -17,6 +17,7 @@ import type {
   DisclosureView,
   PendingAttributeCandidateView,
   SessionPersistenceView,
+  SiteCredentialView,
   SiteLedgerDetail,
   SiteLedgerSummary,
   VisibilityEvent,
@@ -932,11 +933,177 @@ export function SiteDetail({
         </ul>
       )}
 
+      <SiteCredentialUpdateControl
+        siteAccountId={detail.siteAccountId}
+        credentials={detail.credentials}
+        onReload={onReload}
+      />
+
       <SessionPersistenceControl
         siteAccountId={detail.siteAccountId}
         sessionPersistence={detail.sessionPersistence}
         onReload={onReload}
       />
+    </div>
+  );
+}
+
+/**
+ * Update stored site login credentials from the ledger (Issue #362). Password
+ * is write-only (type=password, never prefilled). Overwrite needs a light
+ * confirmation checkbox — not the fourth absolute boundary (deletion).
+ */
+function SiteCredentialUpdateControl({
+  siteAccountId,
+  credentials,
+  onReload,
+}: {
+  siteAccountId: string;
+  credentials: SiteCredentialView[];
+  onReload: () => void | Promise<void>;
+}): React.JSX.Element {
+  const primary = credentials[0];
+  if (!primary) {
+    return (
+      <div className="rounded border border-neutral-200 p-2 text-xs text-neutral-500">
+        保存済みのログイン認証情報がありません。CSV 取り込みで追加するか、再取り込みしてください。
+      </div>
+    );
+  }
+
+  // Remount the form when the credential identity or server-side revision changes
+  // so local fields reset without a setState-in-effect.
+  return (
+    <SiteCredentialUpdateForm
+      key={`${primary.credentialId}:${primary.updatedAt}`}
+      siteAccountId={siteAccountId}
+      credential={primary}
+      credentialCount={credentials.length}
+      onReload={onReload}
+    />
+  );
+}
+
+function SiteCredentialUpdateForm({
+  siteAccountId,
+  credential,
+  credentialCount,
+  onReload,
+}: {
+  siteAccountId: string;
+  credential: SiteCredentialView;
+  credentialCount: number;
+  onReload: () => void | Promise<void>;
+}): React.JSX.Element {
+  const [username, setUsername] = useState(credential.username);
+  const [password, setPassword] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const [savedAt, setSavedAt] = useState<number | undefined>();
+
+  const save = useCallback(async () => {
+    const trimmedUsername = username.trim();
+    const usernameChanged = trimmedUsername !== "" && trimmedUsername !== credential.username;
+    const passwordChanged = password !== "";
+    if (!usernameChanged && !passwordChanged) {
+      setError(reasonMessage("invalid-request"));
+      return;
+    }
+    if (!confirmed) {
+      setError(reasonMessage("confirmation-required"));
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    setSavedAt(undefined);
+    try {
+      const result = await window.soroeru.ledger.updateCredential({
+        siteAccountId,
+        credentialId: credential.credentialId,
+        ...(usernameChanged ? { username: trimmedUsername } : {}),
+        ...(passwordChanged ? { password } : {}),
+        confirmedOverwrite: true,
+      });
+      if (!result.ok) {
+        setError(reasonMessage(result.error));
+        return;
+      }
+      setPassword("");
+      setConfirmed(false);
+      setSavedAt(result.credential?.updatedAt ?? Date.now());
+      if (result.credential) setUsername(result.credential.username);
+    } catch {
+      setError(reasonMessage(undefined));
+    } finally {
+      await onReload();
+      setBusy(false);
+    }
+  }, [confirmed, credential.credentialId, credential.username, onReload, password, siteAccountId, username]);
+
+  return (
+    <div className="flex flex-col gap-2 rounded border border-neutral-200 p-2 text-xs">
+      <p className="font-medium text-neutral-800">ログイン認証情報を更新</p>
+      <p className="text-neutral-500">
+        サイト側でパスワードを変更した場合などに、Soroeru
+        内の保存値を上書きします。既存のパスワードは表示しません（入力はマスク）。
+      </p>
+      {credentialCount > 1 && (
+        <p className="text-amber-800">
+          このサイトには認証情報が {credentialCount} 件あります。先頭の 1 件を編集します（ログイン ID:{" "}
+          {credential.username}）。
+        </p>
+      )}
+      <label className="flex flex-col gap-1 text-neutral-700">
+        <span>ログイン ID</span>
+        <input
+          type="text"
+          autoComplete="off"
+          value={username}
+          disabled={busy}
+          onChange={(event) => setUsername(event.target.value)}
+          className="rounded border border-neutral-300 px-2 py-1 text-sm"
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-neutral-700">
+        <span>新しいパスワード</span>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          disabled={busy}
+          placeholder="変更する場合のみ入力"
+          onChange={(event) => setPassword(event.target.value)}
+          className="rounded border border-neutral-300 px-2 py-1 text-sm"
+        />
+      </label>
+      <label className="flex items-start gap-2 text-neutral-700">
+        <input
+          type="checkbox"
+          checked={confirmed}
+          disabled={busy}
+          onChange={(event) => setConfirmed(event.target.checked)}
+          className="mt-0.5"
+        />
+        <span>既存のログイン認証情報を上書きすることを確認しました（旧パスワードは失われます）。</span>
+      </label>
+      <button
+        type="button"
+        disabled={busy || !confirmed}
+        onClick={() => void save()}
+        className="self-start rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {busy ? "保存中…" : "認証情報を保存"}
+      </button>
+      {savedAt !== undefined && (
+        <p className="text-green-700">保存しました（{new Date(savedAt).toLocaleString("ja-JP")}）。</p>
+      )}
+      {error && <p className="text-red-600">{error}</p>}
+      <p className="text-neutral-400">
+        最終更新: {new Date(credential.updatedAt).toLocaleString("ja-JP")}
+        {credential.source === "csv-import" ? "（CSV 取り込み）" : "（手動更新）"}
+      </p>
     </div>
   );
 }

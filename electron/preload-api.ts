@@ -19,6 +19,8 @@ import {
   type DeleteSiteAccountRequest,
   type DeleteSiteAccountResultView,
   type DomainSummary,
+  type UpdateSiteCredentialRequest,
+  type UpdateSiteCredentialResultView,
   type IpcChannel,
   type LedgerInsights,
   type LogsExportResult,
@@ -78,6 +80,7 @@ export interface SoroeruApi {
       request: ConfirmDynamicAttributeCandidateRequest,
     ): Promise<ConfirmDynamicAttributeCandidateResult>;
     deleteSite(request: DeleteSiteAccountRequest): Promise<DeleteSiteAccountResultView>;
+    updateCredential(request: UpdateSiteCredentialRequest): Promise<UpdateSiteCredentialResultView>;
   };
   sessionPersistence: {
     set(request: SetSessionPersistenceRequest): Promise<SessionPersistenceMutationResult>;
@@ -152,6 +155,8 @@ export function createSoroeruApi(
         ) as Promise<ConfirmDynamicAttributeCandidateResult>,
       deleteSite: (request) =>
         invoke(IPC_CHANNELS.ledgerDeleteSite, request) as Promise<DeleteSiteAccountResultView>,
+      updateCredential: (request) =>
+        invoke(IPC_CHANNELS.ledgerUpdateCredential, request) as Promise<UpdateSiteCredentialResultView>,
     },
     sessionPersistence: {
       set: (request) =>

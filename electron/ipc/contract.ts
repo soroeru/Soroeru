@@ -55,6 +55,7 @@ export const IPC_CHANNELS = {
   revealValue: "soroeru:ledger:reveal",
   ledgerConfirmDynamicCandidate: "soroeru:ledger:confirm-dynamic-candidate",
   ledgerDeleteSite: "soroeru:ledger:delete-site",
+  ledgerUpdateCredential: "soroeru:ledger:update-credential",
   sessionPersistenceSet: "soroeru:session-persistence:set",
   sessionPersistenceClear: "soroeru:session-persistence:clear",
   visibilityRun: "soroeru:visibility:run",
@@ -306,6 +307,18 @@ export interface SessionPersistenceView {
   expiresAt?: number;
 }
 
+/**
+ * A site login credential as the renderer may list it (Issue #362). Carries
+ * login id and metadata only — never the password. Password is write-only via
+ * `UpdateSiteCredentialRequest` (masked input; no existing-value reveal here).
+ */
+export interface SiteCredentialView {
+  credentialId: string;
+  username: string;
+  updatedAt: number;
+  source: "csv-import" | "user";
+}
+
 /** The per-site composed ledger view: the summary plus its masked detail rows. */
 export interface SiteLedgerDetail extends SiteLedgerSummary {
   disclosures: DisclosureView[];
@@ -313,7 +326,32 @@ export interface SiteLedgerDetail extends SiteLedgerSummary {
   constraints: ConstraintView[];
   /** Unconfirmed dynamic-attribute candidates observed on this site. */
   pendingAttributeCandidates: PendingAttributeCandidateView[];
+  /** Saved login credentials (username only; password never crosses IPC). */
+  credentials: SiteCredentialView[];
   sessionPersistence: SessionPersistenceView;
+}
+
+/**
+ * Update a stored site login credential from the ledger (Issue #362). Password
+ * is accepted only as a write payload — responses never echo it. Overwrite is
+ * light friction (`confirmedOverwrite`), not the fourth absolute boundary.
+ */
+export interface UpdateSiteCredentialRequest {
+  siteAccountId: string;
+  credentialId: string;
+  /** When provided and non-empty after trim, replaces the login id. */
+  username?: string;
+  /** When provided and non-empty, replaces the password. */
+  password?: string;
+  /** User acknowledged that the previous credential will be overwritten. */
+  confirmedOverwrite: boolean;
+}
+
+export interface UpdateSiteCredentialResultView {
+  ok: boolean;
+  error?: "locked" | "not-found" | "invalid-request" | "confirmation-required" | "update-failed";
+  /** Masked credential summary after a successful update (no password). */
+  credential?: SiteCredentialView;
 }
 
 /**

@@ -32,6 +32,7 @@ const REASONS: Record<string, string> = {
   "confirm-failed": "項目の確定に失敗しました。",
   "confirmation-required": "確認が必要です。",
   "delete-failed": "削除に失敗しました。",
+  "update-failed": "認証情報の更新に失敗しました。",
   // Diagnostics log export
   "read-failed": "ログの読み込みに失敗しました。",
 };
