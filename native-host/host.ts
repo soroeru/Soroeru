@@ -16,17 +16,22 @@ export function acceptsHandshakeResponse(message: ChromeBridgeMessage): boolean 
   return message.kind === "result" && message.requestId === "native-host-handshake" && message.ok;
 }
 
-function optionsFromArgs(args: string[]): HostOptions {
+export function optionsFromArgs(args: string[]): HostOptions {
   const defaults = join(homedir(), "Library", "Application Support", "Soroeru", "native-host");
-  if (args.length === 0)
-    return { socketPath: join(defaults, "bridge.sock"), tokenPath: join(defaults, "bridge-token") };
-  const value = (name: string): string => {
+  const value = (name: string): string | undefined => {
     const index = args.indexOf(name);
-    const result = index >= 0 ? args[index + 1] : undefined;
-    if (!result) throw new Error(`missing ${name}`);
+    if (index < 0) return undefined;
+    const result = args[index + 1];
+    if (!result) throw new Error(`missing value for ${name}`);
     return result;
   };
-  return { socketPath: value("--socket"), tokenPath: value("--token-file") };
+  // Chrome launches the host with the calling extension's origin
+  // (chrome-extension://<id>/) as the first argument on macOS/Linux, so any
+  // argument that is not one of our flags is ignored rather than rejected.
+  return {
+    socketPath: value("--socket") ?? join(defaults, "bridge.sock"),
+    tokenPath: value("--token-file") ?? join(defaults, "bridge-token"),
+  };
 }
 
 function writeNative(message: ChromeBridgeMessage): void {
@@ -99,5 +104,11 @@ export async function runNativeHost(options: HostOptions): Promise<void> {
 // (jp.soroeru.bridge, see native-host/registration.ts).
 const invokedAs = process.argv[1] ?? "";
 if (/(?:host\.c?js|jp\.soroeru\.bridge)$/.test(invokedAs)) {
-  runNativeHost(optionsFromArgs(process.argv.slice(2))).catch(() => (process.exitCode = 1));
+  // Fail closed on bad flags too: an uncaught throw here would dump a stack
+  // trace to stderr, which Chrome surfaces in the extension's error log.
+  try {
+    runNativeHost(optionsFromArgs(process.argv.slice(2))).catch(() => (process.exitCode = 1));
+  } catch {
+    process.exitCode = 1;
+  }
 }

@@ -16,7 +16,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
+export const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// persist: <category>` annotations for a flagged line. */
 export const ALLOWED_PERSIST_CATEGORIES = new Set([
