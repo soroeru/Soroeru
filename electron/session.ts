@@ -331,14 +331,11 @@ export class SoroeruSession {
       return { ok: true };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      let reason = "unknown";
-      if (message.includes("extensionId must be a 32-character")) {
-        reason = "invalid-extension-id";
-      } else if (message.includes("Node.js runtime not found")) {
-        reason = "node-not-found";
-      } else {
-        reason = "registration-failed";
-      }
+      const reason = message.includes("extensionId must be a 32-character")
+        ? "invalid-extension-id"
+        : message.includes("Node.js runtime not found")
+          ? "node-not-found"
+          : "registration-failed";
       this.log("error", "chrome-bridge", "native host registration failed", {
         reason,
         hasSourceBinary: !!this.chromeBridgeSetup.sourceBinary,
