@@ -34,14 +34,57 @@ Issue before starting.
 Fetch the Issue body and comments first, then derive the branch name and
 implementation scope from that Issue content.
 
+## Agent worktree (MUST)
+
+Canonical rules: [`docs/github-operations.md`](../../docs/github-operations.md)
+§2.
+
+| Agent  | Worktree path           | Branch prefix |
+| ------ | ----------------------- | ------------- |
+| Codex  | `.worktrees/codex`      | `codex/`      |
+| Claude | `.worktrees/claude`     | `claude/`     |
+| Grok   | `.worktrees/grok`       | `grok/`       |
+| Gemini | `.worktrees/gemini`     | `gemini/`     |
+
+- **Dedicated worktree is MUST** on this skill path. Never implement, create a
+  branch, or commit on the primary clone.
+- **Primary clone is human-only.** Agents must not perform git writes there.
+- Antigravity uses the **Gemini** lane (`gemini/`, `.worktrees/gemini`).
+- Choose the lane from the branch prefix you will create. If the session host
+  CLI and the prefix disagree, prefer the prefix you will push.
+
+### Start gate (before any implementation write)
+
+1. Run `git worktree list`.
+2. Ensure the lane exists:
+   `bash scripts/ensure-agent-worktree.sh <agent>`
+   (or `bash scripts/ensure-agent-worktree.sh --all` once when bootstrapping).
+3. Verify cwd is inside that worktree:
+   `bash scripts/ensure-agent-worktree.sh --require-cwd <agent>`
+4. If not inside the lane: move **all** subsequent git and file operations to
+   the absolute path printed by the script (do not keep using the primary tree).
+5. If ensure or require-cwd fails: **stop** and report. **No fallback** to the
+   primary working tree or another agent's worktree.
+
+After the gate, branch creation follows github-operations §2.2 from **inside**
+the agent worktree only.
+
+Keep both skill copies in sync when editing this file:
+
+- `skills/issue-implementation/SKILL.md`
+- `.agents/skills/issue-implementation/SKILL.md`
+
 ## Workflow
 
 Follow this workflow:
 
-1. Fetch the latest `main` branch.
-2. Create a new branch named from the Issue content.
-3. Implement the Issue.
-4. After committing, check the commit command's own output for
+1. **Agent worktree start gate** (MUST — see above). Do not skip.
+2. Fetch the latest `main` branch (`git fetch origin`).
+3. Create a new branch named from the Issue content, from inside the agent
+   worktree only:
+   `git switch -c <agent>/issue-<number>-<short-english-slug> origin/main`
+4. Implement the Issue (all edits and commits stay in the agent worktree).
+5. After committing, check the commit command's own output for
    `[local-ai-review] queued ...`. If present, wait for that result by
    running `scripts/wait-for-local-ai-review.sh --unit <unit[,unit...]>` via a
    single backgrounded shell command (Claude Code: `Bash` with
@@ -61,7 +104,8 @@ Follow this workflow:
    cap holds regardless of what the second review finds. If the first review
    already comes back with nothing actionable (`PASS`, or `NIT_ONLY` handled
    per `docs/local-ai-review.md` §7), no second review is needed.
-5. When local development is complete, push the branch to GitHub and create a
+   Wait for reviews under **this** worktree's `state/ai-reviews/` only.
+6. When local development is complete, push the branch to GitHub and create a
    PR. Include `Closes #<issue>` in the PR body so GitHub closes the Issue
    automatically when the PR is merged. Also include the local AI review status
    for each run, the actionable findings, and what was fixed. If a review did
@@ -72,6 +116,7 @@ Follow this workflow:
 
 - Respect repository instructions, sandbox rules, external-network approval
   requirements, and destructive-command safety boundaries.
+- Do not skip the agent worktree start gate. Do not commit on the primary clone.
 - Do not skip local AI review unless the repository instructions explicitly
   allow it.
 - Do not run an open-ended local AI review loop. This workflow allows at most

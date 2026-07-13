@@ -1,6 +1,9 @@
 # Local state and review artifacts
 state/
 
+# Linked agent worktrees (paths only; never commit checkout contents)
+.worktrees/
+
 # Secrets and local environment
 .env
 .env.local
