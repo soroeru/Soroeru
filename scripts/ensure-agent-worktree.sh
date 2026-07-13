@@ -108,34 +108,35 @@ worktree_path_for() {
   printf '%s/.worktrees/%s\n' "$primary" "$agent"
 }
 
-# Print registered worktree paths (one per line), absolute as Git reports them.
+# Print registered worktree paths for the given primary repo (one per line).
 list_registered_worktrees() {
-  git worktree list --porcelain | sed -n 's/^worktree //p'
+  local primary=$1
+  git -C "$primary" worktree list --porcelain | sed -n 's/^worktree //p'
 }
 
-# True if $1 matches a registered worktree path (canonical comparison).
+# True if $2 matches a registered worktree path under $1 (canonical comparison).
 is_registered_worktree() {
-  local target=$1 path
+  local primary=$1 target=$2 path
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     if paths_equal "$path" "$target"; then
       return 0
     fi
-  done < <(list_registered_worktrees)
+  done < <(list_registered_worktrees "$primary")
   return 1
 }
 
 # If Git still registers $path but the directory is gone, drop the stale entry.
 repair_stale_registration() {
   local primary=$1 path=$2
-  if is_registered_worktree "$path" && [ ! -d "$path" ]; then
+  if is_registered_worktree "$primary" "$path" && [ ! -d "$path" ]; then
     printf 'ensure-agent-worktree: stale registration for %s (dir missing); repairing\n' \
       "$path" >&2
     # Prefer remove; fall back to prune of dead entries.
     if ! git -C "$primary" worktree remove --force "$path" 2>/dev/null; then
       git -C "$primary" worktree prune -v >&2 || true
     fi
-    if is_registered_worktree "$path"; then
+    if is_registered_worktree "$primary" "$path"; then
       printf 'error: could not clear stale worktree registration for %s\n' "$path" >&2
       printf 'error: try: git worktree remove --force %s && git worktree prune\n' "$path" >&2
       exit 1
@@ -146,42 +147,52 @@ repair_stale_registration() {
 # Ensure lane exists; print absolute path on stdout.
 ensure_one() {
   local agent=$1
-  local primary path
+  local primary path tip
   primary=$(primary_root)
   path=$(worktree_path_for "$primary" "$agent")
   path=$(canonicalize_path "$path")
 
   repair_stale_registration "$primary" "$path"
 
-  if [ -d "$path" ] && is_registered_worktree "$path"; then
+  if [ -d "$path" ] && is_registered_worktree "$primary" "$path"; then
     printf 'ensure-agent-worktree: %s already present at %s\n' "$agent" "$path" >&2
     printf '%s\n' "$path"
     return 0
   fi
 
-  if [ -e "$path" ] && ! is_registered_worktree "$path"; then
+  if [ -e "$path" ] && ! is_registered_worktree "$primary" "$path"; then
     printf 'error: path exists but is not a registered worktree: %s\n' "$path" >&2
     printf 'error: remove or rename it, then re-run this script.\n' >&2
     exit 1
   fi
 
-  if is_registered_worktree "$path" && [ ! -d "$path" ]; then
+  if is_registered_worktree "$primary" "$path" && [ ! -d "$path" ]; then
     # Should have been repaired; belt-and-suspenders.
     repair_stale_registration "$primary" "$path"
   fi
 
   mkdir -p "$(dirname "$path")"
-  git -C "$primary" fetch origin 2>/dev/null || true
-  # Detached HEAD at origin/main is expected; skills create named issue branches next.
-  if git -C "$primary" rev-parse --verify origin/main >/dev/null 2>&1; then
-    git -C "$primary" worktree add "$path" origin/main
-  else
-    git -C "$primary" worktree add "$path" main
+  if ! git -C "$primary" fetch origin 2>/dev/null; then
+    printf 'ensure-agent-worktree: warning: git fetch origin failed; using local refs\n' >&2
   fi
 
+  # Always --detach so we never try to check out a branch already held by the
+  # primary tree (local `main` is almost always checked out there).
+  # Detached HEAD at trunk tip is expected; skills create named issue branches next.
+  if git -C "$primary" rev-parse --verify origin/main >/dev/null 2>&1; then
+    tip=origin/main
+  elif git -C "$primary" rev-parse --verify main >/dev/null 2>&1; then
+    printf 'ensure-agent-worktree: warning: origin/main missing; detaching at local main\n' >&2
+    tip=main
+  else
+    printf 'error: neither origin/main nor main is available to create %s\n' "$path" >&2
+    exit 1
+  fi
+  git -C "$primary" worktree add --detach "$path" "$tip"
+
   path=$(canonicalize_path "$path")
-  printf 'ensure-agent-worktree: created %s at %s (detached at trunk tip; create an issue branch before implementing)\n' \
-    "$agent" "$path" >&2
+  printf 'ensure-agent-worktree: created %s at %s (detached at %s; create an issue branch before implementing)\n' \
+    "$agent" "$path" "$tip" >&2
   printf '%s\n' "$path"
 }
 
