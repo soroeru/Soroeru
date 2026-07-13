@@ -96,18 +96,27 @@ async function main(): Promise<void> {
 
   const vaultPath = resolveVaultPath();
   await mkdir(dirname(vaultPath), { recursive: true });
+  // eslint-disable-next-line prefer-const
+  let session: SoroeruSession | undefined;
   const chromeBridge = createChromeExtensionBridge({
     enabled: CHROME_BRIDGE_ENABLED,
     appSupportDir: app.getPath("userData"),
     socketPath: join(app.getPath("userData"), "native-host", "bridge.sock"),
     onEvent: (event) => {
+      if (session) {
+        session.log("info", "chrome-bridge", `connection state transition: ${event.type}`, {
+          ...(event.type === "rejected" ? { reason: event.reason } : {}),
+        });
+      } else {
+        console.log(`[chrome-bridge] connection state transition: ${event.type}`);
+      }
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send(CHROME_BRIDGE_EVENT_CHANNEL, event);
       }
     },
   });
   if (chromeBridge) await chromeBridge.start();
-  const session = new SoroeruSession(vaultPath, {
+  session = new SoroeruSession(vaultPath, {
     // egress: target-site — user-initiated handoff to the user's default browser for manual saved-page import.
     openExternal: (url) => shell.openExternal(url),
     // Developer-only extension automation path (Issue #338); selected when

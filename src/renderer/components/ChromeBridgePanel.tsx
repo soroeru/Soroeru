@@ -69,7 +69,7 @@ export function ChromeBridgePanel(): React.JSX.Element {
           onClick={() =>
             void run(
               () => window.soroeru.chromeBridge.connect(),
-              "host と manifest を登録しました。Chrome で dist/extension を「パッケージ化されていない拡張機能」として読み込んでください。拡張とのハンドシェイクを待っています。",
+              "host と manifest を登録しました。Chrome で dist/extension を「パッケージ化されていない拡張機能」として読み込んでください。すでに拡張機能が読み込まれている場合は、chrome://extensions で拡張機能のリロード（またはサービスワーカーの再起動）を行ってください。拡張とのハンドシェイクを待っています。",
             )
           }
           className="self-start rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:opacity-50"
@@ -79,7 +79,8 @@ export function ChromeBridgePanel(): React.JSX.Element {
       )}
       {status.registered && !status.connected && (
         <p className="text-sm">
-          Chrome の拡張機能画面で Soroeru 拡張を読み込み、拡張アイコンを確認してください。
+          Chrome の拡張機能画面（chrome://extensions）で Soroeru
+          拡張を読み込み、拡張アイコンを確認してください。すでに拡張機能が読み込まれている場合は、拡張機能のリロード（またはサービスワーカーの再起動）を行ってください。
         </p>
       )}
       {status.connected && (

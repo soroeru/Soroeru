@@ -310,14 +310,37 @@ export class SoroeruSession {
   async connectChromeBridge() {
     if (!this.chromeBridge || !this.chromeBridgeSetup) return { ok: false, error: "feature-disabled" };
     try {
+      this.log("info", "chrome-bridge", "registering native host", {
+        hasSourceBinary: !!this.chromeBridgeSetup.sourceBinary,
+        hasExtensionId: !!this.chromeBridgeSetup.extensionId,
+        hasPaths: !!this.chromeBridgeSetup.paths,
+      });
       await registerNativeHost(
         this.chromeBridgeSetup.sourceBinary,
         this.chromeBridgeSetup.extensionId,
         this.chromeBridgeSetup.paths,
       );
+      this.log("info", "chrome-bridge", "native host registered successfully");
+      this.log("info", "chrome-bridge", "starting chrome bridge");
       await this.chromeBridge.start?.();
+      this.log("info", "chrome-bridge", "chrome bridge started successfully");
       return { ok: true };
-    } catch {
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      let reason = "unknown";
+      if (message.includes("extensionId must be a 32-character")) {
+        reason = "invalid-extension-id";
+      } else if (message.includes("Node.js runtime not found")) {
+        reason = "node-not-found";
+      } else {
+        reason = "registration-failed";
+      }
+      this.log("error", "chrome-bridge", "native host registration failed", {
+        reason,
+        hasSourceBinary: !!this.chromeBridgeSetup.sourceBinary,
+        hasExtensionId: !!this.chromeBridgeSetup.extensionId,
+        hasPaths: !!this.chromeBridgeSetup.paths,
+      });
       return { ok: false, error: "registration-failed" };
     }
   }
@@ -326,6 +349,7 @@ export class SoroeruSession {
     if (!this.chromeBridge || !this.chromeBridgeSetup) return { ok: false, error: "feature-disabled" };
     const manualCleanupOrigins: string[] = [];
     let permissionsCleanupUnknown = false;
+    this.log("info", "chrome-bridge", "disconnecting chrome bridge");
     try {
       const response = (await this.chromeBridge.sendCommand("listPermissions")) as { origins?: string[] };
       const approvedOrigins = (response.origins ?? [])
@@ -341,12 +365,29 @@ export class SoroeruSession {
           manualCleanupOrigins.push(origin);
         }
       }
-    } catch {
+    } catch (err) {
       // If Chrome is gone, extension-owned permissions require manual cleanup.
       permissionsCleanupUnknown = true;
+      this.log("warn", "chrome-bridge", "failed to list/remove permissions during disconnect", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
-    await this.chromeBridge.close?.();
-    await unregisterNativeHost(this.chromeBridgeSetup.paths);
+    try {
+      await this.chromeBridge.close?.();
+      this.log("info", "chrome-bridge", "chrome bridge closed");
+    } catch (err) {
+      this.log("error", "chrome-bridge", "failed to close chrome bridge", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
+      await unregisterNativeHost(this.chromeBridgeSetup.paths);
+      this.log("info", "chrome-bridge", "native host unregistered successfully");
+    } catch (err) {
+      this.log("error", "chrome-bridge", "failed to unregister native host", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     this.selectedChromeTab = undefined;
     return {
       ok: true,

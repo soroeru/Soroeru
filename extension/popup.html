@@ -1,6 +1,109 @@
 <!doctype html>
-<meta charset="utf-8">
-<title>Soroeru</title>
-<button id="allow" type="button">このサイトを許可</button>
-<p id="status" role="status"></p>
-<script src="popup.js"></script>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Soroeru</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap');
+    body {
+      font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+      margin: 0;
+      padding: 16px;
+      width: 280px;
+      background-color: #fcfbf7;
+      color: #1c1917;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid #f3f0e8;
+      padding-bottom: 8px;
+      margin-bottom: 4px;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #7c2d12; /* Amber-900 / Rust */
+      margin: 0;
+    }
+    .status-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+    }
+    .status-connected {
+      background-color: #fef3c7;
+      color: #92400e;
+    }
+    .status-disconnected {
+      background-color: #f5f5f4;
+      color: #78716c;
+    }
+    button {
+      width: 100%;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+    #allow {
+      background: linear-gradient(135deg, #7c2d12 0%, #9a3412 100%);
+      color: #ffffff;
+    }
+    #allow:hover {
+      background: linear-gradient(135deg, #9a3412 0%, #b45309 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 6px rgba(124, 45, 18, 0.15);
+    }
+    #allow:active {
+      transform: translateY(0);
+    }
+    #reconnect {
+      background-color: #ffffff;
+      color: #7c2d12;
+      border: 1px solid #e7e5e4;
+    }
+    #reconnect:hover {
+      background-color: #fafaf9;
+      border-color: #d6d3d1;
+    }
+    .message {
+      font-size: 12px;
+      line-height: 1.5;
+      color: #44403c;
+      margin: 0;
+      min-height: 18px;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 class="title">Soroeru 拡張機能</h1>
+      <span id="status-badge" class="status-badge status-disconnected">OFFLINE</span>
+    </div>
+    <button id="allow" type="button">このサイトを許可</button>
+    <button id="reconnect" type="button" style="display: none;">アプリに再接続</button>
+    <p id="status" class="message" role="status"></p>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
