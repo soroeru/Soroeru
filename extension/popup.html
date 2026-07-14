@@ -4,14 +4,16 @@
   <meta charset="utf-8">
   <title>Soroeru</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap');
+    /* No remote fonts: a pending @import defers the whole stylesheet, so Chrome
+       sizes the popup from unstyled content (vertical text), and the extension
+       must not egress to non-target hosts. System fonts only. */
     html {
       width: 280px;
       min-width: 280px;
       box-sizing: border-box;
     }
     body {
-      font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+      font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
       margin: 0;
       padding: 16px;
       background-color: #fcfbf7;
