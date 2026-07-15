@@ -143,6 +143,16 @@ push state, PR state, and review processes have been checked individually.
 
 ## 3. Issue Workflow
 
+### 3.0 Project metadata contract
+
+New Issues may include the bounded `project-metadata` block documented by the
+`create-issue` Skill. The `issues.opened` workflow uses only the title, body,
+labels, and dependencies for deterministic classification. Missing, invalid,
+ambiguous, or unknown values are logged as reason codes and never cause a new
+Project option to be created. Existing Project items and exact-name iterations
+are reused on rerun. A GraphQL failure exits non-zero so GitHub Actions can
+retry it; logs must not contain the Issue body, credentials, or secrets.
+
 Use Issues to define the goal, scope, non-scope, implementation direction, and
 acceptance criteria before starting non-trivial work.
 

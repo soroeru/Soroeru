@@ -1,5 +1,19 @@
 # Testing
 
+## GitHub Project defaults
+
+Run the isolated parser and GraphQL orchestration tests with:
+
+```bash
+node --test tests/unit/project-issue-defaults.test.mjs
+```
+
+The tests use synthetic Issue payloads and an injected GraphQL function. They
+cover metadata and legacy parsing, candidate classification and ambiguity,
+safe defaults, next-day one-day dates, existing-item/iteration reuse, and
+failure before any mutation when a required Project option or classification
+is unavailable. Do not use a real Project token or real Issue body in tests.
+
 This document owns the **testing strategy** for `Soroeru`: what to test, at which layer,
 how aggressively, and how the suites map to the architecture. It is the source of truth for
 *what* to test; the [`writing-good-tests`](../skills/writing-good-tests/SKILL.md) skill (§1.1)

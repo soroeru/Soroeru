@@ -76,6 +76,27 @@ that env var the Playwright path is unchanged.
 
 ## 3. Run Locally
 
+### 3.0 GitHub Project issue defaults
+
+`.github/workflows/project-issue-defaults.yml` handles only `issues.opened` and
+configures classified Issues in `config/github-projects.json`. It resolves
+Project, field, option, item, and iteration IDs by name through GraphQL; IDs
+are intentionally not stored in the repository. Exercise the implementation
+locally with:
+
+```bash
+node --test tests/unit/project-issue-defaults.test.mjs
+node scripts/project-issue-defaults.mjs --event path/to/issues-opened.json
+```
+
+Repository administrators must create the `SOROERU_PROJECT_TOKEN` Actions
+secret using a dedicated GitHub App installation token or fine-grained token
+with read access to Issues and write access to the target Projects V2. Do not
+use a personal token, commit a token, or print it. Rotate the token at the
+provider's normal expiry cadence and immediately after membership or scope
+changes. The workflow also declares `repository-projects: write`; the secret
+is required when the repository token cannot write a user-owned Project.
+
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)
 npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
