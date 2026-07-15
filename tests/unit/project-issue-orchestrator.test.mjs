@@ -419,6 +419,44 @@ test("extracts only the bounded implementation assignment metadata", () => {
   });
 });
 
+test("does not treat multi-line assignment markers as a legacy one-line assignee", () => {
+  const body = `<!-- implementation-assignment:start -->
+- Sub: Claude
+- Model: Fable
+- Order: 1
+- Dependencies: none
+<!-- implementation-assignment:end -->`;
+  assert.equal(parseImplementationAssignment(body).primary, undefined);
+});
+
+test("canonicalizes assignee casing from body and plan items", () => {
+  assert.equal(parseImplementationAssignment(
+    `<!-- implementation-assignment:start -->
+- Primary: codex
+- Sub: claude
+- Model: Fable
+- Order: 1
+- Dependencies: none
+<!-- implementation-assignment:end -->`,
+  ).primary, "Codex");
+  const items = parseProjectItems([
+    {
+      number: 501,
+      title: "Cased",
+      url: "https://example.invalid/issues/501",
+      status: "Ready",
+      startDate: "2026-07-15",
+      primary: "codex",
+      sub: "claude",
+      model: "gpt-5",
+      order: 1,
+      dependencies: [],
+    },
+  ]);
+  assert.equal(items[0].primary, "Codex");
+  assert.equal(items[0].sub, "Claude");
+});
+
 test("extracts the repository's Japanese implementation assignment format", () => {
   const body = `<!-- implementation-assignment:start -->
 - 実装順: 01

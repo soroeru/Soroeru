@@ -40,9 +40,12 @@ export async function runOrchestration(input) {
   const options = input?.options ?? {};
   if (!options.aiSubAssignees || typeof options.aiSubAssignees !== "object")
     throw new Error("ai-sub-assignee-mapping-required");
-  for (const item of items)
-    if (options.aiSubAssignees[item.primary] !== item.sub)
-      throw new Error(`ai-sub-assignee-mismatch:${item.number}`);
+  for (const item of items) {
+    const expectedSub = options.aiSubAssignees[item.primary];
+    if (expectedSub === undefined)
+      throw new Error(`missing-ai-sub-assignee-mapping:${item.number}`);
+    if (expectedSub !== item.sub) throw new Error(`ai-sub-assignee-mismatch:${item.number}`);
+  }
   const parent = options.parent;
   if (!parent?.agent || !parent?.model) throw new Error("parent-route-required");
   validateCapabilities(
@@ -55,6 +58,7 @@ export async function runOrchestration(input) {
   let nextState;
 
   if (!dryRun && input.milestone) {
+    if (!options.statePath) throw new Error("state-path-required");
     nextState = await withStateLock(options.statePath, async () => {
       const lockedState = await readState(options.statePath);
       const updated = applyMilestone(lockedState, input.milestone, {

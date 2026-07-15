@@ -1,4 +1,8 @@
-import { OWNER_TYPES, parseIssueAssignment } from "./project-issue-assignment.mjs";
+import {
+  canonicalizeAssignee,
+  OWNER_TYPES,
+  parseIssueAssignment,
+} from "./project-issue-assignment.mjs";
 
 export function buildProjectItemsQuery(ownerType) {
   if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
@@ -39,21 +43,30 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectNumb
       (node.fieldValues?.nodes ?? []).map((value) => [value.field?.name, value.name ?? value.date]),
     );
     const assignment = parseIssueAssignment(body);
-    return [
-      {
-        number: node.content?.number,
-        title: node.content?.title,
-        url: node.content?.url,
-        status: fields.get("Status"),
-        startDate: fields.get("Start date"),
-        // Project single-select wins over body when present.
-        primary: fields.get("AI Assignees") ?? assignment.primary,
-        sub: fields.get("AI Sub Assignees") ?? assignment.sub,
-        model: assignment.model,
-        order: assignment.order,
-        dependencies: assignment.dependencies,
-      },
-    ];
+    const number = node.content?.number;
+    // Project single-select wins over body when present; canonicalize casing.
+    const primary = canonicalizeAssignee(fields.get("AI Assignees") ?? assignment.primary);
+    const sub = canonicalizeAssignee(fields.get("AI Sub Assignees") ?? assignment.sub);
+    const item = {
+      number,
+      title: node.content?.title,
+      url: node.content?.url,
+      status: fields.get("Status"),
+      startDate: fields.get("Start date"),
+      primary,
+      sub,
+      model: assignment.model,
+      order: assignment.order,
+      dependencies: assignment.dependencies,
+    };
+    // Surface incomplete GitHub-shaped rows with the Issue number before planning.
+    if (
+      assignment.model === undefined ||
+      assignment.order === undefined ||
+      assignment.dependencies === undefined
+    )
+      throw new Error(`incomplete-assignment-metadata:${number}`);
+    return [item];
   });
   return { items: mapped, fetchedBytes };
 }

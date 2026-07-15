@@ -39,6 +39,17 @@ export function toAiAssignee(value) {
   return AI_ASSIGNEES.get(normalize(value).toLowerCase()) ?? "未記載";
 }
 
+/** Canonical form when known; otherwise the trimmed input (for fail-closed callers). */
+export function canonicalizeAssignee(value) {
+  const text = normalize(value);
+  if (!text) return undefined;
+  return AI_ASSIGNEES.get(text.toLowerCase()) ?? text;
+}
+
+export function isKnownAssignee(value) {
+  return AI_ASSIGNEES.has(normalize(value).toLowerCase());
+}
+
 export function isCanonicalDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
@@ -89,8 +100,11 @@ export function parseIssueAssignment(body) {
   const fromImpl = parseMarkedBlock(text, "implementation-assignment");
   const merged = { ...fromProject, ...fromImpl };
 
-  const legacy = text.match(/<!--\s*implementation-assignment\s*:\s*([^>]+?)\s*-->/i)?.[1];
-  if (!merged.primary && legacy) merged.primary = toAiAssignee(legacy);
+  // One-line legacy only: must not match multi-line <!-- …:start --> / :end markers.
+  const legacy = text.match(
+    /<!--\s*implementation-assignment\s*:\s*(?!(?:start|end)\b)([^>]+?)\s*-->/i,
+  )?.[1];
+  if (!merged.primary && legacy) merged.primary = canonicalizeAssignee(legacy);
 
   let dependencies;
   if (Object.hasOwn(merged, "dependencies")) dependencies = parseDependenciesToken(merged.dependencies);
@@ -103,8 +117,8 @@ export function parseIssueAssignment(body) {
   }
 
   return {
-    primary: merged.primary ? normalize(merged.primary) : undefined,
-    sub: merged.sub ? normalize(merged.sub) : undefined,
+    primary: canonicalizeAssignee(merged.primary),
+    sub: canonicalizeAssignee(merged.sub),
     model: merged.model ? normalize(merged.model) : undefined,
     order,
     dependencies,

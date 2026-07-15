@@ -1,4 +1,9 @@
-import { isCanonicalDate, OWNER_TYPES } from "./project-issue-assignment.mjs";
+import {
+  canonicalizeAssignee,
+  isCanonicalDate,
+  isKnownAssignee,
+  OWNER_TYPES,
+} from "./project-issue-assignment.mjs";
 
 const REQUIRED_ASSIGNMENTS = ["primary", "sub", "model"];
 const RUNNABLE_STATUSES = new Set(["Ready", "Todo", "In Progress"]);
@@ -33,6 +38,10 @@ export function parseProjectItems(rawItems) {
     const number = Number(raw?.number);
     if (!Number.isSafeInteger(number) || number <= 0) throw new Error("invalid-issue-number");
     for (const field of REQUIRED_ASSIGNMENTS) requiredString(raw[field], `missing-${field}:${number}`);
+    const primary = canonicalizeAssignee(raw.primary);
+    const sub = canonicalizeAssignee(raw.sub);
+    if (!isKnownAssignee(primary)) throw new Error(`unknown-primary:${number}`);
+    if (!isKnownAssignee(sub)) throw new Error(`unknown-sub:${number}`);
     if (!Array.isArray(raw.dependencies)) throw new Error(`missing-dependencies:${number}`);
     const dependencies = raw.dependencies.map((dependency) => Number(dependency));
     if (dependencies.some((dependency) => !Number.isSafeInteger(dependency) || dependency <= 0))
@@ -49,8 +58,8 @@ export function parseProjectItems(rawItems) {
       url: requiredString(raw.url, `missing-url:${number}`),
       status: requiredString(raw.status, `missing-status:${number}`),
       startDate,
-      primary: raw.primary.trim(),
-      sub: raw.sub.trim(),
+      primary,
+      sub,
       model: raw.model.trim(),
       order,
       dependencies: Object.freeze([...new Set(dependencies)]),

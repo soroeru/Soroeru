@@ -84,6 +84,13 @@ test("accepts legacy implementation-assignment metadata for the AI assignee", ()
   assert.equal(result.aiAssignee, "Codex");
 });
 
+test("does not treat assignment:start as a legacy one-line assignee value", () => {
+  const result = parseProjectMetadata(
+    "<!-- implementation-assignment:start -->\n- Priority: P1\n<!-- implementation-assignment:end -->",
+  );
+  assert.equal(result.aiAssignee, undefined);
+});
+
 test("classifies Visibility issues from Japanese disclosure labels", () => {
   assert.equal(classifyProject({ title: "開示台帳の収集改善", body: "", labels: [] }), "Visibility");
 });
