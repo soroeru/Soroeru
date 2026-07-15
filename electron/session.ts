@@ -29,7 +29,17 @@ import { VisibilityService } from "./visibility-service.js";
 import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-page-importer.js";
 import { FileLogger } from "../src/logging/file-logger.js";
 import type { LogFields, LogLevel, Logger } from "../src/logging/logger.js";
-import { MIN_PASSPHRASE_LENGTH } from "./ipc/contract.js";
+import {
+  MIN_PASSPHRASE_LENGTH,
+  type ChromeBridgeConfigurationMutationResult,
+  type ChromeBridgeConfigurationView,
+} from "./ipc/contract.js";
+import {
+  isValidChromeExtensionId,
+  type ChromeBridgeResolvedSettings,
+  type ChromeBridgeSettingsInput,
+  type ChromeBridgeStoredSettings,
+} from "./chrome-bridge-settings.js";
 import {
   nativeHostIsRegistered,
   registerNativeHost,
@@ -135,6 +145,11 @@ export interface SoroeruSessionOptions {
     extensionId: string;
     paths: NativeHostPaths;
   };
+  /** Non-sensitive local bridge configuration loaded before session construction. */
+  chromeBridgeSettings?: {
+    initial: ChromeBridgeResolvedSettings;
+    save: (input: ChromeBridgeSettingsInput) => Promise<ChromeBridgeStoredSettings>;
+  };
 }
 
 /** Mask a value to a fixed-width bullet preview that reveals at most its length. */
@@ -189,6 +204,8 @@ export class SoroeruSession {
       })
     | undefined;
   private readonly chromeBridgeSetup: SoroeruSessionOptions["chromeBridgeSetup"];
+  private readonly chromeBridgeSettings: SoroeruSessionOptions["chromeBridgeSettings"];
+  private chromeBridgeStoredSettings: ChromeBridgeStoredSettings | undefined;
   private selectedChromeTab: { tabId: number; origin: string } | undefined;
   /**
    * Local-only value source for AI-prompt redaction (Issue #310, design §8):
@@ -209,6 +226,8 @@ export class SoroeruSession {
     this.openExternal = options.openExternal;
     this.chromeBridge = options.chromeBridge;
     this.chromeBridgeSetup = options.chromeBridgeSetup;
+    this.chromeBridgeSettings = options.chromeBridgeSettings;
+    this.chromeBridgeStoredSettings = options.chromeBridgeSettings?.initial.stored;
     this.aiEngineOverride = options.aiEngine !== undefined;
     this.aiProviderFactory = options.aiProviderFactory ?? aiProviderFromEnv;
     this.logPath = options.logPath ?? join(dirname(vaultPath), "logs", "soroeru.log");
@@ -311,6 +330,88 @@ export class SoroeruSession {
     };
   }
 
+  async chromeBridgeConfiguration(): Promise<ChromeBridgeConfigurationView> {
+    const initial = this.chromeBridgeSettings?.initial;
+    const stored = this.chromeBridgeStoredSettings ?? {
+      version: 1 as const,
+      enabled: false,
+      extensionId: "",
+    };
+    const effective = initial?.effective ?? {
+      enabled: false,
+      extensionId: "",
+      enabledSource: "default" as const,
+      extensionIdSource: "default" as const,
+    };
+    const restartRequired =
+      (effective.enabledSource !== "environment" && stored.enabled !== effective.enabled) ||
+      (effective.extensionIdSource !== "environment" && stored.extensionId !== effective.extensionId);
+    return {
+      stored: { enabled: stored.enabled, extensionId: stored.extensionId },
+      effective,
+      restartRequired,
+      ...(initial?.validationError ? { validationError: initial.validationError } : {}),
+    };
+  }
+
+  async setChromeBridgeConfiguration(request: unknown): Promise<ChromeBridgeConfigurationMutationResult> {
+    if (!request || typeof request !== "object" || Array.isArray(request)) {
+      return { ok: false, error: "invalid-request" };
+    }
+    const input = request as Record<string, unknown>;
+    if (
+      Object.keys(input).some((key) => key !== "enabled" && key !== "extensionId") ||
+      typeof input["enabled"] !== "boolean" ||
+      typeof input["extensionId"] !== "string"
+    ) {
+      return { ok: false, error: "invalid-request" };
+    }
+    if (!this.chromeBridgeSettings) {
+      return { ok: false, error: "settings-unavailable" };
+    }
+    const enabled = input["enabled"];
+    const extensionId = input["extensionId"];
+    if (
+      (extensionId !== "" && !isValidChromeExtensionId(extensionId)) ||
+      (enabled && !isValidChromeExtensionId(extensionId))
+    ) {
+      return { ok: false, error: "invalid-extension-id" };
+    }
+    const { effective } = this.chromeBridgeSettings.initial;
+    const stored = this.chromeBridgeStoredSettings ?? this.chromeBridgeSettings.initial.stored;
+    if (
+      (effective.enabledSource === "environment" && enabled !== stored.enabled) ||
+      (effective.extensionIdSource === "environment" && extensionId !== stored.extensionId)
+    ) {
+      return { ok: false, error: "environment-override" };
+    }
+    if (effective.enabled && !enabled) {
+      const status = await this.chromeBridgeStatus();
+      if (status.registered || status.connected) {
+        const cleanup = await this.disconnectChromeBridge();
+        if (
+          !cleanup.ok ||
+          cleanup.permissionsCleanupUnknown ||
+          (cleanup.manualCleanupOrigins?.length ?? 0) > 0
+        ) {
+          return { ...cleanup, ok: false, error: "cleanup-incomplete" };
+        }
+      } else {
+        try {
+          await this.chromeBridge?.close?.();
+        } catch {
+          return { ok: false, error: "cleanup-incomplete" };
+        }
+      }
+    }
+    try {
+      this.chromeBridgeStoredSettings = await this.chromeBridgeSettings.save({ enabled, extensionId });
+      return { ok: true, configuration: await this.chromeBridgeConfiguration() };
+    } catch {
+      return { ok: false, error: "persistence-failed" };
+    }
+  }
+
   async connectChromeBridge() {
     if (!this.chromeBridge || !this.chromeBridgeSetup) return { ok: false, error: "feature-disabled" };
     try {
@@ -373,10 +474,12 @@ export class SoroeruSession {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    let cleanupFailed = false;
     try {
       await this.chromeBridge.close?.();
       this.log("info", "chrome-bridge", "chrome bridge closed");
     } catch (err) {
+      cleanupFailed = true;
       this.log("error", "chrome-bridge", "failed to close chrome bridge", {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -385,13 +488,15 @@ export class SoroeruSession {
       await unregisterNativeHost(this.chromeBridgeSetup.paths);
       this.log("info", "chrome-bridge", "native host unregistered successfully");
     } catch (err) {
+      cleanupFailed = true;
       this.log("error", "chrome-bridge", "failed to unregister native host", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
     this.selectedChromeTab = undefined;
     return {
-      ok: true,
+      ok: !cleanupFailed,
+      ...(cleanupFailed ? { error: "cleanup-failed" } : {}),
       ...(manualCleanupOrigins.length ? { manualCleanupOrigins } : {}),
       ...(permissionsCleanupUnknown ? { permissionsCleanupUnknown: true } : {}),
     };

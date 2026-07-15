@@ -10,10 +10,13 @@ import {
   IPC_CHANNELS,
   type ConfirmDynamicAttributeCandidateRequest,
   type ChromeBridgeConnectionEvent,
+  type ChromeBridgeConfigurationMutationResult,
+  type ChromeBridgeConfigurationView,
   type ChromeBridgeMutationResult,
   type ChromeBridgePermissionsView,
   type ChromeBridgeStatusView,
   type ChromeBridgeTabView,
+  type SetChromeBridgeConfigurationRequest,
   type ConfirmDynamicAttributeCandidateResult,
   type CsvImportResult,
   type DeleteSiteAccountRequest,
@@ -96,6 +99,10 @@ export interface SoroeruApi {
   };
   chromeBridge: {
     status(): Promise<ChromeBridgeStatusView>;
+    configuration(): Promise<ChromeBridgeConfigurationView>;
+    setConfiguration(
+      request: SetChromeBridgeConfigurationRequest,
+    ): Promise<ChromeBridgeConfigurationMutationResult>;
     connect(): Promise<ChromeBridgeMutationResult>;
     disconnect(): Promise<ChromeBridgeMutationResult>;
     permissions(): Promise<ChromeBridgePermissionsView>;
@@ -177,6 +184,13 @@ export function createSoroeruApi(
     },
     chromeBridge: {
       status: () => invoke(IPC_CHANNELS.chromeBridgeStatus) as Promise<ChromeBridgeStatusView>,
+      configuration: () =>
+        invoke(IPC_CHANNELS.chromeBridgeConfiguration) as Promise<ChromeBridgeConfigurationView>,
+      setConfiguration: (request) =>
+        invoke(
+          IPC_CHANNELS.chromeBridgeSetConfiguration,
+          request,
+        ) as Promise<ChromeBridgeConfigurationMutationResult>,
       connect: () => invoke(IPC_CHANNELS.chromeBridgeConnect) as Promise<ChromeBridgeMutationResult>,
       disconnect: () => invoke(IPC_CHANNELS.chromeBridgeDisconnect) as Promise<ChromeBridgeMutationResult>,
       permissions: () => invoke(IPC_CHANNELS.chromeBridgePermissions) as Promise<ChromeBridgePermissionsView>,

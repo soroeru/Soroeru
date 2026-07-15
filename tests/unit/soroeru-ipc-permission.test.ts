@@ -22,6 +22,7 @@ import { VaultV2 } from "../../src/store/vault-v2.js";
 // the renderer-facing API can reach only allowlisted channels, the main bridge
 // exposes exactly that allowlist, and crossing values are sanitized.
 const PASSPHRASE = "ipc-test-passphrase";
+const CHROME_EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
 
 async function tmpVaultPath(): Promise<{ dir: string; path: string }> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-ipc-"));
@@ -68,6 +69,8 @@ test("the preload API invokes only allowlisted channels and covers the surface",
   await api.visibility.abort();
   await api.visibility.status();
   await api.chromeBridge.status();
+  await api.chromeBridge.configuration();
+  await api.chromeBridge.setConfiguration({ enabled: false, extensionId: "" });
   await api.chromeBridge.connect();
   await api.chromeBridge.disconnect();
   await api.chromeBridge.permissions();
@@ -210,6 +213,195 @@ test("Chrome bridge registration failure logs detailed error", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("Chrome bridge configuration persists enablement and reports restart-required state", async () => {
+  const saved: Array<{ enabled: boolean; extensionId: string }> = [];
+  const session = new SoroeruSession(join(tmpdir(), "unused-chrome-settings-vault.json"), {
+    chromeBridgeSettings: {
+      initial: {
+        stored: { version: 1, enabled: false, extensionId: "" },
+        effective: {
+          enabled: false,
+          extensionId: "",
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+      },
+      save: async (input) => {
+        saved.push(input);
+        return { version: 1 as const, ...input };
+      },
+    },
+  });
+
+  assert.equal((await session.chromeBridgeConfiguration()).restartRequired, false);
+  const result = await session.setChromeBridgeConfiguration({
+    enabled: true,
+    extensionId: CHROME_EXTENSION_ID,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.configuration?.restartRequired, true);
+  assert.deepEqual(saved, [{ enabled: true, extensionId: CHROME_EXTENSION_ID }]);
+});
+
+test("Chrome bridge configuration rejects invalid IDs without persistence", async () => {
+  let saved = false;
+  const session = new SoroeruSession(join(tmpdir(), "unused-invalid-chrome-settings-vault.json"), {
+    chromeBridgeSettings: {
+      initial: {
+        stored: { version: 1, enabled: false, extensionId: "" },
+        effective: {
+          enabled: false,
+          extensionId: "",
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+      },
+      save: async (input) => {
+        saved = true;
+        return { version: 1 as const, ...input };
+      },
+    },
+  });
+  assert.deepEqual(await session.setChromeBridgeConfiguration({ enabled: true, extensionId: "invalid" }), {
+    ok: false,
+    error: "invalid-extension-id",
+  });
+  assert.equal(saved, false);
+});
+
+test("Chrome bridge configuration rejects non-boolean IPC input", async () => {
+  let saved = false;
+  const session = new SoroeruSession(join(tmpdir(), "unused-invalid-ipc-settings-vault.json"), {
+    chromeBridgeSettings: {
+      initial: {
+        stored: { version: 1, enabled: false, extensionId: "" },
+        effective: {
+          enabled: false,
+          extensionId: "",
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+      },
+      save: async (input) => {
+        saved = true;
+        return { version: 1 as const, ...input };
+      },
+    },
+  });
+  const bridge = createIpcBridge(session);
+  assert.deepEqual(
+    await bridge[IPC_CHANNELS.chromeBridgeSetConfiguration]({
+      enabled: "true",
+      extensionId: CHROME_EXTENSION_ID,
+    }),
+    { ok: false, error: "invalid-request" },
+  );
+  assert.equal(saved, false);
+});
+
+test("disabling an unregistered listener closes it before persisting OFF", async () => {
+  const order: string[] = [];
+  const session = new SoroeruSession(join(tmpdir(), "unused-unregistered-disable-vault.json"), {
+    chromeBridge: {
+      isConnected: () => false,
+      sendCommand: async () => {
+        throw new Error("must not query permissions without registration");
+      },
+      close: async () => {
+        order.push("close");
+      },
+    },
+    chromeBridgeSettings: {
+      initial: {
+        stored: { version: 1, enabled: true, extensionId: CHROME_EXTENSION_ID },
+        effective: {
+          enabled: true,
+          extensionId: CHROME_EXTENSION_ID,
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+      },
+      save: async (input) => {
+        order.push("save");
+        return { version: 1 as const, ...input };
+      },
+    },
+  });
+  const result = await session.setChromeBridgeConfiguration({
+    enabled: false,
+    extensionId: CHROME_EXTENSION_ID,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(order, ["close", "save"]);
+});
+
+test("disabling does not persist OFF when permission cleanup is uncertain", async () => {
+  let saved = false;
+  const session = new SoroeruSession(join(tmpdir(), "unused-disable-chrome-settings-vault.json"), {
+    chromeBridge: {
+      isConnected: () => true,
+      sendCommand: async () => {
+        throw new Error("Chrome closed");
+      },
+      close: async () => undefined,
+    },
+    chromeBridgeSetup: {
+      sourceBinary: "/unused/host",
+      extensionId: CHROME_EXTENSION_ID,
+      paths: {
+        appSupportDir: join(tmpdir(), "unused-app-support"),
+        chromeNativeMessagingDir: join(tmpdir(), "unused-native-host"),
+      },
+    },
+    chromeBridgeSettings: {
+      initial: {
+        stored: { version: 1, enabled: true, extensionId: CHROME_EXTENSION_ID },
+        effective: {
+          enabled: true,
+          extensionId: CHROME_EXTENSION_ID,
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+      },
+      save: async (input) => {
+        saved = true;
+        return { version: 1 as const, ...input };
+      },
+    },
+  });
+
+  const result = await session.setChromeBridgeConfiguration({
+    enabled: false,
+    extensionId: CHROME_EXTENSION_ID,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "cleanup-incomplete");
+  assert.equal(saved, false);
+});
+
+test("disconnect surfaces listener close failure", async () => {
+  const session = new SoroeruSession(join(tmpdir(), "unused-close-failure-vault.json"), {
+    chromeBridge: {
+      isConnected: () => false,
+      sendCommand: async () => ({ origins: [] }),
+      close: async () => {
+        throw new Error("close failed");
+      },
+    },
+    chromeBridgeSetup: {
+      sourceBinary: "/unused/host",
+      extensionId: CHROME_EXTENSION_ID,
+      paths: {
+        appSupportDir: join(tmpdir(), "unused-close-app-support"),
+        chromeNativeMessagingDir: join(tmpdir(), "unused-close-native-host"),
+      },
+    },
+  });
+  const result = await session.disconnectChromeBridge();
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "cleanup-failed");
 });
 
 test("Chrome permission patterns normalize to HTTPS origins only", () => {

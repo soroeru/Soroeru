@@ -250,7 +250,21 @@ not the supported product installation or binding UX. To use it during local dev
    - Click **Load unpacked** and select the `dist/extension/` directory.
    - Note the extension ID shown on the extension card (you will need it below).
 
-3. **Start the app with the bridge enabled:**
+3. **Start the app and save the bridge settings:**
+   ```bash
+   SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
+   npm run dev
+   ```
+   Open **設定 → Chrome と接続**, enter the extension ID from step 2, select
+   **Chrome 拡張ブリッジを有効にする**, and save. Restart Soroeru when the settings panel
+   asks you to; listener enablement and the extension ID are applied at process startup. The
+   non-sensitive setting is stored locally under Electron's Soroeru `userData` directory and is
+   available before vault unlock. It defaults to OFF.
+
+   `SOROERU_ENABLE_CHROME_BRIDGE` and `SOROERU_CHROME_EXTENSION_ID` remain developer overrides.
+   When present they take precedence over the saved value and the settings panel identifies the
+   overridden field. Both are strict and fail closed: enablement accepts only `0` or `1`, and the
+   extension ID must be 32 lowercase characters in Chrome's `a`–`p` alphabet. For example:
    ```bash
    SOROERU_ENABLE_CHROME_BRIDGE=1 SOROERU_CHROME_EXTENSION_ID=<extension-id-from-step-2> \
    SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
@@ -258,10 +272,9 @@ not the supported product installation or binding UX. To use it during local dev
    ```
    In a **packaged app** (`npm run package:dmg`), the host bundle ships inside the DMG at
    `Soroeru.app/Contents/Resources/native-host/host.cjs` and is used automatically;
-   `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override. `SOROERU_ENABLE_CHROME_BRIDGE=1`
-   and the extension ID are still required during migration — the bridge stays off by default
-   until the reachability, #381 invariant, binding, permission, packaging, and distribution
-   gates in `architecture.md` §2.2 pass.
+   `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override. The bridge stays off by default until
+   the reachability, #381 invariant, binding, permission, packaging, and distribution gates in
+   `architecture.md` §2.2 pass.
 
 4. **In the app:**
    - Go to **設定 → Chrome と接続** and select **host を登録して接続を始める**.
@@ -271,6 +284,9 @@ not the supported product installation or binding UX. To use it during local dev
      into `.app`, which App Translocation can relocate).
    - The handshake completes when the extension confirms the native-messaging connection.
    - When done, choose **切断して登録物を掃除** to unregister and remove the host binary.
+   - Turning the bridge setting OFF runs the same cleanup first. OFF is saved only after listener,
+     permission, and native-host cleanup completes; failed or uncertain cleanup remains visible and
+     leaves the saved setting ON. Restart to make OFF the next startup state.
 
 **Runtime caveat:** Chrome launches the installed host with launchd's minimal `PATH`, so
 an `env node` shebang would fail silently on most machines. Registration therefore

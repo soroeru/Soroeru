@@ -52,6 +52,9 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.visibilityAbort]: () => session.abortVisibility(),
     [IPC_CHANNELS.visibilityStatus]: () => session.visibilityStatus(),
     [IPC_CHANNELS.chromeBridgeStatus]: () => session.chromeBridgeStatus(),
+    [IPC_CHANNELS.chromeBridgeConfiguration]: () => session.chromeBridgeConfiguration(),
+    [IPC_CHANNELS.chromeBridgeSetConfiguration]: (request: unknown) =>
+      session.setChromeBridgeConfiguration(request),
     [IPC_CHANNELS.chromeBridgeConnect]: () => session.connectChromeBridge(),
     [IPC_CHANNELS.chromeBridgeDisconnect]: () => session.disconnectChromeBridge(),
     [IPC_CHANNELS.chromeBridgePermissions]: () => session.chromeBridgePermissions(),
