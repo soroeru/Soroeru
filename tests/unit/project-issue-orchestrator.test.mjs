@@ -28,10 +28,10 @@ const runOptions = {
   releasePolicy: "merged",
   runDate: "2026-07-20",
   aiSubAssignees: { Codex: "Claude", Claude: "Codex" },
-  parent: { provider: "Codex", model: "gpt-5" },
+  parent: { agent: "Codex", model: "gpt-5" },
   capabilities: [
     ...["parent", "worker"].map((role) => ({
-      provider: "Codex",
+      agent: "Codex",
       model: "gpt-5",
       role,
       selector: "test-selector",
@@ -40,7 +40,7 @@ const runOptions = {
       timeoutMs: 60_000,
     })),
     {
-      provider: "Claude",
+      agent: "Claude",
       model: "sonnet",
       role: "worker",
       selector: "test-selector",
@@ -165,7 +165,7 @@ test("reports the complete usage schema and marks a mixed total as partial", () 
   });
 });
 
-test("dry-run returns a plan without writing state", async () => {
+test("dry-run returns a plan without writing state and ignores milestones unless simulated", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-"));
   const statePath = path.join(directory, "state.json");
   await writeFile(statePath, '{"sentinel":true}\n');
@@ -180,6 +180,22 @@ test("dry-run returns a plan without writing state", async () => {
 
   assert.equal(result.dryRun, true);
   assert.equal(await readFile(statePath, "utf8"), before);
+  assert.deepEqual(
+    result.plan.runnable.map(({ number }) => number),
+    [101],
+  );
+
+  const simulated = await runOrchestration({
+    ...input,
+    options: { ...runOptions, dryRun: true, simulateMilestone: true, statePath },
+    milestone: { issue: 101, type: "merged" },
+  });
+  assert.equal(await readFile(statePath, "utf8"), before);
+  assert.deepEqual(simulated.state.completed, [101]);
+  assert.deepEqual(
+    simulated.plan.runnable.map(({ number }) => number),
+    [102],
+  );
 });
 
 test("execute mode persists milestone state", async () => {
@@ -333,8 +349,8 @@ test("treats Fable as an ordinary model name", async () => {
 
 test("requires selectable, verifiable, bounded capability records for parent and workers", () => {
   const required = [
-    { provider: "Claude", model: "Fable", role: "parent" },
-    { provider: "Claude", model: "Fable", role: "worker" },
+    { agent: "Claude", model: "Fable", role: "parent" },
+    { agent: "Claude", model: "Fable", role: "worker" },
   ];
   const capabilities = required.map((route) => ({
     ...route,
@@ -567,6 +583,7 @@ test("parses the documented operational Project CLI flags", () => {
       "--project-number",
       "9",
       "--dry-run",
+      "--simulate-milestone",
       "--max-parallel",
       "2",
       "--release-policy",
@@ -585,12 +602,17 @@ test("parses the documented operational Project CLI flags", () => {
       "102",
       "--milestone-json",
       '{"issue":101,"type":"pr-created"}',
+      "--parent-agent",
+      "Codex",
+      "--parent-model",
+      "gpt-5",
     ]),
     {
       projectOwner: "octo",
       ownerType: "user",
       projectNumber: 9,
       dryRun: true,
+      simulateMilestone: true,
       maxParallel: 2,
       releasePolicy: "pr-created",
       unavailableModels: ["Fable", "sonnet"],
@@ -598,8 +620,11 @@ test("parses the documented operational Project CLI flags", () => {
       statePath: "/tmp/state.json",
       existingWorktrees: [101, 102],
       milestoneJson: '{"issue":101,"type":"pr-created"}',
+      parentAgent: "Codex",
+      parentModel: "gpt-5",
     },
   );
+  assert.equal(parseCliArgs(["--parent-provider", "Claude"]).parentAgent, "Claude");
   assert.throws(() => parseCliArgs(["--mystery"]), /unknown-flag:--mystery/);
 });
 

@@ -59,6 +59,26 @@ test("rejects an unknown AI sub assignee even when it normalizes to the fallback
   assert.equal(result.reasons.includes("unknown-ai-sub-assignee"), true);
 });
 
+test("reports a missing primary-to-sub mapping distinctly from unknown names", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], priorities: ["P1"], sizes: ["M"] },
+    {},
+  );
+  assert.equal(result.reasons.includes("missing-ai-sub-assignee-mapping"), true);
+  assert.equal(result.aiSubAssignee, undefined);
+});
+
+test("reports a map target that is absent from Project field options", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", aiSubAssignee: "Claude", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], aiSubAssignees: ["Codex"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude" },
+  );
+  assert.equal(result.reasons.includes("ai-sub-assignee-option-missing"), true);
+  assert.equal(result.aiSubAssignee, "Claude");
+});
+
 test("accepts legacy implementation-assignment metadata for the AI assignee", () => {
   const result = parseProjectMetadata("<!-- implementation-assignment: codex -->");
   assert.equal(result.aiAssignee, "Codex");
@@ -258,7 +278,7 @@ test("does not mutate a project when the AI sub assignee option is missing", asy
       },
       config: { projectName: "Visibility", aiSubAssignees: { Codex: "Claude" } },
     }),
-    /project-option-not-found:AI Sub Assignees/,
+    /ai-sub-assignee-option-missing/,
   );
 
   assert.equal(mutationCount, 0);

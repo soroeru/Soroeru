@@ -122,12 +122,23 @@ GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
   --project-owner OWNER --owner-type user --project-number 2 --dry-run \
   --max-parallel 2 --release-policy merged --run-date 2026-07-15 \
   --unavailable-model MODEL --existing-worktree 396 \
-  --parent-provider Codex --parent-model MODEL \
+  --parent-agent Codex --parent-model MODEL \
   --capabilities-file path/to/verified-capabilities.json
+# Optional: apply a milestone in memory only (still no state write) during dry-run:
+#   --simulate-milestone --milestone-json '{"issue":396,"type":"merged"}'
 node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json \
   --dry-run --max-parallel 2 --release-policy merged
-node --test tests/unit/project-issue-orchestrator.test.mjs
+node --test tests/unit/project-issue-orchestrator.test.mjs \
+  tests/unit/project-issue-defaults.test.mjs
 ```
+
+Capability files use `agent` (Codex/Claude/…) rather than API-provider names.
+Assignment body markers (`project-metadata` and `implementation-assignment`)
+share one field vocabulary via `scripts/project-issue-assignment.mjs`. The
+planner, GitHub fetch, and local state lock live in
+`project-issue-plan.mjs`, `project-issue-github.mjs`, and
+`project-issue-state.mjs`; the CLI entrypoint is
+`project-issue-orchestrator.mjs`.
 
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)

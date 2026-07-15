@@ -1,18 +1,19 @@
 import fs from "node:fs/promises";
 
+import {
+  AI_ASSIGNEES,
+  normalize,
+  parseProjectMetadata,
+  toAiAssignee,
+} from "./project-issue-assignment.mjs";
+
 export const DEFAULTS = Object.freeze({
   aiAssignee: "未記載",
   priority: "P2",
   size: "M",
 });
 
-const AI_ASSIGNEES = new Map([
-  ["claude", "Claude"],
-  ["codex", "Codex"],
-  ["gemini", "Gemini"],
-  ["grok", "Grok"],
-  ["未記載", "未記載"],
-]);
+export { parseProjectMetadata };
 
 const PROJECT_RULES = [
   { name: "Visibility", keywords: ["visibility", "開示", "台帳", "サイト情報"] },
@@ -23,37 +24,17 @@ const PROJECT_RULES = [
   },
 ];
 
-function normalize(value) {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-export function parseProjectMetadata(body) {
-  const text = normalize(body);
-  const block =
-    text.match(/<!--\s*project-metadata:start\s*-->([\s\S]*?)<!--\s*project-metadata:end\s*-->/i)?.[1] ?? "";
-  const values = {};
-  for (const line of block.split(/\r?\n/)) {
-    const match = line.match(
-      /^\s*-\s*(AI Assignee|AI Sub Assignee|Priority|Size|Feature group)\s*:\s*(.*?)\s*$/i,
-    );
-    if (match) values[match[1].toLowerCase().replace(/\s+/g, "")] = normalize(match[2]);
-  }
-  const legacy = text.match(/<!--\s*implementation-assignment\s*:\s*([^>]+?)\s*-->/i)?.[1];
-  return {
-    aiAssignee: values.aiassignee || (legacy ? toAiAssignee(legacy) : undefined),
-    aiSubAssignee: values.aisubassignee,
-    priority: values.priority,
-    size: values.size,
-    featureGroup: values.featuregroup,
-  };
-}
-
-function toAiAssignee(value) {
-  return AI_ASSIGNEES.get(normalize(value).toLowerCase()) ?? "未記載";
-}
-
+/**
+ * Resolve Project field defaults. Sub-assignee reasons are distinct:
+ * - missing-ai-sub-assignee-mapping: config has no entry for the primary
+ * - unknown-ai-sub-assignee: supplied or mapped name is not a known assignee
+ * - ai-sub-assignee-mismatch: body sub differs from the configured map
+ * - ai-sub-assignee-option-missing: map target not in Project field options
+ */
 export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
   const aiChoices = new Set(choices.aiAssignees ?? [...AI_ASSIGNEES.values()]);
+  const subOptionChoices =
+    choices.aiSubAssignees === undefined ? null : new Set(choices.aiSubAssignees);
   const priorityChoices = new Set(choices.priorities ?? ["P0", "P1", "P2", "P3"]);
   const sizeChoices = new Set(choices.sizes ?? ["XS", "S", "M", "L", "XL"]);
   const reasons = [];
@@ -61,17 +42,29 @@ export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
   const aiAssignee = toAiAssignee(suppliedAiAssignee);
   if (!AI_ASSIGNEES.has(suppliedAiAssignee.toLowerCase()) || !aiChoices.has(aiAssignee))
     reasons.push("unknown-ai-assignee");
-  const aiSubAssignee = aiSubAssignees[aiAssignee];
+
+  const mappedSub = aiSubAssignees[aiAssignee];
   const suppliedAiSubAssignee = normalize(metadata.aiSubAssignee);
-  if (suppliedAiSubAssignee && !AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase()))
+  let aiSubAssignee;
+
+  if (!Object.hasOwn(aiSubAssignees, aiAssignee)) {
+    reasons.push("missing-ai-sub-assignee-mapping");
+    aiSubAssignee = undefined;
+  } else if (!mappedSub || !AI_ASSIGNEES.has(normalize(mappedSub).toLowerCase())) {
     reasons.push("unknown-ai-sub-assignee");
-  else if (suppliedAiSubAssignee && toAiAssignee(suppliedAiSubAssignee) !== aiSubAssignee)
-    reasons.push("ai-sub-assignee-mismatch");
-  if (
-    (!aiSubAssignee || !AI_ASSIGNEES.has(normalize(aiSubAssignee).toLowerCase())) &&
-    !reasons.includes("unknown-ai-sub-assignee")
-  )
-    reasons.push("unknown-ai-sub-assignee");
+    aiSubAssignee = undefined;
+  } else {
+    aiSubAssignee = toAiAssignee(mappedSub);
+    if (suppliedAiSubAssignee) {
+      if (!AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase()))
+        reasons.push("unknown-ai-sub-assignee");
+      else if (toAiAssignee(suppliedAiSubAssignee) !== aiSubAssignee)
+        reasons.push("ai-sub-assignee-mismatch");
+    }
+    if (subOptionChoices && !subOptionChoices.has(aiSubAssignee))
+      reasons.push("ai-sub-assignee-option-missing");
+  }
+
   const priority = priorityChoices.has(metadata.priority) ? metadata.priority : DEFAULTS.priority;
   if (priority !== metadata.priority) reasons.push("invalid-priority");
   const size = sizeChoices.has(metadata.size) ? metadata.size : DEFAULTS.size;
@@ -132,9 +125,16 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     priorities: fields.get(config.fields?.priority ?? "Priority")?.options?.map((option) => option.name),
     sizes: fields.get(config.fields?.size ?? "Size")?.options?.map((option) => option.name),
   };
-  const resolved = resolveDefaults(metadata, choices, config.aiSubAssignees);
-  const invalidSubAssignee = resolved.reasons.find((reason) => reason.includes("ai-sub-assignee"));
+  const resolved = resolveDefaults(metadata, choices, config.aiSubAssignees ?? {});
+  const invalidSubAssignee = resolved.reasons.find(
+    (reason) =>
+      reason === "missing-ai-sub-assignee-mapping" ||
+      reason === "unknown-ai-sub-assignee" ||
+      reason === "ai-sub-assignee-mismatch" ||
+      reason === "ai-sub-assignee-option-missing",
+  );
   if (invalidSubAssignee) throw new Error(invalidSubAssignee);
+  if (!resolved.aiSubAssignee) throw new Error("missing-ai-sub-assignee-mapping");
   const dates = calculateIterationDates((issue.created_at ?? issue.createdAt ?? "").slice(0, 10));
   const aiFieldName = config.fields?.aiAssignee ?? "AI Assignees";
   const aiSubFieldName = config.fields?.aiSubAssignee ?? "AI Sub Assignees";
