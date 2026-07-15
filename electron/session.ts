@@ -414,6 +414,10 @@ export class SoroeruSession {
 
   async connectChromeBridge() {
     if (!this.chromeBridge || !this.chromeBridgeSetup) return { ok: false, error: "feature-disabled" };
+    const configuration = await this.chromeBridgeConfiguration();
+    if (configuration.restartRequired && !configuration.stored.enabled) {
+      return { ok: false, error: "restart-required" };
+    }
     try {
       this.log("info", "chrome-bridge", "registering native host", {
         hasSourceBinary: !!this.chromeBridgeSetup.sourceBinary,

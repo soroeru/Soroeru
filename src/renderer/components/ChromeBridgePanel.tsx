@@ -6,6 +6,7 @@ import type {
 } from "../../../electron/ipc/contract.js";
 import {
   chromeBridgeRestartMessage,
+  chromeBridgeRuntimeControlsEnabled,
   connectionLabel,
   normalizeApprovedOrigins,
   validateChromeExtensionId,
@@ -99,6 +100,7 @@ export function ChromeBridgePanel(): React.JSX.Element {
 
   const enabledOverridden = configuration?.effective.enabledSource === "environment";
   const idOverridden = configuration?.effective.extensionIdSource === "environment";
+  const runtimeControlsEnabled = chromeBridgeRuntimeControlsEnabled(status, configuration);
 
   return (
     <section className="flex flex-col gap-3 rounded border border-amber-300 bg-amber-50 p-4">
@@ -173,7 +175,7 @@ export function ChromeBridgePanel(): React.JSX.Element {
           )}
         </div>
       )}
-      {status.enabled && !status.registered && (
+      {runtimeControlsEnabled && !status.registered && (
         <button
           type="button"
           disabled={busy}
@@ -188,13 +190,13 @@ export function ChromeBridgePanel(): React.JSX.Element {
           host を登録して接続を始める
         </button>
       )}
-      {status.enabled && status.registered && !status.connected && (
+      {runtimeControlsEnabled && status.registered && !status.connected && (
         <p className="text-sm">
           Chrome の拡張機能画面（chrome://extensions）で Soroeru
           拡張を読み込み、拡張アイコンを確認してください。すでに拡張機能が読み込まれている場合は、拡張機能のリロード（またはサービスワーカーの再起動）を行ってください。
         </p>
       )}
-      {status.enabled && status.connected && (
+      {runtimeControlsEnabled && status.connected && (
         <>
           <p className="text-sm">
             サイトを許可するには対象タブを開き、Chrome の Soroeru
@@ -229,7 +231,7 @@ export function ChromeBridgePanel(): React.JSX.Element {
           </div>
         </>
       )}
-      {status.enabled && status.registered && (
+      {runtimeControlsEnabled && status.registered && (
         <button
           type="button"
           disabled={busy}

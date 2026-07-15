@@ -1,4 +1,8 @@
-import type { ChromeBridgeStatusView, ChromeBridgeTabView } from "../../electron/ipc/contract.js";
+import type {
+  ChromeBridgeConfigurationView,
+  ChromeBridgeStatusView,
+  ChromeBridgeTabView,
+} from "../../electron/ipc/contract.js";
 
 export function connectionLabel(status: ChromeBridgeStatusView): string {
   if (!status.enabled) return "OFF（起動時設定）";
@@ -19,6 +23,16 @@ export function chromeBridgeRestartMessage(currentEnabled: boolean, nextEnabled:
     return "現在のプロセスではまだ OFF です。再起動すると Chrome 拡張ブリッジが ON になります。";
   }
   return "拡張IDの変更は再起動後に反映されます。現在の接続は再起動まで以前のIDを使用します。";
+}
+
+export function chromeBridgeRuntimeControlsEnabled(
+  status: ChromeBridgeStatusView,
+  configuration: ChromeBridgeConfigurationView | undefined,
+): boolean {
+  return (
+    status.enabled &&
+    (configuration?.effective.enabledSource === "environment" || configuration?.stored.enabled !== false)
+  );
 }
 
 export function normalizeApprovedOrigins(patterns: readonly string[]): string[] {

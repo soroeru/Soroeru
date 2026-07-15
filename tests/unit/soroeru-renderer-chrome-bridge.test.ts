@@ -8,6 +8,7 @@ import {
   prepareChromeBridgeRun,
   chromeBridgeRestartMessage,
   validateChromeExtensionId,
+  chromeBridgeRuntimeControlsEnabled,
 } from "../../src/renderer/chrome-bridge-ui.js";
 
 const VALID_ID = "abcdefghijklmnopabcdefghijklmnop";
@@ -77,5 +78,24 @@ test("restart copy distinguishes the running listener from the next startup sett
   assert.equal(
     chromeBridgeRestartMessage(true, true),
     "拡張IDの変更は再起動後に反映されます。現在の接続は再起動まで以前のIDを使用します。",
+  );
+});
+
+test("runtime controls stay hidden while OFF is pending restart", () => {
+  assert.equal(
+    chromeBridgeRuntimeControlsEnabled(
+      { enabled: true, registered: false, connected: false },
+      {
+        stored: { enabled: false, extensionId: VALID_ID },
+        effective: {
+          enabled: true,
+          extensionId: VALID_ID,
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+        restartRequired: true,
+      },
+    ),
+    false,
   );
 });

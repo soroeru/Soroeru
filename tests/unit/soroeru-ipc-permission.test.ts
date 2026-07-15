@@ -404,6 +404,36 @@ test("disconnect surfaces listener close failure", async () => {
   assert.equal(result.error, "cleanup-failed");
 });
 
+test("connect is rejected after OFF is stored pending restart", async () => {
+  const session = new SoroeruSession(join(tmpdir(), "unused-pending-off-vault.json"), {
+    chromeBridge: {
+      isConnected: () => false,
+      sendCommand: async () => undefined,
+    },
+    chromeBridgeSetup: {
+      sourceBinary: "/unused/host",
+      extensionId: CHROME_EXTENSION_ID,
+      paths: {
+        appSupportDir: join(tmpdir(), "unused-pending-off-app-support"),
+        chromeNativeMessagingDir: join(tmpdir(), "unused-pending-off-native-host"),
+      },
+    },
+    chromeBridgeSettings: {
+      initial: {
+        stored: { version: 1, enabled: false, extensionId: CHROME_EXTENSION_ID },
+        effective: {
+          enabled: true,
+          extensionId: CHROME_EXTENSION_ID,
+          enabledSource: "stored",
+          extensionIdSource: "stored",
+        },
+      },
+      save: async (input) => ({ version: 1 as const, ...input }),
+    },
+  });
+  assert.deepEqual(await session.connectChromeBridge(), { ok: false, error: "restart-required" });
+});
+
 test("Chrome permission patterns normalize to HTTPS origins only", () => {
   assert.equal(normalizeChromePermissionOrigin("https://example.test/*"), "https://example.test");
   assert.equal(normalizeChromePermissionOrigin("http://example.test/*"), undefined);
