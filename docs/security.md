@@ -232,6 +232,13 @@ all data unless the user set up a recovery key beforehand.
 - AI mode is optional and should be invoked only when the user enables `mode=ai` and
   deterministic confidence is too low, a site/flow is unsupported, or the user explicitly
   asks for AI assistance.
+- Browser-derived requests pass through an allow-list structural sanitizer. Provider adapters
+  accept its branded output, not raw DOM, raw snapshots, field/display values, prefilled or
+  selected values, cookies, tokens, or local value-read results. Static text is pattern-redacted
+  and omitted when ambiguity remains.
+- Responses use strict closed schemas. Navigation references only an opaque element ID from the
+  supplied snapshot; unknown keys, invented URLs/selectors, scripts, free-form actions, and value
+  requests are rejected locally before execution.
 - Use stateless requests; do not enable prompt caching of PII, stored threads, or memory.
   Prefer zero-retention / no-training options where the provider offers them.
 - The model itself does not learn from inference and the context window is per-request;
@@ -416,6 +423,15 @@ attributes may be malformed, misleading, or adversarial.
 - Do not evaluate page-provided strings as code or selectors without validation.
 - Keep raw page text out of persisted per-site records (store references + hashes).
 - Validate stored data before use; never log decrypted values.
+- Prompt instructions embedded in DOM are data, never authority. A bounded discovery engine may
+  propose at most one same-site read-only navigation per step after schema, existence, budget,
+  wall, and policy validation; it receives no general browser or value-reading tool.
+- Wall detection runs before sanitization and navigation. CAPTCHA, MFA/OTP, passkey, identity
+  verification, bot detection, and rate limiting always pause for human hand-off; model output
+  cannot override the pause.
+- Site collection maps are encrypted local candidates. Evidence stores only map/page/entry
+  references, hashes, timestamps, and outcomes—never HTML, screenshots, raw prompts, or values.
+  Sharing requires explicit opt-in and separate sanitization and remains disabled until reviewed.
 
 ## 12. Dependency And Supply Chain
 

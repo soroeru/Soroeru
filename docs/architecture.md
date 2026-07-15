@@ -219,6 +219,7 @@ key (PBKDF2-HMAC-SHA-512 as the Web-Crypto-only fallback), keyed by `entityKind`
 | Workflow checkpoint | `workflowCheckpoint` | Queue and resumability metadata (e.g. Visibility hand-off state), never raw browser profile state. |
 | Provider settings | `providerSettings` | The user's AI provider selection and API key (encrypted). |
 | Local definition | `localDefinition` | Encrypted local candidate site/field definitions (§7). |
+| Site Collection Map | `siteCollectionMap` | Versioned per-site pages, typed item locators, fingerprints, provenance, and generation status (§5.2). A separate entity kind from the Slices B–D `localDefinition` shape. |
 | Diagnostic | `diagnostic` | Support-bundle diagnostics, redacted. |
 
 Vault v2 file layout:
@@ -402,7 +403,7 @@ Collection uses (currently, for Slice A) two tiers, with a third planned:
    - field labels, `autocomplete`, `name`, `id`, placeholder, nearby text
      (`src/agent/scan.ts`, `src/agent/classifier.ts`);
    - Japanese-only matching for MVP.
-2. **Optional AI proposal** (planned): receives page structure, labels, terms text, and
+2. **Optional AI proposal / Site Collection Map discovery** (planned; detailed below): receives page structure, labels, terms text, and
    redacted snippets only; returns candidate page purpose, field mapping, and
    risk/Constraint findings; never sees raw personal values and never decides execution.
 3. **Official/local site definitions** (§7) are a later tier for Slice A and are the
@@ -410,6 +411,33 @@ Collection uses (currently, for Slice A) two tiers, with a third planned:
 
 Unclear values become `unknown` Disclosures or review tasks (surfaced to the user as
 pending dynamic-attribute candidates), not guessed data.
+
+Visibility may add a low-frequency AI discovery pass that produces a versioned
+`SiteCollectionMap` (Issue #381). A mandatory structural sanitizer further redacts `PageDriver`
+structure snapshots—already separate from local value reads—before they reach the model. The model receives only sanitized
+structure and returns a closed-schema proposal referencing opaque IDs in that snapshot; a local
+validator enforces existence, same-registrable-site HTTPS GET/read-only navigation, per-site limits
+(page/depth/call/token/time), and wall state. It has no
+general browser or value-reading tool.
+
+Regular mapped collection is deterministic and stores encrypted Disclosures plus minimized
+Evidence. Mismatch is isolated per entry, falls back to current deterministic exploration, and
+offers user-initiated regeneration. Maps are encrypted local candidate definitions and remain
+usable with AI disabled. The seam applies to Playwright and an extension; Issue #391 must prove
+the extension satisfies these invariants rather than redefine them.
+
+AI discovery has a separate `ai-assisted-discovery` capability. At L0 the collection gate names
+each discovery run. Existing collection L1 does not grant it; L1 expansion requires its own light
+understanding check covering provider egress, bounded navigation, and local-only value reads.
+Reduction remains immediate. Unconfigured-security Review tasks are computed from the latest
+Disclosure/Evidence; dismissal is an encrypted Preference keyed by task plus observation hash, so
+unchanged rescans stay dismissed and changed observations can surface once.
+
+Implementation extends both `Capability.operationType` and `Mandate.operation` with the literal
+`ai-assisted-discovery`; it does not overload `collection`. Maps use the new encrypted
+`siteCollectionMap` entity kind. Discovery wall pause/resume reuses the existing
+`workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a
+second checkpoint mechanism.
 
 ### 5.3 Account Relationship filters
 
@@ -583,7 +611,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
 | CVV most sensitive | Stored encrypted; reveal is refused outright (§4); fill requires a dedicated accessor. |
-| Raw PII never to AI | The agent/AI layer accepts structure-only requests; provider adapters validate redaction. |
+| Raw PII never to AI | The agent/AI layer accepts structure-only requests; provider adapters validate redaction, and the discovery-pass StructuralSanitizer (§5.2) further allow-lists and redacts browser structure. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
 | Local diagnosability without telemetry | Encrypted `diagnostic` records plus sanitized rotating operational logs and user-initiated support-bundle export (§3.5); no automatic upload. |
@@ -596,6 +624,12 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 
 Soroeru keeps the deterministic-vs-AI comparison because it directly protects agency:
 wrong mapping makes the user choose over false information.
+
+For site-wide discovery, Soroeru chooses a bounded observe/propose loop over a single static call
+or autonomous browser control. A static call lacks multi-page reach; autonomous control gives
+untrusted DOM excessive authority. Reconsider only if measurement shows inadequate coverage and
+a replacement preserves structure/value separation, schema-only proposals, deterministic local
+execution, and existing gates.
 
 Measurement plan:
 
