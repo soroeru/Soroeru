@@ -136,38 +136,6 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   ]) {
     if (!fields.has(fieldName)) throw new Error(`project-field-not-found:${fieldName}`);
   }
-  const existing = project.items?.nodes?.find((item) => item.content?.id === issue.id);
-  const itemId =
-    existing?.id ??
-    (await graphql(ADD_ITEM_MUTATION, { projectId: project.id, contentId: issue.id })).addProjectV2ItemById
-      .item.id;
-  const setSingle = async (fieldName, value) => {
-    const field = fields.get(fieldName);
-    const option = field?.options?.find((candidate) => candidate.name === value);
-    if (!field || !option) throw new Error(`project-option-not-found:${fieldName}`);
-    await graphql(UPDATE_ITEM_MUTATION, {
-      projectId: project.id,
-      itemId,
-      fieldId: field.id,
-      value: { singleSelectOptionId: option.id },
-    });
-  };
-  await setSingle(aiFieldName, resolved.aiAssignee);
-  await setSingle(priorityFieldName, resolved.priority);
-  await setSingle(sizeFieldName, resolved.size);
-  for (const [fieldName, value] of [
-    [config.fields?.startDate ?? "Start date", dates.startDate],
-    [config.fields?.targetDate ?? "Target date", dates.targetDate],
-  ]) {
-    const field = fields.get(fieldName);
-    if (!field) throw new Error(`project-field-not-found:${fieldName}`);
-    await graphql(UPDATE_ITEM_MUTATION, {
-      projectId: project.id,
-      itemId,
-      fieldId: field.id,
-      value: { date: value },
-    });
-  }
   const iterationField = fields.get(iterationFieldName);
   const currentIteration = iterationField?.configuration?.iterations?.find(
     (iteration) => iteration.title === (metadata.featureGroup || dates.name),
@@ -196,6 +164,40 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
       (candidate) => candidate.title === title,
     );
     if (!iteration) throw new Error("iteration-create-not-confirmed");
+  }
+  const issueNodeId = issue.node_id;
+  if (!issueNodeId) throw new Error("issue-node-id-required");
+  const existing = project.items?.nodes?.find((item) => item.content?.id === issueNodeId);
+  const itemId =
+    existing?.id ??
+    (await graphql(ADD_ITEM_MUTATION, { projectId: project.id, contentId: issueNodeId })).addProjectV2ItemById
+      .item.id;
+  const setSingle = async (fieldName, value) => {
+    const field = fields.get(fieldName);
+    const option = field?.options?.find((candidate) => candidate.name === value);
+    if (!field || !option) throw new Error(`project-option-not-found:${fieldName}`);
+    await graphql(UPDATE_ITEM_MUTATION, {
+      projectId: project.id,
+      itemId,
+      fieldId: field.id,
+      value: { singleSelectOptionId: option.id },
+    });
+  };
+  await setSingle(aiFieldName, resolved.aiAssignee);
+  await setSingle(priorityFieldName, resolved.priority);
+  await setSingle(sizeFieldName, resolved.size);
+  for (const [fieldName, value] of [
+    [config.fields?.startDate ?? "Start date", dates.startDate],
+    [config.fields?.targetDate ?? "Target date", dates.targetDate],
+  ]) {
+    const field = fields.get(fieldName);
+    if (!field) throw new Error(`project-field-not-found:${fieldName}`);
+    await graphql(UPDATE_ITEM_MUTATION, {
+      projectId: project.id,
+      itemId,
+      fieldId: field.id,
+      value: { date: value },
+    });
   }
   await graphql(UPDATE_ITEM_MUTATION, {
     projectId: project.id,
@@ -235,7 +237,7 @@ async function main() {
   const owner = process.env.GITHUB_REPOSITORY_OWNER;
   const projectName = classifyProject(
     issue,
-    config.projects.flatMap((candidate) => candidate.candidates ?? []),
+    config.projects.filter((candidate) => candidate.number).flatMap((candidate) => candidate.candidates ?? []),
   );
   if (!projectName) {
     console.log(JSON.stringify({ status: "not-configured", reason: "project-unclassified" }));

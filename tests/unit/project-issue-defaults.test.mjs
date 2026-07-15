@@ -77,6 +77,7 @@ test("reuses an existing item and iteration without creating duplicates", async 
   const result = await applyProjectDefaults({
     issue: {
       id: "issue-1",
+      node_id: "issue-node-1",
       title: "Visibility collection",
       body: "",
       labels: [],
@@ -85,7 +86,7 @@ test("reuses an existing item and iteration without creating duplicates", async 
     project: {
       id: "project-1",
       title: "Visibility",
-      items: { nodes: [{ id: "item-existing", content: { id: "issue-1" } }] },
+          items: { nodes: [{ id: "item-existing", content: { id: "issue-node-1" } }] },
       fields: {
         nodes: [
           {
@@ -159,4 +160,45 @@ test("does not update a project when classification is required but absent", asy
     }),
     /project-unclassified/,
   );
+});
+
+test("creates the iteration before adding the Issue item", async () => {
+  const calls = [];
+  const graphql = async (query) => {
+    calls.push(query);
+    if (query.includes("UpdateIteration")) {
+      throw new Error("iteration-api-failed");
+    }
+    throw new Error("item-mutation-must-not-run");
+  };
+  await assert.rejects(
+    applyProjectDefaults({
+      issue: {
+        id: "issue-1",
+        node_id: "issue-node-1",
+        title: "Visibility collection",
+        body: "<!-- project-metadata:start -->\n- Feature group: New group\n<!-- project-metadata:end -->",
+        labels: [],
+        created_at: "2026-07-15T00:00:00Z",
+      },
+      project: {
+        id: "project-1",
+        fields: {
+          nodes: [
+            { id: "ai", name: "AI Assignees", options: [{ id: "unknown", name: "未記載" }] },
+            { id: "priority", name: "Priority", options: [{ id: "p2", name: "P2" }] },
+            { id: "size", name: "Size", options: [{ id: "m", name: "M" }] },
+            { id: "start", name: "Start date" },
+            { id: "target", name: "Target date" },
+            { id: "iteration", name: "Iteration", configuration: { iterations: [] } },
+          ],
+        },
+        items: { nodes: [] },
+      },
+      graphql,
+      config: { projectName: "Visibility" },
+    }),
+    /iteration-api-failed/,
+  );
+  assert.equal(calls.some((query) => query.includes("AddItem")), false);
 });
