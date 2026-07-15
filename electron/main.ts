@@ -14,6 +14,7 @@ import { createIpcBridge } from "./ipc/bridge.js";
 import { CHROME_BRIDGE_EVENT_CHANNEL, VISIBILITY_EVENT_CHANNEL } from "./ipc/contract.js";
 import { registerCrashLogging } from "./crash-logging.js";
 import { defaultNativeHostPaths } from "../native-host/registration.js";
+import { ChromeBridgeSettingsStore } from "./chrome-bridge-settings.js";
 
 // Product name (issue #158): the userData path becomes
 // ".../Application Support/Soroeru". The code identifier stays "soroeru".
@@ -27,8 +28,6 @@ const appRoot = resolve(here, "..", "..", "..");
 const DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const PRELOAD_PATH = join(appRoot, "dist", "preload", "preload.cjs");
 const RENDERER_INDEX = join(appRoot, "dist", "renderer", "index.html");
-const CHROME_BRIDGE_ENABLED = process.env["SOROERU_ENABLE_CHROME_BRIDGE"] === "1";
-const CHROME_EXTENSION_ID = process.env["SOROERU_CHROME_EXTENSION_ID"] ?? "";
 // Packaged builds bundle the self-contained host at Resources/native-host/
 // (forge.config.cjs extraResource); dev builds pass an explicit path.
 const CHROME_HOST_BINARY =
@@ -96,10 +95,14 @@ async function main(): Promise<void> {
 
   const vaultPath = resolveVaultPath();
   await mkdir(dirname(vaultPath), { recursive: true });
+  const chromeBridgeSettingsStore = new ChromeBridgeSettingsStore(
+    join(app.getPath("userData"), "chrome-bridge-settings.json"),
+  );
+  const chromeBridgeSettings = await chromeBridgeSettingsStore.resolve(process.env);
   // eslint-disable-next-line prefer-const
   let session: SoroeruSession | undefined;
   const chromeBridge = createChromeExtensionBridge({
-    enabled: CHROME_BRIDGE_ENABLED,
+    enabled: chromeBridgeSettings.effective.enabled,
     appSupportDir: app.getPath("userData"),
     socketPath: join(app.getPath("userData"), "native-host", "bridge.sock"),
     onEvent: (event) => {
@@ -122,15 +125,19 @@ async function main(): Promise<void> {
     // Developer-only extension automation path (Issue #338); selected when
     // SOROERU_CHROME_BRIDGE_TAB_ID is set. Playwright remains the default.
     ...(chromeBridge ? { chromeBridge } : {}),
-    ...(chromeBridge && CHROME_EXTENSION_ID && CHROME_HOST_BINARY
+    ...(chromeBridge && chromeBridgeSettings.effective.extensionId && CHROME_HOST_BINARY
       ? {
           chromeBridgeSetup: {
             sourceBinary: CHROME_HOST_BINARY,
-            extensionId: CHROME_EXTENSION_ID,
+            extensionId: chromeBridgeSettings.effective.extensionId,
             paths: defaultNativeHostPaths(),
           },
         }
       : {}),
+    chromeBridgeSettings: {
+      initial: chromeBridgeSettings,
+      save: (input) => chromeBridgeSettingsStore.save(input),
+    },
   });
   registerCrashLogging(session);
   session.log("info", "app", "app started", { version: app.getVersion(), platform: process.platform });

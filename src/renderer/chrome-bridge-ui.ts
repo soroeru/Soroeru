@@ -1,9 +1,38 @@
-import type { ChromeBridgeStatusView, ChromeBridgeTabView } from "../../electron/ipc/contract.js";
+import type {
+  ChromeBridgeConfigurationView,
+  ChromeBridgeStatusView,
+  ChromeBridgeTabView,
+} from "../../electron/ipc/contract.js";
 
 export function connectionLabel(status: ChromeBridgeStatusView): string {
-  if (!status.enabled) return "無効（開発者フラグOFF）";
+  if (!status.enabled) return "OFF（起動時設定）";
   if (!status.registered) return "未登録";
   return status.connected ? "接続済み" : "拡張の接続待ち";
+}
+
+export function validateChromeExtensionId(enabled: boolean, extensionId: string): string | undefined {
+  if (!enabled && extensionId === "") return undefined;
+  return /^[a-p]{32}$/.test(extensionId) ? undefined : "32文字の拡張ID（a〜pの小文字）を入力してください。";
+}
+
+export function chromeBridgeRestartMessage(currentEnabled: boolean, nextEnabled: boolean): string {
+  if (currentEnabled && !nextEnabled) {
+    return "接続リスナーを停止しました。再起動すると Chrome 拡張ブリッジは OFF で起動します。";
+  }
+  if (!currentEnabled && nextEnabled) {
+    return "現在のプロセスではまだ OFF です。再起動すると Chrome 拡張ブリッジが ON になります。";
+  }
+  return "拡張IDの変更は再起動後に反映されます。現在の接続は再起動まで以前のIDを使用します。";
+}
+
+export function chromeBridgeRuntimeControlsEnabled(
+  status: ChromeBridgeStatusView,
+  configuration: ChromeBridgeConfigurationView | undefined,
+): boolean {
+  return (
+    status.enabled &&
+    (configuration?.effective.enabledSource === "environment" || configuration?.stored.enabled !== false)
+  );
 }
 
 export function normalizeApprovedOrigins(patterns: readonly string[]): string[] {

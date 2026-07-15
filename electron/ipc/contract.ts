@@ -63,6 +63,8 @@ export const IPC_CHANNELS = {
   visibilityAbort: "soroeru:visibility:abort",
   visibilityStatus: "soroeru:visibility:status",
   chromeBridgeStatus: "soroeru:chrome-bridge:status",
+  chromeBridgeConfiguration: "soroeru:chrome-bridge:configuration",
+  chromeBridgeSetConfiguration: "soroeru:chrome-bridge:set-configuration",
   chromeBridgeConnect: "soroeru:chrome-bridge:connect",
   chromeBridgeDisconnect: "soroeru:chrome-bridge:disconnect",
   chromeBridgePermissions: "soroeru:chrome-bridge:permissions",
@@ -498,6 +500,29 @@ export interface ChromeBridgeStatusView {
   registered: boolean;
   connected: boolean;
   selectedTab?: ChromeBridgeTabView;
+}
+
+export type ChromeBridgeSettingSource = "environment" | "stored" | "default";
+
+export interface ChromeBridgeConfigurationView {
+  stored: { enabled: boolean; extensionId: string };
+  effective: {
+    enabled: boolean;
+    extensionId: string;
+    enabledSource: ChromeBridgeSettingSource;
+    extensionIdSource: ChromeBridgeSettingSource;
+  };
+  restartRequired: boolean;
+  validationError?: "invalid-extension-id";
+}
+
+export interface SetChromeBridgeConfigurationRequest {
+  enabled: boolean;
+  extensionId: string;
+}
+
+export interface ChromeBridgeConfigurationMutationResult extends ChromeBridgeMutationResult {
+  configuration?: ChromeBridgeConfigurationView;
 }
 
 export interface ChromeBridgeTabView {
