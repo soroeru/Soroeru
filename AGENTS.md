@@ -43,8 +43,9 @@ through repetition.
 The first capability is **Visibility**: import the user's Google/Chrome Password Manager
 CSV, auto-log in to each site, collect what is registered there, and build a **disclosure
 ledger** so the user can see "what was given, where, and when," with stale values flagged.
-Browser automation uses **Playwright** (browser-engine independence) in the target
-architecture selected in `docs/architecture.md`.
+Browser automation uses a **Soroeru-owned browser extension** as the production front door,
+behind the browser-neutral `PageDriver` seam selected in `docs/architecture.md`; Playwright is
+retained only for development tests after the staged cutover.
 
 ## Product Ownership and AI Responsibilities
 
@@ -252,7 +253,9 @@ Do not implement these unless the user explicitly changes the scope:
 Target stack is defined in [`docs/architecture.md`](docs/architecture.md) §2:
 
 - Electron desktop app, TypeScript / Node.js, React + Vite renderer.
-- Playwright Library for headed browser automation, run behind a narrow automation service.
+- Soroeru-owned Chrome extension + Native Messaging for the production browser front door,
+  behind a narrow browser-neutral `PageDriver`/session/transport seam; Playwright Test remains
+  development-only after the staged cutover.
 - Versioned encrypted record vault using AES-256-GCM with Argon2id
   (PBKDF2-HMAC-SHA-512 fallback), derived key in memory only.
 - Deterministic-first analysis; optional user-configured Anthropic/OpenAI providers only,
@@ -274,8 +277,9 @@ Conceptually and architecturally, Soroeru separates: a **store/vault service** o
 Personal Attributes, Site Accounts, Disclosures, Account Relationships, Mandates, Evidence,
 Policies, and Reflections; a **domain service** that owns Policy and Delegation Boundary
 decisions; a **definition/agent** layer (deterministic by default, optional AI analysis
-that receives structure, not raw values); an **automation** layer that drives a headed
-browser to log in, collect, update, withdraw, and hand off / resume; and a **UI** that is a
+that receives structure, not raw values); an **automation** layer that leases one explicitly
+selected real-browser tab through a thin extension adapter to log in, collect, update,
+withdraw, and hand off / resume; and a **UI** that is a
 *place of self-understanding* (the ledger, filtered lists, Reflection, the gate, Delegation
 Boundary, settings).
 

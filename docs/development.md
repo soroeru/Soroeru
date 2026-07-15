@@ -21,7 +21,8 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
   `.worktrees/issue-<number>-<short-slug>` worktrees.
 - Keep product requirements, application architecture, test strategy, and
   security assumptions in the owning docs rather than repeating them in `README.md`.
-- Playwright browser automation and the user's configured AI provider are the
+- Browser automation (the target extension front door, current migration-stage Playwright
+  path) and the user's configured AI provider are the
   scope decision of the product direction (see [`requirements.md`](requirements.md));
   do not introduce *other* frameworks, dependencies, backend services, cloud sync,
   telemetry, or AI providers without an explicit scope decision.
@@ -52,7 +53,10 @@ MVP development targets Apple Silicon Macs running macOS 14 Sonoma or macOS 15 S
 Other development hosts may be useful for code review or docs, but release and manual QA
 for the private beta must run on the supported Mac target.
 
-After cloning, install dependencies and the Playwright browsers:
+After cloning, install dependencies and the Playwright browsers used by the current runtime
+and development-only E2E suite. Issue #391 makes the Chrome extension the target production
+front door; a follow-up retirement Issue will remove production Playwright/browser packaging,
+but these commands remain current until that cutover lands:
 
 ```bash
 npm install
@@ -65,14 +69,17 @@ Install local hooks only if the local AI review workflow is in use:
 bash scripts/setup-hooks.sh
 ```
 
-The Chrome extension bridge prototype is disabled by default and is not part of
-the MVP UI or DMG. Developer-only experiments may enable its Electron-side UNIX
+The Chrome extension bridge is the **target production browser front door** (decision #391),
+but the current implementation remains a migration-stage feature flag and is not yet the
+default. Developer validation may enable its Electron-side UNIX
 socket listener with `SOROERU_ENABLE_CHROME_BRIDGE=1`; the bridge still requires
 the native-host handshake token and rejects unknown commands. To route a
 Visibility run through `ExtensionPageDriver` (Issue #338) instead of Playwright,
 also set `SOROERU_CHROME_BRIDGE_TAB_ID` to the positive Chrome tab id already
-bound/authorized in the extension. Tab-selection UI is a later Issue; without
-that env var the Playwright path is unchanged.
+bound/authorized in the extension. This environment-variable tab selection is explicitly
+temporary: production requires an extension-created binding offer, exact-origin permission,
+Electron confirmation, and a memory-only tab lease. Without that env var the current
+Playwright path is unchanged; there is no silent fallback after the extension cutover.
 
 ## 3. Run Locally
 
@@ -150,8 +157,8 @@ is not committed.
 The Soroeru private-beta packaging path is an unsigned macOS DMG built with
 Electron Forge and `@electron-forge/maker-dmg` (architecture.md §2). It packages the
 Electron app, Vite renderer, compiled main/preload code, installed npm
-dependencies, and a hermetic Playwright Chromium browser so beta users do not
-need a system Node.js install.
+dependencies, and—until the #391 retirement stage—a hermetic Playwright Chromium browser so
+beta users do not need a system Node.js install.
 
 ```bash
 nvm use            # Node 22 LTS (see .nvmrc); required for the DMG native deps
@@ -218,11 +225,13 @@ run, vault recovery, Add Site branches, registration, import, update, wall hand-
 support-bundle review, and beta release-note limitations. Keep this section focused on
 commands and packaging facts; keep the executable QA checklist in `manual-test.md`.
 
-## 3.2 Chrome Extension Bridge Developer Setup
+## 3.2 Chrome Extension Front-Door Migration Setup
 
-The Chrome extension bridge is a **developer-only prototype** (Issue #340) — not included in the
-MVP DMG — that enables automation via the user's actual Chrome profile instead of the
-sandboxed Playwright Chromium. To use it during local development:
+The Chrome extension bridge is the **selected production direction** (Issue #391), currently
+still exercised through the developer setup from Issue #340. It enables automation via the
+user's actual Chrome profile instead of sandboxed Playwright Chromium. This setup is for
+development/parity evidence only; unpacked loading and environment-variable tab selection are
+not the supported product installation or binding UX. To use it during local development:
 
 1. **Build the extension and the native-messaging host bundle:**
    ```bash
@@ -250,7 +259,9 @@ sandboxed Playwright Chromium. To use it during local development:
    In a **packaged app** (`npm run package:dmg`), the host bundle ships inside the DMG at
    `Soroeru.app/Contents/Resources/native-host/host.cjs` and is used automatically;
    `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override. `SOROERU_ENABLE_CHROME_BRIDGE=1`
-   and the extension ID are still required — the bridge stays off and UI-hidden by default.
+   and the extension ID are still required during migration — the bridge stays off by default
+   until the reachability, #381 invariant, binding, permission, packaging, and distribution
+   gates in `architecture.md` §2.2 pass.
 
 4. **In the app:**
    - Go to **設定 → Chrome と接続** and select **host を登録して接続を始める**.
@@ -267,13 +278,21 @@ rewrites the installed copy's shebang to an **absolute Node path** (resolved fro
 app's `PATH`, then `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`) and **fails with a
 clear error** when no Node runtime is found. If you later move or upgrade your Node
 install, re-run the connection setup so the shebang is re-resolved. A system Node is
-required only for this developer prototype; it is revisited if the bridge is ever
-promoted to a user-facing feature.
+required only for the current migration-stage helper; the product helper must be
+self-contained before cutover.
 
 **Security note:** The unpacked extension ID is not stable across machines, so never commit
-a hardcoded ID. Chrome Web Store distribution (stable ID, auto-update) is a post-adoption
-Issue and out of scope for the MVP. The DMG bundles only the inert relay file; nothing is
-registered with Chrome until the user starts setup from settings.
+a hardcoded development ID. Product cutover requires Chrome Web Store distribution, a stable
+allowlisted ID, and signed/notarized app/helper distribution beyond invited beta. The DMG
+bundles only the inert relay file; nothing is registered with Chrome until the user starts
+setup from settings.
+
+**Node transition:** keep Node 22 as the repository and DMG baseline while the current
+`appdmg` native dependency chain and bundled Playwright Chromium remain. Node 24 LTS is the
+candidate for extension/native-helper validation, but adopt it repository-wide only after the
+helper is self-contained, production Playwright packaging is retired, a Node-24-compatible DMG
+maker is selected, and host/typecheck/unit/native-handshake/DMG checks pass. Node 26 is not
+selected while it is Current rather than LTS.
 
 See [`manual-test.md`](manual-test.md) §0.1–0.2 for the full QA checklist, including
 permission verification, tab binding, cleanup, and policy compliance (`npm run poc -- check-egress` etc.).
@@ -382,7 +401,7 @@ For documentation-only changes, review the rendered Markdown and check for
 stale file references.
 
 For Mac beta scope, also confirm docs and release notes do not imply support for Windows,
-Linux, mobile apps, hosted vaults, telemetry, or a browser-extension distribution.
+Linux, mobile apps, hosted vaults, telemetry, or additional-browser extension distribution.
 
 Before a private beta build is distributed, run the full Mac beta checklist in
 [`manual-test.md`](manual-test.md) §0 and record the tested commit SHA or beta tag in the
