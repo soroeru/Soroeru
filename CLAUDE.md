@@ -393,6 +393,13 @@ The canonical quality gate definitions live in [`docs/development.md`](docs/deve
 ## Implementation Guidance
 
 - Prefer simple, deterministic logic where it suffices; reserve AI for form understanding.
+- AI-assisted page discovery may use only a bounded observe/propose loop over sanitized structure.
+  Separate structure snapshots from local value reads; validate closed-schema proposals against
+  present elements, same-site/read-only policy, budgets, and wall state. Never give the model a
+  general browser tool or let DOM instructions authorize actions.
+- Site collection maps are encrypted local candidate definitions. Execute them deterministically,
+  isolate stale entries, fall back safely, and require an explicit regeneration proposal rather
+  than silently starting AI re-exploration.
 - Keep DOM parsing / field classification isolated and testable.
 - Keep wall detection (CAPTCHA / MFA) separate from field classification.
 - Keep storage access behind a small, encrypted abstraction; never log decrypted values.

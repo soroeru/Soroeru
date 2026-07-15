@@ -411,6 +411,19 @@ Collection uses (currently, for Slice A) two tiers, with a third planned:
 Unclear values become `unknown` Disclosures or review tasks (surfaced to the user as
 pending dynamic-attribute candidates), not guessed data.
 
+Visibility may add a low-frequency AI discovery pass that produces a versioned
+`SiteCollectionMap` (Issue #381). A mandatory structural sanitizer separates
+`PageDriver` structure snapshots from local value reads. The model receives only sanitized
+structure and returns a closed-schema proposal referencing opaque IDs in that snapshot; a local
+validator enforces existence, same-site read-only navigation, budgets, and wall state. It has no
+general browser or value-reading tool.
+
+Regular mapped collection is deterministic and stores encrypted Disclosures plus minimized
+Evidence. Mismatch is isolated per entry, falls back to current deterministic exploration, and
+offers user-initiated regeneration. Maps are encrypted local candidate definitions and remain
+usable with AI disabled. The seam applies to Playwright and an extension; Issue #391 must prove
+the extension satisfies these invariants rather than redefine them.
+
 ### 5.3 Account Relationship filters
 
 `ledgerInsights` (`computeLedgerInsights`) computes the required filtered lists — the exact
@@ -596,6 +609,12 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 
 Soroeru keeps the deterministic-vs-AI comparison because it directly protects agency:
 wrong mapping makes the user choose over false information.
+
+For site-wide discovery, Soroeru chooses a bounded observe/propose loop over a single static call
+or autonomous browser control. A static call lacks multi-page reach; autonomous control gives
+untrusted DOM excessive authority. Reconsider only if measurement shows inadequate coverage and
+a replacement preserves structure/value separation, schema-only proposals, deterministic local
+execution, and existing gates.
 
 Measurement plan:
 
