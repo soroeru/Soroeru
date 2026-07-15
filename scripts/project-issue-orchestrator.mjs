@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { OWNER_TYPES } from "./project-issue-assignment.mjs";
+import { canonicalizeSubAssigneeMap, OWNER_TYPES } from "./project-issue-assignment.mjs";
 import { fetchProjectItems, githubGraphql } from "./project-issue-github.mjs";
 import {
   applyMilestone,
@@ -38,10 +38,9 @@ export { buildProjectItemsQuery, fetchProjectItems, githubGraphql } from "./proj
 export async function runOrchestration(input) {
   const items = parseProjectItems(input?.items);
   const options = input?.options ?? {};
-  if (!options.aiSubAssignees || typeof options.aiSubAssignees !== "object")
-    throw new Error("ai-sub-assignee-mapping-required");
+  const aiSubAssignees = canonicalizeSubAssigneeMap(options.aiSubAssignees);
   for (const item of items) {
-    const expectedSub = options.aiSubAssignees[item.primary];
+    const expectedSub = aiSubAssignees[item.primary];
     if (expectedSub === undefined)
       throw new Error(`missing-ai-sub-assignee-mapping:${item.number}`);
     if (expectedSub !== item.sub) throw new Error(`ai-sub-assignee-mismatch:${item.number}`);
@@ -167,21 +166,38 @@ export function parseCliArgs(argv) {
   return options;
 }
 
+async function loadProjectConfig(cli) {
+  const config = JSON.parse(
+    await fs.readFile(new URL("../config/github-projects.json", import.meta.url), "utf8"),
+  );
+  return selectProjectConfig(config.projects, {
+    owner: cli.projectOwner,
+    ownerType: cli.ownerType ?? "user",
+    name: cli.projectName,
+    number: cli.projectNumber,
+  });
+}
+
 async function readInput(cli) {
   if (cli.inputPath) {
     return JSON.parse(await fs.readFile(cli.inputPath, "utf8"));
   }
   if (cli.projectOwner || cli.projectNumber) {
     if (!cli.projectOwner || !cli.projectNumber) throw new Error("project-owner-and-number-required");
-    return fetchProjectItems({
-      owner: cli.projectOwner,
-      ownerType: cli.ownerType ?? "user",
-      projectNumber: cli.projectNumber,
-      graphql: (query, variables) =>
-        githubGraphql(query, variables, {
-          token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
-        }),
-    });
+    const project = await loadProjectConfig(cli);
+    return {
+      ...(await fetchProjectItems({
+        owner: cli.projectOwner,
+        ownerType: cli.ownerType ?? "user",
+        projectNumber: cli.projectNumber,
+        fields: project.fields,
+        graphql: (query, variables) =>
+          githubGraphql(query, variables, {
+            token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
+          }),
+      })),
+      projectConfig: project,
+    };
   }
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -214,19 +230,11 @@ async function main() {
   };
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))
     throw new Error("parent-agent-and-model-required");
-  if (!input.options.aiSubAssignees && cli.projectNumber) {
-    const config = JSON.parse(
-      await fs.readFile(new URL("../config/github-projects.json", import.meta.url), "utf8"),
-    );
-    const project = selectProjectConfig(config.projects, {
-      owner: cli.projectOwner,
-      ownerType: cli.ownerType ?? "user",
-      name: cli.projectName,
-      number: cli.projectNumber,
-    });
-    if (!project?.aiSubAssignees) throw new Error("ai-sub-assignee-mapping-required");
-    input.options.aiSubAssignees = project.aiSubAssignees;
+  if (!input.options.aiSubAssignees) {
+    const project = input.projectConfig ?? (cli.projectNumber ? await loadProjectConfig(cli) : null);
+    if (project?.aiSubAssignees) input.options.aiSubAssignees = project.aiSubAssignees;
   }
+  delete input.projectConfig;
   process.stdout.write(`${JSON.stringify(await runOrchestration(input))}\n`);
 }
 

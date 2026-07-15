@@ -1,7 +1,7 @@
 import {
   canonicalizeAssignee,
   isCanonicalDate,
-  isKnownAssignee,
+  isOrchestrationAssignee,
   OWNER_TYPES,
 } from "./project-issue-assignment.mjs";
 
@@ -40,8 +40,8 @@ export function parseProjectItems(rawItems) {
     for (const field of REQUIRED_ASSIGNMENTS) requiredString(raw[field], `missing-${field}:${number}`);
     const primary = canonicalizeAssignee(raw.primary);
     const sub = canonicalizeAssignee(raw.sub);
-    if (!isKnownAssignee(primary)) throw new Error(`unknown-primary:${number}`);
-    if (!isKnownAssignee(sub)) throw new Error(`unknown-sub:${number}`);
+    if (!isOrchestrationAssignee(primary)) throw new Error(`unknown-primary:${number}`);
+    if (!isOrchestrationAssignee(sub)) throw new Error(`unknown-sub:${number}`);
     if (!Array.isArray(raw.dependencies)) throw new Error(`missing-dependencies:${number}`);
     const dependencies = raw.dependencies.map((dependency) => Number(dependency));
     if (dependencies.some((dependency) => !Number.isSafeInteger(dependency) || dependency <= 0))

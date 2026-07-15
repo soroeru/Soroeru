@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 
 import {
   AI_ASSIGNEES,
+  canonicalizeAssignee,
   normalize,
   parseProjectMetadata,
   toAiAssignee,
@@ -39,22 +40,30 @@ export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
   const sizeChoices = new Set(choices.sizes ?? ["XS", "S", "M", "L", "XL"]);
   const reasons = [];
   const suppliedAiAssignee = normalize(metadata.aiAssignee || DEFAULTS.aiAssignee);
-  const aiAssignee = toAiAssignee(suppliedAiAssignee);
-  if (!AI_ASSIGNEES.has(suppliedAiAssignee.toLowerCase()) || !aiChoices.has(aiAssignee))
-    reasons.push("unknown-ai-assignee");
+  const resolvedPrimary = toAiAssignee(suppliedAiAssignee);
+  const primaryAccepted =
+    AI_ASSIGNEES.has(suppliedAiAssignee.toLowerCase()) && aiChoices.has(resolvedPrimary);
+  if (!primaryAccepted) reasons.push("unknown-ai-assignee");
+  // Final primary after Project-option fallback — all sub mapping uses this value.
+  const aiAssignee = primaryAccepted ? resolvedPrimary : DEFAULTS.aiAssignee;
 
-  const mappedSub = aiSubAssignees[aiAssignee];
+  const map = {};
+  for (const [key, value] of Object.entries(aiSubAssignees ?? {})) {
+    const primaryKey = canonicalizeAssignee(key);
+    if (primaryKey) map[primaryKey] = value;
+  }
+  const mappedSubRaw = map[aiAssignee];
   const suppliedAiSubAssignee = normalize(metadata.aiSubAssignee);
   let aiSubAssignee;
 
-  if (!Object.hasOwn(aiSubAssignees, aiAssignee)) {
+  if (!Object.hasOwn(map, aiAssignee)) {
     reasons.push("missing-ai-sub-assignee-mapping");
     aiSubAssignee = undefined;
-  } else if (!mappedSub || !AI_ASSIGNEES.has(normalize(mappedSub).toLowerCase())) {
+  } else if (!mappedSubRaw || !AI_ASSIGNEES.has(normalize(mappedSubRaw).toLowerCase())) {
     reasons.push("unknown-ai-sub-assignee");
     aiSubAssignee = undefined;
   } else {
-    aiSubAssignee = toAiAssignee(mappedSub);
+    aiSubAssignee = toAiAssignee(mappedSubRaw);
     if (suppliedAiSubAssignee) {
       if (!AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase()))
         reasons.push("unknown-ai-sub-assignee");
@@ -70,7 +79,7 @@ export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
   const size = sizeChoices.has(metadata.size) ? metadata.size : DEFAULTS.size;
   if (size !== metadata.size) reasons.push("invalid-size");
   return {
-    aiAssignee: aiChoices.has(aiAssignee) ? aiAssignee : DEFAULTS.aiAssignee,
+    aiAssignee,
     aiSubAssignee,
     priority: priorityChoices.has(priority) ? priority : ([...priorityChoices][0] ?? DEFAULTS.priority),
     size: sizeChoices.has(size) ? size : ([...sizeChoices][0] ?? DEFAULTS.size),

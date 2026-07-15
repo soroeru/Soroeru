@@ -15,8 +15,13 @@ export async function writeState(statePath, state) {
   if (!statePath) throw new Error("state-path-required");
   await fs.mkdir(path.dirname(statePath), { recursive: true });
   const temporary = `${statePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-  await fs.writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: "wx" });
+  await fs.writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, {
+    flag: "wx",
+    mode: 0o600,
+  });
   await fs.rename(temporary, statePath);
+  // Rename keeps the temp file mode on most platforms; re-assert owner-only access.
+  await fs.chmod(statePath, 0o600);
 }
 
 /**

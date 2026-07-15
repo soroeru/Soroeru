@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -209,6 +209,7 @@ test("execute mode persists milestone state", async () => {
   });
   const state = JSON.parse(await readFile(statePath, "utf8"));
   assert.deepEqual(state.completed, [101]);
+  assert.equal((await stat(statePath)).mode & 0o777, 0o600);
 });
 
 test("concurrent milestone transactions preserve both events and usage records", async () => {
@@ -522,6 +523,108 @@ test("rejects a primary and sub assignment that does not match the configured ma
     aiSubAssignees: { Codex: "Gemini", Claude: "Codex" },
   };
   await assert.rejects(runOrchestration(input), /ai-sub-assignee-mismatch:101/);
+});
+
+test("rejects the Project placeholder 未記載 as an orchestration assignee", () => {
+  assert.throws(
+    () =>
+      parseProjectItems([
+        {
+          number: 601,
+          title: "Unset",
+          url: "https://example.invalid/issues/601",
+          status: "Ready",
+          startDate: "2026-07-15",
+          primary: "未記載",
+          sub: "Claude",
+          model: "gpt-5",
+          order: 1,
+          dependencies: [],
+        },
+      ]),
+    /unknown-primary:601/,
+  );
+});
+
+test("accepts case-variant sub-assignee map keys and values", async () => {
+  const input = await load("linear.json");
+  input.options = {
+    ...runOptions,
+    aiSubAssignees: { codex: "claude", claude: "codex" },
+  };
+  const result = await runOrchestration(input);
+  assert.equal(result.plan.runnable[0].primary, "Codex");
+});
+
+test("prefers Project single-select assignees over body assignment fields", async () => {
+  const body =
+    "<!-- implementation-assignment:start -->\n- Primary: Claude\n- Sub: Codex\n- Model: Fable\n- Order: 3\n- Dependencies: none\n<!-- implementation-assignment:end -->";
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        items: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            {
+              fieldValues: {
+                nodes: [
+                  { field: { name: "Status" }, name: "Ready" },
+                  { field: { name: "Start date" }, date: "2026-07-15" },
+                  { field: { name: "AI Assignees" }, name: "Codex" },
+                  { field: { name: "AI Sub Assignees" }, name: "Claude" },
+                ],
+              },
+              content: {
+                __typename: "Issue",
+                number: 701,
+                title: "Override",
+                url: "https://example.invalid/issues/701",
+                body,
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  assert.equal(result.items[0].primary, "Codex");
+  assert.equal(result.items[0].sub, "Claude");
+  assert.equal(result.items[0].order, 3);
+});
+
+test("throws incomplete-assignment-metadata for missing model order or dependencies", async () => {
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        items: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            {
+              fieldValues: {
+                nodes: [
+                  { field: { name: "Status" }, name: "Ready" },
+                  { field: { name: "Start date" }, date: "2026-07-15" },
+                  { field: { name: "AI Assignees" }, name: "Codex" },
+                ],
+              },
+              content: {
+                __typename: "Issue",
+                number: 702,
+                title: "Incomplete",
+                url: "https://example.invalid/issues/702",
+                body: "no assignment block",
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  await assert.rejects(
+    fetchProjectItems({ owner: "octo", projectNumber: 9, graphql }),
+    /incomplete-assignment-metadata:702/,
+  );
 });
 
 test("paginates organization ProjectV2 items and discards Issue bodies from returned metadata", async () => {

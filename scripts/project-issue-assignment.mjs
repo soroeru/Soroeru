@@ -50,6 +50,32 @@ export function isKnownAssignee(value) {
   return AI_ASSIGNEES.has(normalize(value).toLowerCase());
 }
 
+/** Assignees allowed to run workers (excludes the Project placeholder 未記載). */
+export function isOrchestrationAssignee(value) {
+  const canonical = canonicalizeAssignee(value);
+  return Boolean(canonical) && isKnownAssignee(canonical) && canonical !== "未記載";
+}
+
+/**
+ * Build a primary→sub map with canonical keys/values.
+ * Unknown assignee names fail closed.
+ */
+export function canonicalizeSubAssigneeMap(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new Error("ai-sub-assignee-mapping-required");
+  const result = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const primary = canonicalizeAssignee(key);
+    const sub = canonicalizeAssignee(value);
+    if (!primary || !isKnownAssignee(primary))
+      throw new Error(`invalid-ai-sub-assignee-mapping-key:${key}`);
+    if (!sub || !isKnownAssignee(sub))
+      throw new Error(`invalid-ai-sub-assignee-mapping-value:${key}`);
+    result[primary] = sub;
+  }
+  return result;
+}
+
 export function isCanonicalDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);

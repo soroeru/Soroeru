@@ -4,6 +4,13 @@ import {
   parseIssueAssignment,
 } from "./project-issue-assignment.mjs";
 
+export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
+  aiAssignee: "AI Assignees",
+  aiSubAssignee: "AI Sub Assignees",
+  status: "Status",
+  startDate: "Start date",
+});
+
 export function buildProjectItemsQuery(ownerType) {
   if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
   return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body } } } } } } }`;
@@ -14,14 +21,31 @@ function requiredString(value, reason) {
   return value.trim();
 }
 
+function resolveFieldNames(fields = {}) {
+  return {
+    aiAssignee: fields.aiAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiAssignee,
+    aiSubAssignee: fields.aiSubAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiSubAssignee,
+    status: fields.status ?? DEFAULT_PROJECT_FIELD_NAMES.status,
+    startDate: fields.startDate ?? DEFAULT_PROJECT_FIELD_NAMES.startDate,
+  };
+}
+
 /**
  * Fetch Project items and map each Issue to the minimal assignment schema.
  * Issue bodies are counted for telemetry then discarded from the returned items.
+ * `fields` mirrors config/github-projects.json `fields` (aiAssignee / aiSubAssignee / …).
  */
-export async function fetchProjectItems({ owner, ownerType = "user", projectNumber, graphql }) {
+export async function fetchProjectItems({
+  owner,
+  ownerType = "user",
+  projectNumber,
+  graphql,
+  fields = {},
+}) {
   requiredString(owner, "project-owner-required");
   if (!Number.isSafeInteger(projectNumber) || projectNumber <= 0) throw new Error("invalid-project-number");
   if (typeof graphql !== "function") throw new Error("graphql-required");
+  const fieldNames = resolveFieldNames(fields);
   const query = buildProjectItemsQuery(ownerType);
   const nodes = [];
   let cursor = null;
@@ -39,34 +63,38 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectNumb
     const body = String(node.content?.body ?? "");
     fetchedBytes += Buffer.byteLength(body, "utf8");
     if (node.content?.__typename !== "Issue") return [];
-    const fields = new Map(
+    const fieldValues = new Map(
       (node.fieldValues?.nodes ?? []).map((value) => [value.field?.name, value.name ?? value.date]),
     );
     const assignment = parseIssueAssignment(body);
     const number = node.content?.number;
     // Project single-select wins over body when present; canonicalize casing.
-    const primary = canonicalizeAssignee(fields.get("AI Assignees") ?? assignment.primary);
-    const sub = canonicalizeAssignee(fields.get("AI Sub Assignees") ?? assignment.sub);
-    const item = {
-      number,
-      title: node.content?.title,
-      url: node.content?.url,
-      status: fields.get("Status"),
-      startDate: fields.get("Start date"),
-      primary,
-      sub,
-      model: assignment.model,
-      order: assignment.order,
-      dependencies: assignment.dependencies,
-    };
+    const primary = canonicalizeAssignee(
+      fieldValues.get(fieldNames.aiAssignee) ?? assignment.primary,
+    );
+    const sub = canonicalizeAssignee(
+      fieldValues.get(fieldNames.aiSubAssignee) ?? assignment.sub,
+    );
+    const model = assignment.model;
+    const order = assignment.order;
+    const dependencies = assignment.dependencies;
     // Surface incomplete GitHub-shaped rows with the Issue number before planning.
-    if (
-      assignment.model === undefined ||
-      assignment.order === undefined ||
-      assignment.dependencies === undefined
-    )
+    if (model === undefined || order === undefined || dependencies === undefined)
       throw new Error(`incomplete-assignment-metadata:${number}`);
-    return [item];
+    return [
+      {
+        number,
+        title: node.content?.title,
+        url: node.content?.url,
+        status: fieldValues.get(fieldNames.status),
+        startDate: fieldValues.get(fieldNames.startDate),
+        primary,
+        sub,
+        model,
+        order,
+        dependencies,
+      },
+    ];
   });
   return { items: mapped, fetchedBytes };
 }

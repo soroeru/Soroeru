@@ -123,6 +123,18 @@ test("uses documented safe defaults for missing and invalid values", () => {
   );
 });
 
+test("maps sub assignee from the final primary after Project-option fallback", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", priority: "P1", size: "M" },
+    { aiAssignees: ["Claude", "未記載"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude", 未記載: "未記載" },
+  );
+  // Rejected primary falls back to 未記載; sub comes from that map entry, not Codex→Claude.
+  assert.equal(result.aiAssignee, "未記載");
+  assert.equal(result.aiSubAssignee, "未記載");
+  assert.equal(result.reasons.includes("unknown-ai-assignee"), true);
+});
+
 test("starts a one-day iteration on the day after the issue date", () => {
   assert.deepEqual(calculateIterationDates("2026-07-15"), {
     startDate: "2026-07-16",
