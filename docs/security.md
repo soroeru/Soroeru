@@ -293,6 +293,17 @@ solving or evading a control that actively blocks automation is. This distinctio
 Soroeru contest ToS-gray confidently while keeping the inviolable line principled rather than
 timid.
 
+**A user-installed Soroeru browser extension operating an explicitly selected tab is a
+front-door use of the user's real browser and authenticated session, not a bypass.** The absence
+of an automation-framework fingerprint is a property of the genuine user browser; Soroeru does
+not falsify or conceal one. Front-door use requires visible badge/banner state, explicit tab
+binding and exact-origin permission, the user's own account/credentials, and the same wall
+detection, Evidence, Policy, and confirmation gates as every other browser surface. It never
+includes fingerprint/UA spoofing, stealth patches, human-like input or timing disguise,
+automation-marker suppression, challenge-token reuse, or any attempt to continue after a site
+actively blocks the operation. If bot detection or another control fires, the extension pauses
+and hands the same visible tab to the user; it does not make the control stop firing.
+
 Do not implement:
 
 - CAPTCHA solving, bypass, hiding, outsourcing, or token reuse;
@@ -302,8 +313,10 @@ Do not implement:
 - silently proceeding past a detected automation-prohibiting ToS clause instead of
   surfacing it as a Constraint / high-risk item for the user to decide.
 
-At a wall, the agent pauses in the same headed Playwright session, the user resolves it,
-and the agent resumes only after re-observing the page. Ambiguous access-control or
+At a wall, the agent pauses in the same visibly bound browser tab, the user resolves it,
+and the agent resumes only after re-observing the page and revalidating the live tab lease.
+If the tab, permission, bridge, browser, app, vault lock state, or site scope changed, the lease
+is invalid and an explicit rebind is required. Ambiguous access-control or
 security-check wording is treated as a wall too: when unsure, stop and ask the user.
 
 **Static enforcement (SEC-002 / #23)**: `npm run poc -- check-bypass`
@@ -550,12 +563,14 @@ The first beta DMG is allowed to be unsigned / not notarized only for the invite
 10-user private beta, and release notes must say so. Wider distribution requires a
 separate signing/notarization issue and a repeat of the security checklist below.
 
-**Chrome extension bridge (developer-only prototype, Issue #340):** The DMG bundles the
+**Chrome extension production front door (decision #391; migration from prototype #340):**
+The DMG bundles the
 self-contained native-host relay bundle at
 `Soroeru.app/Contents/Resources/native-host/host.cjs` (`npm run build:host`). The bridge
-remains feature-flagged (`SOROERU_ENABLE_CHROME_BRIDGE=1`) and has no user-facing UI in the
-MVP; bundling the inert relay file does not change that. Manifest registration is
-user-initiated only — the app copies the bundled file to app-support and registers
+remains feature-flagged during parity work; production cutover requires a self-contained helper,
+Chrome Web Store stable ID, version negotiation, explicit tab-binding UX, and signed/notarized
+distribution beyond invited beta. Manifest registration is always user-initiated — the app
+copies the bundled file to app-support and registers
 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`,
 as per the design (`docs/design/issue-291-chrome-extension-bridge.md` §3.3). Before
 distributing a DMG, confirm:
@@ -574,6 +589,18 @@ distributing a DMG, confirm:
 - [ ] The manifest's `path` field points at the app-support copy, never into
       `Soroeru.app`, so App Translocation and user `.app` relocation cannot break or
       redirect it (design §3.3).
+- [ ] One explicit tab and exact HTTPS origin are bound; permission and binding are separate,
+      memory-only grants, and badge plus in-page banner remain visible while active.
+- [ ] Every bridge command carries the current lease/epoch and uses the closed command schema;
+      arbitrary script/DOM evaluation, raw HTML, screenshots, downloads, and unrestricted
+      navigation remain impossible.
+- [ ] Extension/content/helper payloads may contain raw values only transiently for the local
+      read/fill operation that needs them; they are never logged, persisted, included in
+      diagnostics, or forwarded to AI. The extension contains no vault, provider key, canonical
+      profile, or durable collection-map state.
+- [ ] Disconnect, tab close, permission removal, vault lock, browser/extension restart, and
+      out-of-scope navigation invalidate the lease and require explicit rebind; none triggers a
+      silent Playwright fallback.
 
 ### 12.2 Local Diagnostics And Support Bundles
 

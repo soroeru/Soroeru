@@ -33,10 +33,12 @@ Soroeru.app (Electron)
 │   │   ├── Policy / Preference
 │   │   ├── Delegation Boundary (Capability)
 │   │   └── Reflection
-│   ├── AutomationService (Playwright)
+│   ├── AutomationService (browser-neutral PageDriver)
+│   │   ├── browser-extension tab lease (production front door)
 │   │   ├── Visibility login / collection today; update / withdraw / register later
-│   │   ├── wall detection -> hand-off -> resume
-│   │   └── ephemeral browser contexts by default
+│   │   └── wall detection -> hand-off -> resume
+│   ├── BrowserTransport (versioned, authenticated local protocol)
+│   │   └── native helper -> thin browser extension -> one user-selected tab
 │   ├── DefinitionService (Agent layer, §7 below — Slices B-D only, not yet ported)
 │   ├── AiAnalysisService (optional)
 │   │   └── structure-only provider calls
@@ -76,7 +78,8 @@ Reference implementation:
   `ledger-insights.ts`, `normalize.ts`).
 - **Store**: `src/store/` (`vault-v2.ts`, `crypto.ts`, `recovery.ts`; `vault.ts` for legacy
   v1 file-existence checks only).
-- **Automation**: `src/automation/` (`browser-engine.ts`, `page-driver.ts`,
+- **Automation**: `src/automation/` (`page-driver.ts`, `extension-page-driver.ts`,
+  `browser-engine.ts` during migration,
   `visibility-runner.ts`, `wall-detection.ts`, `disclosure-collector.ts`, `evidence.ts`,
   `saved-page-importer.ts`).
 - **Agent (definition/classification helpers)**: `src/agent/` (`scan.ts`, `classifier.ts`,
@@ -89,8 +92,10 @@ the provider abstraction — isolated so it can be tested outside a live browser
 Electron.
 
 The MVP packaging target is a downloadable, unsigned macOS DMG for a small group of
-invited beta users. Windows, Linux, mobile, and browser-extension distribution are
-post-MVP (see [`requirements.md`](requirements.md) §9).
+invited beta users plus a Soroeru-owned Chrome extension. Chrome Web Store distribution,
+a self-contained native helper, and signing/notarization are release gates for promoting
+the extension path beyond developer validation. Windows, Linux, mobile, and additional
+browser adapters are later (see [`requirements.md`](requirements.md) §9).
 
 ## 2. Technology Selection
 
@@ -104,19 +109,19 @@ bypass); and local-first (no hosted vault, telemetry, analytics, or crash report
 
 | Layer | Decision | Why |
 | --- | --- | --- |
-| Runtime / language | **Node.js + TypeScript + Electron** | Playwright's primary runtime is Node-compatible; Electron main can run Playwright, vault services, and provider SDKs without a sidecar. TypeScript keeps page snapshots, the Disclosure ledger, Policy, and IPC contracts shared and typed end to end. |
+| Runtime / language | **Node.js + TypeScript + Electron** | Electron main owns the vault, policy, browser-session orchestration, and provider SDKs. TypeScript keeps page snapshots, the Disclosure ledger, Policy, IPC, and browser-transport contracts shared and typed end to end. |
 | UI | **React + Vite + TypeScript** in the Electron renderer, with `contextIsolation`, `sandbox`, and `nodeIntegration: false`; all privileged operations go through typed preload IPC | Soroeru's UI is mostly ledger tables, filters, forms, confirmation gates, policy settings, and reflection surfaces — React's ecosystem is strongest for accessible primitives, form validation, and virtualized tables. |
-| Browser automation | **Playwright Library**, headed | Unified automation API across Chromium / Firefox / WebKit; supports a live headed session the user can take over for MFA/CAPTCHA. Default packaged engine is Chromium for packaging simplicity; Firefox/WebKit remain compatibility targets behind the same `BrowserEngine` abstraction. |
-| Browser session policy | **Ephemeral Playwright contexts by default; opt-in per-Site-Account encrypted `storageState` persistence** (Issue #294), toggled from the ledger's site detail view; no raw browser profile or cookies persisted as durable plaintext outside the vault | For sites that treat a fresh context as automation-suspicious, the user may opt in per site to reuse a session. The exported `storageState` is stored as an encrypted Vault v2 record (`sessionState`, AES-256-GCM / Argon2id, same as every other record) — never a raw browser profile — with a fixed 30-day sliding expiry and immediate clearing on opt-out. If the app exits mid-run, the run is safely stopped and resumed/retried from encrypted workflow state, not from a raw browser profile. |
-| Browser channel | Packaged Chromium by default; **`BrowserEngine` accepts an opt-in `channel: "chrome"`** to launch the user's installed Google Chrome instead, falling back to packaged Chromium if it is not installed (Issue #293) | Some sites treat the bundled Chromium build as more automation-suspicious than a real Chrome binary. The option is opt-in and off by default (no UI wiring yet, separate from the `storageState` persistence toggle above, which is unwired to `channel: "chrome"`). |
+| Browser automation | **Soroeru-owned Chrome extension + Native Messaging**, behind the browser-neutral `PageDriver` seam | The production front door operates one explicitly selected tab in the user's real browser/profile. Electron remains the trusted core; the extension and native helper are thin adapters. Playwright Library is retained only behind a temporary developer rollback flag until parity evidence exists, then removed from production. There is never a silent Playwright fallback. |
+| Browser session policy | **Explicit, in-memory lease of one user-selected tab**; the browser owns authentication/session state | A lease is bound to a browser instance, tab, site scope, permission, and execution epoch. Release never closes the user's tab. Soroeru never exports cookies, local storage, history, a profile, or `storageState`; encrypted workflow checkpoints contain only safe workflow/map/Evidence references. Restart, disconnect, tab close, permission revocation, vault lock, or out-of-scope navigation invalidates the lease and requires explicit rebind plus local revalidation. |
+| Browser adapters | Chrome first; **`PageDriver` + browser-neutral session/transport contracts** are the multi-browser seam | Chrome/Edge can share a WebExtension family; Firefox needs a capability-verified adapter; Safari needs a separate Safari Web Extension/App Extension feasibility RFC. Portable semantics are commands, lifecycle, capability negotiation, and errors—not Chrome tab IDs or Native Messaging framing. |
 | Local encrypted storage | **Vault v2**: a versioned encrypted record vault (§3), not a plaintext SQLite database or a single encrypted JSON blob | Matches the AES-256-GCM + Argon2id requirement, avoids native DB dependencies, and supports entity-by-entity migration and audit records. SQLCipher SQLite may be revisited later if ledger scale, query performance, or concurrent access becomes a real constraint. |
 | AI provider abstraction | **Deterministic-first**; optional Anthropic/OpenAI adapters are stateless, structure-only, and user-configured | Matches the requirement that raw values never leave the local process; AI proposes (structure classification, terms summarization, Constraint findings), Policy/Delegation decides. |
-| Packaging | **Unsigned macOS DMG** for the MVP, via **Electron Forge `maker-dmg`**, with clear Gatekeeper instructions and no auto-update | Matches the macOS-only MVP, removes the user's Node.js prerequisite, and bundles the app plus the default Playwright browser. Signing/notarization, auto-update, and other platforms are explicitly later. |
+| Packaging | **Unsigned macOS DMG** during invited development beta, via **Electron Forge `maker-dmg`**; Chrome extension through the Chrome Web Store before product cutover | The app bundles a self-contained native helper and registers it only after explicit user action. A stable store extension ID is allowlisted. Signing/notarization is required before distribution beyond invited beta; unpacked loading is development-only. |
 | Package manager | **npm** | The repo already has a lockfile; the dependency graph is not large enough to justify pnpm/Yarn. |
 | Renderer build | **Vite** | Most direct match for React + TypeScript in Electron; keeps the UI iteration loop fast. |
 | Main/preload build | **`tsc`** | Type-correctness first; add bundling only if packaging proves it necessary. |
 | Unit tests | **Node built-in test runner** | Keeps the dependency surface small for domain/vault/service tests. |
-| Browser E2E | **Playwright Test** | Reuses the product's own automation library for new Soroeru E2E and packaging smoke. |
+| Browser E2E | **Playwright Test, development-only** | Tests local fixtures, Electron UI, and extension behavior without making Playwright Library a supported production automation path. |
 | Formatting / linting | **Prettier + ESLint** | Standard, low-friction baseline once React/Electron source exists. |
 
 ### 2.1 Decision alternatives and reconsideration triggers
@@ -126,74 +131,100 @@ known alternatives and concrete triggers for reconsideration:
 
 - **Electron desktop app**: lighter desktop shells (Tauri, native Swift/AppKit, or a
   browser-extension-only surface) were considered but not selected for the MVP because the
-  trusted main process needs to own Vault v2, headed Playwright automation, typed IPC, and
+  trusted main process needs to own Vault v2, policy, workflow, typed IPC, Evidence, and
   provider SDK integration in one inspectable Node/TypeScript runtime. Reconsider if the
   package size or idle memory footprint is recorded as a release blocker in beta feedback
   or the release-candidate checklist, or if Electron's sandbox/process model prevents a
   required macOS security or distribution constraint.
-- **Packaged browser engine defaults to Chromium**: bundling all Playwright engines was
-  considered but deferred to keep the first DMG smaller and reduce packaging failure modes.
-  Firefox/WebKit remain compatibility targets behind `BrowserEngine`, so this is a
-  distribution choice rather than a product-level Chromium lock-in. Reconsider if Visibility
-  collection has two or more confirmed beta-site failures that pass on Firefox or WebKit
-  with the same workflow, or if beta support requires a second bundled engine to satisfy the
-  browser-engine independence goal.
-- **`channel: "chrome"` stays opt-in, unwired to any setting**: a full Soroeru-owned Chrome
-  extension (#291) was evaluated as a heavier alternative and not selected for this increment;
-  `channel: "chrome"` needed no new extension surface, native host, or packaging change, so it
-  landed first as the minimal `BrowserEngine` option. Real-site pass/fail comparison data
-  between packaged Chromium and `channel: "chrome"` was not collected in this Issue (no
-  real-site network access or test credentials in this environment, and `docs/testing.md`
-  restricts automated tests to local fixtures) — the option exists for manual beta evaluation.
-  Reconsider promoting it to a user-facing setting once manual beta testing records at least
-  one confirmed site where `channel: "chrome"` collects data that packaged Chromium fails to.
-  This option is independent of the `storageState` persistence decision below: it is
-  unwired to it, and the two questions (which browser binary launches a session, and whether
-  a session is reused across runs) were decided on separate timelines.
-- **Opt-in `storageState` persistence uses a flat 30-day expiry and a simple per-Site-Account
-  toggle** (Issue #294): two narrower alternatives were considered and rejected for this
-  increment — (a) gating the toggle on the still-undecided #291 permission model instead of
-  its own boolean field, and (b) a variable expiry keyed to per-site risk tier instead of one
-  fixed duration for every site. Unlike `channel: "chrome"` above, this decision was **not**
-  gated on beta comparison data: the Product Owner decided the simple/fixed model directly
-  in-session (`docs/design/storage-state-persistence.md`), since reusing a session across runs
-  is a separate question from which browser binary launches it. Reconsider tying the toggle to
-  #291's permission model once that model ships, or reconsider a risk-tiered expiry if beta
-  feedback shows a flat 30 days is wrong for high-risk sites (either direction changes the
-  `sessionState` record shape and the ledger's session-persistence UI, so it is tracked here
-  as a decision, not left implicit in the table row above).
-- **Soroeru-owned Chrome extension + Native Messaging + Electron bridge: designed option
-  now entering a developer-only, feature-flagged prototype stage (trigger fired
-  2026-07-10)** (Issue #291): a design spike
-  ([`design/issue-291-chrome-extension-bridge.md`](design/issue-291-chrome-extension-bridge.md))
-  compared it against the current Playwright path (with `channel: "chrome"` and encrypted
-  `storageState` above) and a localhost-WebSocket variant, and concluded it is a post-MVP
-  architecture option whose first implementation would be a developer-only, feature-flagged
-  prototype — not an MVP scope change; browser-extension distribution stays post-MVP (§1).
-  The extension would sit behind the same `PageDriver` seam as a second session surface, so
-  the Playwright path is preserved, not replaced. The option is a front-door use of the
-  user's own profile, not bot-detection evasion: no fingerprint/UA spoofing, no stealth, no
-  wall bypass, and the automation is visibly indicated via the extension badge and an
-  in-page banner (design §1/§7; [`security.md`](security.md) §7 unchanged). The
-  reconsideration trigger — manual beta testing showing **two or more** sites that still
-  fail collection due to bot/risk checks with `channel: "chrome"` plus persisted
-  `storageState`, with the failure attributed to the browser surface rather than
-  selector/flow mismatch — **fired on 2026-07-10**: the Product Owner's manual beta
-  evaluation found no collection-rate improvement at all from either option (the
-  implementing PRs #295/#297 had explicitly deferred real-site comparison to manual
-  beta). The per-site surface-vs-selector attribution was not separately recorded via the
-  #317 diagnostics; the Product Owner, as owner of the trigger, judged the blanket
-  no-improvement result sufficient to fire it. The design's follow-up implementation
-  Issues are filed as **#335–#340**; the first implementation stage remains the
-  developer-only, feature-flagged prototype, and browser-extension distribution remains
-  post-MVP. The design depends only on public Chrome extension /
-  Native Messaging APIs — never on the Codex extension or any undocumented protocol.
+- **Chrome extension is the production browser front door** (Issue #391): three alternatives
+  were considered: keep Playwright primary, keep both paths indefinitely, or promote the
+  extension and retire production Playwright. Playwright and `channel: "chrome"` failed to
+  improve reachability on the Product Owner's real-site beta checks, while two privileged
+  production paths would duplicate session semantics, packaging, and security surface. The
+  extension therefore becomes primary. The existing Playwright adapter is a temporary,
+  developer-only rollback during parity work; after the extension acceptance proof it is
+  removed from runtime and packaging, while Playwright Test stays development-only. A bridge
+  failure, missing permission, wall, or unsupported capability always fails closed—never a
+  silent Playwright fallback. Reconsider the production retirement only if recorded extension
+  evidence shows a required site is reachable and safe solely through Playwright.
+- **The browser owns session state; Soroeru leases a tab**: exporting the real profile would
+  grant broader authority than the job needs, so #294 `storageState` persistence remains a
+  legacy Playwright-only facility until its production path and encrypted records are retired.
+  The shared session seam must lose `exportStorageState`. A lease is in-memory; only encrypted
+  workflow metadata survives a restart, and resumption after invalidation requires explicit
+  rebind and local revalidation. Reconsider only if a future browser exposes a least-authority,
+  user-approved session capability that does not export profile material.
+- **Explicit binding and least permission**: the production UX replaces
+  `SOROERU_CHROME_BRIDGE_TAB_ID` with a two-party ceremony: the user offers the active tab in
+  the extension, grants that exact HTTPS origin, and accepts the matching Site Account in
+  Electron. A short-lived nonce/lease ID, browser instance, tab handle, site scope, permission,
+  and execution epoch are checked on every closed-schema command. Same-site subdomains require
+  their own visible permission grant; bindings remain memory-only and are visibly marked by
+  badge plus in-page banner. Either surface can stop immediately.
+  Cross-origin SSO is a human hand-off, not an automatic permission expansion: commands pause
+  before leaving the Site Account scope, the user completes the IdP flow without Soroeru reading
+  or filling the IdP, and the encrypted checkpoint retains no IdP URL, token, or page data. On
+  return to an already permitted target-site origin, resume requires local redirect/site/wall
+  revalidation and explicit user confirmation; a new tab or non-returning flow requires a fresh
+  binding. A future adapter may automate an IdP only through a separately approved exact-origin
+  grant and dedicated security design, never through the Site Account grant.
+- **Thin adapters, browser-neutral semantics**: `PageDriver` retains the #381 split between
+  structure snapshots and local value reads. A browser-neutral session/factory/transport
+  contract owns lifecycle, capability negotiation, cancellation, and typed errors. Chrome
+  details—numeric tab IDs, extension IDs, Native Messaging framing—must not cross that seam.
+  Edge is the nearest future adapter; Firefox requires a capability spike; Safari requires a
+  separate feasibility RFC because Safari App Extension messaging is not assumed equivalent.
+- **Store distribution and native helper**: unpacked loading stays development-only. Product
+  cutover requires Chrome Web Store distribution (unlisted beta first is acceptable), a stable
+  allowlisted extension ID, protocol/helper/app version negotiation, and an in-app explicit
+  install/repair/uninstall flow for a self-contained helper. Registration is never implicit.
+  Reconsider the store channel if its policies prevent the least-permission design; do not
+  replace it with a permanently developer-mode product flow.
 - **Unsigned DMG with no auto-update for MVP**: signing/notarization, auto-update, App Store
   distribution, and zip-only delivery were considered but deferred. The unsigned DMG best
   matches the small private beta while making Gatekeeper friction explicit and avoiding
   release infrastructure that is not yet required. Reconsider when distribution moves beyond
   invited beta users, when manual upgrade friction blocks validation, or when Developer ID
   signing/notarization credentials become available for a release issue.
+
+### 2.2 Extension-primary migration and implementation split
+
+The migration is fail-closed and dependency ordered. “Default” changes only after the
+extension capability proof passes; production Playwright removal happens only after the
+extension path is distributed and accepted. Each numbered item should be its own Issue:
+
+1. **Real-session reachability proof** (depends on #381 contracts): on one Product
+   Owner-approved site that Playwright could not reach, prove that the extension can reach and
+   observe the page without evasion; record sanitized Evidence, never credentials or captures.
+2. **Browser-neutral session/transport contract** (depends on 1): introduce tab-lease lifecycle,
+   capability negotiation, cancellation epochs, typed errors, and remove `exportStorageState`
+   from the shared seam.
+3. **Explicit binding and least-permission UX** (depends on 2): extension-created binding offer,
+   Electron acceptance, exact-origin permission, badge/banner, stop/revoke/rebind.
+4. **Self-contained native helper and packaging** (depends on 2): stable-ID allowlist, versioned
+   handshake, explicit install/repair/uninstall, no system Node requirement.
+5. **#381 extension capability proof** (depends on 1–4): sanitizer, navigation, wall-first,
+   local-value, cancellation, reconnect, and stale-map invariant tests.
+6. **Read-only Visibility cutover** (depends on 5): extension becomes the default with encrypted
+   workflow checkpoints/Evidence and no silent fallback.
+7. **Web Store and signed distribution** (depends on 4 and 6): stable Chrome ID, store privacy
+   disclosures, and signed/notarized app/helper path before broader distribution.
+8. **Production Playwright and #294 retirement** (depends on 6–7 plus acceptance Evidence):
+   remove bundled Chromium, `channel: "chrome"`, runtime `BrowserEngine`, production
+   `storageState` UI/records, and the runtime Playwright Library dependency; keep Playwright Test.
+9. **Node 24 LTS toolchain migration** (depends on 4 and 8): verify host, typecheck, unit tests,
+   native handshake, and DMG on Node 24 before changing the repository-wide baseline. Node 26
+   remains unselected while it is Current rather than LTS.
+10. **Mutation operations and future browsers** (depends on 6 and each Slice B/C/D gate): split
+    update, withdrawal, and registration commands; then Edge adapter, Firefox capability spike,
+    and a separate Safari extension/native-app messaging RFC.
+
+Until item 8, release packaging remains on Node 22 because the current `appdmg` chain is the
+constraint—not Playwright's Node engine. Node 24 may be evaluated for extension/native-helper
+development, but two production Node baselines are not adopted. The migration exit gate requires
+recorded extension reachability, #381 invariant parity, wall hand-off/resume, disconnect/rebind,
+   permission revocation, cross-origin SSO hand-off/return, helper cleanup, and package/install
+   Evidence.
 
 ## 3. Domain Model And Persistence Mapping
 
@@ -353,15 +384,30 @@ The renderer and main process share exactly one typed contract:
 `electron/ipc/bridge.ts` wires each `SoroeruSession` method to its channel;
 `electron/main.ts` registers only the channels present in that bridge via `ipcMain.handle`.
 
+The browser boundary is separately typed and least-authority: Electron main authenticates a
+versioned local connection to the native helper; the helper relays closed-schema messages to the
+Soroeru extension; the extension worker validates lease/epoch/tab/origin/permission before a
+content script observes or changes the one bound page. The helper is an untrusted relay and may
+not interpret, persist, or log payloads. The extension/content script may transiently hold page
+structure or a value only for the local command that needs it; vault records, provider keys,
+canonical profiles, durable collection maps, AI calls, Policy, Evidence, and gates remain in
+Electron. Browser target-site traffic is the only network egress from this chain; native
+messaging is local transport, and AI-provider egress remains a separate sanitized Electron-owned
+path. DOM content and every bridge message are treated as untrusted input.
+
 **Reveal flow**: a stored site-held Disclosure value is masked by default. Revealing it
 (`revealValue`) requires re-verifying the master passphrase for that single reveal and is
 refused outright for most-sensitive attributes (the card CVV). The renderer must show a
 revealed value transiently and never persist it.
 
-## 5. Slice A: Visibility (implemented)
+## 5. Slice A: Visibility (implemented core; target browser flow during migration)
 
 Slice A's goal is not "automate a lot." It is to create the first threshold-crossing
 experience: the user sees their scattered online footprint at once.
+
+The ledger, runner, collection, and wall hand-off core are implemented. The tab-offer and lease
+steps below are the target state selected by #391; current code still defaults to Playwright and
+uses a feature-flagged numeric-tab extension bridge until §2.2's cutover gates pass.
 
 ### 5.1 Flow
 
@@ -370,10 +416,10 @@ experience: the user sees their scattered online footprint at once.
    local account page (HTML) can also be imported manually as a fallback
    (`SavedPageImportPanel`, when auto-login/collection cannot reach a page).
 3. **Visibility run** (`LedgerPanel` / `SiteCollectionUi`, `VisibilityService`):
-   - open an ephemeral Playwright browser session per selected Site Account
-     (`BrowserEngine.openSession`);
+   - ask the user to offer one Chrome tab from the extension, grant the exact HTTPS origin,
+     and confirm the matching Site Account in Electron; then open an in-memory tab lease;
    - navigate to the site and log in with the stored credential;
-   - detect walls; hand off in the same page/context; the run pauses and the renderer
+   - detect walls; hand off in the same leased tab; the run pauses and the renderer
      receives a `handoff` event with instruction text; the user resolves the wall and the
      run resumes (§6);
    - find profile/account/billing/newsletter pages using deterministic discovery first,
@@ -423,8 +469,11 @@ general browser or value-reading tool.
 Regular mapped collection is deterministic and stores encrypted Disclosures plus minimized
 Evidence. Mismatch is isolated per entry, falls back to current deterministic exploration, and
 offers user-initiated regeneration. Maps are encrypted local candidate definitions and remain
-usable with AI disabled. The seam applies to Playwright and an extension; Issue #391 must prove
-the extension satisfies these invariants rather than redefine them.
+usable with AI disabled. Every browser adapter must preserve the same invariants: sanitized
+structure only to AI; field/display values, HTML, screenshots, cookies, and profile data never
+to AI; schema-limited proposals only; local validation of site scope, navigation, budgets,
+locators, and walls; deterministic execution; card last4 reduction and CVV exclusion; and the
+existing action gates. Adapter capabilities may narrow behavior but never weaken these rules.
 
 AI discovery has a separate `ai-assisted-discovery` capability. At L0 the collection gate names
 each discovery run. Existing collection L1 does not grant it; L1 expansion requires its own light
@@ -458,10 +507,16 @@ levels and their conditions for this slice are canonical in
 When CAPTCHA / MFA / identity / email / SMS verification is detected
 (`src/automation/wall-detection.ts`, kept strictly separate from field classification), the
 Visibility runner pauses and `VisibilityService` emits a `handoff` event with instruction
-text and evidence. The user resolves the step in the same headed browser session; the
+text and evidence. The user resolves the step in the same visibly bound browser tab; the
 renderer then calls `resumeVisibility` (continue) or `abortVisibility` (stop; never
 bypasses). Detection is conservative and never attempts to solve, bypass, outsource, or
 obscure a wall; see [`security.md`](security.md) §7.
+
+Resume is valid only while the same live tab lease, site scope, permission, and execution epoch
+remain valid. Browser/extension/app restart, tab close, vault lock, permission removal,
+out-of-scope navigation, or bridge disconnect invalidates the lease. The encrypted workflow
+checkpoint remains, but continuing requires an explicit rebind and local revalidation of URL,
+site scope, wall state, and checkpoint; no tab ID or browser-session material is durable.
 
 Only one Visibility run (and therefore one hand-off) is active at a time — `SoroeruSession`
 rejects a concurrent `runVisibility` call with a `busy` status. Bulk update (§8) will reuse
@@ -514,7 +569,7 @@ Deterministic Mode and AI Mode share one definition model (`SiteDefinition` /
 
 Resolution order (`src/agent/definitions.ts`):
 
-1. scan the current page / flow with Playwright (`PageSnapshot`);
+1. scan the current page / flow through `PageDriver` (`PageSnapshot`);
 2. `matchDefinition` builds a score from domain/URL pattern, path pattern, field-token,
    heading, button, and wall-signal hits — a definition must positively match
    `match.domains` or `match.urlPatterns` before any other signal counts;
@@ -618,7 +673,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | No active-control bypass | Wall detection (§6) is separate from classification; detected walls stop or hand off. |
 | Review gate / three guards / fourth boundary | Domain/Policy services decide (later slices, §8); the renderer only renders the gate. |
 | ToS automation prohibition | Constraint record + high-risk UI; user decides; active controls still never bypassed. |
-| No raw browser profile at rest | Ephemeral Playwright contexts (§2); future session persistence must be encrypted vault state. |
+| No raw browser profile at rest | The browser owns its profile/session; the tab lease is memory-only and Soroeru never exports cookies, local storage, history, profile bytes, or `storageState` (§2). |
 
 ## 11. Field Detection And Measurement
 
