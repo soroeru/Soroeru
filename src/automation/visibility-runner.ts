@@ -8,6 +8,7 @@ import {
   findLoginLink,
   findLoginSubmitButton,
   findSsoLoginOptions,
+  hasAuthenticatedSessionMarker,
   hasLoginFields,
   type SsoLoginOption,
 } from "./login-handler.js";
@@ -104,7 +105,15 @@ export class VisibilityRunner {
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       if (!snapshot) return this.handoffResult(siteAccountId);
 
-      if (credential) {
+      const reuseAuthenticatedSession = credential !== undefined && hasAuthenticatedSessionMarker(snapshot);
+      if (reuseAuthenticatedSession) {
+        this.logger.info("visibility", "reusing authenticated browser session", {
+          domain: siteAccount.domain,
+          reason: "visible-logout-control",
+        });
+      }
+
+      if (credential && !reuseAuthenticatedSession) {
         snapshot = await this.ensureLoginPage(siteAccount, session, snapshot);
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page", credential);

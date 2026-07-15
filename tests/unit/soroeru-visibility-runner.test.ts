@@ -490,6 +490,149 @@ test("visibility runner does not click arbitrary buttons when credentials exist 
   }
 });
 
+test("visibility runner reuses an authenticated session without navigating to login or sending credentials", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "authenticated.example.test",
+      url: "https://authenticated.example.test/account",
+      displayName: "Authenticated",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const authenticated = {
+      ...snapshot("https://authenticated.example.test/account", [
+        field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+      ]),
+      links: [
+        { href: "https://authenticated.example.test/logout", text: "ログアウト" },
+        { href: "https://authenticated.example.test/mypage", text: "マイページ" },
+      ],
+    };
+    const loginTrap = snapshot("https://authenticated.example.test/login", [
+      field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("login-password", {
+        type: "password",
+        autocomplete: "current-password",
+        labels: ["パスワード"],
+      }),
+    ]);
+    const page = new FakePageDriver([authenticated, loginTrap], {
+      "profile-email": "user@example.test",
+    });
+    const { logger, entries } = recordingLogger();
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      logger,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(page.visited.includes("https://authenticated.example.test/login"), false);
+    assert.deepEqual(page.filled, {});
+    assert.deepEqual(page.clicked, []);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 1);
+    const reuseLog = entries.find((entry) => entry.message === "reusing authenticated browser session");
+    assert.deepEqual(reuseLog?.fields, {
+      domain: "authenticated.example.test",
+      reason: "visible-logout-control",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner does not treat a logout marker as authenticated on a partial login step", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "partial-marker.example.test",
+      url: "https://partial-marker.example.test/login",
+      displayName: "Partial Marker",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const partialLogin = {
+      ...snapshot("https://partial-marker.example.test/login", [
+        field("account-entry", { type: "email", name: "username", labels: ["メールアドレス"] }),
+      ]),
+      links: [{ href: "https://partial-marker.example.test/logout", text: "ログアウト" }],
+    };
+    const account = snapshot("https://partial-marker.example.test/account", [
+      field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    const page = new FakePageDriver([partialLogin, account, account], {
+      "profile-email": "user@example.test",
+    });
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    await runner.runSite(site.id);
+
+    assert.equal(page.filled["account-entry"], "user@example.test");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner falls back to login when only an ambiguous account marker is present", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "ambiguous.example.test",
+      url: "https://ambiguous.example.test/",
+      displayName: "Ambiguous",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const landing = {
+      ...snapshot("https://ambiguous.example.test/", []),
+      links: [{ href: "https://ambiguous.example.test/mypage", text: "マイページ" }],
+    };
+    const login = snapshot("https://ambiguous.example.test/login", [
+      field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("login-password", {
+        type: "password",
+        autocomplete: "current-password",
+        labels: ["パスワード"],
+      }),
+    ]);
+    const account = snapshot("https://ambiguous.example.test/account", [
+      field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    const page = new FakePageDriver([landing, login, account], {
+      "profile-email": "user@example.test",
+    });
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    await runner.runSite(site.id);
+
+    assert.equal(page.filled["login-email"], "user@example.test");
+    assert.equal(page.filled["login-password"], "fake-pass");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner discovers a same-site login page and stores that URL on the site account", async () => {
   const { dir, service } = await openService();
   try {

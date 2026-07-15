@@ -132,6 +132,32 @@ export function hasLoginFields(snapshot: PageSnapshot): boolean {
 }
 
 /**
+ * Conservative positive signal that the current, already-loaded page belongs
+ * to an authenticated session. Scanner snapshots contain visible controls
+ * only, so an exact logout action is stronger than account/mypage wording.
+ * Any credential-entry field wins: partial and multi-step login pages must
+ * continue through the existing login flow.
+ */
+export function hasAuthenticatedSessionMarker(snapshot: PageSnapshot): boolean {
+  if (hasLoginCredentialEntryField(snapshot)) return false;
+  return [...snapshot.links, ...snapshot.buttons].some((control) => isLogoutAction(control.text));
+}
+
+function hasLoginCredentialEntryField(snapshot: PageSnapshot): boolean {
+  if (findLoginField(snapshot.fields, "password")) return true;
+  return snapshot.fields.some(
+    (field) =>
+      field.autocomplete === "username" ||
+      /(?:^|[^a-z0-9])(?:user(?:name)?|login)(?:$|[^a-z0-9])/i.test(`${field.name} ${field.id}`),
+  );
+}
+
+function isLogoutAction(text: string): boolean {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return /^(?:ログアウト|サインアウト)(?:する)?$|^(?:log|sign) out$/i.test(normalized);
+}
+
+/**
  * Detected third-party SSO login control on a login page (structure only).
  * Used only during the login stage — never as a wall signal (see Issue #351).
  */
