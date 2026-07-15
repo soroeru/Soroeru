@@ -63,9 +63,10 @@ export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
     reasons.push("unknown-ai-assignee");
   const aiSubAssignee = aiSubAssignees[aiAssignee];
   const suppliedAiSubAssignee = normalize(metadata.aiSubAssignee);
-  if (!suppliedAiSubAssignee) reasons.push("missing-ai-sub-assignee");
-  else if (!AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase())) reasons.push("unknown-ai-sub-assignee");
-  else if (toAiAssignee(suppliedAiSubAssignee) !== aiSubAssignee) reasons.push("ai-sub-assignee-mismatch");
+  if (suppliedAiSubAssignee && !AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase()))
+    reasons.push("unknown-ai-sub-assignee");
+  else if (suppliedAiSubAssignee && toAiAssignee(suppliedAiSubAssignee) !== aiSubAssignee)
+    reasons.push("ai-sub-assignee-mismatch");
   if (
     (!aiSubAssignee || !AI_ASSIGNEES.has(normalize(aiSubAssignee).toLowerCase())) &&
     !reasons.includes("unknown-ai-sub-assignee")

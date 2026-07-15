@@ -39,6 +39,16 @@ test("maps the primary AI assignee to its configured sub assignee", () => {
   assert.equal(result.aiSubAssignee, "Claude");
 });
 
+test("derives a missing AI sub assignee from the configured mapping for legacy issues", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], aiSubAssignees: ["Claude"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude" },
+  );
+  assert.equal(result.aiSubAssignee, "Claude");
+  assert.equal(result.reasons.includes("missing-ai-sub-assignee"), false);
+});
+
 test("rejects an unknown AI sub assignee even when it normalizes to the fallback", () => {
   const result = resolveDefaults(
     { aiAssignee: "未記載", aiSubAssignee: "Unknown", priority: "P2", size: "M" },

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -224,6 +224,22 @@ test("concurrent milestone transactions preserve both events and usage records",
   assert.deepEqual(state.usage, { 101: usage, 102: secondUsage });
 });
 
+test("reclaims a stale state lock left by a crashed process", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-stale-lock-"));
+  const statePath = path.join(directory, "state.json");
+  const lockPath = `${statePath}.lock`;
+  await mkdir(lockPath);
+  const stale = new Date(Date.now() - 60_000);
+  await utimes(lockPath, stale, stale);
+  const input = await load("linear.json");
+  const result = await runOrchestration({
+    ...input,
+    options: { ...runOptions, dryRun: false, statePath },
+    milestone: { issue: 101, type: "merged", usage },
+  });
+  assert.deepEqual(result.state.completed, [101]);
+});
+
 test("requires maxParallel to be a positive integer and limits the runnable group", async () => {
   const items = parseProjectItems((await load("branching.json")).items);
   for (const maxParallel of [undefined, 0, -1, 1.5])
@@ -428,6 +444,16 @@ test("selects exactly one owner/type/name/number Project configuration", () => {
   assert.throws(
     () => selectProjectConfig(projects, { name: "Visibility", number: 9 }),
     /project-config-ambiguous/,
+  );
+  assert.throws(
+    () =>
+      selectProjectConfig([{ ownerType: "user", name: "Visibility", number: 9 }], {
+        owner: "octo",
+        ownerType: "user",
+        name: "Visibility",
+        number: 9,
+      }),
+    /project-config-not-found/,
   );
   assert.throws(
     () => selectProjectConfig(projects, { owner: "octo", ownerType: "team", number: 9 }),

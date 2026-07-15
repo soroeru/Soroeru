@@ -279,7 +279,7 @@ export function selectProjectConfig(projects, selection = {}) {
     throw new Error("invalid-owner-type");
   const matches = projects.filter(
     (project) =>
-      (selection.owner === undefined || project.owner === undefined || project.owner === selection.owner) &&
+      (selection.owner === undefined || project.owner === selection.owner) &&
       (selection.ownerType === undefined || project.ownerType === selection.ownerType) &&
       (selection.name === undefined || project.name === selection.name) &&
       (selection.number === undefined || project.number === selection.number),
@@ -362,7 +362,11 @@ async function writeState(statePath, state) {
   await fs.rename(temporary, statePath);
 }
 
-async function withStateLock(statePath, operation, { timeoutMs = 5_000, pollMs = 10 } = {}) {
+async function withStateLock(
+  statePath,
+  operation,
+  { timeoutMs = 5_000, pollMs = 10, staleMs = 30_000 } = {},
+) {
   if (!statePath) throw new Error("state-path-required");
   const lockPath = `${statePath}.lock`;
   await fs.mkdir(path.dirname(statePath), { recursive: true });
@@ -373,6 +377,18 @@ async function withStateLock(statePath, operation, { timeoutMs = 5_000, pollMs =
       break;
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
+      try {
+        const lock = await fs.stat(lockPath);
+        if (Date.now() - lock.mtimeMs > staleMs) {
+          const stalePath = `${lockPath}.stale.${process.pid}.${Date.now()}`;
+          await fs.rename(lockPath, stalePath);
+          await fs.rm(stalePath, { recursive: true, force: true });
+          continue;
+        }
+      } catch (lockError) {
+        if (!new Set(["ENOENT", "EEXIST"]).has(lockError.code)) throw lockError;
+        continue;
+      }
       if (Date.now() >= deadline) throw new Error("state-lock-timeout");
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
