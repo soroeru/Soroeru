@@ -195,6 +195,35 @@ test("execute mode persists milestone state", async () => {
   assert.deepEqual(state.completed, [101]);
 });
 
+test("concurrent milestone transactions preserve both events and usage records", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-concurrent-"));
+  const statePath = path.join(directory, "state.json");
+  const input = await load("linear.json");
+  const secondUsage = { ...usage, inputTokens: 99 };
+  await Promise.all([
+    runOrchestration({
+      ...input,
+      options: { ...runOptions, dryRun: false, statePath },
+      milestone: { issue: 101, type: "merged", usage },
+    }),
+    runOrchestration({
+      ...input,
+      options: { ...runOptions, dryRun: false, statePath },
+      milestone: { issue: 102, type: "merged", usage: secondUsage },
+    }),
+  ]);
+  const state = JSON.parse(await readFile(statePath, "utf8"));
+  assert.deepEqual(state.completed, [101, 102]);
+  assert.deepEqual(
+    [...state.milestones].sort((left, right) => left.issue - right.issue),
+    [
+      { issue: 101, type: "merged" },
+      { issue: 102, type: "merged" },
+    ],
+  );
+  assert.deepEqual(state.usage, { 101: usage, 102: secondUsage });
+});
+
 test("requires maxParallel to be a positive integer and limits the runnable group", async () => {
   const items = parseProjectItems((await load("branching.json")).items);
   for (const maxParallel of [undefined, 0, -1, 1.5])
@@ -271,6 +300,14 @@ test("blocks issues whose start date is after the run date", async () => {
   assert.deepEqual(plan.blocked[0], { number: 101, reason: "start-date-in-future:2026-07-15" });
 });
 
+test("rejects impossible item and run dates instead of accepting date-shaped strings", async () => {
+  const raw = (await load("linear.json")).items;
+  raw[0].startDate = "2026-02-30";
+  assert.throws(() => parseProjectItems(raw), /invalid-start-date:101/);
+  const items = parseProjectItems((await load("linear.json")).items);
+  assert.throws(() => buildRunPlan(items, { ...runOptions, runDate: "2026-02-30" }), /invalid-run-date/);
+});
+
 test("treats Fable as an ordinary model name", async () => {
   const raw = (await load("linear.json")).items;
   raw[0].model = "Fable";
@@ -306,6 +343,28 @@ test("run orchestration blocks before planning when a required worker capability
     ),
   };
   await assert.rejects(runOrchestration(input), /routing-unavailable:worker:Codex:gpt-5/);
+});
+
+test("validates workers only for runnable issues after persisting a completing milestone", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-capability-"));
+  const statePath = path.join(directory, "state.json");
+  const input = await load("linear.json");
+  const parentOnly = runOptions.capabilities.filter((capability) => capability.role === "parent");
+  const result = await runOrchestration({
+    ...input,
+    options: {
+      ...runOptions,
+      dryRun: false,
+      statePath,
+      runDate: "2026-07-14",
+      unavailableModels: ["sonnet"],
+      capabilities: parentOnly,
+    },
+    milestone: { issue: 101, type: "merged", usage },
+  });
+  assert.deepEqual(result.state.completed, [101]);
+  assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")).completed, [101]);
+  assert.deepEqual(result.plan.runnable, []);
 });
 
 test("CLI rejects unknown flags", async () => {
@@ -404,6 +463,7 @@ test("paginates organization ProjectV2 items and discards Issue bodies from retu
                   ],
                 },
                 content: {
+                  __typename: "Issue",
                   number: secondPage ? 302 : 301,
                   title: secondPage ? "Second issue" : "Fetched issue",
                   url: `https://example.invalid/issues/${secondPage ? 302 : 301}`,
@@ -434,6 +494,40 @@ test("paginates organization ProjectV2 items and discards Issue bodies from retu
   assert.equal(
     result.items.some((item) => Object.hasOwn(item, "body")),
     false,
+  );
+});
+
+test("skips draft, pull request, and non-Issue Project items", async () => {
+  const assignment =
+    "<!-- implementation-assignment:start -->\n- Primary: Codex\n- Sub: Claude\n- Model: Fable\n- Order: 1\n- Dependencies: none\n<!-- implementation-assignment:end -->";
+  const node = (content) => ({
+    fieldValues: {
+      nodes: [
+        { field: { name: "Status" }, name: "Ready" },
+        { field: { name: "Start date" }, date: "2026-07-15" },
+      ],
+    },
+    content,
+  });
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        items: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            node({ __typename: "Issue", number: 401, title: "Issue", url: "issue", body: assignment }),
+            node({ __typename: "PullRequest", number: 402, title: "PR", url: "pr", body: assignment }),
+            node({ __typename: "DraftIssue", title: "Draft", body: assignment }),
+            node(null),
+          ],
+        },
+      },
+    },
+  });
+  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  assert.deepEqual(
+    result.items.map(({ number }) => number),
+    [401],
   );
 });
 

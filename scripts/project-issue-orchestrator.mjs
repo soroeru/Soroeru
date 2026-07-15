@@ -23,6 +23,12 @@ function requiredString(value, reason) {
   return value.trim();
 }
 
+function isCanonicalDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
 export function parseProjectItems(rawItems) {
   if (!Array.isArray(rawItems)) throw new Error("items-required");
   const items = rawItems.map((raw) => {
@@ -37,12 +43,14 @@ export function parseProjectItems(rawItems) {
       throw new Error(`missing-order:${number}`);
     const order = Number(raw.order);
     if (!Number.isSafeInteger(order) || order <= 0) throw new Error(`invalid-order:${number}`);
+    const startDate = requiredString(raw.startDate, `missing-start-date:${number}`);
+    if (!isCanonicalDate(startDate)) throw new Error(`invalid-start-date:${number}`);
     return Object.freeze({
       number,
       title: requiredString(raw.title, `missing-title:${number}`),
       url: requiredString(raw.url, `missing-url:${number}`),
       status: requiredString(raw.status, `missing-status:${number}`),
-      startDate: requiredString(raw.startDate, `missing-start-date:${number}`),
+      startDate,
       primary: raw.primary.trim(),
       sub: raw.sub.trim(),
       model: raw.model.trim(),
@@ -111,8 +119,7 @@ export function buildRunPlan(items, run = {}) {
   validateProjectItems(items);
   if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) throw new Error("invalid-max-parallel");
   if (!RELEASE_POLICIES.has(run.releasePolicy)) throw new Error("invalid-release-policy");
-  if (run.runDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(run.runDate))
-    throw new Error("invalid-run-date");
+  if (run.runDate !== undefined && !isCanonicalDate(run.runDate)) throw new Error("invalid-run-date");
   const completed = new Set((run.completed ?? []).map(Number));
   const unavailableModels = new Set(run.unavailableModels ?? []);
   const existingWorktrees = new Set((run.existingWorktrees ?? []).map(Number));
@@ -263,7 +270,7 @@ export function parseImplementationAssignment(body) {
 
 export function buildProjectItemsQuery(ownerType) {
   if (!new Set(["user", "organization"]).has(ownerType)) throw new Error("invalid-owner-type");
-  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } content { ... on Issue { number title url body } } } } } } }`;
+  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body } } } } } } }`;
 }
 
 export function selectProjectConfig(projects, selection = {}) {
@@ -299,25 +306,28 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectNumb
     cursor = items.pageInfo.endCursor;
   }
   let fetchedBytes = 0;
-  const mapped = nodes.map((node) => {
+  const mapped = nodes.flatMap((node) => {
+    const body = String(node.content?.body ?? "");
+    fetchedBytes += Buffer.byteLength(body, "utf8");
+    if (node.content?.__typename !== "Issue") return [];
     const fields = new Map(
       (node.fieldValues?.nodes ?? []).map((value) => [value.field?.name, value.name ?? value.date]),
     );
-    const body = String(node.content?.body ?? "");
-    fetchedBytes += Buffer.byteLength(body, "utf8");
     const assignment = parseImplementationAssignment(body);
-    return {
-      number: node.content?.number,
-      title: node.content?.title,
-      url: node.content?.url,
-      status: fields.get("Status"),
-      startDate: fields.get("Start date"),
-      primary: fields.get("AI Assignees") ?? assignment.primary,
-      sub: fields.get("AI Sub Assignees") ?? assignment.sub,
-      model: assignment.model,
-      order: assignment.order,
-      dependencies: assignment.dependencies,
-    };
+    return [
+      {
+        number: node.content?.number,
+        title: node.content?.title,
+        url: node.content?.url,
+        status: fields.get("Status"),
+        startDate: fields.get("Start date"),
+        primary: fields.get("AI Assignees") ?? assignment.primary,
+        sub: fields.get("AI Sub Assignees") ?? assignment.sub,
+        model: assignment.model,
+        order: assignment.order,
+        dependencies: assignment.dependencies,
+      },
+    ];
   });
   return { items: mapped, fetchedBytes };
 }
@@ -347,9 +357,31 @@ async function readState(statePath) {
 async function writeState(statePath, state) {
   if (!statePath) throw new Error("state-path-required");
   await fs.mkdir(path.dirname(statePath), { recursive: true });
-  const temporary = `${statePath}.${process.pid}.tmp`;
+  const temporary = `${statePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { flag: "wx" });
   await fs.rename(temporary, statePath);
+}
+
+async function withStateLock(statePath, operation, { timeoutMs = 5_000, pollMs = 10 } = {}) {
+  if (!statePath) throw new Error("state-path-required");
+  const lockPath = `${statePath}.lock`;
+  await fs.mkdir(path.dirname(statePath), { recursive: true });
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      await fs.mkdir(lockPath);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (Date.now() >= deadline) throw new Error("state-lock-timeout");
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+  try {
+    return await operation();
+  } finally {
+    await fs.rm(lockPath, { recursive: true, force: true });
+  }
 }
 
 export async function runOrchestration(input) {
@@ -362,29 +394,32 @@ export async function runOrchestration(input) {
       throw new Error(`ai-sub-assignee-mismatch:${item.number}`);
   const parent = options.parent;
   if (!parent?.provider || !parent?.model) throw new Error("parent-route-required");
-  const unavailableModels = new Set(options.unavailableModels ?? []);
-  const requiredRoutes = [
-    { provider: parent.provider, model: parent.model, role: "parent" },
-    ...items
-      .filter((item) => !unavailableModels.has(item.model))
-      .map((item) => ({ provider: item.primary, model: item.model, role: "worker" })),
-  ].filter(
-    (route, index, routes) =>
-      routes.findIndex(
-        (candidate) =>
-          candidate.provider === route.provider &&
-          candidate.model === route.model &&
-          candidate.role === route.role,
-      ) === index,
+  validateCapabilities(
+    [{ provider: parent.provider, model: parent.model, role: "parent" }],
+    options.capabilities,
   );
-  validateCapabilities(requiredRoutes, options.capabilities);
-  const currentState = input.state ?? (await readState(options.statePath));
-  const nextState = input.milestone
-    ? applyMilestone(currentState, input.milestone, {
+  let currentState;
+  let nextState;
+  if (!options.dryRun && input.milestone) {
+    nextState = await withStateLock(options.statePath, async () => {
+      const lockedState = await readState(options.statePath);
+      const updated = applyMilestone(lockedState, input.milestone, {
         issueNumbers: items.map(({ number }) => number),
         releasePolicy: options.releasePolicy,
-      })
-    : currentState;
+      });
+      await writeState(options.statePath, updated);
+      return updated;
+    });
+    currentState = nextState;
+  } else {
+    currentState = input.state ?? (await readState(options.statePath));
+    nextState = input.milestone
+      ? applyMilestone(currentState, input.milestone, {
+          issueNumbers: items.map(({ number }) => number),
+          releasePolicy: options.releasePolicy,
+        })
+      : currentState;
+  }
   const plan = buildRunPlan(items, {
     completed: nextState.completed,
     unavailableModels: options.unavailableModels,
@@ -393,7 +428,22 @@ export async function runOrchestration(input) {
     releasePolicy: options.releasePolicy,
     runDate: options.runDate,
   });
-  if (!options.dryRun && input.milestone) await writeState(options.statePath, nextState);
+  const requiredRoutes = plan.runnable
+    .map((item) => ({
+      provider: item.primary,
+      model: item.model,
+      role: "worker",
+    }))
+    .filter(
+      (route, index, routes) =>
+        routes.findIndex(
+          (candidate) =>
+            candidate.provider === route.provider &&
+            candidate.model === route.model &&
+            candidate.role === route.role,
+        ) === index,
+    );
+  validateCapabilities(requiredRoutes, options.capabilities);
   return {
     dryRun: Boolean(options.dryRun),
     ...(input.fetchedBytes === undefined ? {} : { fetchedBytes: input.fetchedBytes }),
