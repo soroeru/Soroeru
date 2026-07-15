@@ -1,6 +1,6 @@
 # Chrome Extension Bridge Settings Design
 
-Issue: #371  
+Issue: #371
 Dependency: #391 at `b070a5e`
 
 ## Goal and scope
