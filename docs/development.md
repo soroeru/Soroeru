@@ -97,6 +97,14 @@ provider's normal expiry cadence and immediately after membership or scope
 changes. The workflow also declares `repository-projects: write`; the secret
 is required when the repository token cannot write a user-owned Project.
 
+Python-based Skill validation uses `uv` and the repository-managed PyYAML
+development dependency:
+
+```bash
+uv sync
+uv run python "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" skills/create-issue
+```
+
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)
 npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
