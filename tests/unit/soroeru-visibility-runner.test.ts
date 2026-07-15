@@ -505,8 +505,8 @@ test("visibility runner reuses an authenticated session without navigating to lo
       source: "csv-import",
     });
     const authenticated = {
-      ...snapshot("https://authenticated.example.test/account", [
-        field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+      ...snapshot("https://authenticated.example.test/account", [], "", [
+        { valueId: "profile-email", labelText: "メールアドレス", nearbyText: "" },
       ]),
       links: [
         { href: "https://authenticated.example.test/logout", text: "ログアウト" },
@@ -521,9 +521,7 @@ test("visibility runner reuses an authenticated session without navigating to lo
         labels: ["パスワード"],
       }),
     ]);
-    const page = new FakePageDriver([authenticated, loginTrap], {
-      "profile-email": "user@example.test",
-    });
+    const page = new FakePageDriver([authenticated, loginTrap], {}, { "profile-email": "user@example.test" });
     const { logger, entries } = recordingLogger();
     const runner = new VisibilityRunner({
       domain: service,
@@ -547,6 +545,83 @@ test("visibility runner reuses an authenticated session without navigating to lo
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+for (const identityCase of [
+  {
+    name: "missing",
+    fields: [] as FormField[],
+    values: {},
+  },
+  {
+    name: "mismatched",
+    fields: [field("profile-email", { autocomplete: "email", labels: ["メールアドレス"] })],
+    values: { "profile-email": "other-user@example.test" },
+  },
+  {
+    name: "ambiguous",
+    fields: [
+      field("primary-email", { autocomplete: "email", labels: ["メールアドレス"] }),
+      field("secondary-email", { autocomplete: "email", labels: ["予備メールアドレス"] }),
+    ],
+    values: {
+      "primary-email": "user@example.test",
+      "secondary-email": "other-user@example.test",
+    },
+  },
+] as const) {
+  test(`visibility runner falls back to login when the authenticated-session identity is ${identityCase.name}`, async () => {
+    const { dir, service } = await openService();
+    try {
+      const site = service.upsertSiteAccount({
+        domain: `${identityCase.name}.example.test`,
+        url: `https://${identityCase.name}.example.test/account`,
+        displayName: identityCase.name,
+      });
+      service.addCredential({
+        siteAccountId: site.id,
+        username: "user@example.test",
+        password: "fake-pass",
+        source: "csv-import",
+      });
+      const initial = {
+        ...snapshot(`https://${identityCase.name}.example.test/account`, [...identityCase.fields]),
+        links: [
+          { href: `https://${identityCase.name}.example.test/logout`, text: "ログアウト" },
+          { href: `https://${identityCase.name}.example.test/mypage`, text: "マイページ" },
+        ],
+      };
+      const login = snapshot(`https://${identityCase.name}.example.test/login`, [
+        field("login-email", { autocomplete: "username", labels: ["メールアドレス"] }),
+        field("login-password", {
+          type: "password",
+          autocomplete: "current-password",
+          labels: ["パスワード"],
+        }),
+      ]);
+      const account = snapshot(`https://${identityCase.name}.example.test/account`, [
+        field("collected-email", { autocomplete: "email", labels: ["メールアドレス"] }),
+      ]);
+      const page = new FakePageDriver([initial, login, account], {
+        ...identityCase.values,
+        "collected-email": "user@example.test",
+      });
+      const { logger, entries } = recordingLogger();
+      const runner = new VisibilityRunner({
+        domain: service,
+        openSession: () => Promise.resolve(new FakeSession(page)),
+        logger,
+      });
+
+      await runner.runSite(site.id);
+
+      assert.equal(page.filled["login-email"], "user@example.test");
+      assert.equal(page.filled["login-password"], "fake-pass");
+      assert.equal(entries.some((entry) => entry.message === "reusing authenticated browser session"), false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 test("visibility runner does not treat a logout marker as authenticated on a partial login step", async () => {
   const { dir, service } = await openService();

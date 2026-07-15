@@ -105,7 +105,10 @@ export class VisibilityRunner {
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       if (!snapshot) return this.handoffResult(siteAccountId);
 
-      const reuseAuthenticatedSession = credential !== undefined && hasAuthenticatedSessionMarker(snapshot);
+      const reuseAuthenticatedSession =
+        credential !== undefined &&
+        hasAuthenticatedSessionMarker(snapshot) &&
+        (await this.authenticatedSessionIdentityMatches(session, snapshot, credential));
       if (reuseAuthenticatedSession) {
         this.logger.info("visibility", "reusing authenticated browser session", {
           domain: siteAccount.domain,
@@ -370,6 +373,36 @@ export class VisibilityRunner {
     await session.page.goto(loginLink);
     await session.page.waitForReady();
     return session.page.snapshot();
+  }
+
+  /**
+   * Bind a reusable browser session to the imported account without putting
+   * the observed identifier into the structure snapshot, AI input, logs, or
+   * durable state. Missing, conflicting, and mismatched identity values all
+   * fail closed to the existing login path.
+   */
+  private async authenticatedSessionIdentityMatches(
+    session: SiteSession,
+    snapshot: PageSnapshot,
+    credential: Credential,
+  ): Promise<boolean> {
+    const fieldIds = snapshot.fields.filter(isAccountIdentityField).map((field) => field.fieldId);
+    const displayIds = (snapshot.displayValues ?? [])
+      .filter((candidate) => isAccountIdentityText(`${candidate.labelText} ${candidate.nearbyText}`))
+      .map((candidate) => candidate.valueId);
+    if (fieldIds.length === 0 && displayIds.length === 0) return false;
+
+    const fieldValues = fieldIds.length > 0 ? await session.page.readValues() : {};
+    const displayValues =
+      displayIds.length > 0 && session.page.readDisplayValues
+        ? await session.page.readDisplayValues()
+        : {};
+    const observed = new Set(
+      [...fieldIds.map((id) => fieldValues[id]), ...displayIds.map((id) => displayValues[id])]
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map(normalizeAccountIdentity),
+    );
+    return observed.size === 1 && observed.has(normalizeAccountIdentity(credential.username));
   }
 
   private requireSite(siteAccountId: string): SiteAccount {
@@ -759,6 +792,25 @@ export class VisibilityRunner {
 
 function shouldOfferHandoffCredential(step: string, snapshot: PageSnapshot, wallKind: string): boolean {
   return step === "login-page" || hasLoginFields(snapshot) || wallKind === "mfa";
+}
+
+function isAccountIdentityField(field: PageSnapshot["fields"][number]): boolean {
+  return (
+    field.autocomplete === "email" ||
+    isAccountIdentityText(
+      `${field.name} ${field.id} ${field.placeholder} ${field.labels.join(" ")} ${field.nearbyText}`,
+    )
+  );
+}
+
+function isAccountIdentityText(text: string): boolean {
+  return /メールアドレス|e[\s_-]?mail|ログインID|ユーザーID|ユーザー名|会員ID|account[\s_-]?id|user[\s_-]?name/i.test(
+    text,
+  );
+}
+
+function normalizeAccountIdentity(value: string): string {
+  return value.trim().normalize("NFKC");
 }
 
 function formatSsoProviderList(options: SsoLoginOption[]): string {
