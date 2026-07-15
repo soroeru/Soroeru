@@ -438,7 +438,10 @@ attributes may be malformed, misleading, or adversarial.
 - Validate stored data before use; never log decrypted values.
 - Prompt instructions embedded in DOM are data, never authority. A bounded discovery engine may
   propose at most one same-site read-only navigation per step after schema, existence, budget,
-  wall, and policy validation; it receives no general browser or value-reading tool.
+  wall, and policy validation. GET is not sufficient: local policy rejects action-like
+  routes/elements, permits only approved account-information page classes, and requires user
+  confirmation for unknown non-action destinations. It receives no general browser or
+  value-reading tool.
 - Wall detection runs before sanitization and navigation. CAPTCHA, MFA/OTP, passkey, identity
   verification, bot detection, and rate limiting always pause for human hand-off; model output
   cannot override the pause.
@@ -594,6 +597,10 @@ distributing a DMG, confirm:
 - [ ] Every bridge command carries the current lease/epoch and uses the closed command schema;
       arbitrary script/DOM evaluation, raw HTML, screenshots, downloads, and unrestricted
       navigation remain impossible.
+- [ ] The app-bundled native helper is treated as a trusted, minimal local transport because it
+      sees plaintext messages in memory. It is authenticated to the app/extension endpoints and
+      has no vault/provider access, network client, payload interpretation, persistence, durable
+      queue, or logs; installed-binary integrity and cleanup are release-verified.
 - [ ] Extension/content/helper payloads may contain raw values only transiently for the local
       read/fill operation that needs them; they are never logged, persisted, included in
       diagnostics, or forwarded to AI. The extension contains no vault, provider key, canonical

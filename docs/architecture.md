@@ -387,11 +387,15 @@ The renderer and main process share exactly one typed contract:
 The browser boundary is separately typed and least-authority: Electron main authenticates a
 versioned local connection to the native helper; the helper relays closed-schema messages to the
 Soroeru extension; the extension worker validates lease/epoch/tab/origin/permission before a
-content script observes or changes the one bound page. The helper is an untrusted relay and may
-not interpret, persist, or log payloads. The extension/content script may transiently hold page
-structure or a value only for the local command that needs it; vault records, provider keys,
-canonical profiles, durable collection maps, AI calls, Policy, Evidence, and gates remain in
-Electron. Browser target-site traffic is the only network egress from this chain; native
+content script observes or changes the one bound page. The app-bundled helper is a **trusted but
+minimal local transport**: it necessarily sees message plaintext in memory, so its process and
+installed binary are inside the trusted computing base, but it has no vault/provider access,
+network client, payload interpretation, durable queue, logging, or persistence. It accepts only
+the authenticated app/extension endpoints and exits with the connection. The extension/content
+script and helper may transiently hold page structure or a value only for the local command that
+needs it; vault records, provider keys, canonical profiles, durable collection maps, AI calls,
+Policy, Evidence, and gates remain in Electron. Browser target-site traffic is the only network
+egress from this chain; native
 messaging is local transport, and AI-provider egress remains a separate sanitized Electron-owned
 path. DOM content and every bridge message are treated as untrusted input.
 
@@ -462,8 +466,12 @@ Visibility may add a low-frequency AI discovery pass that produces a versioned
 `SiteCollectionMap` (Issue #381). A mandatory structural sanitizer further redacts `PageDriver`
 structure snapshots—already separate from local value reads—before they reach the model. The model receives only sanitized
 structure and returns a closed-schema proposal referencing opaque IDs in that snapshot; a local
-validator enforces existence, same-registrable-site HTTPS GET/read-only navigation, per-site limits
-(page/depth/call/token/time), and wall state. It has no
+validator enforces existence, same-registrable-site HTTPS navigation, per-site limits
+(page/depth/call/token/time), and wall state. GET alone is never accepted as proof of read-only:
+the destination must match a locally approved account-information page class and must not have an
+action-like path/query/element signal (logout, delete, withdraw, cancel, unsubscribe, confirm,
+submit, purchase, or preference mutation). Unknown destinations require user confirmation before
+navigation; action-like destinations are rejected from discovery rather than confirmable. It has no
 general browser or value-reading tool.
 
 Regular mapped collection is deterministic and stores encrypted Disclosures plus minimized
