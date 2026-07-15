@@ -639,7 +639,7 @@ test("visibility runner does not treat a logout marker as authenticated on a par
     });
     const partialLogin = {
       ...snapshot("https://partial-marker.example.test/login", [
-        field("account-entry", { type: "email", name: "username", labels: ["メールアドレス"] }),
+        field("account-entry", { type: "email", labels: ["メールアドレス"] }),
       ]),
       links: [{ href: "https://partial-marker.example.test/logout", text: "ログアウト" }],
     };
@@ -647,6 +647,7 @@ test("visibility runner does not treat a logout marker as authenticated on a par
       field("profile-email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
     ]);
     const page = new FakePageDriver([partialLogin, account, account], {
+      "account-entry": "user@example.test",
       "profile-email": "user@example.test",
     });
     const runner = new VisibilityRunner({

@@ -144,11 +144,9 @@ export function hasAuthenticatedSessionMarker(snapshot: PageSnapshot): boolean {
 }
 
 function hasLoginCredentialEntryField(snapshot: PageSnapshot): boolean {
-  if (findLoginField(snapshot.fields, "password")) return true;
-  return snapshot.fields.some(
-    (field) =>
-      field.autocomplete === "username" ||
-      /(?:^|[^a-z0-9])(?:user(?:name)?|login)(?:$|[^a-z0-9])/i.test(`${field.name} ${field.id}`),
+  return (
+    findLoginField(snapshot.fields, "password") !== undefined ||
+    findLoginField(snapshot.fields, "username") !== undefined
   );
 }
 
