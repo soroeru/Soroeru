@@ -219,6 +219,7 @@ key (PBKDF2-HMAC-SHA-512 as the Web-Crypto-only fallback), keyed by `entityKind`
 | Workflow checkpoint | `workflowCheckpoint` | Queue and resumability metadata (e.g. Visibility hand-off state), never raw browser profile state. |
 | Provider settings | `providerSettings` | The user's AI provider selection and API key (encrypted). |
 | Local definition | `localDefinition` | Encrypted local candidate site/field definitions (§7). |
+| Site Collection Map | `siteCollectionMap` | Versioned per-site pages, typed item locators, fingerprints, provenance, and generation status (§5.2). A separate entity kind from the Slices B–D `localDefinition` shape. |
 | Diagnostic | `diagnostic` | Support-bundle diagnostics, redacted. |
 
 Vault v2 file layout:
@@ -402,7 +403,7 @@ Collection uses (currently, for Slice A) two tiers, with a third planned:
    - field labels, `autocomplete`, `name`, `id`, placeholder, nearby text
      (`src/agent/scan.ts`, `src/agent/classifier.ts`);
    - Japanese-only matching for MVP.
-2. **Optional AI proposal** (planned): receives page structure, labels, terms text, and
+2. **Optional AI proposal / Site Collection Map discovery** (planned; detailed below): receives page structure, labels, terms text, and
    redacted snippets only; returns candidate page purpose, field mapping, and
    risk/Constraint findings; never sees raw personal values and never decides execution.
 3. **Official/local site definitions** (§7) are a later tier for Slice A and are the
@@ -431,6 +432,12 @@ understanding check covering provider egress, bounded navigation, and local-only
 Reduction remains immediate. Unconfigured-security Review tasks are computed from the latest
 Disclosure/Evidence; dismissal is an encrypted Preference keyed by task plus observation hash, so
 unchanged rescans stay dismissed and changed observations can surface once.
+
+Implementation extends both `Capability.operationType` and `Mandate.operation` with the literal
+`ai-assisted-discovery`; it does not overload `collection`. Maps use the new encrypted
+`siteCollectionMap` entity kind. Discovery wall pause/resume reuses the existing
+`workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a
+second checkpoint mechanism.
 
 ### 5.3 Account Relationship filters
 

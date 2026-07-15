@@ -336,7 +336,7 @@ registration (last).**
   wall detection, or exhaustion of the per-site limits owned by
   [`architecture.md`](architecture.md) §5.2 yields deterministic fallback or an explicit partial/
   unknown result, never a guessed value or automatic expansion of authority. A stored sanitized
-  collection map may execute locally without an AI provider; regeneration requires user action.
+  Site Collection Map may execute locally without an AI provider; regeneration requires user action.
 - No raw browser session state (profile, cookies) is retained outside the encrypted vault;
   browser automation sessions are ephemeral by default. Mechanism: see
   [`architecture.md`](architecture.md) §2.
@@ -444,7 +444,8 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
 | REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | — | Won't (MVP) |
 | REQ-020 | Run the デジタル認証アプリ integration through a minimal, OSS, zero-retention identity-auth BFF: registered relying party (client ID, redirect / back-channel logout URIs, private_key_jwt), egress to the Digital Agency only, basic-4 forwarded encrypted to the user's device and never persisted server-side. Narrowly-scoped exception to the no-backend principle, identity layer only. | A | Must |
-| REQ-021 | AI-assisted Visibility discovery may use a bounded observe/propose loop, but every proposal is schema-validated and locally executed; mapped values remain local, maps are encrypted local candidates, wall detection hands off, stale maps fall back per entry, and regeneration is explicit rather than silent. An observed unconfigured security item is recorded and shown as a non-blocking, dismissible review task; Soroeru neither recommends nor changes the setting automatically. | A | Must |
+| REQ-021 | AI-assisted Visibility discovery may use a bounded observe/propose loop, but every proposal is schema-validated and locally executed; mapped values remain local, maps are encrypted local candidates, wall detection hands off, stale maps fall back per entry, and regeneration is explicit rather than silent. | A | Must |
+| REQ-022 | Record an observed unconfigured security item and show it as a non-blocking, dismissible review task; Soroeru neither recommends nor changes the setting automatically. | A | Must |
 
 ## 11. Glossary
 

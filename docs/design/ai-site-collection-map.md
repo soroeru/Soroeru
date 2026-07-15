@@ -97,6 +97,18 @@ interface CollectionMapEntry {
   confidence: number;
   provenance: "ai" | "deterministic" | "manual";
 }
+
+interface CollectionMapEvidenceRef {
+  mapId: string;
+  pageId: string;
+  entryId?: string;
+  outcome: "mapped" | "collected" | "stale" | "wall-paused" | "partial" | "cancelled" | "budget-exhausted";
+}
+
+// Add this optional member to the existing Evidence entity.
+interface Evidence {
+  collectionMapRef?: CollectionMapEvidenceRef;
+}
 ```
 
 Reject dynamic/value-dependent selectors and cross-origin references. Prefer a semantic hint; an
@@ -117,7 +129,8 @@ observation hash. It stays dismissed across rescans of the same observation; a c
 new observation hash supersedes the dismissal and may produce one new task. Removing the source
 Disclosure removes the computed task under existing retention/deletion rules.
 
-AI discovery is a separately named collection capability, `ai-assisted-discovery`. At L0, each
+AI discovery extends the existing closed `Capability.operationType` and `Mandate.operation` unions
+with the literal `ai-assisted-discovery`; it does not overload `collection`. At L0, each
 discovery run is included in the collection gate. Existing L1 `collection` authority alone does
 not enable it. Opening L1 for AI discovery is user-initiated and has its own light understanding
 check explaining provider egress, bounded navigation, and deterministic value reads. Reduction is
@@ -129,7 +142,7 @@ immediate; all existing absolute boundaries remain unaffected.
 idle -> snapshotting -> sanitizing -> consulting -> validating -> navigating -> snapshotting
                               |             |              |
                            partial       partial       wall-paused
-active -> complete | partial | cancelled | budget-exhausted
+any active loop state -> complete | partial | cancelled | budget-exhausted
 wall-paused -> snapshotting (same headed session after human completion) | cancelled
 ```
 
@@ -196,14 +209,16 @@ and PO-run manual verification in the real headed session.
 1. **Sanitizer and typed contracts** (no dependency): branded snapshot/proposal types,
    adversarial tests, and extensions around the existing `snapshot()` versus
    `readValues()`/`readDisplayValues()` PageDriver split (no method rename).
-2. **Encrypted map persistence** (depends on 1): schema migration, atomic activation, Evidence,
+2. **Encrypted map persistence** (depends on 1): new `siteCollectionMap` entity kind, schema
+   migration, atomic activation, `Evidence.collectionMapRef`, shared `workflowCheckpoint` resume,
    sharing sanitizer (export remains disabled).
 3. **Bounded discovery engine** (depends on 1–2): state machine, budgets, validator, walls,
    cancellation, fake-provider tests.
 4. **Deterministic mapped collector** (depends on 1–2): locators, per-entry staleness, fallback,
    ledger writes, card/CVV rules.
-5. **Review-task and regeneration UX** (depends on 3–4): unset-security notification, partial/
-   stale status, explicit regeneration, deterministic-only experience.
+5. **Capability, Review-task, and regeneration UX** (depends on 3–4): add the
+   `ai-assisted-discovery` Capability/Mandate literal and light understanding check; unset-security
+   notification; partial/stale status; explicit regeneration; deterministic-only experience.
 6. **Extension capability proof / #391** (depends on 1; parallel with 2): prove the extension
    meets the same sanitizer, navigation, wall, and local-value invariants.
 7. **Acceptance/measurement** (depends on 3–6): sanitized fixtures, PO Nintendo scenario,
