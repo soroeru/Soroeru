@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "number": 201,
+      "title": "A",
+      "url": "https://example.invalid/issues/201",
+      "status": "Ready",
+      "startDate": "2026-07-15",
+      "primary": "Codex",
+      "sub": "Claude",
+      "model": "gpt-5",
+      "order": 1,
+      "dependencies": []
+    },
+    {
+      "number": 202,
+      "title": "B",
+      "url": "https://example.invalid/issues/202",
+      "status": "Ready",
+      "startDate": "2026-07-16",
+      "primary": "Claude",
+      "sub": "Codex",
+      "model": "sonnet",
+      "order": 2,
+      "dependencies": [201]
+    },
+    {
+      "number": 203,
+      "title": "C",
+      "url": "https://example.invalid/issues/203",
+      "status": "Ready",
+      "startDate": "2026-07-16",
+      "primary": "Codex",
+      "sub": "Claude",
+      "model": "gpt-5",
+      "order": 3,
+      "dependencies": [201]
+    }
+  ]
+}

@@ -33,12 +33,15 @@ export function parseProjectMetadata(body) {
     text.match(/<!--\s*project-metadata:start\s*-->([\s\S]*?)<!--\s*project-metadata:end\s*-->/i)?.[1] ?? "";
   const values = {};
   for (const line of block.split(/\r?\n/)) {
-    const match = line.match(/^\s*-\s*(AI Assignee|Priority|Size|Feature group)\s*:\s*(.*?)\s*$/i);
-    if (match) values[match[1].toLowerCase().replace(" ", "")] = normalize(match[2]);
+    const match = line.match(
+      /^\s*-\s*(AI Assignee|AI Sub Assignee|Priority|Size|Feature group)\s*:\s*(.*?)\s*$/i,
+    );
+    if (match) values[match[1].toLowerCase().replace(/\s+/g, "")] = normalize(match[2]);
   }
   const legacy = text.match(/<!--\s*implementation-assignment\s*:\s*([^>]+?)\s*-->/i)?.[1];
   return {
     aiAssignee: values.aiassignee || (legacy ? toAiAssignee(legacy) : undefined),
+    aiSubAssignee: values.aisubassignee,
     priority: values.priority,
     size: values.size,
     featureGroup: values.featuregroup,
@@ -49,7 +52,7 @@ function toAiAssignee(value) {
   return AI_ASSIGNEES.get(normalize(value).toLowerCase()) ?? "未記載";
 }
 
-export function resolveDefaults(metadata, choices = {}) {
+export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
   const aiChoices = new Set(choices.aiAssignees ?? [...AI_ASSIGNEES.values()]);
   const priorityChoices = new Set(choices.priorities ?? ["P0", "P1", "P2", "P3"]);
   const sizeChoices = new Set(choices.sizes ?? ["XS", "S", "M", "L", "XL"]);
@@ -58,12 +61,23 @@ export function resolveDefaults(metadata, choices = {}) {
   const aiAssignee = toAiAssignee(suppliedAiAssignee);
   if (!AI_ASSIGNEES.has(suppliedAiAssignee.toLowerCase()) || !aiChoices.has(aiAssignee))
     reasons.push("unknown-ai-assignee");
+  const aiSubAssignee = aiSubAssignees[aiAssignee];
+  const suppliedAiSubAssignee = normalize(metadata.aiSubAssignee);
+  if (!suppliedAiSubAssignee) reasons.push("missing-ai-sub-assignee");
+  else if (!AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase())) reasons.push("unknown-ai-sub-assignee");
+  else if (toAiAssignee(suppliedAiSubAssignee) !== aiSubAssignee) reasons.push("ai-sub-assignee-mismatch");
+  if (
+    (!aiSubAssignee || !AI_ASSIGNEES.has(normalize(aiSubAssignee).toLowerCase())) &&
+    !reasons.includes("unknown-ai-sub-assignee")
+  )
+    reasons.push("unknown-ai-sub-assignee");
   const priority = priorityChoices.has(metadata.priority) ? metadata.priority : DEFAULTS.priority;
   if (priority !== metadata.priority) reasons.push("invalid-priority");
   const size = sizeChoices.has(metadata.size) ? metadata.size : DEFAULTS.size;
   if (size !== metadata.size) reasons.push("invalid-size");
   return {
     aiAssignee: aiChoices.has(aiAssignee) ? aiAssignee : DEFAULTS.aiAssignee,
+    aiSubAssignee,
     priority: priorityChoices.has(priority) ? priority : ([...priorityChoices][0] ?? DEFAULTS.priority),
     size: sizeChoices.has(size) ? size : ([...sizeChoices][0] ?? DEFAULTS.size),
     reasons,
@@ -111,22 +125,30 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     aiAssignees: fields
       .get(config.fields?.aiAssignee ?? "AI Assignees")
       ?.options?.map((option) => option.name),
+    aiSubAssignees: fields
+      .get(config.fields?.aiSubAssignee ?? "AI Sub Assignees")
+      ?.options?.map((option) => option.name),
     priorities: fields.get(config.fields?.priority ?? "Priority")?.options?.map((option) => option.name),
     sizes: fields.get(config.fields?.size ?? "Size")?.options?.map((option) => option.name),
   };
-  const resolved = resolveDefaults(metadata, choices);
+  const resolved = resolveDefaults(metadata, choices, config.aiSubAssignees);
+  const invalidSubAssignee = resolved.reasons.find((reason) => reason.includes("ai-sub-assignee"));
+  if (invalidSubAssignee) throw new Error(invalidSubAssignee);
   const dates = calculateIterationDates((issue.created_at ?? issue.createdAt ?? "").slice(0, 10));
   const aiFieldName = config.fields?.aiAssignee ?? "AI Assignees";
+  const aiSubFieldName = config.fields?.aiSubAssignee ?? "AI Sub Assignees";
   const priorityFieldName = config.fields?.priority ?? "Priority";
   const sizeFieldName = config.fields?.size ?? "Size";
   const iterationFieldName = config.fields?.iteration ?? "Iteration";
   for (const [fieldName, value] of [
     [aiFieldName, resolved.aiAssignee],
+    [aiSubFieldName, resolved.aiSubAssignee],
     [priorityFieldName, resolved.priority],
     [sizeFieldName, resolved.size],
   ]) {
     const field = fields.get(fieldName);
-    if (!field || !field.options?.some((option) => option.name === value))
+    if (!field) throw new Error(`project-field-not-found:${fieldName}`);
+    if (!field.options?.some((option) => option.name === value))
       throw new Error(`project-option-not-found:${fieldName}`);
   }
   for (const fieldName of [
@@ -184,6 +206,7 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     });
   };
   await setSingle(aiFieldName, resolved.aiAssignee);
+  await setSingle(aiSubFieldName, resolved.aiSubAssignee);
   await setSingle(priorityFieldName, resolved.priority);
   await setSingle(sizeFieldName, resolved.size);
   for (const [fieldName, value] of [
@@ -237,7 +260,9 @@ async function main() {
   const owner = process.env.GITHUB_REPOSITORY_OWNER;
   const projectName = classifyProject(
     issue,
-    config.projects.filter((candidate) => candidate.number).flatMap((candidate) => candidate.candidates ?? []),
+    config.projects
+      .filter((candidate) => candidate.number)
+      .flatMap((candidate) => candidate.candidates ?? []),
   );
   if (!projectName) {
     console.log(JSON.stringify({ status: "not-configured", reason: "project-unclassified" }));
