@@ -1,0 +1,24 @@
+name: project-issue-defaults
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: read
+  repository-projects: write
+
+jobs:
+  configure-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Add issue to Project and apply defaults
+        env:
+          GH_PROJECT_TOKEN: ${{ secrets.SOROERU_PROJECT_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: node scripts/project-issue-defaults.mjs --event "$GITHUB_EVENT_PATH"

@@ -106,7 +106,8 @@ local_ai_review_run_claude() {
   exec claude -p "$prompt" \
     --permission-mode plan \
     --output-format text \
-    --tools "Read,Grep,Glob"
+    --tools "Read,Grep,Glob" \
+    </dev/null
 }
 
 local_ai_review_run_codex() {
@@ -115,7 +116,8 @@ local_ai_review_run_codex() {
   # read-only sandbox blocks all file edits.
   exec codex exec \
     --sandbox read-only \
-    "$prompt"
+    "$prompt" \
+    </dev/null
 }
 
 local_ai_review_run_grok() {
@@ -126,7 +128,8 @@ local_ai_review_run_grok() {
   exec grok -p "$prompt" \
     --permission-mode plan \
     --output-format plain \
-    --tools "read_file,grep,list_dir"
+    --tools "read_file,grep,list_dir" \
+    </dev/null
 }
 
 local_ai_review_run_gemini() {
@@ -135,5 +138,6 @@ local_ai_review_run_gemini() {
   # --mode plan is read-only at the model level (no file writes).
   exec agy -p "$prompt" \
     --mode plan \
-    --output-format text
+    --output-format text \
+    </dev/null
 }
