@@ -32,13 +32,13 @@ configured Anthropic/OpenAI provider is supported; CLI providers and MCP are not
 ## Trust boundary and data flow
 
 ```text
-PageDriver.snapshotStructure() -> StructuralSanitizer -> AiPageSnapshot -> AI
+PageDriver.snapshot() -> StructuralSanitizer -> AiPageSnapshot -> AI
                                                               |
                                          closed-schema proposal
                                                               v
-PageDriver.navigate() <- local policy/existence/wall validator
+PageDriver.goto() <- local policy/existence/wall validator
 
-PageDriver.readMappedValue() -> local reduction -> encrypted Disclosure + Evidence
+PageDriver.readValues()/readDisplayValues() -> local reduction -> encrypted Disclosure + Evidence
 ```
 
 Structure snapshotting and `readValues`/mapped-value reads are separate capabilities. The AI adapter
@@ -109,6 +109,20 @@ configured” creates a ledger observation and one non-blocking, dismissible **R
 Evidence and page link. It is not a Constraint, makes no recommendation, and never changes the
 setting. Reflection may later summarize it; Policy promotion remains unchanged.
 
+`SecurityReviewTask` is a computed UI view, not a new vault entity. It is derived once per
+`siteAccountId + attributeKey` from the latest unconfigured Disclosure and its Evidence:
+`{ taskKey, siteAccountId, attributeKey, observedAt, evidenceId, pageUrl, status }`. Dismissal writes
+an encrypted `preference` record containing `taskKey` and the dismissed Disclosure's normalized
+observation hash. It stays dismissed across rescans of the same observation; a changed value or
+new observation hash supersedes the dismissal and may produce one new task. Removing the source
+Disclosure removes the computed task under existing retention/deletion rules.
+
+AI discovery is a separately named collection capability, `ai-assisted-discovery`. At L0, each
+discovery run is included in the collection gate. Existing L1 `collection` authority alone does
+not enable it. Opening L1 for AI discovery is user-initiated and has its own light understanding
+check explaining provider egress, bounded navigation, and deterministic value reads. Reduction is
+immediate; all existing absolute boundaries remain unaffected.
+
 ## Bounded discovery and failures
 
 ```text
@@ -124,6 +138,11 @@ One step performs snapshot, sanitize, consult, validate, then at most one naviga
 normalized URL plus structure fingerprint. Navigation is HTTPS, same registrable site, GET/read-
 only, and selected from current links. Reject identity/payment/download/logout/delete/submit and
 mutation routes.
+
+When no unvisited, locally valid same-site link candidate remains and all accepted map candidates
+have been processed within budget, `snapshotting` transitions to `complete` and atomically activates
+the map. Hitting any hard budget before that condition transitions to `budget-exhausted` and saves a
+partial map.
 
 Wall detection runs before sanitization and navigation. CAPTCHA, MFA/OTP, passkey, identity
 verification, bot detection, and rate limits enter `wall-paused` and are never AI problems to
@@ -156,7 +175,8 @@ Evidence references, precise session timestamps, and user-derived fingerprints.
 | 残高とお支払い方法     | card-last4, points/balance                                        | last4 reduction, CVV never read, balance-or-points observation    |
 | プライバシー           | friend recommendation, notices, survey, linked-service permission | boolean/enum notification, privacy, linked-service observations   |
 
-No Nintendo HTML or values enter the repository. Acceptance uses sanitized synthetic structures
+This scope implements Issue #381's explicit requirement to represent unset security items and
+choose their notification UX. No Nintendo HTML or values enter the repository. Acceptance uses sanitized synthetic structures
 and PO-run manual verification in the real headed session.
 
 ## Verification
@@ -174,7 +194,8 @@ and PO-run manual verification in the real headed session.
 ## Implementation Issue split
 
 1. **Sanitizer and typed contracts** (no dependency): branded snapshot/proposal types,
-   adversarial tests, and PageDriver structure/value split.
+   adversarial tests, and extensions around the existing `snapshot()` versus
+   `readValues()`/`readDisplayValues()` PageDriver split (no method rename).
 2. **Encrypted map persistence** (depends on 1): schema migration, atomic activation, Evidence,
    sharing sanitizer (export remains disabled).
 3. **Bounded discovery engine** (depends on 1–2): state machine, budgets, validator, walls,
