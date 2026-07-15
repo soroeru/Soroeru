@@ -64,10 +64,10 @@ Enabling or changing the ID persists the requested state and returns `restartReq
 
 Disabling follows strict ordering:
 
-1. If the runtime bridge is registered or connected, run the existing disconnect path, including permission cleanup and native-host unregister.
-2. If cleanup fails or its permission state is unknown, return that result and do not persist OFF.
+1. If the runtime bridge is registered or connected, run an extended disconnect path, including permission cleanup, listener close, and native-host unregister.
+2. Extend `ChromeBridgeMutationResult` so listener-close or native-host-unregister failure returns `ok: false`, `error: "cleanup-failed"`, plus existing manual-cleanup metadata. An unknown permission state also prevents the settings mutation even though the standalone disconnect control may continue to report the manual cleanup guidance it provides today.
 3. Only after successful cleanup atomically persist `enabled: false`.
-4. Return a configuration view with an accessible restart-required message. The current runtime listener remains until restart, but no UI text claims OFF is already effective.
+4. Successful cleanup stops the current listener immediately. The startup configuration and injected session capability still describe an enabled process until restart, so return a configuration view whose accessible restart notice says the connection listener has stopped and OFF becomes the startup state after restart. No UI text claims the stored setting is already the effective startup configuration.
 
 Environment overrides remain authoritative. The UI disables overridden fields (or marks them read-only), names the overriding variable, and does not claim a stored edit can change the effective value. Saving a non-effective value remains unnecessary.
 
@@ -88,7 +88,7 @@ Existing registration, connection, permission revocation, and cleanup controls r
 
 - Missing, unreadable, malformed, or unsupported-version settings fail closed to defaults.
 - Atomic write failure leaves the prior file intact and returns a sanitized persistence error.
-- Failed or uncertain cleanup leaves stored enablement unchanged.
+- Failed or uncertain cleanup leaves stored enablement unchanged. Listener-close and native-host-unregister failures are no longer swallowed by the disconnect result; the UI retains existing manual permission-cleanup details alongside the sanitized failure.
 - The extension ID may appear in its settings input but is not added to diagnostics logs.
 - No raw personal value, credential, page content, or permission token is added to IPC, logs, or network egress.
 - CAPTCHA, MFA, bot detection, rate limits, and access controls remain hand-off boundaries; this feature changes no automation command.
