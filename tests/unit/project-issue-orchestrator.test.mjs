@@ -481,6 +481,10 @@ test("skips unverified routes and rejects malformed worker capability records", 
     /invalid-capability-record:Codex/,
   );
   assert.throws(
+    () => selectWorkerRoutes([{ ...workerRoute(" Codex ", "gpt-5") }]),
+    /invalid-capability-record: Codex /,
+  );
+  assert.throws(
     () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), selectable: "false" }]),
     /invalid-capability-record:Codex/,
   );
@@ -553,6 +557,33 @@ test("CLI rejects unknown flags", async () => {
   await assert.rejects(
     execFileAsync(process.execPath, [script.pathname, "--input", fixture.pathname, "--unknown"]),
     ({ stderr }) => stderr.includes("unknown-flag:--unknown"),
+  );
+});
+
+test("CLI preserves input-provided unavailable agents when YAML and flags omit them", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-input-options-"));
+  const inputPath = path.join(directory, "input.json");
+  const fixture = await load("linear.json");
+  await writeFile(
+    inputPath,
+    JSON.stringify({
+      ...fixture,
+      options: { ...runOptions, dryRun: true, unavailableAgents: ["Codex"] },
+    }),
+  );
+  const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
+
+  const { stdout } = await execFileAsync(process.execPath, [
+    script.pathname,
+    "--input",
+    inputPath,
+    "--issues",
+    "101",
+  ]);
+
+  assert.deepEqual(
+    JSON.parse(stdout).workerRoutes.map(({ agent }) => agent),
+    ["Claude"],
   );
 });
 

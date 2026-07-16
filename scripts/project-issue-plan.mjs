@@ -209,6 +209,7 @@ export function selectWorkerRoutes(capabilities, { unavailableAgents = [], unava
     if (
       typeof record.agent !== "string" ||
       record.agent.trim() === "" ||
+      record.agent !== record.agent.trim() ||
       (record.requestedModel !== undefined &&
         (typeof record.requestedModel !== "string" ||
           record.requestedModel.trim() === "" ||

@@ -92,10 +92,8 @@ export async function loadOrchestratorConfig(filePath = DEFAULT_CONFIG_PATH, { c
 
 export function mergeOrchestratorConfig({ defaults = {}, yaml = {}, cli = {} } = {}) {
   const merged = { ...defaults, ...yaml, ...cli };
-  if (merged.unavailableModels === undefined) merged.unavailableModels = [];
   if (typeof merged.unavailableModels === "string")
     merged.unavailableModels = parseUnavailableModels(merged.unavailableModels);
-  if (merged.unavailableAgents === undefined) merged.unavailableAgents = [];
   if (typeof merged.unavailableAgents === "string")
     merged.unavailableAgents = parseUnavailableAgents(merged.unavailableAgents);
   return merged;

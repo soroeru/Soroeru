@@ -99,11 +99,19 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   ]) {
     const field = fields.get(fieldName);
     if (!field) throw new Error(`project-field-not-found:${fieldName}`);
+    if (field.dataType !== "SINGLE_SELECT")
+      throw new Error(`project-field-type-mismatch:${fieldName}`);
     if (!field.options?.some((option) => option.name === value))
       throw new Error(`project-option-not-found:${fieldName}`);
   }
-  for (const fieldName of [startDateFieldName, targetDateFieldName, iterationFieldName]) {
-    if (!fields.has(fieldName)) throw new Error(`project-field-not-found:${fieldName}`);
+  for (const [fieldName, dataType] of [
+    [startDateFieldName, "DATE"],
+    [targetDateFieldName, "DATE"],
+    [iterationFieldName, "ITERATION"],
+  ]) {
+    const field = fields.get(fieldName);
+    if (!field) throw new Error(`project-field-not-found:${fieldName}`);
+    if (field.dataType !== dataType) throw new Error(`project-field-type-mismatch:${fieldName}`);
   }
   const issueNodeId = issue.node_id;
   if (!issueNodeId) throw new Error("issue-node-id-required");

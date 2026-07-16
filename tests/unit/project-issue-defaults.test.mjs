@@ -93,13 +93,24 @@ const projectFixture = () => ({
   items: { nodes: [{ id: "item-existing", content: { id: "issue-node-1" } }] },
   fields: {
     nodes: [
-      { id: "priority", name: "Priority", options: [{ id: "p2", name: "P2" }] },
-      { id: "size", name: "Size", options: [{ id: "m", name: "M" }] },
-      { id: "start", name: "Start date" },
-      { id: "target", name: "Target date" },
+      {
+        id: "priority",
+        name: "Priority",
+        dataType: "SINGLE_SELECT",
+        options: [{ id: "p2", name: "P2" }],
+      },
+      {
+        id: "size",
+        name: "Size",
+        dataType: "SINGLE_SELECT",
+        options: [{ id: "m", name: "M" }],
+      },
+      { id: "start", name: "Start date", dataType: "DATE" },
+      { id: "target", name: "Target date", dataType: "DATE" },
       {
         id: "iteration",
         name: "Iteration",
+        dataType: "ITERATION",
         configuration: { iterations: [{ id: "it-existing", title: "2026-07-16" }] },
       },
     ],
@@ -275,6 +286,25 @@ test("does not mutate a project when a required option is unavailable", async ()
       config: { projectName: "Visibility" },
     }),
     /project-option-not-found:Size/,
+  );
+  assert.equal(mutationCount, 0);
+});
+
+test("does not mutate a project when a required field has the wrong type", async () => {
+  let mutationCount = 0;
+  const project = projectFixture();
+  project.fields.nodes.find((field) => field.name === "Start date").dataType = "TEXT";
+  await assert.rejects(
+    applyProjectDefaults({
+      issue: issueFixture(),
+      project,
+      graphql: async () => {
+        mutationCount += 1;
+        throw new Error("must-not-mutate");
+      },
+      config: { projectName: "Visibility" },
+    }),
+    /project-field-type-mismatch:Start date/,
   );
   assert.equal(mutationCount, 0);
 });
