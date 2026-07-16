@@ -176,8 +176,10 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   // Final readback: success only when every field converged. The error names
   // only Project field names — never Issue bodies, tokens, or diffs.
   const readback = await graphql(ITEM_FIELD_VALUES_QUERY, { itemId });
+  if (!readback?.node || !Array.isArray(readback.node.fieldValues?.nodes))
+    throw new Error("project-readback-unavailable");
   const observed = new Map(
-    (readback?.node?.fieldValues?.nodes ?? []).map((value) => [
+    readback.node.fieldValues.nodes.map((value) => [
       value.field?.name,
       value.name ?? value.date ?? value.title,
     ]),
@@ -192,7 +194,11 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   const unconverged = expected
     .filter(([fieldName, value]) => observed.get(fieldName) !== value)
     .map(([fieldName]) => fieldName);
-  if (unconverged.length) throw new Error(`project-fields-unconverged:${unconverged.join(",")}`);
+  if (unconverged.length) {
+    const error = new Error(`project-fields-unconverged:${unconverged.join(",")}`);
+    error.fields = unconverged;
+    throw error;
+  }
   return { itemId, projectName: project.title, iteration: iteration.title, reasons: resolved.reasons };
 }
 
@@ -209,6 +215,16 @@ async function githubGraphql(query, variables, token) {
   const payload = await response.json();
   if (!response.ok || payload.errors?.length) throw new Error("github-graphql-failed");
   return payload.data;
+}
+
+export function toRetryableErrorPayload(error) {
+  const [reason] = String(error.message).split(":");
+  const payload = { status: "retryable-error", reason };
+  // Project field names are the only detail safe to surface; they tell the
+  // rerun which fields did not converge without echoing Issue contents.
+  if (reason === "project-fields-unconverged" && Array.isArray(error.fields))
+    payload.fields = error.fields;
+  return payload;
 }
 
 async function main() {
@@ -257,12 +273,6 @@ async function main() {
 
 if (process.argv[1] === new URL(import.meta.url).pathname)
   main().catch((error) => {
-    const [reason, ...detail] = String(error.message).split(":");
-    const payload = { status: "retryable-error", reason };
-    // Project field names are the only detail safe to surface; they tell the
-    // rerun which fields did not converge without echoing Issue contents.
-    if (reason === "project-fields-unconverged")
-      payload.fields = detail.join(":").split(",").filter(Boolean);
-    console.error(JSON.stringify(payload));
+    console.error(JSON.stringify(toRetryableErrorPayload(error)));
     process.exitCode = 1;
   });

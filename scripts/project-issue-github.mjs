@@ -61,9 +61,12 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectName
     if (!items.pageInfo.endCursor) throw new Error("project-pagination-cursor-missing");
     cursor = items.pageInfo.endCursor;
   }
+  // Total UTF-8 JSON bytes for every Project item node fetched, including
+  // non-Issue nodes that are discarded below. This is a bounded-read metric,
+  // not an Issue-body byte count (Issue bodies are never requested).
   let fetchedBytes = 0;
   const mapped = nodes.flatMap((node) => {
-    fetchedBytes += Buffer.byteLength(JSON.stringify(node) ?? "", "utf8");
+    fetchedBytes += Buffer.byteLength(JSON.stringify(node), "utf8");
     if (node.content?.__typename !== "Issue") return [];
     const fieldValues = new Map(
       (node.fieldValues?.nodes ?? []).map((value) => [

@@ -136,6 +136,9 @@ Copy `config/project-issue-orchestrator.example.yaml` to
 CLI and `orchestrate-project-issues` skill discover that path automatically.
 Use `--config path/to/other.yaml` only when intentionally selecting another
 configuration file. Explicit CLI flags override YAML values.
+The run configuration accepts `unavailableModels` and `unavailableAgents` as
+either `none` or a YAML list; these exclusions are runtime hints for that run
+and are recomputed from fresh capability records on the next run.
 
 Dependency closure comes from each Issue's GitHub `Blocked by` relationships,
 not from Issue body text. A `CLOSED` blocker is treated as completed; an

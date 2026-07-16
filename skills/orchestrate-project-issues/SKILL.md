@@ -12,7 +12,8 @@ Coordinate many Issues while keeping each Issue's implementation inside its assi
 Load `state/project-issue-orchestrator.yaml` automatically when it exists. The file is the
 Git-ignored runtime copy of `config/project-issue-orchestrator.example.yaml` and contains
 `project.owner`, `project.ownerType`, `project.name`, `run.maxParallel`,
-`run.releasePolicy`, and `run.unavailableModels`. `unavailableModels: none` means an empty list.
+`run.releasePolicy`, `run.unavailableModels`, and `run.unavailableAgents`. An unavailable list may
+be `none` or a YAML list of exact runtime labels; both lists apply only to the current run.
 Use `--config <path>` only for an intentional non-default file. Explicit CLI flags override YAML
 values. If no YAML exists, require the Project owner/name, maximum parallel workers, and
 dependency release policy (`pr-created` or `merged`) in the invocation; reject a missing policy
@@ -46,8 +47,9 @@ run-scoped hints. Rules:
 - Choose only from `workerRoutes`; never invent a selector, substitute a nearby model name, or
   relabel a canonical identifier as a different model.
 - Record the chosen route (agent + model labels only) in run state and in the dispatch message.
-- Exclusions are run-scoped: `--unavailable-agent` / `--unavailable-model` affect only the current
-  run, and availability is recomputed from fresh capability records on the next run.
+- Exclusions are run-scoped: YAML `run.unavailableAgents` / `run.unavailableModels` and their
+  `--unavailable-agent` / `--unavailable-model` CLI overrides affect only the current run, and
+  availability is recomputed from fresh capability records on the next run.
 - Budget snapshots are not an input to initial assignment; session limits are handled reactively
   at interruption time (below).
 

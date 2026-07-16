@@ -7,6 +7,7 @@ import {
   parseProjectMetadata,
   resolveDefaults,
   applyProjectDefaults,
+  toRetryableErrorPayload,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -185,6 +186,58 @@ test("does not report success when the readback shows an unconverged field", asy
       config: { projectName: "Visibility" },
     }),
     /project-fields-unconverged:Priority/,
+  );
+});
+
+test("preserves configured field names in the retryable unconverged payload", async () => {
+  const project = projectFixture();
+  project.fields.nodes.find((field) => field.name === "Start date").name = "Start, actual: date";
+  const graphql = async (query) => {
+    if (query.includes("ItemFieldValues"))
+      return {
+        node: {
+          fieldValues: {
+            nodes: convergedFieldValues.node.fieldValues.nodes.map((value) =>
+              value.field.name === "Start date"
+                ? { field: { name: "Start, actual: date" }, date: "2026-07-17" }
+                : value,
+            ),
+          },
+        },
+      };
+    return {};
+  };
+
+  let caught;
+  try {
+    await applyProjectDefaults({
+      issue: issueFixture(),
+      project,
+      graphql,
+      config: { projectName: "Visibility", fields: { startDate: "Start, actual: date" } },
+    });
+  } catch (error) {
+    caught = error;
+  }
+
+  assert.deepEqual(toRetryableErrorPayload(caught), {
+    status: "retryable-error",
+    reason: "project-fields-unconverged",
+    fields: ["Start, actual: date"],
+  });
+});
+
+test("reports an unavailable final readback separately from field divergence", async () => {
+  const graphql = async (query) => (query.includes("ItemFieldValues") ? { node: null } : {});
+
+  await assert.rejects(
+    applyProjectDefaults({
+      issue: issueFixture(),
+      project: projectFixture(),
+      graphql,
+      config: { projectName: "Visibility" },
+    }),
+    /project-readback-unavailable/,
   );
 });
 

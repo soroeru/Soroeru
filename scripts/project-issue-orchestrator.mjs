@@ -246,6 +246,7 @@ async function main() {
       ...(cli.maxParallel === undefined ? {} : { maxParallel: cli.maxParallel }),
       ...(cli.releasePolicy === undefined ? {} : { releasePolicy: cli.releasePolicy }),
       ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
+      ...(cli.unavailableAgents === undefined ? {} : { unavailableAgents: cli.unavailableAgents }),
     },
   });
   const effectiveCli = {
@@ -256,6 +257,7 @@ async function main() {
     ...(merged.maxParallel === undefined ? {} : { maxParallel: merged.maxParallel }),
     ...(merged.releasePolicy === undefined ? {} : { releasePolicy: merged.releasePolicy }),
     ...(merged.unavailableModels === undefined ? {} : { unavailableModels: merged.unavailableModels }),
+    ...(merged.unavailableAgents === undefined ? {} : { unavailableAgents: merged.unavailableAgents }),
   };
   const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
@@ -272,7 +274,9 @@ async function main() {
     ...(effectiveCli.unavailableModels === undefined
       ? {}
       : { unavailableModels: effectiveCli.unavailableModels }),
-    ...(cli.unavailableAgents === undefined ? {} : { unavailableAgents: cli.unavailableAgents }),
+    ...(effectiveCli.unavailableAgents === undefined
+      ? {}
+      : { unavailableAgents: effectiveCli.unavailableAgents }),
     ...(cli.statePath === undefined ? {} : { statePath: cli.statePath }),
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
     ...(capabilities === undefined ? {} : { capabilities }),

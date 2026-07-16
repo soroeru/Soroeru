@@ -198,7 +198,9 @@ export function validateCapabilities(requiredRoutes, capabilities) {
 export function selectWorkerRoutes(capabilities, { unavailableAgents = [], unavailableModels = [] } = {}) {
   if (!Array.isArray(capabilities)) throw new Error("capability-records-required");
   const excludedAgents = new Set(
-    unavailableAgents.map((agent) => canonicalizeAgent(agent)).filter(Boolean),
+    unavailableAgents
+      .map((agent) => (canonicalizeAgent(agent) ?? "").toLowerCase())
+      .filter(Boolean),
   );
   const excludedModels = new Set(unavailableModels);
   const routes = [];
@@ -217,7 +219,7 @@ export function selectWorkerRoutes(capabilities, { unavailableAgents = [], unava
     )
       throw new Error(`invalid-capability-record:${record?.agent ?? "unknown"}`);
     if (!record.selectable || !record.verifiable) continue;
-    if (excludedAgents.has(canonicalizeAgent(record.agent))) continue;
+    if (excludedAgents.has(canonicalizeAgent(record.agent).toLowerCase())) continue;
     if (excludedModels.has(record.model) || excludedModels.has(record.requestedModel)) continue;
     routes.push(record);
   }

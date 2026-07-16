@@ -454,6 +454,13 @@ test("excludes run-scoped unavailable agents and models from the route pool", ()
   assert.deepEqual(selectWorkerRoutes(requested, { unavailableModels: ["Grok 4.5"] }), []);
 });
 
+test("matches unavailable agent names case-insensitively outside the built-in vocabulary", () => {
+  assert.deepEqual(
+    selectWorkerRoutes([workerRoute("Qwen", "qwen-3")], { unavailableAgents: ["qwen"] }),
+    [],
+  );
+});
+
 test("skips unverified routes and rejects malformed worker capability records", () => {
   const unverified = { ...workerRoute("Codex", "gpt-5"), verifiable: false };
   assert.deepEqual(selectWorkerRoutes([unverified]), []);
@@ -538,7 +545,7 @@ test("loads and normalizes the orchestrator YAML config", async () => {
   const configPath = path.join(directory, "settings.yaml");
   await writeFile(
     configPath,
-    "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n",
+    "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n  unavailableAgents:\n    - Codex\n",
   );
   assert.equal(DEFAULT_CONFIG_PATH, "state/project-issue-orchestrator.yaml");
   assert.deepEqual(await loadOrchestratorConfig(configPath, { cwd: directory }), {
@@ -548,6 +555,7 @@ test("loads and normalizes the orchestrator YAML config", async () => {
     maxParallel: 4,
     releasePolicy: "merged",
     unavailableModels: [],
+    unavailableAgents: ["Codex"],
   });
 });
 
@@ -584,11 +592,21 @@ test("rejects malformed and unsafe orchestrator YAML configs", async () => {
 test("merges explicit CLI values over YAML values", () => {
   assert.deepEqual(
     mergeOrchestratorConfig({
-      defaults: { maxParallel: 1, unavailableModels: [] },
-      yaml: { maxParallel: 4, releasePolicy: "merged", unavailableModels: ["Fable"] },
+      defaults: { maxParallel: 1, unavailableModels: [], unavailableAgents: [] },
+      yaml: {
+        maxParallel: 4,
+        releasePolicy: "merged",
+        unavailableModels: ["Fable"],
+        unavailableAgents: ["Claude"],
+      },
       cli: { maxParallel: 2 },
     }),
-    { maxParallel: 2, releasePolicy: "merged", unavailableModels: ["Fable"] },
+    {
+      maxParallel: 2,
+      releasePolicy: "merged",
+      unavailableModels: ["Fable"],
+      unavailableAgents: ["Claude"],
+    },
   );
 });
 
@@ -747,6 +765,15 @@ test("ignores legacy assignment body blocks in the metadata vocabulary", () => {
     size: "M",
     featureGroup: "GitHub Project automation",
   });
+});
+
+test("the create-issue agent prompt does not request abolished assignment metadata", async () => {
+  const promptConfig = await readFile(
+    new URL("../../skills/create-issue/agents/openai.yaml", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(promptConfig, /primary|sub AI|AI Assignee|Model|Order/i);
+  assert.match(promptConfig, /Priority, Size, and Feature group/);
 });
 
 test("paginates organization ProjectV2 items and reports fetched bytes", async () => {
