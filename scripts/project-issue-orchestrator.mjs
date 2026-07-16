@@ -48,16 +48,12 @@ export async function runOrchestration(input) {
   const aiSubAssignees = canonicalizeSubAssigneeMap(options.aiSubAssignees);
   for (const item of items) {
     const expectedSub = aiSubAssignees[item.primary];
-    if (expectedSub === undefined)
-      throw new Error(`missing-ai-sub-assignee-mapping:${item.number}`);
+    if (expectedSub === undefined) throw new Error(`missing-ai-sub-assignee-mapping:${item.number}`);
     if (expectedSub !== item.sub) throw new Error(`ai-sub-assignee-mismatch:${item.number}`);
   }
   const parent = options.parent;
   if (!parent?.agent || !parent?.model) throw new Error("parent-route-required");
-  validateCapabilities(
-    [{ agent: parent.agent, model: parent.model, role: "parent" }],
-    options.capabilities,
-  );
+  validateCapabilities([{ agent: parent.agent, model: parent.model, role: "parent" }], options.capabilities);
 
   const dryRun = Boolean(options.dryRun);
   const applyInMemory = Boolean(input.milestone) && (!dryRun || options.simulateMilestone);
@@ -125,11 +121,10 @@ export function parseCliArgs(argv) {
   const valueFlags = new Map([
     ["--input", "inputPath"],
     ["--project-owner", "projectOwner"],
-    ["--project-number", "projectNumber"],
+    ["--project-name", "projectName"],
     ["--max-parallel", "maxParallel"],
     ["--release-policy", "releasePolicy"],
     ["--owner-type", "ownerType"],
-    ["--project-name", "projectName"],
     ["--issues", "issues"],
     ["--priority", "priority"],
     ["--iteration", "iteration"],
@@ -168,9 +163,14 @@ export function parseCliArgs(argv) {
     if (["unavailableModels", "existingWorktrees", "issues", "priority", "iteration", "size"].includes(key)) {
       options[key] ??= [];
       if (["issues", "priority", "iteration", "size"].includes(key))
-        options[key].push(...value.split(",").map((item) => item.trim()).filter(Boolean));
+        options[key].push(
+          ...value
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        );
       else options[key].push(key === "existingWorktrees" ? Number(value) : value);
-    } else options[key] = ["projectNumber", "maxParallel"].includes(key) ? Number(value) : value;
+    } else options[key] = ["maxParallel"].includes(key) ? Number(value) : value;
   }
   if (options.ownerType !== undefined && !OWNER_TYPES.has(options.ownerType))
     throw new Error("invalid-owner-type");
@@ -186,7 +186,6 @@ async function loadProjectConfig(cli) {
     owner: cli.projectOwner,
     ownerType: cli.ownerType ?? "user",
     name: cli.projectName,
-    number: cli.projectNumber,
   });
 }
 
@@ -211,19 +210,19 @@ async function readInput(cli) {
     const input = JSON.parse(await fs.readFile(cli.inputPath, "utf8"));
     return applySelection(input, selectProjectItems(input.items, selectors));
   }
-  if (cli.projectOwner || cli.projectNumber) {
-    if (!cli.projectOwner || !cli.projectNumber) throw new Error("project-owner-and-number-required");
+  if (cli.projectOwner || cli.projectName) {
+    if (!cli.projectOwner || !cli.projectName) throw new Error("project-owner-and-name-required");
     const project = await loadProjectConfig(cli);
     const fetched = await fetchProjectItems({
-        owner: cli.projectOwner,
-        ownerType: cli.ownerType ?? "user",
-        projectNumber: cli.projectNumber,
-        fields: project.fields,
-        graphql: (query, variables) =>
-          githubGraphql(query, variables, {
-            token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
-          }),
-      });
+      owner: cli.projectOwner,
+      ownerType: cli.ownerType ?? "user",
+      projectName: cli.projectName,
+      fields: project.fields,
+      graphql: (query, variables) =>
+        githubGraphql(query, variables, {
+          token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
+        }),
+    });
     const selection = selectProjectItems(fetched.items, selectors);
     return {
       ...applySelection(fetched, selection),
@@ -252,7 +251,7 @@ async function main() {
     cli: {
       ...(cli.projectOwner === undefined ? {} : { projectOwner: cli.projectOwner }),
       ...(cli.ownerType === undefined ? {} : { ownerType: cli.ownerType }),
-      ...(cli.projectNumber === undefined ? {} : { projectNumber: cli.projectNumber }),
+      ...(cli.projectName === undefined ? {} : { projectName: cli.projectName }),
       ...(cli.maxParallel === undefined ? {} : { maxParallel: cli.maxParallel }),
       ...(cli.releasePolicy === undefined ? {} : { releasePolicy: cli.releasePolicy }),
       ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
@@ -262,7 +261,7 @@ async function main() {
     ...cli,
     ...(merged.projectOwner === undefined ? {} : { projectOwner: merged.projectOwner }),
     ...(merged.ownerType === undefined ? {} : { ownerType: merged.ownerType }),
-    ...(merged.projectNumber === undefined ? {} : { projectNumber: merged.projectNumber }),
+    ...(merged.projectName === undefined ? {} : { projectName: merged.projectName }),
     ...(merged.maxParallel === undefined ? {} : { maxParallel: merged.maxParallel }),
     ...(merged.releasePolicy === undefined ? {} : { releasePolicy: merged.releasePolicy }),
     ...(merged.unavailableModels === undefined ? {} : { unavailableModels: merged.unavailableModels }),
@@ -279,7 +278,9 @@ async function main() {
     ...(cli.simulateMilestone === undefined ? {} : { simulateMilestone: cli.simulateMilestone }),
     ...(effectiveCli.maxParallel === undefined ? {} : { maxParallel: effectiveCli.maxParallel }),
     ...(effectiveCli.releasePolicy === undefined ? {} : { releasePolicy: effectiveCli.releasePolicy }),
-    ...(effectiveCli.unavailableModels === undefined ? {} : { unavailableModels: effectiveCli.unavailableModels }),
+    ...(effectiveCli.unavailableModels === undefined
+      ? {}
+      : { unavailableModels: effectiveCli.unavailableModels }),
     ...(cli.statePath === undefined ? {} : { statePath: cli.statePath }),
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
     ...(capabilities === undefined ? {} : { capabilities }),
@@ -290,7 +291,8 @@ async function main() {
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))
     throw new Error("parent-agent-and-model-required");
   if (!input.options.aiSubAssignees) {
-    const project = input.projectConfig ?? (effectiveCli.projectNumber ? await loadProjectConfig(effectiveCli) : null);
+    const project =
+      input.projectConfig ?? (effectiveCli.projectName ? await loadProjectConfig(effectiveCli) : null);
     if (project?.aiSubAssignees) input.options.aiSubAssignees = project.aiSubAssignees;
   }
   delete input.projectConfig;

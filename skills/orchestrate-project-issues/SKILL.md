@@ -11,10 +11,10 @@ Coordinate many Issues while keeping each Issue's implementation inside its assi
 
 Load `state/project-issue-orchestrator.yaml` automatically when it exists. The file is the
 Git-ignored runtime copy of `config/project-issue-orchestrator.example.yaml` and contains
-`project.owner`, `project.ownerType`, `project.number`, `run.maxParallel`,
+`project.owner`, `project.ownerType`, `project.name`, `run.maxParallel`,
 `run.releasePolicy`, and `run.unavailableModels`. `unavailableModels: none` means an empty list.
 Use `--config <path>` only for an intentional non-default file. Explicit CLI flags override YAML
-values. If no YAML exists, require the Project owner/number, maximum parallel workers,
+values. If no YAML exists, require the Project owner/name, maximum parallel workers,
 dependency release policy (`pr-created` or `merged`), and run-scoped unavailable-model list in
 the invocation; reject a missing policy or assignment and never infer it.
 

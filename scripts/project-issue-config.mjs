@@ -5,7 +5,7 @@ import YAML from "yaml";
 
 export const DEFAULT_CONFIG_PATH = "state/project-issue-orchestrator.yaml";
 
-const PROJECT_KEYS = new Set(["owner", "ownerType", "number"]);
+const PROJECT_KEYS = new Set(["owner", "ownerType", "name"]);
 const RUN_KEYS = new Set(["maxParallel", "releasePolicy", "unavailableModels"]);
 
 function fail(reason) {
@@ -30,8 +30,7 @@ function requiredString(value, field) {
 
 function parseUnavailableModels(value) {
   if (typeof value === "string" && value.trim().toLowerCase() === "none") return [];
-  if (!Array.isArray(value) || value.length === 0)
-    fail("config-invalid-unavailable-models");
+  if (!Array.isArray(value) || value.length === 0) fail("config-invalid-unavailable-models");
   if (value.some((model) => typeof model !== "string" || model.trim() === ""))
     fail("config-invalid-unavailable-models");
   return value.map((model) => model.trim());
@@ -48,21 +47,17 @@ function normalizeDocument(document) {
 
   const projectOwner = requiredString(project.owner, "project.owner");
   const ownerType = requiredString(project.ownerType, "project.ownerType");
-  if (!new Set(["user", "organization"]).has(ownerType))
-    fail("config-invalid-owner-type");
-  if (!Number.isSafeInteger(project.number) || project.number <= 0)
-    fail("config-invalid-project-number");
+  if (!new Set(["user", "organization"]).has(ownerType)) fail("config-invalid-owner-type");
+  const projectName = requiredString(project.name, "project.name");
 
-  if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0)
-    fail("config-invalid-max-parallel");
+  if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) fail("config-invalid-max-parallel");
   const releasePolicy = requiredString(run.releasePolicy, "run.releasePolicy");
-  if (!new Set(["pr-created", "merged"]).has(releasePolicy))
-    fail("config-invalid-release-policy");
+  if (!new Set(["pr-created", "merged"]).has(releasePolicy)) fail("config-invalid-release-policy");
 
   return {
     projectOwner,
     ownerType,
-    projectNumber: project.number,
+    projectName,
     maxParallel: run.maxParallel,
     releasePolicy,
     unavailableModels: parseUnavailableModels(run.unavailableModels),

@@ -336,7 +336,10 @@ test("rejects milestones for unknown issues and types outside the allowlist", ()
 test("does not use Start date for Issue selection", async () => {
   const items = parseProjectItems((await load("linear.json")).items);
   const plan = buildRunPlan(items, { ...runOptions, runDate: "2026-07-14" });
-  assert.deepEqual(plan.runnable.map(({ number }) => number), [101]);
+  assert.deepEqual(
+    plan.runnable.map(({ number }) => number),
+    [101],
+  );
 });
 
 test("rejects impossible item dates while ignoring run-date input", async () => {
@@ -420,13 +423,13 @@ test("loads and normalizes the orchestrator YAML config", async () => {
   const configPath = path.join(directory, "settings.yaml");
   await writeFile(
     configPath,
-    "project:\n  owner: ShinHaya\n  ownerType: user\n  number: 2\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n",
+    "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n",
   );
   assert.equal(DEFAULT_CONFIG_PATH, "state/project-issue-orchestrator.yaml");
   assert.deepEqual(await loadOrchestratorConfig(configPath, { cwd: directory }), {
     projectOwner: "ShinHaya",
     ownerType: "user",
-    projectNumber: 2,
+    projectName: "Visibility",
     maxParallel: 4,
     releasePolicy: "merged",
     unavailableModels: [],
@@ -440,17 +443,23 @@ test("rejects malformed and unsafe orchestrator YAML configs", async () => {
     await writeFile(file, value);
     return file;
   };
-  const validProject = "project:\n  owner: ShinHaya\n  ownerType: user\n  number: 2\n";
+  const validProject = "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\n";
   await assert.rejects(
     loadOrchestratorConfig(
-      await writeConfig("unknown.yaml", `${validProject}run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\nextra: true\n`),
+      await writeConfig(
+        "unknown.yaml",
+        `${validProject}run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\nextra: true\n`,
+      ),
       { cwd: directory },
     ),
     /config-unknown-key:root\.extra/,
   );
   await assert.rejects(
     loadOrchestratorConfig(
-      await writeConfig("invalid.yaml", `${validProject}run:\n  maxParallel: 0\n  releasePolicy: merged\n  unavailableModels: none\n`),
+      await writeConfig(
+        "invalid.yaml",
+        `${validProject}run:\n  maxParallel: 0\n  releasePolicy: merged\n  unavailableModels: none\n`,
+      ),
       { cwd: directory },
     ),
     /config-invalid-max-parallel/,
@@ -509,10 +518,16 @@ test("treats closed Blocked by Issues as completed and stops on open dependencie
     { number: 2, priority: "P2", iteration: "Sprint 1", size: "S", dependencies: [] },
   ];
   const selected = selectProjectItems(items, { issues: [3] });
-  assert.deepEqual(selected.items.map(({ number }) => number), [3]);
+  assert.deepEqual(
+    selected.items.map(({ number }) => number),
+    [3],
+  );
   assert.deepEqual(selected.completed, [2]);
   assert.throws(
-    () => selectProjectItems([{ ...items[0], blockedBy: [{ number: 2, state: "OPEN" }] }, items[1]], { issues: [3] }),
+    () =>
+      selectProjectItems([{ ...items[0], blockedBy: [{ number: 2, state: "OPEN" }] }, items[1]], {
+        issues: [3],
+      }),
     /dependency-open:3:2/,
   );
 });
@@ -550,7 +565,7 @@ test("reads dependencies from Blocked by instead of malformed body text", async 
       },
     },
   });
-  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
   assert.deepEqual(result.items[0].dependencies, [391]);
   assert.deepEqual(result.items[0].blockedBy, [{ number: 391, state: "CLOSED" }]);
 });
@@ -577,15 +592,18 @@ test("does not treat multi-line assignment markers as a legacy one-line assignee
 });
 
 test("canonicalizes assignee casing from body and plan items", () => {
-  assert.equal(parseImplementationAssignment(
-    `<!-- implementation-assignment:start -->
+  assert.equal(
+    parseImplementationAssignment(
+      `<!-- implementation-assignment:start -->
 - Primary: codex
 - Sub: claude
 - Model: Fable
 - Order: 1
 - Dependencies: none
 <!-- implementation-assignment:end -->`,
-  ).primary, "Codex");
+    ).primary,
+    "Codex",
+  );
   const items = parseProjectItems([
     {
       number: 501,
@@ -733,7 +751,7 @@ test("prefers Project single-select assignees over body assignment fields", asyn
       },
     },
   });
-  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
   assert.equal(result.items[0].primary, "Codex");
   assert.equal(result.items[0].sub, "Claude");
   assert.equal(result.items[0].order, 3);
@@ -767,7 +785,7 @@ test("defers incomplete-assignment-metadata until an Issue is selected", async (
       },
     },
   });
-  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
   assert.equal(selectProjectItems(result.items, { issues: [702] }).items[0].number, 702);
   assert.throws(() => parseProjectItems(result.items), /missing-sub:702/);
 });
@@ -807,11 +825,11 @@ test("paginates organization ProjectV2 items and discards Issue bodies from retu
   const result = await fetchProjectItems({
     owner: "acme",
     ownerType: "organization",
-    projectNumber: 9,
+    projectName: "Visibility",
     graphql,
   });
-  assert.deepEqual(calls[0].variables, { owner: "acme", number: 9, cursor: null });
-  assert.deepEqual(calls[1].variables, { owner: "acme", number: 9, cursor: "next" });
+  assert.deepEqual(calls[0].variables, { owner: "acme", name: "Visibility", cursor: null });
+  assert.deepEqual(calls[1].variables, { owner: "acme", name: "Visibility", cursor: "next" });
   assert.equal(calls[0].query.includes("body"), true);
   assert.deepEqual(
     result.items.map(({ number }) => number),
@@ -852,7 +870,7 @@ test("skips draft, pull request, and non-Issue Project items", async () => {
       },
     },
   });
-  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
   assert.deepEqual(
     result.items.map(({ number }) => number),
     [401],
@@ -866,8 +884,8 @@ test("parses the documented operational Project CLI flags", () => {
       "octo",
       "--owner-type",
       "user",
-      "--project-number",
-      "9",
+      "--project-name",
+      "Visibility",
       "--dry-run",
       "--simulate-milestone",
       "--max-parallel",
@@ -904,7 +922,7 @@ test("parses the documented operational Project CLI flags", () => {
     {
       projectOwner: "octo",
       ownerType: "user",
-      projectNumber: 9,
+      projectName: "Visibility",
       dryRun: true,
       simulateMilestone: true,
       maxParallel: 2,

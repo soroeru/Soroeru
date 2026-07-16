@@ -4,7 +4,7 @@
 
 **Goal:** Load Project Issue orchestration parameters from the repository-root-relative `state/project-issue-orchestrator.yaml` by default, with an explicit alternate-path override.
 
-**Architecture:** A small schema loader parses YAML at the CLI boundary and returns the existing option names (`projectOwner`, `ownerType`, `projectNumber`, `maxParallel`, `releasePolicy`, and `unavailableModels`). The CLI merges defaults, YAML values, and explicit flags in that order, then runs the unchanged planner and GitHub fetch path. The skill documents default discovery and does not carry personal or credential data.
+**Architecture:** A small schema loader parses YAML at the CLI boundary and returns the existing option names (`projectOwner`, `ownerType`, `projectName`, `maxParallel`, `releasePolicy`, and `unavailableModels`). The CLI merges defaults, YAML values, and explicit flags in that order, then resolves the GitHub Project by exact name before fetching its items. The skill documents default discovery and does not carry personal or credential data.
 
 **Tech Stack:** Node.js ESM, maintained `yaml` package, existing Node test runner, Markdown skill/docs, Git-ignored local `state/`.
 
@@ -34,7 +34,7 @@
 
 **Interfaces:**
 - Produces `DEFAULT_CONFIG_PATH = "state/project-issue-orchestrator.yaml"`.
-- Produces `loadOrchestratorConfig(filePath, { cwd })`, returning `{ projectOwner, ownerType, projectNumber, maxParallel, releasePolicy, unavailableModels }`.
+- Produces `loadOrchestratorConfig(filePath, { cwd })`, returning `{ projectOwner, ownerType, projectName, maxParallel, releasePolicy, unavailableModels }`.
 - Produces `mergeOrchestratorConfig({ defaults, yaml, cli })`, where later defined fields override earlier fields and `unavailableModels` is always an array.
 
 - [ ] **Step 1: Add failing unit tests**
@@ -46,7 +46,7 @@ const config = await loadOrchestratorConfig(file, { cwd: repoRoot });
 assert.deepEqual(config, {
   projectOwner: "ShinHaya",
   ownerType: "user",
-  projectNumber: 2,
+  projectName: "Visibility",
   maxParallel: 4,
   releasePolicy: "merged",
   unavailableModels: [],
@@ -114,7 +114,7 @@ Expected: FAIL for the new `configPath` and precedence assertions.
 
 Load configuration before `readInput` performs GitHub access. Preserve explicit CLI array flags
 for repeated `--unavailable-model`, and let an explicit empty/unavailable setting be represented
-only by YAML `none`. Keep `--project-owner`, `--owner-type`, `--project-number`,
+only by YAML `none`. Keep `--project-owner`, `--owner-type`, `--project-name`,
 `--max-parallel`, and `--release-policy` as the final override layer.
 
 - [ ] **Step 4: Run the tests and verify GREEN**
@@ -145,7 +145,7 @@ git commit -m "feat: auto-load orchestrator YAML settings"
 
 - [ ] **Step 1: Add the sample and ignore rule**
 
-Create the sample with `project.owner`, `project.ownerType`, `project.number`, `run.maxParallel`,
+Create the sample with `project.owner`, `project.ownerType`, `project.name`, `run.maxParallel`,
 `run.releasePolicy`, and `run.unavailableModels: none`. Add only the runtime filename pattern
 `state/project-issue-orchestrator.yaml` to `.gitignore`; do not broaden the existing state rule.
 
