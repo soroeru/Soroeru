@@ -88,10 +88,11 @@ selectors is required; otherwise it fails with `issue-filter-required`. Values w
 kind are ORed, while different selector kinds are ANDed. Issue-number selection is an exact
 number match.
 
-After the initial selection, every dependency referenced by a selected Issue is added recursively
-to the execution set, even when that dependency does not match the selector fields. The selected
-set and its dependency closure are then parsed and validated strictly. Unrelated Project items
-are not allowed to block a filtered run because of malformed assignment metadata.
+After the initial selection, every GitHub `Blocked by` relationship of a selected Issue is
+resolved recursively. A `CLOSED` blocker is treated as completed and excluded from execution. An
+`OPEN` blocker stops the run with a deterministic dependency reason. The selected set and its
+open/closed dependency state are then validated strictly. Issue body dependency text is ignored;
+unrelated Project items are not allowed to block a filtered run because of malformed metadata.
 
 Project `Start date` remains available as metadata but is not a selector. The `--run-date` CLI
 argument and future Start-date filtering are removed from the orchestration path.

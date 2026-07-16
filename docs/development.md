@@ -123,6 +123,10 @@ CLI and `orchestrate-project-issues` skill discover that path automatically.
 Use `--config path/to/other.yaml` only when intentionally selecting another
 configuration file. Explicit CLI flags override YAML values.
 
+Dependency closure comes from each Issue's GitHub `Blocked by` relationships,
+not from Issue body text. A `CLOSED` blocker is treated as completed; an
+`OPEN` blocker stops the dry-run with a deterministic dependency reason.
+
 ```bash
 GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
   --dry-run --issues 380,382,384,386,387 \

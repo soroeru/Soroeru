@@ -22,14 +22,16 @@ Each minimal item must contain `number`, `title`, `url`, `status`, `startDate`, 
 
 Pass at least one target selector: `--issues`, `--priority`, `--iteration`, or `--size`. Repeat a
 selector or use comma-separated values for OR within that selector. Different selectors are ANDed.
-Selected Issues automatically include their recursive dependencies, even when those dependencies
-do not match the selector fields. `Start date` is metadata only; do not pass `--run-date`.
+Selected Issues automatically include their recursive `Blocked by` dependencies, even when those
+dependencies do not match the selector fields. A closed Blocked by Issue is treated as completed;
+an open one stops the run with its Issue numbers in the reason. Dependency state is read from
+GitHub deterministically. `Start date` is metadata only; do not pass `--run-date`.
 
 ## Start gate
 
 1. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model> --capabilities-file <verified-capabilities.json>`; the default YAML supplies the six stable Project/run values. Add explicit CLI flags for a one-off override, or `--config <path>` to select another YAML. Capability records use `{agent, model, role, selector, selectable, verifiable, timeoutMs}` where `agent` is the AI assignee runtime (Codex/Claude/…), not an API vendor name. Dry-run never writes state and never applies milestones unless `--simulate-milestone` is also set. Assignment metadata is parsed by the shared `project-issue-assignment` module (project-metadata and implementation-assignment blocks share one field vocabulary). GitHub cannot return a substring of an Issue body, so the mapper receives each body, counts its bytes, extracts only bounded assignment fields, and never returns or stores the body in parent state. Fetch body/comments again only inside its worker immediately before implementation.
 2. For an offline fixture, use the same flags with `--input <sanitized-plan.json>`; its `options.aiSubAssignees` must come from `config/github-projects.json`.
-3. Stop before any worktree or Project mutation on unknown dependencies, cycles, missing assignment fields, missing AI Sub Assignee mappings, or unavailable routing capabilities.
+3. Stop before any worktree or Project mutation on unknown/cyclic `Blocked by` dependencies, open or unavailable dependency state, missing assignment fields, missing AI Sub Assignee mappings, or unavailable routing capabilities.
 4. Confirm the requested parent and worker models can actually be selected. Claude Fable is a normal parent/worker candidate when the runtime exposes it. If exact selection cannot be verified, block that route; never relabel another model as Fable.
 
 ## Scheduling

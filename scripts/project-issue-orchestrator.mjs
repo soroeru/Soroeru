@@ -197,9 +197,19 @@ async function readInput(cli) {
     iteration: cli.iteration,
     size: cli.size,
   };
+  const applySelection = (input, selection) => ({
+    ...input,
+    items: selection.items,
+    state: {
+      ...(input.state ?? {}),
+      completed: [...new Set([...(input.state?.completed ?? []), ...selection.completed])].sort(
+        (left, right) => left - right,
+      ),
+    },
+  });
   if (cli.inputPath) {
     const input = JSON.parse(await fs.readFile(cli.inputPath, "utf8"));
-    return { ...input, items: selectProjectItems(input.items, selectors) };
+    return applySelection(input, selectProjectItems(input.items, selectors));
   }
   if (cli.projectOwner || cli.projectNumber) {
     if (!cli.projectOwner || !cli.projectNumber) throw new Error("project-owner-and-number-required");
@@ -214,9 +224,9 @@ async function readInput(cli) {
             token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
           }),
       });
+    const selection = selectProjectItems(fetched.items, selectors);
     return {
-      ...fetched,
-      items: selectProjectItems(fetched.items, selectors),
+      ...applySelection(fetched, selection),
       projectConfig: project,
     };
   }

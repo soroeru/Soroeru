@@ -16,7 +16,7 @@ export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
 
 export function buildProjectItemsQuery(ownerType) {
   if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
-  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body } } } } } } }`;
+  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body blockedBy(first: 100) { nodes { number state } } } } } } } } }`;
 }
 
 function requiredString(value, reason) {
@@ -75,7 +75,7 @@ export async function fetchProjectItems({
     let assignment;
     let assignmentError;
     try {
-      assignment = parseIssueAssignment(body);
+      assignment = parseIssueAssignment(body, { ignoreDependencies: true });
     } catch (error) {
       assignment = {};
       assignmentError = error.message;
@@ -90,7 +90,8 @@ export async function fetchProjectItems({
     );
     const model = assignment.model;
     const order = assignment.order;
-    const dependencies = assignment.dependencies;
+    const blockedBy = node.content?.blockedBy?.nodes ?? [];
+    const dependencies = blockedBy.map((dependency) => Number(dependency.number));
     // Surface incomplete GitHub-shaped rows with the Issue number before planning.
     return [
       {
@@ -107,6 +108,10 @@ export async function fetchProjectItems({
         model,
         order,
         dependencies,
+        blockedBy: blockedBy.map(({ number: dependency, state }) => ({
+          number: Number(dependency),
+          state,
+        })),
         ...(assignmentError ? { assignmentError } : {}),
       },
     ];

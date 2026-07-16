@@ -95,6 +95,7 @@ export function selectProjectItems(rawItems, selectors = {}) {
 
   const byNumber = new Map(rawItems.map((item) => [Number(item.number), item]));
   const selected = new Map();
+  const completed = new Set();
   const visit = (item) => {
     const number = Number(item.number);
     if (selected.has(number)) return;
@@ -102,13 +103,26 @@ export function selectProjectItems(rawItems, selectors = {}) {
     if (!Array.isArray(item.dependencies)) throw new Error(`missing-dependencies:${number}`);
     selected.set(number, item);
     for (const dependency of item.dependencies) {
+      const relation = (item.blockedBy ?? []).find(
+        ({ number: blockedNumber }) => Number(blockedNumber) === Number(dependency),
+      );
+      if (relation?.state === "CLOSED") {
+        completed.add(Number(dependency));
+        continue;
+      }
+      if (relation?.state === "OPEN") throw new Error(`dependency-open:${number}:${dependency}`);
+      if (relation && relation.state !== "CLOSED" && relation.state !== "OPEN")
+        throw new Error(`dependency-state-unavailable:${number}:${dependency}`);
       const dependencyItem = byNumber.get(Number(dependency));
       if (!dependencyItem) throw new Error(`unknown-dependency:${number}:${dependency}`);
       visit(dependencyItem);
     }
   };
   for (const match of matches) visit(match);
-  return [...selected.values()].sort((left, right) => Number(left.number) - Number(right.number));
+  return {
+    items: [...selected.values()].sort((left, right) => Number(left.number) - Number(right.number)),
+    completed: [...completed].sort((left, right) => left - right),
+  };
 }
 
 export function validateProjectItems(items) {

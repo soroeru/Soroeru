@@ -475,11 +475,11 @@ test("selects Issues with AND across dimensions and OR within a dimension", () =
     { number: 3, priority: "P2", iteration: "Sprint 1", size: "M", dependencies: [] },
   ];
   assert.deepEqual(
-    selectProjectItems(items, { priority: ["P1"], size: ["M"] }).map(({ number }) => number),
+    selectProjectItems(items, { priority: ["P1"], size: ["M"] }).items.map(({ number }) => number),
     [1],
   );
   assert.deepEqual(
-    selectProjectItems(items, { iteration: ["Sprint 1", "Sprint 2"] }).map(({ number }) => number),
+    selectProjectItems(items, { iteration: ["Sprint 1", "Sprint 2"] }).items.map(({ number }) => number),
     [1, 2, 3],
   );
 });
@@ -491,14 +491,68 @@ test("adds recursive dependencies to selected Issues", () => {
     { number: 1, priority: "P2", iteration: "Sprint 1", size: "XS", dependencies: [] },
   ];
   assert.deepEqual(
-    selectProjectItems(items, { issues: [3] }).map(({ number }) => number),
+    selectProjectItems(items, { issues: [3] }).items.map(({ number }) => number),
     [1, 2, 3],
+  );
+});
+
+test("treats closed Blocked by Issues as completed and stops on open dependencies", () => {
+  const items = [
+    {
+      number: 3,
+      priority: "P1",
+      iteration: "Sprint 1",
+      size: "M",
+      dependencies: [2],
+      blockedBy: [{ number: 2, state: "CLOSED" }],
+    },
+    { number: 2, priority: "P2", iteration: "Sprint 1", size: "S", dependencies: [] },
+  ];
+  const selected = selectProjectItems(items, { issues: [3] });
+  assert.deepEqual(selected.items.map(({ number }) => number), [3]);
+  assert.deepEqual(selected.completed, [2]);
+  assert.throws(
+    () => selectProjectItems([{ ...items[0], blockedBy: [{ number: 2, state: "OPEN" }] }, items[1]], { issues: [3] }),
+    /dependency-open:3:2/,
   );
 });
 
 test("requires an Issue selector and rejects run-date filtering", () => {
   assert.throws(() => selectProjectItems([{ number: 1, dependencies: [] }], {}), /issue-filter-required/);
   assert.throws(() => parseCliArgs(["--run-date", "2026-07-16"]), /unknown-flag:--run-date/);
+});
+
+test("reads dependencies from Blocked by instead of malformed body text", async () => {
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        items: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            {
+              fieldValues: {
+                nodes: [
+                  { field: { name: "Status" }, name: "Ready" },
+                  { field: { name: "Start date" }, date: "2026-07-15" },
+                ],
+              },
+              content: {
+                __typename: "Issue",
+                number: 386,
+                title: "Issue",
+                url: "issue",
+                body: "<!-- implementation-assignment:start -->\n- 担当: Codex\n- 副担当: Claude\n- モデル: gpt-5\n- 実装順: 1\n- 前提: #391 の主経路方針\n<!-- implementation-assignment:end -->",
+                blockedBy: { nodes: [{ number: 391, state: "CLOSED" }] },
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  assert.deepEqual(result.items[0].dependencies, [391]);
+  assert.deepEqual(result.items[0].blockedBy, [{ number: 391, state: "CLOSED" }]);
 });
 
 test("extracts only the bounded implementation assignment metadata", () => {
@@ -714,7 +768,8 @@ test("defers incomplete-assignment-metadata until an Issue is selected", async (
     },
   });
   const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
-  assert.throws(() => selectProjectItems(result.items, { issues: [702] }), /missing-dependencies:702/);
+  assert.equal(selectProjectItems(result.items, { issues: [702] }).items[0].number, 702);
+  assert.throws(() => parseProjectItems(result.items), /missing-sub:702/);
 });
 
 test("paginates organization ProjectV2 items and discards Issue bodies from returned metadata", async () => {
