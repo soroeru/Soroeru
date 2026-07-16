@@ -13,7 +13,8 @@ the YAML.
 
 Commit `config/project-issue-orchestrator.example.yaml` as the documented template. The Product
 Owner copies it to the Git-ignored `state/project-issue-orchestrator.yaml` and edits only that
-runtime copy.
+runtime copy. Both the CLI and the skill automatically look for this default path, resolved from
+the repository root rather than the caller's current directory.
 
 The schema is:
 
@@ -38,10 +39,16 @@ state paths, milestone events, target Issue lists, or orchestration output.
 
 ## CLI Integration
 
-Add `--config <path>` to `scripts/project-issue-orchestrator.mjs`. The CLI loads and validates the
-YAML before fetching the GitHub Project. Configuration values fill the corresponding existing
-CLI options. An explicitly supplied CLI flag overrides the YAML value for the same field, which
-keeps one-off runs possible without editing the file.
+The CLI automatically loads `state/project-issue-orchestrator.yaml` when that file exists. Add
+`--config <path>` to `scripts/project-issue-orchestrator.mjs` only as an override for callers that
+need a different file. The CLI loads and validates the selected YAML before fetching the GitHub
+Project. Configuration values fill the corresponding existing CLI options. An explicitly
+supplied CLI flag overrides the YAML value for the same field, which keeps one-off runs possible
+without editing the file.
+
+Backward-compatible all-CLI invocation remains available when the default YAML does not exist.
+If neither the selected YAML nor explicit CLI flags provide all required Project and run values,
+the existing missing-input errors stop execution before network access.
 
 After normalization, the existing Project fetch, assignment parsing, graph validation,
 capability validation, scheduling, state, and milestone paths receive the same option shape they
@@ -64,10 +71,11 @@ the complete YAML document.
 
 ## Skill Flow
 
-Update `orchestrate-project-issues` so a user may supply the runtime YAML path instead of spelling
-out the six configured values in conversation. The skill verifies the path exists, invokes the
-orchestrator with `--config`, and retains every existing requirement for capabilities, dry-run,
-state, worktree detection, milestones, and worker routing.
+Update `orchestrate-project-issues` so it automatically uses
+`state/project-issue-orchestrator.yaml` without requiring the user to name the file or spell out
+the six configured values in conversation. A user supplies a path only when intentionally using
+a non-default file. The skill verifies the selected file when present and retains every existing
+requirement for capabilities, dry-run, state, worktree detection, milestones, and worker routing.
 
 The Product Owner will fill `state/project-issue-orchestrator.yaml` before the first verification
 run. Creating the file does not automatically start orchestration.
@@ -84,6 +92,7 @@ the Electron UI.
 Focused unit tests cover:
 
 - valid YAML loading and normalization;
+- repository-root-based default-file discovery and explicit path override;
 - `none` and model-list handling;
 - explicit CLI-over-YAML precedence;
 - missing values, unknown keys, invalid enums, invalid limits, malformed YAML, and duplicate keys;
