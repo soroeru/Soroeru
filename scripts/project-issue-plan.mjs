@@ -178,8 +178,8 @@ export function validateCapabilities(requiredRoutes, capabilities) {
       !match ||
       (match.requestedModel !== undefined &&
         (typeof match.requestedModel !== "string" || match.requestedModel.trim() === "")) ||
-      (match.model !== undefined &&
-        (typeof match.model !== "string" || match.model.trim() === "")) ||
+      typeof match.model !== "string" ||
+      match.model.trim() === "" ||
       !match.selectable ||
       !match.verifiable ||
       typeof match.selector !== "string" ||

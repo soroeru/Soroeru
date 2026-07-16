@@ -432,6 +432,25 @@ test("does not let a mismatched requestedModel fall back to the canonical identi
   );
 });
 
+test("requires a canonical model when requestedModel is supplied", () => {
+  const required = [{ agent: "Grok", model: "Grok 4.5", role: "worker" }];
+  assert.throws(
+    () =>
+      validateCapabilities(required, [
+        {
+          agent: "Grok",
+          requestedModel: "Grok 4.5",
+          role: "worker",
+          selector: "grok --model grok-4.5",
+          selectable: true,
+          verifiable: true,
+          timeoutMs: 30_000,
+        },
+      ]),
+    /routing-unavailable:worker:Grok:Grok 4\.5/,
+  );
+});
+
 test("run orchestration blocks before planning when a required worker capability is unverified", async () => {
   const input = await load("linear.json");
   input.options = {
