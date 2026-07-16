@@ -376,6 +376,81 @@ test("requires selectable, verifiable, bounded capability records for parent and
   );
 });
 
+test("matches a Project display model through an explicit requestedModel capability", () => {
+  const required = [{ agent: "Grok", model: "Grok 4.5", role: "worker" }];
+  const capabilities = [
+    {
+      agent: "Grok",
+      requestedModel: "Grok 4.5",
+      model: "grok-4.5",
+      role: "worker",
+      selector: "grok --model grok-4.5",
+      selectable: true,
+      verifiable: true,
+      timeoutMs: 30_000,
+    },
+  ];
+  assert.deepEqual(validateCapabilities(required, capabilities), capabilities);
+});
+
+test("does not treat a canonical model identifier as proof for a different request", () => {
+  const required = [{ agent: "Grok", model: "Grok 4.5", role: "worker" }];
+  assert.throws(
+    () =>
+      validateCapabilities(required, [
+        {
+          agent: "Grok",
+          model: "grok-4.5",
+          role: "worker",
+          selector: "grok --model grok-4.5",
+          selectable: true,
+          verifiable: true,
+          timeoutMs: 30_000,
+        },
+      ]),
+    /routing-unavailable:worker:Grok:Grok 4\.5/,
+  );
+});
+
+test("does not let a mismatched requestedModel fall back to the canonical identifier", () => {
+  const required = [{ agent: "Grok", model: "Grok 4.5", role: "worker" }];
+  assert.throws(
+    () =>
+      validateCapabilities(required, [
+        {
+          agent: "Grok",
+          requestedModel: "Other model",
+          model: "grok-4.5",
+          role: "worker",
+          selector: "grok --model grok-4.5",
+          selectable: true,
+          verifiable: true,
+          timeoutMs: 30_000,
+        },
+      ]),
+    /routing-unavailable:worker:Grok:Grok 4\.5/,
+  );
+});
+
+test("requires a canonical model when requestedModel is supplied", () => {
+  const required = [{ agent: "Grok", model: "Grok 4.5", role: "worker" }];
+  assert.throws(
+    () =>
+      validateCapabilities(required, [
+        {
+          agent: "Grok",
+          requestedModel: "Grok 4.5",
+          role: "worker",
+          selector: "grok --model grok-4.5",
+          selectable: true,
+          verifiable: true,
+          timeoutMs: 30_000,
+        },
+      ]),
+    /routing-unavailable:worker:Grok:Grok 4\.5/,
+  );
+});
+
 test("run orchestration blocks before planning when a required worker capability is unverified", async () => {
   const input = await load("linear.json");
   input.options = {

@@ -165,11 +165,21 @@ export function validateCapabilities(requiredRoutes, capabilities) {
     const match = capabilities.find(
       (candidate) =>
         candidate.agent === route.agent &&
-        candidate.model === route.model &&
+        // `requestedModel` preserves the Project/Issue display name while
+        // `model` remains the runtime's canonical model identifier. Keep
+        // accepting the legacy shape where `model` is the requested name,
+        // but never let a canonical ID override a supplied display label.
+        (candidate.requestedModel !== undefined
+          ? candidate.requestedModel === route.model
+          : candidate.model === route.model) &&
         candidate.role === route.role,
     );
     if (
       !match ||
+      (match.requestedModel !== undefined &&
+        (typeof match.requestedModel !== "string" || match.requestedModel.trim() === "")) ||
+      typeof match.model !== "string" ||
+      match.model.trim() === "" ||
       !match.selectable ||
       !match.verifiable ||
       typeof match.selector !== "string" ||
