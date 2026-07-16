@@ -167,8 +167,11 @@ export function validateCapabilities(requiredRoutes, capabilities) {
         candidate.agent === route.agent &&
         // `requestedModel` preserves the Project/Issue display name while
         // `model` remains the runtime's canonical model identifier. Keep
-        // accepting the legacy shape where `model` is the requested name.
-        (candidate.requestedModel === route.model || candidate.model === route.model) &&
+        // accepting the legacy shape where `model` is the requested name,
+        // but never let a canonical ID override a supplied display label.
+        (candidate.requestedModel !== undefined
+          ? candidate.requestedModel === route.model
+          : candidate.model === route.model) &&
         candidate.role === route.role,
     );
     if (
