@@ -472,6 +472,22 @@ test("skips unverified routes and rejects malformed worker capability records", 
     () => selectWorkerRoutes([{ ...workerRoute("Codex", " ") }]),
     /invalid-capability-record:Codex/,
   );
+  assert.throws(
+    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), selector: " " }]),
+    /invalid-capability-record:Codex/,
+  );
+  assert.throws(
+    () => selectWorkerRoutes([{ ...workerRoute("Codex", " gpt-5") }]),
+    /invalid-capability-record:Codex/,
+  );
+  assert.throws(
+    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), selectable: "false" }]),
+    /invalid-capability-record:Codex/,
+  );
+  assert.throws(
+    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), verifiable: "false" }]),
+    /invalid-capability-record:Codex/,
+  );
 });
 
 test("stops with no-worker-route-available when issues are runnable without any route", async () => {

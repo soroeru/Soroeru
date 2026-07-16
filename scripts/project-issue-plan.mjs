@@ -210,15 +210,21 @@ export function selectWorkerRoutes(capabilities, { unavailableAgents = [], unava
       typeof record.agent !== "string" ||
       record.agent.trim() === "" ||
       (record.requestedModel !== undefined &&
-        (typeof record.requestedModel !== "string" || record.requestedModel.trim() === "")) ||
+        (typeof record.requestedModel !== "string" ||
+          record.requestedModel.trim() === "" ||
+          record.requestedModel !== record.requestedModel.trim())) ||
       typeof record.model !== "string" ||
       record.model.trim() === "" ||
+      record.model !== record.model.trim() ||
       typeof record.selector !== "string" ||
+      record.selector.trim() === "" ||
+      typeof record.selectable !== "boolean" ||
+      typeof record.verifiable !== "boolean" ||
       !Number.isSafeInteger(record.timeoutMs) ||
       record.timeoutMs <= 0
     )
       throw new Error(`invalid-capability-record:${record?.agent ?? "unknown"}`);
-    if (!record.selectable || !record.verifiable) continue;
+    if (record.selectable !== true || record.verifiable !== true) continue;
     if (excludedAgents.has(canonicalizeAgent(record.agent).toLowerCase())) continue;
     if (excludedModels.has(record.model) || excludedModels.has(record.requestedModel)) continue;
     routes.push(record);
