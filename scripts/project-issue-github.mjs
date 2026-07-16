@@ -1,8 +1,6 @@
-import { canonicalizeAssignee, OWNER_TYPES, parseIssueAssignment } from "./project-issue-assignment.mjs";
+import { OWNER_TYPES } from "./project-issue-assignment.mjs";
 
 export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
-  aiAssignee: "AI Assignees",
-  aiSubAssignee: "AI Sub Assignees",
   priority: "Priority",
   iteration: "Iteration",
   size: "Size",
@@ -12,7 +10,7 @@ export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
 
 export function buildProjectItemsQuery(ownerType) {
   if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
-  return `query ProjectIssueOrchestration($owner: String!, $name: String!, $cursor: String) { ${ownerType}(login: $owner) { projectsV2(first: 10, query: $name) { nodes { title items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body blockedBy(first: 100) { nodes { number state } } } } } } } } } }`;
+  return `query ProjectIssueOrchestration($owner: String!, $name: String!, $cursor: String) { ${ownerType}(login: $owner) { projectsV2(first: 10, query: $name) { nodes { title items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url blockedBy(first: 100) { nodes { number state } } } } } } } } } }`;
 }
 
 function requiredString(value, reason) {
@@ -22,8 +20,6 @@ function requiredString(value, reason) {
 
 function resolveFieldNames(fields = {}) {
   return {
-    aiAssignee: fields.aiAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiAssignee,
-    aiSubAssignee: fields.aiSubAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiSubAssignee,
     priority: fields.priority ?? DEFAULT_PROJECT_FIELD_NAMES.priority,
     iteration: fields.iteration ?? DEFAULT_PROJECT_FIELD_NAMES.iteration,
     size: fields.size ?? DEFAULT_PROJECT_FIELD_NAMES.size,
@@ -33,9 +29,11 @@ function resolveFieldNames(fields = {}) {
 }
 
 /**
- * Fetch Project items and map each Issue to the minimal assignment schema.
- * Issue bodies are counted for telemetry then discarded from the returned items.
- * `fields` mirrors config/github-projects.json `fields` (aiAssignee / aiSubAssignee / …).
+ * Fetch Project items and map each Issue to the minimal planning schema.
+ * Issue bodies are never requested: dependencies come from GitHub `blockedBy`
+ * relations and Priority/Size/Status come from Project fields, so no bounded
+ * body extraction is needed. `fields` mirrors config/github-projects.json
+ * `fields` (priority / size / …).
  */
 export async function fetchProjectItems({ owner, ownerType = "user", projectName, graphql, fields = {} }) {
   requiredString(owner, "project-owner-required");
@@ -63,10 +61,12 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectName
     if (!items.pageInfo.endCursor) throw new Error("project-pagination-cursor-missing");
     cursor = items.pageInfo.endCursor;
   }
+  // Total UTF-8 JSON bytes for every Project item node fetched, including
+  // non-Issue nodes that are discarded below. This is a bounded-read metric,
+  // not an Issue-body byte count (Issue bodies are never requested).
   let fetchedBytes = 0;
   const mapped = nodes.flatMap((node) => {
-    const body = String(node.content?.body ?? "");
-    fetchedBytes += Buffer.byteLength(body, "utf8");
+    fetchedBytes += Buffer.byteLength(JSON.stringify(node), "utf8");
     if (node.content?.__typename !== "Issue") return [];
     const fieldValues = new Map(
       (node.fieldValues?.nodes ?? []).map((value) => [
@@ -74,26 +74,10 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectName
         value.name ?? value.date ?? value.title,
       ]),
     );
-    let assignment;
-    let assignmentError;
-    try {
-      assignment = parseIssueAssignment(body, { ignoreDependencies: true });
-    } catch (error) {
-      assignment = {};
-      assignmentError = error.message;
-    }
-    const number = node.content?.number;
-    // Project single-select wins over body when present; canonicalize casing.
-    const primary = canonicalizeAssignee(fieldValues.get(fieldNames.aiAssignee) ?? assignment.primary);
-    const sub = canonicalizeAssignee(fieldValues.get(fieldNames.aiSubAssignee) ?? assignment.sub);
-    const model = assignment.model;
-    const order = assignment.order;
     const blockedBy = node.content?.blockedBy?.nodes ?? [];
-    const dependencies = blockedBy.map((dependency) => Number(dependency.number));
-    // Surface incomplete GitHub-shaped rows with the Issue number before planning.
     return [
       {
-        number,
+        number: node.content?.number,
         title: node.content?.title,
         url: node.content?.url,
         status: fieldValues.get(fieldNames.status),
@@ -101,16 +85,11 @@ export async function fetchProjectItems({ owner, ownerType = "user", projectName
         iteration: fieldValues.get(fieldNames.iteration),
         size: fieldValues.get(fieldNames.size),
         startDate: fieldValues.get(fieldNames.startDate),
-        primary,
-        sub,
-        model,
-        order,
-        dependencies,
+        dependencies: blockedBy.map((dependency) => Number(dependency.number)),
         blockedBy: blockedBy.map(({ number: dependency, state }) => ({
           number: Number(dependency),
           state,
         })),
-        ...(assignmentError ? { assignmentError } : {}),
       },
     ];
   });

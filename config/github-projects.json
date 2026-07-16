@@ -6,20 +6,11 @@
       "owner": "ShinHaya",
       "ownerType": "user",
       "fields": {
-        "aiAssignee": "AI Assignees",
-        "aiSubAssignee": "AI Sub Assignees",
         "priority": "Priority",
         "size": "Size",
         "iteration": "Iteration",
         "startDate": "Start date",
         "targetDate": "Target date"
-      },
-      "aiSubAssignees": {
-        "Codex": "Claude",
-        "Claude": "Codex",
-        "Gemini": "Codex",
-        "Grok": "Codex",
-        "未記載": "未記載"
       },
       "candidates": [
         { "name": "Visibility", "keywords": ["visibility", "開示", "台帳", "サイト情報"] },

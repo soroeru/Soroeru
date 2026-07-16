@@ -9,3 +9,4 @@ run:
   maxParallel: 4
   releasePolicy: merged
   unavailableModels: none
+  unavailableAgents: none

@@ -6,7 +6,12 @@ import YAML from "yaml";
 export const DEFAULT_CONFIG_PATH = "state/project-issue-orchestrator.yaml";
 
 const PROJECT_KEYS = new Set(["owner", "ownerType", "name"]);
-const RUN_KEYS = new Set(["maxParallel", "releasePolicy", "unavailableModels"]);
+const RUN_KEYS = new Set([
+  "maxParallel",
+  "releasePolicy",
+  "unavailableModels",
+  "unavailableAgents",
+]);
 
 function fail(reason) {
   throw new Error(reason);
@@ -36,6 +41,14 @@ function parseUnavailableModels(value) {
   return value.map((model) => model.trim());
 }
 
+function parseUnavailableAgents(value) {
+  if (typeof value === "string" && value.trim().toLowerCase() === "none") return [];
+  if (!Array.isArray(value) || value.length === 0) fail("config-invalid-unavailable-agents");
+  if (value.some((agent) => typeof agent !== "string" || agent.trim() === ""))
+    fail("config-invalid-unavailable-agents");
+  return value.map((agent) => agent.trim());
+}
+
 function normalizeDocument(document) {
   if (document.errors.length) fail("config-invalid-yaml");
   const root = assertObject(document.toJS(), "config-invalid-root");
@@ -61,6 +74,7 @@ function normalizeDocument(document) {
     maxParallel: run.maxParallel,
     releasePolicy,
     unavailableModels: parseUnavailableModels(run.unavailableModels),
+    unavailableAgents: parseUnavailableAgents(run.unavailableAgents ?? "none"),
   };
 }
 
@@ -78,8 +92,9 @@ export async function loadOrchestratorConfig(filePath = DEFAULT_CONFIG_PATH, { c
 
 export function mergeOrchestratorConfig({ defaults = {}, yaml = {}, cli = {} } = {}) {
   const merged = { ...defaults, ...yaml, ...cli };
-  if (merged.unavailableModels === undefined) merged.unavailableModels = [];
   if (typeof merged.unavailableModels === "string")
     merged.unavailableModels = parseUnavailableModels(merged.unavailableModels);
+  if (typeof merged.unavailableAgents === "string")
+    merged.unavailableAgents = parseUnavailableAgents(merged.unavailableAgents);
   return merged;
 }

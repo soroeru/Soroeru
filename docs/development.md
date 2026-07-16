@@ -88,8 +88,22 @@ Playwright path is unchanged; there is no silent fallback after the extension cu
 `.github/workflows/project-issue-defaults.yml` handles only `issues.opened` and
 configures classified Issues in `config/github-projects.json`. It resolves
 Project, field, option, item, and iteration IDs by name through GraphQL; IDs
-are intentionally not stored in the repository. Exercise the implementation
-locally with:
+are intentionally not stored in the repository. The workflow sets only
+Priority, Size, Start/Target date, and Iteration. Agent/model assignment is
+decided at orchestration run time and is **not** stored in the Project or the
+Issue body; the former `AI Assignees` / `AI Sub Assignees` fields are
+abolished (the Product Owner deletes those two single-select fields from the
+Project settings UI once — the automation ignores them either way, and legacy
+Issues that still contain AI Assignee lines or an `implementation-assignment`
+block are processed with those fields ignored, never rejected).
+
+The workflow is fail-close: every read and validation completes before the
+first GraphQL mutation (a validation failure performs zero mutations), and a
+final readback confirms all written fields converged. A partial failure
+returns `{"status":"retryable-error","reason":...}` — with the unconverged
+Project field names for `project-fields-unconverged` — and rerunning the
+workflow reconciles by reusing the existing Project item and exact-name
+iteration. Exercise the implementation locally with:
 
 ```bash
 node --test tests/unit/project-issue-defaults.test.mjs
@@ -122,6 +136,9 @@ Copy `config/project-issue-orchestrator.example.yaml` to
 CLI and `orchestrate-project-issues` skill discover that path automatically.
 Use `--config path/to/other.yaml` only when intentionally selecting another
 configuration file. Explicit CLI flags override YAML values.
+The run configuration accepts `unavailableModels` and `unavailableAgents` as
+either `none` or a YAML list; these exclusions are runtime hints for that run
+and are recomputed from fresh capability records on the next run.
 
 Dependency closure comes from each Issue's GitHub `Blocked by` relationships,
 not from Issue body text. A `CLOSED` blocker is treated as completed; an
@@ -130,7 +147,7 @@ not from Issue body text. A `CLOSED` blocker is treated as completed; an
 ```bash
 GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
   --dry-run --issues 380,382,384,386,387 \
-  --unavailable-model MODEL --existing-worktree 396 \
+  --unavailable-model MODEL --unavailable-agent Codex --existing-worktree 396 \
   --parent-agent Codex --parent-model MODEL \
   --capabilities-file path/to/verified-capabilities.json
 # Optional: apply a milestone in memory only (still no state write) during dry-run:
@@ -140,6 +157,14 @@ node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json 
 node --test tests/unit/project-issue-orchestrator.test.mjs \
   tests/unit/project-issue-defaults.test.mjs
 ```
+
+Items carry no per-Issue agent/model assignment: the plan orders runnable
+Issues by Priority (P0 first) then Issue number under the dependency
+constraints, and the result includes `workerRoutes` — the run-scoped pool of
+verified worker capability records after `--unavailable-agent` /
+`--unavailable-model` exclusions. The orchestrating agent assigns each
+runnable Issue to one of those routes at run time; if Issues are runnable but
+the pool is empty the run stops with `no-worker-route-available`.
 
 Capability files use `agent` (Codex/Claude/…) rather than API-provider names. A
 capability may use `requestedModel` for the exact Project/Issue model label and
@@ -162,12 +187,12 @@ The requested label must still be explicitly present in the capability record;
 the canonical runtime identifier alone is not an alias or fallback. The legacy
 shape with only `model` remains supported when it already contains the exact
 requested model label.
-Assignment body markers (`project-metadata` and `implementation-assignment`)
-share one field vocabulary via `scripts/project-issue-assignment.mjs`. The
-planner, GitHub fetch, and local state lock live in
-`project-issue-plan.mjs`, `project-issue-github.mjs`, and
-`project-issue-state.mjs`; the CLI entrypoint is
-`project-issue-orchestrator.mjs`.
+The `project-metadata` body marker carries only Priority / Size / Feature
+group via `scripts/project-issue-assignment.mjs`; legacy AI Assignee lines and
+the `implementation-assignment` block are ignored. The planner, GitHub fetch,
+and local state lock live in `project-issue-plan.mjs`,
+`project-issue-github.mjs`, and `project-issue-state.mjs`; the CLI entrypoint
+is `project-issue-orchestrator.mjs`.
 
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)

@@ -1,15 +1,8 @@
 import fs from "node:fs/promises";
 
-import {
-  AI_ASSIGNEES,
-  canonicalizeAssignee,
-  normalize,
-  parseProjectMetadata,
-  toAiAssignee,
-} from "./project-issue-assignment.mjs";
+import { normalize, parseProjectMetadata } from "./project-issue-assignment.mjs";
 
 export const DEFAULTS = Object.freeze({
-  aiAssignee: "未記載",
   priority: "P2",
   size: "M",
 });
@@ -26,61 +19,19 @@ const PROJECT_RULES = [
 ];
 
 /**
- * Resolve Project field defaults. Sub-assignee reasons are distinct:
- * - missing-ai-sub-assignee-mapping: config has no entry for the primary
- * - unknown-ai-sub-assignee: supplied or mapped name is not a known assignee
- * - ai-sub-assignee-mismatch: body sub differs from the configured map
- * - ai-sub-assignee-option-missing: map target not in Project field options
+ * Resolve Project field defaults for the remaining metadata vocabulary
+ * (Priority / Size). Agent assignment is decided at orchestration run time
+ * and is never resolved or stored here.
  */
-export function resolveDefaults(metadata, choices = {}, aiSubAssignees = {}) {
-  const aiChoices = new Set(choices.aiAssignees ?? [...AI_ASSIGNEES.values()]);
-  const subOptionChoices =
-    choices.aiSubAssignees === undefined ? null : new Set(choices.aiSubAssignees);
+export function resolveDefaults(metadata, choices = {}) {
   const priorityChoices = new Set(choices.priorities ?? ["P0", "P1", "P2", "P3"]);
   const sizeChoices = new Set(choices.sizes ?? ["XS", "S", "M", "L", "XL"]);
   const reasons = [];
-  const suppliedAiAssignee = normalize(metadata.aiAssignee || DEFAULTS.aiAssignee);
-  const resolvedPrimary = toAiAssignee(suppliedAiAssignee);
-  const primaryAccepted =
-    AI_ASSIGNEES.has(suppliedAiAssignee.toLowerCase()) && aiChoices.has(resolvedPrimary);
-  if (!primaryAccepted) reasons.push("unknown-ai-assignee");
-  // Final primary after Project-option fallback — all sub mapping uses this value.
-  const aiAssignee = primaryAccepted ? resolvedPrimary : DEFAULTS.aiAssignee;
-
-  const map = {};
-  for (const [key, value] of Object.entries(aiSubAssignees ?? {})) {
-    const primaryKey = canonicalizeAssignee(key);
-    if (primaryKey) map[primaryKey] = value;
-  }
-  const mappedSubRaw = map[aiAssignee];
-  const suppliedAiSubAssignee = normalize(metadata.aiSubAssignee);
-  let aiSubAssignee;
-
-  if (!Object.hasOwn(map, aiAssignee)) {
-    reasons.push("missing-ai-sub-assignee-mapping");
-    aiSubAssignee = undefined;
-  } else if (!mappedSubRaw || !AI_ASSIGNEES.has(normalize(mappedSubRaw).toLowerCase())) {
-    reasons.push("unknown-ai-sub-assignee");
-    aiSubAssignee = undefined;
-  } else {
-    aiSubAssignee = toAiAssignee(mappedSubRaw);
-    if (suppliedAiSubAssignee) {
-      if (!AI_ASSIGNEES.has(suppliedAiSubAssignee.toLowerCase()))
-        reasons.push("unknown-ai-sub-assignee");
-      else if (toAiAssignee(suppliedAiSubAssignee) !== aiSubAssignee)
-        reasons.push("ai-sub-assignee-mismatch");
-    }
-    if (subOptionChoices && !subOptionChoices.has(aiSubAssignee))
-      reasons.push("ai-sub-assignee-option-missing");
-  }
-
   const priority = priorityChoices.has(metadata.priority) ? metadata.priority : DEFAULTS.priority;
   if (priority !== metadata.priority) reasons.push("invalid-priority");
   const size = sizeChoices.has(metadata.size) ? metadata.size : DEFAULTS.size;
   if (size !== metadata.size) reasons.push("invalid-size");
   return {
-    aiAssignee,
-    aiSubAssignee,
     priority: priorityChoices.has(priority) ? priority : ([...priorityChoices][0] ?? DEFAULTS.priority),
     size: sizeChoices.has(size) ? size : ([...sizeChoices][0] ?? DEFAULTS.size),
     reasons,
@@ -115,7 +66,14 @@ export function buildProjectQuery(ownerType) {
 export const ADD_ITEM_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: { projectId: $projectId contentId: $contentId }) { item { id } } }`;
 export const UPDATE_ITEM_MUTATION = `mutation UpdateItem($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId itemId: $itemId fieldId: $fieldId value: $value }) { projectV2Item { id } } }`;
 export const UPDATE_ITERATION_MUTATION = `mutation UpdateIteration($fieldId: ID!, $configuration: ProjectV2IterationFieldConfigurationInput!) { updateProjectV2Field(input: { fieldId: $fieldId iterationConfiguration: $configuration }) { projectV2Field { ... on ProjectV2IterationField { id configuration { iterations { id title startDate duration } } } } } }`;
+export const ITEM_FIELD_VALUES_QUERY = `query ItemFieldValues($itemId: ID!) { node(id: $itemId) { ... on ProjectV2Item { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } } } }`;
 
+/**
+ * Fail-close Project configuration: every read and validation completes
+ * before the first mutation, and a final readback confirms all fields
+ * converged. Reruns reuse the existing item and exact-name iteration, so a
+ * partial failure is recovered by executing the workflow again.
+ */
 export async function applyProjectDefaults({ issue, project, graphql, config = {} }) {
   if (!project) throw new Error("project-not-found");
   const metadata = parseProjectMetadata(issue.body);
@@ -125,57 +83,46 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   if (!projectName && config.requireClassification) throw new Error("project-unclassified");
   const fields = new Map((project.fields?.nodes ?? []).map((field) => [field.name, field]));
   const choices = {
-    aiAssignees: fields
-      .get(config.fields?.aiAssignee ?? "AI Assignees")
-      ?.options?.map((option) => option.name),
-    aiSubAssignees: fields
-      .get(config.fields?.aiSubAssignee ?? "AI Sub Assignees")
-      ?.options?.map((option) => option.name),
     priorities: fields.get(config.fields?.priority ?? "Priority")?.options?.map((option) => option.name),
     sizes: fields.get(config.fields?.size ?? "Size")?.options?.map((option) => option.name),
   };
-  const resolved = resolveDefaults(metadata, choices, config.aiSubAssignees ?? {});
-  const invalidSubAssignee = resolved.reasons.find(
-    (reason) =>
-      reason === "missing-ai-sub-assignee-mapping" ||
-      reason === "unknown-ai-sub-assignee" ||
-      reason === "ai-sub-assignee-mismatch" ||
-      reason === "ai-sub-assignee-option-missing",
-  );
-  if (invalidSubAssignee) throw new Error(invalidSubAssignee);
-  if (!resolved.aiSubAssignee) throw new Error("missing-ai-sub-assignee-mapping");
+  const resolved = resolveDefaults(metadata, choices);
   const dates = calculateIterationDates((issue.created_at ?? issue.createdAt ?? "").slice(0, 10));
-  const aiFieldName = config.fields?.aiAssignee ?? "AI Assignees";
-  const aiSubFieldName = config.fields?.aiSubAssignee ?? "AI Sub Assignees";
   const priorityFieldName = config.fields?.priority ?? "Priority";
   const sizeFieldName = config.fields?.size ?? "Size";
+  const startDateFieldName = config.fields?.startDate ?? "Start date";
+  const targetDateFieldName = config.fields?.targetDate ?? "Target date";
   const iterationFieldName = config.fields?.iteration ?? "Iteration";
   for (const [fieldName, value] of [
-    [aiFieldName, resolved.aiAssignee],
-    [aiSubFieldName, resolved.aiSubAssignee],
     [priorityFieldName, resolved.priority],
     [sizeFieldName, resolved.size],
   ]) {
     const field = fields.get(fieldName);
     if (!field) throw new Error(`project-field-not-found:${fieldName}`);
+    if (field.dataType !== "SINGLE_SELECT")
+      throw new Error(`project-field-type-mismatch:${fieldName}`);
     if (!field.options?.some((option) => option.name === value))
       throw new Error(`project-option-not-found:${fieldName}`);
   }
-  for (const fieldName of [
-    config.fields?.startDate ?? "Start date",
-    config.fields?.targetDate ?? "Target date",
-    iterationFieldName,
+  for (const [fieldName, dataType] of [
+    [startDateFieldName, "DATE"],
+    [targetDateFieldName, "DATE"],
+    [iterationFieldName, "ITERATION"],
   ]) {
-    if (!fields.has(fieldName)) throw new Error(`project-field-not-found:${fieldName}`);
+    const field = fields.get(fieldName);
+    if (!field) throw new Error(`project-field-not-found:${fieldName}`);
+    if (field.dataType !== dataType) throw new Error(`project-field-type-mismatch:${fieldName}`);
   }
+  const issueNodeId = issue.node_id;
+  if (!issueNodeId) throw new Error("issue-node-id-required");
   const iterationField = fields.get(iterationFieldName);
-  const currentIteration = iterationField?.configuration?.iterations?.find(
-    (iteration) => iteration.title === (metadata.featureGroup || dates.name),
+  const iterationTitle = metadata.featureGroup || dates.name;
+
+  // All reads and validations are complete; mutations start here.
+  let iteration = iterationField.configuration?.iterations?.find(
+    (candidate) => candidate.title === iterationTitle,
   );
-  let iteration = currentIteration;
-  if (!iterationField) throw new Error("project-field-not-found:Iteration");
   if (!iteration) {
-    const title = metadata.featureGroup || dates.name;
     const iterations = iterationField.configuration?.iterations ?? [];
     const updateResult = await graphql(UPDATE_ITERATION_MUTATION, {
       fieldId: iterationField.id,
@@ -188,17 +135,15 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
             startDate,
             duration,
           })),
-          { title, startDate: dates.startDate, duration: 1 },
+          { title: iterationTitle, startDate: dates.startDate, duration: 1 },
         ],
       },
     });
     iteration = updateResult.updateProjectV2Field.projectV2Field.configuration.iterations.find(
-      (candidate) => candidate.title === title,
+      (candidate) => candidate.title === iterationTitle,
     );
     if (!iteration) throw new Error("iteration-create-not-confirmed");
   }
-  const issueNodeId = issue.node_id;
-  if (!issueNodeId) throw new Error("issue-node-id-required");
   const existing = project.items?.nodes?.find((item) => item.content?.id === issueNodeId);
   const itemId =
     existing?.id ??
@@ -215,16 +160,13 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
       value: { singleSelectOptionId: option.id },
     });
   };
-  await setSingle(aiFieldName, resolved.aiAssignee);
-  await setSingle(aiSubFieldName, resolved.aiSubAssignee);
   await setSingle(priorityFieldName, resolved.priority);
   await setSingle(sizeFieldName, resolved.size);
   for (const [fieldName, value] of [
-    [config.fields?.startDate ?? "Start date", dates.startDate],
-    [config.fields?.targetDate ?? "Target date", dates.targetDate],
+    [startDateFieldName, dates.startDate],
+    [targetDateFieldName, dates.targetDate],
   ]) {
     const field = fields.get(fieldName);
-    if (!field) throw new Error(`project-field-not-found:${fieldName}`);
     await graphql(UPDATE_ITEM_MUTATION, {
       projectId: project.id,
       itemId,
@@ -238,6 +180,33 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     fieldId: iterationField.id,
     value: { iterationId: iteration.id },
   });
+
+  // Final readback: success only when every field converged. The error names
+  // only Project field names — never Issue bodies, tokens, or diffs.
+  const readback = await graphql(ITEM_FIELD_VALUES_QUERY, { itemId });
+  if (!readback?.node || !Array.isArray(readback.node.fieldValues?.nodes))
+    throw new Error("project-readback-unavailable");
+  const observed = new Map(
+    readback.node.fieldValues.nodes.map((value) => [
+      value.field?.name,
+      value.name ?? value.date ?? value.title,
+    ]),
+  );
+  const expected = [
+    [priorityFieldName, resolved.priority],
+    [sizeFieldName, resolved.size],
+    [startDateFieldName, dates.startDate],
+    [targetDateFieldName, dates.targetDate],
+    [iterationFieldName, iteration.title],
+  ];
+  const unconverged = expected
+    .filter(([fieldName, value]) => observed.get(fieldName) !== value)
+    .map(([fieldName]) => fieldName);
+  if (unconverged.length) {
+    const error = new Error(`project-fields-unconverged:${unconverged.join(",")}`);
+    error.fields = unconverged;
+    throw error;
+  }
   return { itemId, projectName: project.title, iteration: iteration.title, reasons: resolved.reasons };
 }
 
@@ -254,6 +223,16 @@ async function githubGraphql(query, variables, token) {
   const payload = await response.json();
   if (!response.ok || payload.errors?.length) throw new Error("github-graphql-failed");
   return payload.data;
+}
+
+export function toRetryableErrorPayload(error) {
+  const [reason] = String(error.message).split(":");
+  const payload = { status: "retryable-error", reason };
+  // Project field names are the only detail safe to surface; they tell the
+  // rerun which fields did not converge without echoing Issue contents.
+  if (reason === "project-fields-unconverged" && Array.isArray(error.fields))
+    payload.fields = error.fields;
+  return payload;
 }
 
 async function main() {
@@ -302,6 +281,6 @@ async function main() {
 
 if (process.argv[1] === new URL(import.meta.url).pathname)
   main().catch((error) => {
-    console.error(JSON.stringify({ status: "retryable-error", reason: error.message.split(":")[0] }));
+    console.error(JSON.stringify(toRetryableErrorPayload(error)));
     process.exitCode = 1;
   });

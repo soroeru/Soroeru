@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { canonicalizeSubAssigneeMap, OWNER_TYPES } from "./project-issue-assignment.mjs";
+import { OWNER_TYPES } from "./project-issue-assignment.mjs";
 import {
   DEFAULT_CONFIG_PATH,
   loadOrchestratorConfig,
@@ -18,6 +18,7 @@ import {
   parseProjectItems,
   selectProjectConfig,
   selectProjectItems,
+  selectWorkerRoutes,
   validateCapabilities,
 } from "./project-issue-plan.mjs";
 import { readState, withStateLock, writeState } from "./project-issue-state.mjs";
@@ -27,11 +28,11 @@ export {
   applyMilestone,
   buildRunPlan,
   buildUsageReport,
-  parseImplementationAssignment,
-  parseIssueAssignment,
   parseProjectItems,
+  parseProjectMetadata,
   selectProjectItems,
   selectProjectConfig,
+  selectWorkerRoutes,
   validateCapabilities,
   validateProjectItems,
 } from "./project-issue-plan.mjs";
@@ -41,16 +42,15 @@ export { buildProjectItemsQuery, fetchProjectItems, githubGraphql } from "./proj
  * Dry-run never mutates disk state and never applies milestones to the plan.
  * Pass `options.simulateMilestone: true` to apply a milestone in memory only
  * (still no disk write) for "what if this event landed" plans.
+ *
+ * Agent/model routing is run-scoped: the plan carries no per-Issue assignment.
+ * The orchestrating agent assigns each runnable Issue to one of the returned
+ * `workerRoutes`, and re-runs with `--unavailable-agent` / `--unavailable-model`
+ * when a route is lost mid-run (session limit, interruption).
  */
 export async function runOrchestration(input) {
   const items = parseProjectItems(input?.items);
   const options = input?.options ?? {};
-  const aiSubAssignees = canonicalizeSubAssigneeMap(options.aiSubAssignees);
-  for (const item of items) {
-    const expectedSub = aiSubAssignees[item.primary];
-    if (expectedSub === undefined) throw new Error(`missing-ai-sub-assignee-mapping:${item.number}`);
-    if (expectedSub !== item.sub) throw new Error(`ai-sub-assignee-mismatch:${item.number}`);
-  }
   const parent = options.parent;
   if (!parent?.agent || !parent?.model) throw new Error("parent-route-required");
   validateCapabilities([{ agent: parent.agent, model: parent.model, role: "parent" }], options.capabilities);
@@ -83,31 +83,20 @@ export async function runOrchestration(input) {
 
   const plan = buildRunPlan(items, {
     completed: nextState.completed,
-    unavailableModels: options.unavailableModels,
     existingWorktrees: options.existingWorktrees,
     maxParallel: options.maxParallel,
     releasePolicy: options.releasePolicy,
   });
-  const requiredRoutes = plan.runnable
-    .map((item) => ({
-      agent: item.primary,
-      model: item.model,
-      role: "worker",
-    }))
-    .filter(
-      (route, index, routes) =>
-        routes.findIndex(
-          (candidate) =>
-            candidate.agent === route.agent &&
-            candidate.model === route.model &&
-            candidate.role === route.role,
-        ) === index,
-    );
-  validateCapabilities(requiredRoutes, options.capabilities);
+  const workerRoutes = selectWorkerRoutes(options.capabilities ?? [], {
+    unavailableAgents: options.unavailableAgents,
+    unavailableModels: options.unavailableModels,
+  });
+  if (plan.runnable.length && !workerRoutes.length) throw new Error("no-worker-route-available");
   return {
     dryRun,
     ...(input.fetchedBytes === undefined ? {} : { fetchedBytes: input.fetchedBytes }),
     plan,
+    workerRoutes,
     state: nextState,
     usage: buildUsageReport(
       nextState.usage,
@@ -130,6 +119,7 @@ export function parseCliArgs(argv) {
     ["--iteration", "iteration"],
     ["--size", "size"],
     ["--unavailable-model", "unavailableModels"],
+    ["--unavailable-agent", "unavailableAgents"],
     ["--state-path", "statePath"],
     ["--existing-worktree", "existingWorktrees"],
     ["--milestone-json", "milestoneJson"],
@@ -160,7 +150,11 @@ export function parseCliArgs(argv) {
     if (!key) throw new Error(`unknown-flag:${flag}`);
     const value = argv[++index];
     if (value === undefined || value.startsWith("--")) throw new Error(`missing-flag-value:${flag}`);
-    if (["unavailableModels", "existingWorktrees", "issues", "priority", "iteration", "size"].includes(key)) {
+    if (
+      ["unavailableModels", "unavailableAgents", "existingWorktrees", "issues", "priority", "iteration", "size"].includes(
+        key,
+      )
+    ) {
       options[key] ??= [];
       if (["issues", "priority", "iteration", "size"].includes(key))
         options[key].push(
@@ -224,10 +218,7 @@ async function readInput(cli) {
         }),
     });
     const selection = selectProjectItems(fetched.items, selectors);
-    return {
-      ...applySelection(fetched, selection),
-      projectConfig: project,
-    };
+    return applySelection(fetched, selection);
   }
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -255,6 +246,7 @@ async function main() {
       ...(cli.maxParallel === undefined ? {} : { maxParallel: cli.maxParallel }),
       ...(cli.releasePolicy === undefined ? {} : { releasePolicy: cli.releasePolicy }),
       ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
+      ...(cli.unavailableAgents === undefined ? {} : { unavailableAgents: cli.unavailableAgents }),
     },
   });
   const effectiveCli = {
@@ -265,6 +257,7 @@ async function main() {
     ...(merged.maxParallel === undefined ? {} : { maxParallel: merged.maxParallel }),
     ...(merged.releasePolicy === undefined ? {} : { releasePolicy: merged.releasePolicy }),
     ...(merged.unavailableModels === undefined ? {} : { unavailableModels: merged.unavailableModels }),
+    ...(merged.unavailableAgents === undefined ? {} : { unavailableAgents: merged.unavailableAgents }),
   };
   const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
@@ -281,6 +274,9 @@ async function main() {
     ...(effectiveCli.unavailableModels === undefined
       ? {}
       : { unavailableModels: effectiveCli.unavailableModels }),
+    ...(effectiveCli.unavailableAgents === undefined
+      ? {}
+      : { unavailableAgents: effectiveCli.unavailableAgents }),
     ...(cli.statePath === undefined ? {} : { statePath: cli.statePath }),
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
     ...(capabilities === undefined ? {} : { capabilities }),
@@ -290,12 +286,6 @@ async function main() {
   };
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))
     throw new Error("parent-agent-and-model-required");
-  if (!input.options.aiSubAssignees) {
-    const project =
-      input.projectConfig ?? (effectiveCli.projectName ? await loadProjectConfig(effectiveCli) : null);
-    if (project?.aiSubAssignees) input.options.aiSubAssignees = project.aiSubAssignees;
-  }
-  delete input.projectConfig;
   process.stdout.write(`${JSON.stringify(await runOrchestration(input))}\n`);
 }
 
