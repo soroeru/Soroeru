@@ -5,11 +5,9 @@
       "title": "A",
       "url": "https://example.invalid/issues/101",
       "status": "Ready",
+      "priority": "P1",
+      "size": "M",
       "startDate": "2026-07-15",
-      "primary": "Codex",
-      "sub": "Claude",
-      "model": "gpt-5",
-      "order": 1,
       "dependencies": []
     },
     {
@@ -17,11 +15,9 @@
       "title": "B",
       "url": "https://example.invalid/issues/102",
       "status": "Ready",
+      "priority": "P1",
+      "size": "S",
       "startDate": "2026-07-16",
-      "primary": "Claude",
-      "sub": "Codex",
-      "model": "sonnet",
-      "order": 2,
       "dependencies": [101]
     },
     {
@@ -29,11 +25,9 @@
       "title": "C",
       "url": "https://example.invalid/issues/103",
       "status": "Ready",
+      "priority": "P2",
+      "size": "M",
       "startDate": "2026-07-17",
-      "primary": "Codex",
-      "sub": "Claude",
-      "model": "gpt-5",
-      "order": 3,
       "dependencies": [102]
     }
   ]

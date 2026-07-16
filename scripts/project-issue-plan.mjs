@@ -1,14 +1,9 @@
-import {
-  canonicalizeAssignee,
-  isCanonicalDate,
-  isOrchestrationAssignee,
-  OWNER_TYPES,
-} from "./project-issue-assignment.mjs";
+import { canonicalizeAgent, isCanonicalDate, OWNER_TYPES } from "./project-issue-assignment.mjs";
 
-const REQUIRED_ASSIGNMENTS = ["primary", "sub", "model"];
 const RUNNABLE_STATUSES = new Set(["Ready", "Todo", "In Progress"]);
 const RELEASE_POLICIES = new Set(["pr-created", "merged"]);
 const MILESTONE_TYPES = new Set(["pr-created", "merged"]);
+const PRIORITY_ORDER = ["P0", "P1", "P2", "P3"];
 const USAGE_FIELDS = [
   "inputTokens",
   "cachedInputTokens",
@@ -20,48 +15,45 @@ const USAGE_FIELDS = [
 ];
 
 /** Hard readiness kinds that block dependents via dependency-blocked. */
-const HARD_BLOCK_KINDS = new Set([
-  "model-unavailable",
-  "start-date-in-future",
-  "status-not-runnable",
-  "dependency-blocked",
-]);
+const HARD_BLOCK_KINDS = new Set(["status-not-runnable", "dependency-blocked"]);
 
 function requiredString(value, reason) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(reason);
   return value.trim();
 }
 
+function optionalString(value) {
+  if (value === undefined || value === null) return undefined;
+  const text = String(value).trim();
+  return text === "" ? undefined : text;
+}
+
+/**
+ * Items carry no agent/model assignment: routing is decided at run time from
+ * capability records, so only identity, status, ordering metadata, and the
+ * GitHub-derived dependency closure are validated here.
+ */
 export function parseProjectItems(rawItems) {
   if (!Array.isArray(rawItems)) throw new Error("items-required");
   const items = rawItems.map((raw) => {
     const number = Number(raw?.number);
     if (!Number.isSafeInteger(number) || number <= 0) throw new Error("invalid-issue-number");
-    for (const field of REQUIRED_ASSIGNMENTS) requiredString(raw[field], `missing-${field}:${number}`);
-    const primary = canonicalizeAssignee(raw.primary);
-    const sub = canonicalizeAssignee(raw.sub);
-    if (!isOrchestrationAssignee(primary)) throw new Error(`unknown-primary:${number}`);
-    if (!isOrchestrationAssignee(sub)) throw new Error(`unknown-sub:${number}`);
     if (!Array.isArray(raw.dependencies)) throw new Error(`missing-dependencies:${number}`);
     const dependencies = raw.dependencies.map((dependency) => Number(dependency));
     if (dependencies.some((dependency) => !Number.isSafeInteger(dependency) || dependency <= 0))
       throw new Error(`invalid-dependency:${number}`);
-    if (raw.order === undefined || raw.order === null || raw.order === "")
-      throw new Error(`missing-order:${number}`);
-    const order = Number(raw.order);
-    if (!Number.isSafeInteger(order) || order <= 0) throw new Error(`invalid-order:${number}`);
-    const startDate = requiredString(raw.startDate, `missing-start-date:${number}`);
-    if (!isCanonicalDate(startDate)) throw new Error(`invalid-start-date:${number}`);
+    const startDate = optionalString(raw.startDate);
+    if (startDate !== undefined && !isCanonicalDate(startDate))
+      throw new Error(`invalid-start-date:${number}`);
     return Object.freeze({
       number,
       title: requiredString(raw.title, `missing-title:${number}`),
       url: requiredString(raw.url, `missing-url:${number}`),
       status: requiredString(raw.status, `missing-status:${number}`),
-      startDate,
-      primary,
-      sub,
-      model: raw.model.trim(),
-      order,
+      priority: optionalString(raw.priority),
+      size: optionalString(raw.size),
+      iteration: optionalString(raw.iteration),
+      ...(startDate === undefined ? {} : { startDate }),
       dependencies: Object.freeze([...new Set(dependencies)]),
     });
   });
@@ -99,7 +91,6 @@ export function selectProjectItems(rawItems, selectors = {}) {
   const visit = (item) => {
     const number = Number(item.number);
     if (selected.has(number)) return;
-    if (item.assignmentError) throw new Error(`${item.assignmentError}:${number}`);
     if (!Array.isArray(item.dependencies)) throw new Error(`missing-dependencies:${number}`);
     selected.set(number, item);
     for (const dependency of item.dependencies) {
@@ -149,8 +140,14 @@ export function validateProjectItems(items) {
   return items;
 }
 
+function priorityRank(priority) {
+  const rank = PRIORITY_ORDER.indexOf(priority);
+  return rank === -1 ? PRIORITY_ORDER.length : rank;
+}
+
+/** Deterministic execution order: Priority (P0 first), then Issue number. */
 function issueOrder(left, right) {
-  return left.order - right.order || left.number - right.number;
+  return priorityRank(left.priority) - priorityRank(right.priority) || left.number - right.number;
 }
 
 /**
@@ -165,7 +162,7 @@ export function validateCapabilities(requiredRoutes, capabilities) {
     const match = capabilities.find(
       (candidate) =>
         candidate.agent === route.agent &&
-        // `requestedModel` preserves the Project/Issue display name while
+        // `requestedModel` preserves the requested display name while
         // `model` remains the runtime's canonical model identifier. Keep
         // accepting the legacy shape where `model` is the requested name,
         // but never let a canonical ID override a supplied display label.
@@ -192,6 +189,41 @@ export function validateCapabilities(requiredRoutes, capabilities) {
   return validated;
 }
 
+/**
+ * Run-time worker route pool: every role=worker capability record that is
+ * well-formed, selectable, verifiable, and not excluded by the run-scoped
+ * unavailable agent/model lists. The orchestrating agent assigns each
+ * runnable Issue to one of these routes; the pool never invents a route.
+ */
+export function selectWorkerRoutes(capabilities, { unavailableAgents = [], unavailableModels = [] } = {}) {
+  if (!Array.isArray(capabilities)) throw new Error("capability-records-required");
+  const excludedAgents = new Set(
+    unavailableAgents.map((agent) => canonicalizeAgent(agent)).filter(Boolean),
+  );
+  const excludedModels = new Set(unavailableModels);
+  const routes = [];
+  for (const record of capabilities) {
+    if (record?.role !== "worker") continue;
+    if (
+      typeof record.agent !== "string" ||
+      record.agent.trim() === "" ||
+      (record.requestedModel !== undefined &&
+        (typeof record.requestedModel !== "string" || record.requestedModel.trim() === "")) ||
+      typeof record.model !== "string" ||
+      record.model.trim() === "" ||
+      typeof record.selector !== "string" ||
+      !Number.isSafeInteger(record.timeoutMs) ||
+      record.timeoutMs <= 0
+    )
+      throw new Error(`invalid-capability-record:${record?.agent ?? "unknown"}`);
+    if (!record.selectable || !record.verifiable) continue;
+    if (excludedAgents.has(canonicalizeAgent(record.agent))) continue;
+    if (excludedModels.has(record.model) || excludedModels.has(record.requestedModel)) continue;
+    routes.push(record);
+  }
+  return routes;
+}
+
 function reasonFromReadiness(readiness) {
   if (readiness.detail !== undefined) return `${readiness.kind}:${readiness.detail}`;
   return readiness.kind;
@@ -206,7 +238,6 @@ export function buildRunPlan(items, run = {}) {
   if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) throw new Error("invalid-max-parallel");
   if (!RELEASE_POLICIES.has(run.releasePolicy)) throw new Error("invalid-release-policy");
   const completed = new Set((run.completed ?? []).map(Number));
-  const unavailableModels = new Set(run.unavailableModels ?? []);
   const existingWorktrees = new Set((run.existingWorktrees ?? []).map(Number));
   const byNumber = new Map(items.map((item) => [item.number, item]));
   const readinessByNumber = new Map();
@@ -225,8 +256,8 @@ export function buildRunPlan(items, run = {}) {
       return ready;
     }
 
-    // Dependency readiness wins over local model/start-date so a tree reports
-    // dependency-blocked when an ancestor is hard-blocked (legacy behavior).
+    // Dependency readiness wins over local readiness so a tree reports
+    // dependency-blocked when an ancestor is hard-blocked.
     const incomplete = item.dependencies.filter((dependency) => !completed.has(dependency));
     const hardDeps = [];
     for (const dependency of incomplete) {
@@ -240,11 +271,6 @@ export function buildRunPlan(items, run = {}) {
     }
     if (incomplete.length) {
       const ready = { kind: "dependencies-incomplete", detail: incomplete.join(",") };
-      readinessByNumber.set(number, ready);
-      return ready;
-    }
-    if (unavailableModels.has(item.model)) {
-      const ready = { kind: "model-unavailable", detail: item.model };
       readinessByNumber.set(number, ready);
       return ready;
     }
@@ -354,6 +380,5 @@ export {
   isCanonicalDate,
   normalize,
   OWNER_TYPES,
-  parseImplementationAssignment,
-  parseIssueAssignment,
+  parseProjectMetadata,
 } from "./project-issue-assignment.mjs";
