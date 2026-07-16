@@ -20,6 +20,11 @@ import {
   validateCapabilities,
   validateProjectItems,
 } from "../../scripts/project-issue-orchestrator.mjs";
+import {
+  DEFAULT_CONFIG_PATH,
+  loadOrchestratorConfig,
+  mergeOrchestratorConfig,
+} from "../../scripts/project-issue-config.mjs";
 
 const fixtures = new URL("../fixtures/project-issue-orchestrator/", import.meta.url);
 const load = async (name) => JSON.parse(await readFile(new URL(name, fixtures), "utf8"));
@@ -409,6 +414,59 @@ test("CLI rejects unknown flags", async () => {
   );
 });
 
+test("loads and normalizes the orchestrator YAML config", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-config-"));
+  const configPath = path.join(directory, "settings.yaml");
+  await writeFile(
+    configPath,
+    "project:\n  owner: ShinHaya\n  ownerType: user\n  number: 2\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n",
+  );
+  assert.equal(DEFAULT_CONFIG_PATH, "state/project-issue-orchestrator.yaml");
+  assert.deepEqual(await loadOrchestratorConfig(configPath, { cwd: directory }), {
+    projectOwner: "ShinHaya",
+    ownerType: "user",
+    projectNumber: 2,
+    maxParallel: 4,
+    releasePolicy: "merged",
+    unavailableModels: [],
+  });
+});
+
+test("rejects malformed and unsafe orchestrator YAML configs", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-config-invalid-"));
+  const writeConfig = async (name, value) => {
+    const file = path.join(directory, name);
+    await writeFile(file, value);
+    return file;
+  };
+  const validProject = "project:\n  owner: ShinHaya\n  ownerType: user\n  number: 2\n";
+  await assert.rejects(
+    loadOrchestratorConfig(
+      await writeConfig("unknown.yaml", `${validProject}run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\nextra: true\n`),
+      { cwd: directory },
+    ),
+    /config-unknown-key:root\.extra/,
+  );
+  await assert.rejects(
+    loadOrchestratorConfig(
+      await writeConfig("invalid.yaml", `${validProject}run:\n  maxParallel: 0\n  releasePolicy: merged\n  unavailableModels: none\n`),
+      { cwd: directory },
+    ),
+    /config-invalid-max-parallel/,
+  );
+});
+
+test("merges explicit CLI values over YAML values", () => {
+  assert.deepEqual(
+    mergeOrchestratorConfig({
+      defaults: { maxParallel: 1, unavailableModels: [] },
+      yaml: { maxParallel: 4, releasePolicy: "merged", unavailableModels: ["Fable"] },
+      cli: { maxParallel: 2 },
+    }),
+    { maxParallel: 2, releasePolicy: "merged", unavailableModels: ["Fable"] },
+  );
+});
+
 test("extracts only the bounded implementation assignment metadata", () => {
   const body = `private prose\n<!-- implementation-assignment:start -->\n- Primary: Codex\n- Sub: Claude\n- Model: Fable\n- Order: 7\n- Dependencies: #10, 11\n<!-- implementation-assignment:end -->\nmore private prose`;
   assert.deepEqual(parseImplementationAssignment(body), {
@@ -747,6 +805,8 @@ test("parses the documented operational Project CLI flags", () => {
       "Codex",
       "--parent-model",
       "gpt-5",
+      "--config",
+      "state/custom.yaml",
     ]),
     {
       projectOwner: "octo",
@@ -763,6 +823,7 @@ test("parses the documented operational Project CLI flags", () => {
       milestoneJson: '{"issue":101,"type":"pr-created"}',
       parentAgent: "Codex",
       parentModel: "gpt-5",
+      configPath: "state/custom.yaml",
     },
   );
   assert.equal(parseCliArgs(["--parent-provider", "Claude"]).parentAgent, "Claude");

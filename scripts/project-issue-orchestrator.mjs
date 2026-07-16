@@ -5,6 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { canonicalizeSubAssigneeMap, OWNER_TYPES } from "./project-issue-assignment.mjs";
+import {
+  DEFAULT_CONFIG_PATH,
+  loadOrchestratorConfig,
+  mergeOrchestratorConfig,
+} from "./project-issue-config.mjs";
 import { fetchProjectItems, githubGraphql } from "./project-issue-github.mjs";
 import {
   applyMilestone,
@@ -133,6 +138,7 @@ export function parseCliArgs(argv) {
     ["--capabilities-file", "capabilitiesFile"],
     ["--parent-agent", "parentAgent"],
     ["--parent-model", "parentModel"],
+    ["--config", "configPath"],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -207,7 +213,36 @@ async function readInput(cli) {
 
 async function main() {
   const cli = parseCliArgs(process.argv.slice(2));
-  const input = await readInput(cli);
+  const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  let yamlConfig = {};
+  try {
+    yamlConfig = await loadOrchestratorConfig(cli.configPath ?? DEFAULT_CONFIG_PATH, {
+      cwd: repositoryRoot,
+    });
+  } catch (error) {
+    if (error.message !== "config-file-not-found" || cli.configPath) throw error;
+  }
+  const merged = mergeOrchestratorConfig({
+    yaml: yamlConfig,
+    cli: {
+      ...(cli.projectOwner === undefined ? {} : { projectOwner: cli.projectOwner }),
+      ...(cli.ownerType === undefined ? {} : { ownerType: cli.ownerType }),
+      ...(cli.projectNumber === undefined ? {} : { projectNumber: cli.projectNumber }),
+      ...(cli.maxParallel === undefined ? {} : { maxParallel: cli.maxParallel }),
+      ...(cli.releasePolicy === undefined ? {} : { releasePolicy: cli.releasePolicy }),
+      ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
+    },
+  });
+  const effectiveCli = {
+    ...cli,
+    ...(merged.projectOwner === undefined ? {} : { projectOwner: merged.projectOwner }),
+    ...(merged.ownerType === undefined ? {} : { ownerType: merged.ownerType }),
+    ...(merged.projectNumber === undefined ? {} : { projectNumber: merged.projectNumber }),
+    ...(merged.maxParallel === undefined ? {} : { maxParallel: merged.maxParallel }),
+    ...(merged.releasePolicy === undefined ? {} : { releasePolicy: merged.releasePolicy }),
+    ...(merged.unavailableModels === undefined ? {} : { unavailableModels: merged.unavailableModels }),
+  };
+  const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
   if (cli.milestoneFile) input.milestone = JSON.parse(await fs.readFile(cli.milestoneFile, "utf8"));
   const capabilities = cli.capabilitiesFile
@@ -217,9 +252,9 @@ async function main() {
     ...(input.options ?? {}),
     ...(cli.dryRun === undefined ? {} : { dryRun: cli.dryRun }),
     ...(cli.simulateMilestone === undefined ? {} : { simulateMilestone: cli.simulateMilestone }),
-    ...(cli.maxParallel === undefined ? {} : { maxParallel: cli.maxParallel }),
-    ...(cli.releasePolicy === undefined ? {} : { releasePolicy: cli.releasePolicy }),
-    ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
+    ...(effectiveCli.maxParallel === undefined ? {} : { maxParallel: effectiveCli.maxParallel }),
+    ...(effectiveCli.releasePolicy === undefined ? {} : { releasePolicy: effectiveCli.releasePolicy }),
+    ...(effectiveCli.unavailableModels === undefined ? {} : { unavailableModels: effectiveCli.unavailableModels }),
     ...(cli.runDate === undefined ? {} : { runDate: cli.runDate }),
     ...(cli.statePath === undefined ? {} : { statePath: cli.statePath }),
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
@@ -231,7 +266,7 @@ async function main() {
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))
     throw new Error("parent-agent-and-model-required");
   if (!input.options.aiSubAssignees) {
-    const project = input.projectConfig ?? (cli.projectNumber ? await loadProjectConfig(cli) : null);
+    const project = input.projectConfig ?? (effectiveCli.projectNumber ? await loadProjectConfig(effectiveCli) : null);
     if (project?.aiSubAssignees) input.options.aiSubAssignees = project.aiSubAssignees;
   }
   delete input.projectConfig;

@@ -117,10 +117,15 @@ Multi-Issue Project orchestration is dry-run first. Feed only the minimal,
 sanitized Project item schema to the deterministic planner; individual workers
 fetch their own Issue body and comments immediately before implementation:
 
+Copy `config/project-issue-orchestrator.example.yaml` to
+`state/project-issue-orchestrator.yaml` and fill in the Project/run values. The
+CLI and `orchestrate-project-issues` skill discover that path automatically.
+Use `--config path/to/other.yaml` only when intentionally selecting another
+configuration file. Explicit CLI flags override YAML values.
+
 ```bash
 GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
-  --project-owner OWNER --owner-type user --project-number 2 --dry-run \
-  --max-parallel 2 --release-policy merged --run-date 2026-07-15 \
+  --dry-run --run-date 2026-07-15 \
   --unavailable-model MODEL --existing-worktree 396 \
   --parent-agent Codex --parent-model MODEL \
   --capabilities-file path/to/verified-capabilities.json
