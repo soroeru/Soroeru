@@ -11,13 +11,16 @@ Use the repository's Issue template and include a bounded machine-readable block
 <!-- project-metadata:start -->
 
 - AI Assignee: Codex
+- AI Sub Assignee: Claude
 - Priority: P1
 - Size: M
 - Feature group: Visibility collection
 <!-- project-metadata:end -->
 ```
 
-Allowed AI Assignees are `Claude`, `Codex`, `Gemini`, `Grok`, and `未記載`. Priority and Size must be values already present in the target Project; the automation never creates options. The legacy `implementation-assignment` comment is accepted for AI Assignee compatibility.
+Allowed AI Assignees are `Claude`, `Codex`, `Gemini`, `Grok`, and `未記載`. Every Issue must also name its mapped AI Sub Assignee. Read the mapping from the selected target Project's `aiSubAssignees` entry in `config/github-projects.json`; that configuration is the contract source. The `Codex` / `Claude` pair above is illustrative only and must not be copied when the configured mapping differs. The sub assignee is the preselected handoff recipient, not an implicit model fallback. Missing map entries, unknown names, mismatched primary/sub pairs, and map targets absent from the Project field options each fail with a distinct reason and stop Project mutation. Priority and Size must be values already present in the target Project; the automation never creates options. Body assignment fields are parsed by the shared `project-issue-assignment` module: `AI Assignee` / `Primary` / `担当` are the same field, and the one-line legacy `<!-- implementation-assignment: codex -->` form still maps to the primary only.
+
+If the primary agent reaches a session limit or is otherwise interrupted after work has started, the mapped sub assignee must resume the existing Issue worktree with `handoff-issue`. Never create a duplicate worktree or reset, clean, stash, copy, or discard inherited WIP.
 
 Classify only from the Issue title, body, labels, and dependencies. Do not send credentials, tokens, personal data, or raw secret values to an AI provider. If a classification is ambiguous or below the provider's confidence threshold, leave the Project unconfigured and report `project-unclassified`.
 

@@ -13,6 +13,7 @@ test("parses the bounded project metadata block", () => {
   const result = parseProjectMetadata(
     "before\n<!-- project-metadata:start -->\n" +
       "- AI Assignee: Codex\n" +
+      "- AI Sub Assignee: Claude\n" +
       "- Priority: P1\n" +
       "- Size: M\n" +
       "- Feature group: AI探索・収集基盤\n" +
@@ -21,15 +22,73 @@ test("parses the bounded project metadata block", () => {
 
   assert.deepEqual(result, {
     aiAssignee: "Codex",
+    aiSubAssignee: "Claude",
     priority: "P1",
     size: "M",
     featureGroup: "AI探索・収集基盤",
   });
 });
 
+test("maps the primary AI assignee to its configured sub assignee", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", aiSubAssignee: "Claude", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], aiSubAssignees: ["Claude"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude" },
+  );
+
+  assert.equal(result.aiSubAssignee, "Claude");
+});
+
+test("derives a missing AI sub assignee from the configured mapping for legacy issues", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], aiSubAssignees: ["Claude"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude" },
+  );
+  assert.equal(result.aiSubAssignee, "Claude");
+  assert.equal(result.reasons.includes("missing-ai-sub-assignee"), false);
+});
+
+test("rejects an unknown AI sub assignee even when it normalizes to the fallback", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "未記載", aiSubAssignee: "Unknown", priority: "P2", size: "M" },
+    {},
+    { 未記載: "未記載" },
+  );
+
+  assert.equal(result.reasons.includes("unknown-ai-sub-assignee"), true);
+});
+
+test("reports a missing primary-to-sub mapping distinctly from unknown names", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], priorities: ["P1"], sizes: ["M"] },
+    {},
+  );
+  assert.equal(result.reasons.includes("missing-ai-sub-assignee-mapping"), true);
+  assert.equal(result.aiSubAssignee, undefined);
+});
+
+test("reports a map target that is absent from Project field options", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", aiSubAssignee: "Claude", priority: "P1", size: "M" },
+    { aiAssignees: ["Codex"], aiSubAssignees: ["Codex"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude" },
+  );
+  assert.equal(result.reasons.includes("ai-sub-assignee-option-missing"), true);
+  assert.equal(result.aiSubAssignee, "Claude");
+});
+
 test("accepts legacy implementation-assignment metadata for the AI assignee", () => {
   const result = parseProjectMetadata("<!-- implementation-assignment: codex -->");
   assert.equal(result.aiAssignee, "Codex");
+});
+
+test("does not treat assignment:start as a legacy one-line assignee value", () => {
+  const result = parseProjectMetadata(
+    "<!-- implementation-assignment:start -->\n- Priority: P1\n<!-- implementation-assignment:end -->",
+  );
+  assert.equal(result.aiAssignee, undefined);
 });
 
 test("classifies Visibility issues from Japanese disclosure labels", () => {
@@ -48,12 +107,32 @@ test("does not guess when two candidate projects are equally plausible", () => {
 });
 
 test("uses documented safe defaults for missing and invalid values", () => {
-  assert.deepEqual(resolveDefaults({ aiAssignee: "Unknown", priority: "P9", size: "XXL" }), {
-    aiAssignee: "未記載",
-    priority: "P2",
-    size: "M",
-    reasons: ["unknown-ai-assignee", "invalid-priority", "invalid-size"],
-  });
+  assert.deepEqual(
+    resolveDefaults(
+      { aiAssignee: "Unknown", aiSubAssignee: "未記載", priority: "P9", size: "XXL" },
+      {},
+      { 未記載: "未記載" },
+    ),
+    {
+      aiAssignee: "未記載",
+      aiSubAssignee: "未記載",
+      priority: "P2",
+      size: "M",
+      reasons: ["unknown-ai-assignee", "invalid-priority", "invalid-size"],
+    },
+  );
+});
+
+test("maps sub assignee from the final primary after Project-option fallback", () => {
+  const result = resolveDefaults(
+    { aiAssignee: "Codex", priority: "P1", size: "M" },
+    { aiAssignees: ["Claude", "未記載"], priorities: ["P1"], sizes: ["M"] },
+    { Codex: "Claude", 未記載: "未記載" },
+  );
+  // Rejected primary falls back to 未記載; sub comes from that map entry, not Codex→Claude.
+  assert.equal(result.aiAssignee, "未記載");
+  assert.equal(result.aiSubAssignee, "未記載");
+  assert.equal(result.reasons.includes("unknown-ai-assignee"), true);
 });
 
 test("starts a one-day iteration on the day after the issue date", () => {
@@ -79,14 +158,14 @@ test("reuses an existing item and iteration without creating duplicates", async 
       id: "issue-1",
       node_id: "issue-node-1",
       title: "Visibility collection",
-      body: "",
+      body: "<!-- project-metadata:start -->\n- AI Sub Assignee: Claude\n<!-- project-metadata:end -->",
       labels: [],
       created_at: "2026-07-15T00:00:00Z",
     },
     project: {
       id: "project-1",
       title: "Visibility",
-          items: { nodes: [{ id: "item-existing", content: { id: "issue-node-1" } }] },
+      items: { nodes: [{ id: "item-existing", content: { id: "issue-node-1" } }] },
       fields: {
         nodes: [
           {
@@ -96,6 +175,11 @@ test("reuses an existing item and iteration without creating duplicates", async 
               { id: "codex", name: "Codex" },
               { id: "unknown", name: "未記載" },
             ],
+          },
+          {
+            id: "ai-sub",
+            name: "AI Sub Assignees",
+            options: [{ id: "claude", name: "Claude" }],
           },
           { id: "priority", name: "Priority", options: [{ id: "p2", name: "P2" }] },
           { id: "size", name: "Size", options: [{ id: "m", name: "M" }] },
@@ -110,7 +194,7 @@ test("reuses an existing item and iteration without creating duplicates", async 
       },
     },
     graphql,
-    config: { projectName: "Visibility" },
+    config: { projectName: "Visibility", aiSubAssignees: { 未記載: "Claude" } },
   });
 
   assert.equal(result.itemId, "item-existing");
@@ -119,7 +203,104 @@ test("reuses an existing item and iteration without creating duplicates", async 
     calls.some(({ query }) => query.includes("AddItem")),
     false,
   );
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 7);
+  assert.equal(
+    calls.some(
+      ({ variables }) => variables.fieldId === "ai-sub" && variables.value.singleSelectOptionId === "claude",
+    ),
+    true,
+  );
+});
+
+test("does not mutate a project when the AI sub assignee field is missing", async () => {
+  let mutationCount = 0;
+
+  await assert.rejects(
+    applyProjectDefaults({
+      issue: {
+        id: "issue-1",
+        node_id: "issue-node-1",
+        title: "Visibility collection",
+        body: "<!-- project-metadata:start -->\n- AI Assignee: Codex\n- AI Sub Assignee: Claude\n<!-- project-metadata:end -->",
+        labels: [],
+        created_at: "2026-07-15T00:00:00Z",
+      },
+      project: {
+        id: "project-1",
+        fields: {
+          nodes: [
+            { id: "ai", name: "AI Assignees", options: [{ id: "codex", name: "Codex" }] },
+            { id: "priority", name: "Priority", options: [{ id: "p2", name: "P2" }] },
+            { id: "size", name: "Size", options: [{ id: "m", name: "M" }] },
+            { id: "start", name: "Start date" },
+            { id: "target", name: "Target date" },
+            {
+              id: "iteration",
+              name: "Iteration",
+              configuration: { iterations: [{ id: "it-existing", title: "2026-07-16" }] },
+            },
+          ],
+        },
+        items: { nodes: [] },
+      },
+      graphql: async () => {
+        mutationCount += 1;
+        throw new Error("must-not-mutate");
+      },
+      config: { projectName: "Visibility", aiSubAssignees: { Codex: "Claude" } },
+    }),
+    /project-field-not-found:AI Sub Assignees/,
+  );
+
+  assert.equal(mutationCount, 0);
+});
+
+test("does not mutate a project when the AI sub assignee option is missing", async () => {
+  let mutationCount = 0;
+
+  await assert.rejects(
+    applyProjectDefaults({
+      issue: {
+        id: "issue-1",
+        node_id: "issue-node-1",
+        title: "Visibility collection",
+        body: "<!-- project-metadata:start -->\n- AI Assignee: Codex\n- AI Sub Assignee: Claude\n<!-- project-metadata:end -->",
+        labels: [],
+        created_at: "2026-07-15T00:00:00Z",
+      },
+      project: {
+        id: "project-1",
+        fields: {
+          nodes: [
+            { id: "ai", name: "AI Assignees", options: [{ id: "codex", name: "Codex" }] },
+            {
+              id: "ai-sub",
+              name: "AI Sub Assignees",
+              options: [{ id: "codex-sub", name: "Codex" }],
+            },
+            { id: "priority", name: "Priority", options: [{ id: "p2", name: "P2" }] },
+            { id: "size", name: "Size", options: [{ id: "m", name: "M" }] },
+            { id: "start", name: "Start date" },
+            { id: "target", name: "Target date" },
+            {
+              id: "iteration",
+              name: "Iteration",
+              configuration: { iterations: [{ id: "it-existing", title: "2026-07-16" }] },
+            },
+          ],
+        },
+        items: { nodes: [] },
+      },
+      graphql: async () => {
+        mutationCount += 1;
+        throw new Error("must-not-mutate");
+      },
+      config: { projectName: "Visibility", aiSubAssignees: { Codex: "Claude" } },
+    }),
+    /ai-sub-assignee-option-missing/,
+  );
+
+  assert.equal(mutationCount, 0);
 });
 
 test("does not mutate a project when a required option is unavailable", async () => {
@@ -128,7 +309,7 @@ test("does not mutate a project when a required option is unavailable", async ()
       issue: {
         id: "issue-1",
         title: "Visibility",
-        body: "- Priority: P1",
+        body: "<!-- project-metadata:start -->\n- AI Sub Assignee: 未記載\n<!-- project-metadata:end -->",
         labels: [],
         created_at: "2026-07-15T00:00:00Z",
       },
@@ -136,7 +317,7 @@ test("does not mutate a project when a required option is unavailable", async ()
       graphql: async () => {
         throw new Error("must-not-call-api");
       },
-      config: { projectName: "Visibility" },
+      config: { projectName: "Visibility", aiSubAssignees: { 未記載: "未記載" } },
     }),
     /project-option-not-found|project-field-not-found/,
   );
@@ -177,7 +358,7 @@ test("creates the iteration before adding the Issue item", async () => {
         id: "issue-1",
         node_id: "issue-node-1",
         title: "Visibility collection",
-        body: "<!-- project-metadata:start -->\n- Feature group: New group\n<!-- project-metadata:end -->",
+        body: "<!-- project-metadata:start -->\n- AI Sub Assignee: 未記載\n- Feature group: New group\n<!-- project-metadata:end -->",
         labels: [],
         created_at: "2026-07-15T00:00:00Z",
       },
@@ -186,6 +367,11 @@ test("creates the iteration before adding the Issue item", async () => {
         fields: {
           nodes: [
             { id: "ai", name: "AI Assignees", options: [{ id: "unknown", name: "未記載" }] },
+            {
+              id: "ai-sub",
+              name: "AI Sub Assignees",
+              options: [{ id: "unknown-sub", name: "未記載" }],
+            },
             { id: "priority", name: "Priority", options: [{ id: "p2", name: "P2" }] },
             { id: "size", name: "Size", options: [{ id: "m", name: "M" }] },
             { id: "start", name: "Start date" },
@@ -196,9 +382,12 @@ test("creates the iteration before adding the Issue item", async () => {
         items: { nodes: [] },
       },
       graphql,
-      config: { projectName: "Visibility" },
+      config: { projectName: "Visibility", aiSubAssignees: { 未記載: "未記載" } },
     }),
     /iteration-api-failed/,
   );
-  assert.equal(calls.some((query) => query.includes("AddItem")), false);
+  assert.equal(
+    calls.some((query) => query.includes("AddItem")),
+    false,
+  );
 });

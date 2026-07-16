@@ -1,6 +1,6 @@
 interface:
   display_name: "Create Soroeru Issue"
   short_description: "Create Issues with safe Project metadata"
-  default_prompt: "Use $create-issue to draft a Soroeru Issue with validated Project metadata."
+  default_prompt: "Use $create-issue to draft a Soroeru Issue with validated primary and sub AI Project metadata."
 policy:
   allow_implicit_invocation: true

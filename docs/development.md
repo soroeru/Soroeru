@@ -24,7 +24,7 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 - Browser automation (the target extension front door, current migration-stage Playwright
   path) and the user's configured AI provider are the
   scope decision of the product direction (see [`requirements.md`](requirements.md));
-  do not introduce *other* frameworks, dependencies, backend services, cloud sync,
+  do not introduce _other_ frameworks, dependencies, backend services, cloud sync,
   telemetry, or AI providers without an explicit scope decision.
 - Keep field detection, field classification, wall detection (CAPTCHA / MFA),
   the encrypted store, and UI concerns separated so they can be tested independently.
@@ -110,7 +110,35 @@ development dependency:
 ```bash
 uv sync
 uv run python "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" skills/create-issue
+uv run python "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" skills/orchestrate-project-issues
 ```
+
+Multi-Issue Project orchestration is dry-run first. Feed only the minimal,
+sanitized Project item schema to the deterministic planner; individual workers
+fetch their own Issue body and comments immediately before implementation:
+
+```bash
+GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
+  --project-owner OWNER --owner-type user --project-number 2 --dry-run \
+  --max-parallel 2 --release-policy merged --run-date 2026-07-15 \
+  --unavailable-model MODEL --existing-worktree 396 \
+  --parent-agent Codex --parent-model MODEL \
+  --capabilities-file path/to/verified-capabilities.json
+# Optional: apply a milestone in memory only (still no state write) during dry-run:
+#   --simulate-milestone --milestone-json '{"issue":396,"type":"merged"}'
+node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json \
+  --dry-run --max-parallel 2 --release-policy merged
+node --test tests/unit/project-issue-orchestrator.test.mjs \
+  tests/unit/project-issue-defaults.test.mjs
+```
+
+Capability files use `agent` (Codex/Claude/…) rather than API-provider names.
+Assignment body markers (`project-metadata` and `implementation-assignment`)
+share one field vocabulary via `scripts/project-issue-assignment.mjs`. The
+planner, GitHub fetch, and local state lock live in
+`project-issue-plan.mjs`, `project-issue-github.mjs`, and
+`project-issue-state.mjs`; the CLI entrypoint is
+`project-issue-orchestrator.mjs`.
 
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)
@@ -169,7 +197,7 @@ npm run package:dmg
 > **Node version matters for DMG packaging.** The maker chain
 > (`@electron-forge/maker-dmg` → `electron-installer-dmg` → `appdmg`) pulls in
 > `nan`-based native modules (`macos-alias`, `fs-xattr`) that do **not** compile
-> against Node 23+ V8 headers. Because `appdmg` is an *optional* dependency, a
+> against Node 23+ V8 headers. Because `appdmg` is an _optional_ dependency, a
 > too-new Node silently skips it at install time and the build later fails with
 > `Cannot find module 'appdmg'`. Use Node 22 LTS (matches `.nvmrc` and CI). If
 > you previously ran `npm ci` under Node 23+, switch to Node 22 and re-run
@@ -234,10 +262,12 @@ development/parity evidence only; unpacked loading and environment-variable tab 
 not the supported product installation or binding UX. To use it during local development:
 
 1. **Build the extension and the native-messaging host bundle:**
+
    ```bash
    npm run build:extension
    npm run build:host
    ```
+
    `build:extension` bundles the extension to `dist/extension/`. `build:host` bundles the
    native-messaging host relay into one self-contained file,
    `dist/native-host/host.cjs` — required because setup copies a **single file** into
@@ -251,10 +281,12 @@ not the supported product installation or binding UX. To use it during local dev
    - Note the extension ID shown on the extension card (you will need it below).
 
 3. **Start the app and save the bridge settings:**
+
    ```bash
    SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
    npm run dev
    ```
+
    Open **設定 → Chrome と接続**, enter the extension ID from step 2, select
    **Chrome 拡張ブリッジを有効にする**, and save. Restart Soroeru when the settings panel
    asks you to; listener enablement and the extension ID are applied at process startup. The
@@ -265,11 +297,13 @@ not the supported product installation or binding UX. To use it during local dev
    When present they take precedence over the saved value and the settings panel identifies the
    overridden field. Both are strict and fail closed: enablement accepts only `0` or `1`, and the
    extension ID must be 32 lowercase characters in Chrome's `a`–`p` alphabet. For example:
+
    ```bash
    SOROERU_ENABLE_CHROME_BRIDGE=1 SOROERU_CHROME_EXTENSION_ID=<extension-id-from-step-2> \
    SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
    npm run dev
    ```
+
    In a **packaged app** (`npm run package:dmg`), the host bundle ships inside the DMG at
    `Soroeru.app/Contents/Resources/native-host/host.cjs` and is used automatically;
    `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override. The bridge stays off by default until
@@ -372,7 +406,7 @@ and skill content has a single source of truth under `skills/`.
 - Use fake data in examples, tests, screenshots, and fixtures.
 - When writing or reviewing tests, use the repo-local **`writing-good-tests`** skill
   ([`skills/writing-good-tests/SKILL.md`](../skills/writing-good-tests/SKILL.md)) for
-  *how* to write them — behavior over implementation, "not too many, mostly integration",
+  _how_ to write them — behavior over implementation, "not too many, mostly integration",
   condition-based waiting, and strategic mocking. The test **strategy** (what to test, by
   layer) stays in [`testing.md`](testing.md) §1–§2.
 - Avoid committed generated output unless the project later documents a reason
@@ -631,9 +665,9 @@ unless the user explicitly changes it:
    the review-count cap and follow-up policy) rather than polling
    `state/ai-reviews/` turn-by-turn. This workflow allows up to two local AI
    review runs per handoff epoch: apply a fix pass for the first review's actionable
-  findings and commit it *without* `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
+   findings and commit it _without_ `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
    second review runs on that fix commit); if that second review still has
-    actionable findings, apply one more fix pass and commit it *with*
+   actionable findings, apply one more fix pass and commit it _with_
    `LOCAL_AI_REVIEW_RUNNING=1` so a third review never starts.
 5. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
