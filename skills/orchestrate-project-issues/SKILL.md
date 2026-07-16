@@ -20,6 +20,11 @@ the invocation; reject a missing policy or assignment and never infer it.
 
 Each minimal item must contain `number`, `title`, `url`, `status`, `startDate`, `primary`, `sub`, `model`, `order`, and `dependencies`. The primary and sub assignees must match the configured Project mapping.
 
+Pass at least one target selector: `--issues`, `--priority`, `--iteration`, or `--size`. Repeat a
+selector or use comma-separated values for OR within that selector. Different selectors are ANDed.
+Selected Issues automatically include their recursive dependencies, even when those dependencies
+do not match the selector fields. `Start date` is metadata only; do not pass `--run-date`.
+
 ## Start gate
 
 1. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model> --capabilities-file <verified-capabilities.json>`; the default YAML supplies the six stable Project/run values. Add explicit CLI flags for a one-off override, or `--config <path>` to select another YAML. Capability records use `{agent, model, role, selector, selectable, verifiable, timeoutMs}` where `agent` is the AI assignee runtime (Codex/Claude/…), not an API vendor name. Dry-run never writes state and never applies milestones unless `--simulate-milestone` is also set. Assignment metadata is parsed by the shared `project-issue-assignment` module (project-metadata and implementation-assignment blocks share one field vocabulary). GitHub cannot return a substring of an Issue body, so the mapper receives each body, counts its bytes, extracts only bounded assignment fields, and never returns or stores the body in parent state. Fetch body/comments again only inside its worker immediately before implementation.
@@ -33,7 +38,7 @@ Each minimal item must contain `number`, `title`, `url`, `status`, `startDate`, 
 - A run-scoped unavailable model blocks only that Issue and its dependents. Do not substitute a model or make the unavailability permanent. Recompute on the next run.
 - Release a dependency only on the configured milestone: `pr-created` or `merged`. Never invent a third release condition.
 - Use completion notifications and milestone events. Do not short-poll workers, logs, review files, or model availability. A single bounded fallback wakeup may detect lost notifications.
-- Supply run-scoped state explicitly with `--unavailable-model`, `--run-date`, `--state-path`, `--existing-worktree`, and `--milestone-json` or `--milestone-file`. Repeat the model/worktree flags as needed.
+- Supply run-scoped state explicitly with `--unavailable-model`, `--state-path`, `--existing-worktree`, and `--milestone-json` or `--milestone-file`. Repeat the model/worktree flags as needed.
 
 ## Worker contract
 

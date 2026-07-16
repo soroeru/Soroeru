@@ -17,6 +17,7 @@ import {
   buildUsageReport,
   parseProjectItems,
   selectProjectConfig,
+  selectProjectItems,
   validateCapabilities,
 } from "./project-issue-plan.mjs";
 import { readState, withStateLock, writeState } from "./project-issue-state.mjs";
@@ -29,6 +30,7 @@ export {
   parseImplementationAssignment,
   parseIssueAssignment,
   parseProjectItems,
+  selectProjectItems,
   selectProjectConfig,
   validateCapabilities,
   validateProjectItems,
@@ -89,7 +91,6 @@ export async function runOrchestration(input) {
     existingWorktrees: options.existingWorktrees,
     maxParallel: options.maxParallel,
     releasePolicy: options.releasePolicy,
-    runDate: options.runDate,
   });
   const requiredRoutes = plan.runnable
     .map((item) => ({
@@ -129,8 +130,11 @@ export function parseCliArgs(argv) {
     ["--release-policy", "releasePolicy"],
     ["--owner-type", "ownerType"],
     ["--project-name", "projectName"],
+    ["--issues", "issues"],
+    ["--priority", "priority"],
+    ["--iteration", "iteration"],
+    ["--size", "size"],
     ["--unavailable-model", "unavailableModels"],
-    ["--run-date", "runDate"],
     ["--state-path", "statePath"],
     ["--existing-worktree", "existingWorktrees"],
     ["--milestone-json", "milestoneJson"],
@@ -161,9 +165,11 @@ export function parseCliArgs(argv) {
     if (!key) throw new Error(`unknown-flag:${flag}`);
     const value = argv[++index];
     if (value === undefined || value.startsWith("--")) throw new Error(`missing-flag-value:${flag}`);
-    if (["unavailableModels", "existingWorktrees"].includes(key)) {
+    if (["unavailableModels", "existingWorktrees", "issues", "priority", "iteration", "size"].includes(key)) {
       options[key] ??= [];
-      options[key].push(key === "existingWorktrees" ? Number(value) : value);
+      if (["issues", "priority", "iteration", "size"].includes(key))
+        options[key].push(...value.split(",").map((item) => item.trim()).filter(Boolean));
+      else options[key].push(key === "existingWorktrees" ? Number(value) : value);
     } else options[key] = ["projectNumber", "maxParallel"].includes(key) ? Number(value) : value;
   }
   if (options.ownerType !== undefined && !OWNER_TYPES.has(options.ownerType))
@@ -185,14 +191,20 @@ async function loadProjectConfig(cli) {
 }
 
 async function readInput(cli) {
+  const selectors = {
+    issues: cli.issues,
+    priority: cli.priority,
+    iteration: cli.iteration,
+    size: cli.size,
+  };
   if (cli.inputPath) {
-    return JSON.parse(await fs.readFile(cli.inputPath, "utf8"));
+    const input = JSON.parse(await fs.readFile(cli.inputPath, "utf8"));
+    return { ...input, items: selectProjectItems(input.items, selectors) };
   }
   if (cli.projectOwner || cli.projectNumber) {
     if (!cli.projectOwner || !cli.projectNumber) throw new Error("project-owner-and-number-required");
     const project = await loadProjectConfig(cli);
-    return {
-      ...(await fetchProjectItems({
+    const fetched = await fetchProjectItems({
         owner: cli.projectOwner,
         ownerType: cli.ownerType ?? "user",
         projectNumber: cli.projectNumber,
@@ -201,7 +213,10 @@ async function readInput(cli) {
           githubGraphql(query, variables, {
             token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
           }),
-      })),
+      });
+    return {
+      ...fetched,
+      items: selectProjectItems(fetched.items, selectors),
       projectConfig: project,
     };
   }
@@ -255,7 +270,6 @@ async function main() {
     ...(effectiveCli.maxParallel === undefined ? {} : { maxParallel: effectiveCli.maxParallel }),
     ...(effectiveCli.releasePolicy === undefined ? {} : { releasePolicy: effectiveCli.releasePolicy }),
     ...(effectiveCli.unavailableModels === undefined ? {} : { unavailableModels: effectiveCli.unavailableModels }),
-    ...(cli.runDate === undefined ? {} : { runDate: cli.runDate }),
     ...(cli.statePath === undefined ? {} : { statePath: cli.statePath }),
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
     ...(capabilities === undefined ? {} : { capabilities }),

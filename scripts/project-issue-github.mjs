@@ -7,13 +7,16 @@ import {
 export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
   aiAssignee: "AI Assignees",
   aiSubAssignee: "AI Sub Assignees",
+  priority: "Priority",
+  iteration: "Iteration",
+  size: "Size",
   status: "Status",
   startDate: "Start date",
 });
 
 export function buildProjectItemsQuery(ownerType) {
   if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
-  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body } } } } } } }`;
+  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body } } } } } } }`;
 }
 
 function requiredString(value, reason) {
@@ -25,6 +28,9 @@ function resolveFieldNames(fields = {}) {
   return {
     aiAssignee: fields.aiAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiAssignee,
     aiSubAssignee: fields.aiSubAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiSubAssignee,
+    priority: fields.priority ?? DEFAULT_PROJECT_FIELD_NAMES.priority,
+    iteration: fields.iteration ?? DEFAULT_PROJECT_FIELD_NAMES.iteration,
+    size: fields.size ?? DEFAULT_PROJECT_FIELD_NAMES.size,
     status: fields.status ?? DEFAULT_PROJECT_FIELD_NAMES.status,
     startDate: fields.startDate ?? DEFAULT_PROJECT_FIELD_NAMES.startDate,
   };
@@ -64,9 +70,16 @@ export async function fetchProjectItems({
     fetchedBytes += Buffer.byteLength(body, "utf8");
     if (node.content?.__typename !== "Issue") return [];
     const fieldValues = new Map(
-      (node.fieldValues?.nodes ?? []).map((value) => [value.field?.name, value.name ?? value.date]),
+      (node.fieldValues?.nodes ?? []).map((value) => [value.field?.name, value.name ?? value.date ?? value.title]),
     );
-    const assignment = parseIssueAssignment(body);
+    let assignment;
+    let assignmentError;
+    try {
+      assignment = parseIssueAssignment(body);
+    } catch (error) {
+      assignment = {};
+      assignmentError = error.message;
+    }
     const number = node.content?.number;
     // Project single-select wins over body when present; canonicalize casing.
     const primary = canonicalizeAssignee(
@@ -79,20 +92,22 @@ export async function fetchProjectItems({
     const order = assignment.order;
     const dependencies = assignment.dependencies;
     // Surface incomplete GitHub-shaped rows with the Issue number before planning.
-    if (model === undefined || order === undefined || dependencies === undefined)
-      throw new Error(`incomplete-assignment-metadata:${number}`);
     return [
       {
         number,
         title: node.content?.title,
         url: node.content?.url,
         status: fieldValues.get(fieldNames.status),
+        priority: fieldValues.get(fieldNames.priority),
+        iteration: fieldValues.get(fieldNames.iteration),
+        size: fieldValues.get(fieldNames.size),
         startDate: fieldValues.get(fieldNames.startDate),
         primary,
         sub,
         model,
         order,
         dependencies,
+        ...(assignmentError ? { assignmentError } : {}),
       },
     ];
   });

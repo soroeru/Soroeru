@@ -125,7 +125,7 @@ configuration file. Explicit CLI flags override YAML values.
 
 ```bash
 GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
-  --dry-run --run-date 2026-07-15 \
+  --dry-run --issues 380,382,384,386,387 \
   --unavailable-model MODEL --existing-worktree 396 \
   --parent-agent Codex --parent-model MODEL \
   --capabilities-file path/to/verified-capabilities.json

@@ -16,6 +16,7 @@ import {
   parseImplementationAssignment,
   parseProjectItems,
   runOrchestration,
+  selectProjectItems,
   selectProjectConfig,
   validateCapabilities,
   validateProjectItems,
@@ -332,18 +333,18 @@ test("rejects milestones for unknown issues and types outside the allowlist", ()
   );
 });
 
-test("blocks issues whose start date is after the run date", async () => {
+test("does not use Start date for Issue selection", async () => {
   const items = parseProjectItems((await load("linear.json")).items);
   const plan = buildRunPlan(items, { ...runOptions, runDate: "2026-07-14" });
-  assert.deepEqual(plan.blocked[0], { number: 101, reason: "start-date-in-future:2026-07-15" });
+  assert.deepEqual(plan.runnable.map(({ number }) => number), [101]);
 });
 
-test("rejects impossible item and run dates instead of accepting date-shaped strings", async () => {
+test("rejects impossible item dates while ignoring run-date input", async () => {
   const raw = (await load("linear.json")).items;
   raw[0].startDate = "2026-02-30";
   assert.throws(() => parseProjectItems(raw), /invalid-start-date:101/);
   const items = parseProjectItems((await load("linear.json")).items);
-  assert.throws(() => buildRunPlan(items, { ...runOptions, runDate: "2026-02-30" }), /invalid-run-date/);
+  assert.equal(buildRunPlan(items, { ...runOptions, runDate: "2026-02-30" }).runnable[0].number, 101);
 });
 
 test("treats Fable as an ordinary model name", async () => {
@@ -465,6 +466,39 @@ test("merges explicit CLI values over YAML values", () => {
     }),
     { maxParallel: 2, releasePolicy: "merged", unavailableModels: ["Fable"] },
   );
+});
+
+test("selects Issues with AND across dimensions and OR within a dimension", () => {
+  const items = [
+    { number: 1, priority: "P1", iteration: "Sprint 1", size: "M", dependencies: [] },
+    { number: 2, priority: "P1", iteration: "Sprint 2", size: "S", dependencies: [] },
+    { number: 3, priority: "P2", iteration: "Sprint 1", size: "M", dependencies: [] },
+  ];
+  assert.deepEqual(
+    selectProjectItems(items, { priority: ["P1"], size: ["M"] }).map(({ number }) => number),
+    [1],
+  );
+  assert.deepEqual(
+    selectProjectItems(items, { iteration: ["Sprint 1", "Sprint 2"] }).map(({ number }) => number),
+    [1, 2, 3],
+  );
+});
+
+test("adds recursive dependencies to selected Issues", () => {
+  const items = [
+    { number: 3, priority: "P1", iteration: "Sprint 1", size: "M", dependencies: [2] },
+    { number: 2, priority: "P2", iteration: "Sprint 1", size: "S", dependencies: [1] },
+    { number: 1, priority: "P2", iteration: "Sprint 1", size: "XS", dependencies: [] },
+  ];
+  assert.deepEqual(
+    selectProjectItems(items, { issues: [3] }).map(({ number }) => number),
+    [1, 2, 3],
+  );
+});
+
+test("requires an Issue selector and rejects run-date filtering", () => {
+  assert.throws(() => selectProjectItems([{ number: 1, dependencies: [] }], {}), /issue-filter-required/);
+  assert.throws(() => parseCliArgs(["--run-date", "2026-07-16"]), /unknown-flag:--run-date/);
 });
 
 test("extracts only the bounded implementation assignment metadata", () => {
@@ -651,7 +685,7 @@ test("prefers Project single-select assignees over body assignment fields", asyn
   assert.equal(result.items[0].order, 3);
 });
 
-test("throws incomplete-assignment-metadata for missing model order or dependencies", async () => {
+test("defers incomplete-assignment-metadata until an Issue is selected", async () => {
   const graphql = async () => ({
     user: {
       projectV2: {
@@ -679,10 +713,8 @@ test("throws incomplete-assignment-metadata for missing model order or dependenc
       },
     },
   });
-  await assert.rejects(
-    fetchProjectItems({ owner: "octo", projectNumber: 9, graphql }),
-    /incomplete-assignment-metadata:702/,
-  );
+  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  assert.throws(() => selectProjectItems(result.items, { issues: [702] }), /missing-dependencies:702/);
 });
 
 test("paginates organization ProjectV2 items and discards Issue bodies from returned metadata", async () => {
@@ -791,8 +823,14 @@ test("parses the documented operational Project CLI flags", () => {
       "Fable",
       "--unavailable-model",
       "sonnet",
-      "--run-date",
-      "2026-07-15",
+      "--issues",
+      "101,102",
+      "--priority",
+      "P1",
+      "--iteration",
+      "Sprint 1",
+      "--size",
+      "M",
       "--state-path",
       "/tmp/state.json",
       "--existing-worktree",
@@ -817,13 +855,16 @@ test("parses the documented operational Project CLI flags", () => {
       maxParallel: 2,
       releasePolicy: "pr-created",
       unavailableModels: ["Fable", "sonnet"],
-      runDate: "2026-07-15",
       statePath: "/tmp/state.json",
       existingWorktrees: [101, 102],
       milestoneJson: '{"issue":101,"type":"pr-created"}',
       parentAgent: "Codex",
       parentModel: "gpt-5",
       configPath: "state/custom.yaml",
+      issues: ["101", "102"],
+      priority: ["P1"],
+      iteration: ["Sprint 1"],
+      size: ["M"],
     },
   );
   assert.equal(parseCliArgs(["--parent-provider", "Claude"]).parentAgent, "Claude");

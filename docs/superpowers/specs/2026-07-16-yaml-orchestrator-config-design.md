@@ -80,6 +80,22 @@ requirement for capabilities, dry-run, state, worktree detection, milestones, an
 The Product Owner will fill `state/project-issue-orchestrator.yaml` before the first verification
 run. Creating the file does not automatically start orchestration.
 
+## Issue Selection
+
+The CLI accepts `--issues <number[,number...]>` (repeatable), `--priority <value>` (repeatable),
+`--iteration <value>` (repeatable), and `--size <value>` (repeatable). At least one of these four
+selectors is required; otherwise it fails with `issue-filter-required`. Values within one selector
+kind are ORed, while different selector kinds are ANDed. Issue-number selection is an exact
+number match.
+
+After the initial selection, every dependency referenced by a selected Issue is added recursively
+to the execution set, even when that dependency does not match the selector fields. The selected
+set and its dependency closure are then parsed and validated strictly. Unrelated Project items
+are not allowed to block a filtered run because of malformed assignment metadata.
+
+Project `Start date` remains available as metadata but is not a selector. The `--run-date` CLI
+argument and future Start-date filtering are removed from the orchestration path.
+
 ## Implementation Boundaries
 
 Use a maintained YAML parser rather than a partial custom parser. Keep parsing and schema

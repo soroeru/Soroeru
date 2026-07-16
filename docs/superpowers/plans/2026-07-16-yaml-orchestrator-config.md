@@ -17,6 +17,10 @@
 - `unavailableModels: none` normalizes to `[]`.
 - Unknown keys and invalid values fail closed before GitHub network access.
 - Explicit CLI flags override YAML values; all-CLI invocation remains valid when the default file is absent.
+- At least one of `--issues`, `--priority`, `--iteration`, or `--size` is required for a run.
+- Values within one selector kind are ORed; different selector kinds are ANDed.
+- Dependencies are recursively added to the selected Issue closure, regardless of their selector fields.
+- `Start date` is metadata only; `--run-date` is removed from orchestration filtering.
 - Do not put tokens, capability records, state paths, milestones, target Issue lists, or parent routes in YAML.
 
 ---
@@ -213,3 +217,25 @@ git commit -m "test: verify orchestrator YAML configuration"
 Tell the Product Owner to copy `config/project-issue-orchestrator.example.yaml` to
 `state/project-issue-orchestrator.yaml` in the Issue worktree and fill the values. Do not run
 orchestration until they have supplied the values and requested a dry-run.
+
+### Task 5: Add filtered Issue selection and dependency closure
+
+**Files:**
+- Modify: `scripts/project-issue-github.mjs`
+- Modify: `scripts/project-issue-plan.mjs`
+- Modify: `scripts/project-issue-orchestrator.mjs`
+- Modify: `tests/unit/project-issue-orchestrator.test.mjs`
+- Modify: `skills/orchestrate-project-issues/SKILL.md`
+- Modify: `docs/development.md`
+
+**Interfaces:**
+- `parseCliArgs` accepts repeatable comma-separated `--issues`, `--priority`, `--iteration`, and `--size` values.
+- `selectProjectItems(items, selectors)` returns the selector matches plus their recursive dependency closure.
+- Selection fails with `issue-filter-required` when all four selector lists are empty.
+
+- [ ] **Step 1: Write failing selection and dependency tests**
+- [ ] **Step 2: Run focused tests and verify RED**
+- [ ] **Step 3: Implement raw Project metadata mapping and post-fetch selection**
+- [ ] **Step 4: Remove `--run-date` handling and update docs/skill examples**
+- [ ] **Step 5: Run focused tests and verify GREEN**
+- [ ] **Step 6: Commit filtered selection**
