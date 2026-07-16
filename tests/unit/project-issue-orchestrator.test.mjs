@@ -16,10 +16,16 @@ import {
   parseImplementationAssignment,
   parseProjectItems,
   runOrchestration,
+  selectProjectItems,
   selectProjectConfig,
   validateCapabilities,
   validateProjectItems,
 } from "../../scripts/project-issue-orchestrator.mjs";
+import {
+  DEFAULT_CONFIG_PATH,
+  loadOrchestratorConfig,
+  mergeOrchestratorConfig,
+} from "../../scripts/project-issue-config.mjs";
 
 const fixtures = new URL("../fixtures/project-issue-orchestrator/", import.meta.url);
 const load = async (name) => JSON.parse(await readFile(new URL(name, fixtures), "utf8"));
@@ -327,18 +333,21 @@ test("rejects milestones for unknown issues and types outside the allowlist", ()
   );
 });
 
-test("blocks issues whose start date is after the run date", async () => {
+test("does not use Start date for Issue selection", async () => {
   const items = parseProjectItems((await load("linear.json")).items);
   const plan = buildRunPlan(items, { ...runOptions, runDate: "2026-07-14" });
-  assert.deepEqual(plan.blocked[0], { number: 101, reason: "start-date-in-future:2026-07-15" });
+  assert.deepEqual(
+    plan.runnable.map(({ number }) => number),
+    [101],
+  );
 });
 
-test("rejects impossible item and run dates instead of accepting date-shaped strings", async () => {
+test("rejects impossible item dates while ignoring run-date input", async () => {
   const raw = (await load("linear.json")).items;
   raw[0].startDate = "2026-02-30";
   assert.throws(() => parseProjectItems(raw), /invalid-start-date:101/);
   const items = parseProjectItems((await load("linear.json")).items);
-  assert.throws(() => buildRunPlan(items, { ...runOptions, runDate: "2026-02-30" }), /invalid-run-date/);
+  assert.equal(buildRunPlan(items, { ...runOptions, runDate: "2026-02-30" }).runnable[0].number, 101);
 });
 
 test("treats Fable as an ordinary model name", async () => {
@@ -409,6 +418,158 @@ test("CLI rejects unknown flags", async () => {
   );
 });
 
+test("loads and normalizes the orchestrator YAML config", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-config-"));
+  const configPath = path.join(directory, "settings.yaml");
+  await writeFile(
+    configPath,
+    "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n",
+  );
+  assert.equal(DEFAULT_CONFIG_PATH, "state/project-issue-orchestrator.yaml");
+  assert.deepEqual(await loadOrchestratorConfig(configPath, { cwd: directory }), {
+    projectOwner: "ShinHaya",
+    ownerType: "user",
+    projectName: "Visibility",
+    maxParallel: 4,
+    releasePolicy: "merged",
+    unavailableModels: [],
+  });
+});
+
+test("rejects malformed and unsafe orchestrator YAML configs", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-config-invalid-"));
+  const writeConfig = async (name, value) => {
+    const file = path.join(directory, name);
+    await writeFile(file, value);
+    return file;
+  };
+  const validProject = "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\n";
+  await assert.rejects(
+    loadOrchestratorConfig(
+      await writeConfig(
+        "unknown.yaml",
+        `${validProject}run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\nextra: true\n`,
+      ),
+      { cwd: directory },
+    ),
+    /config-unknown-key:root\.extra/,
+  );
+  await assert.rejects(
+    loadOrchestratorConfig(
+      await writeConfig(
+        "invalid.yaml",
+        `${validProject}run:\n  maxParallel: 0\n  releasePolicy: merged\n  unavailableModels: none\n`,
+      ),
+      { cwd: directory },
+    ),
+    /config-invalid-max-parallel/,
+  );
+});
+
+test("merges explicit CLI values over YAML values", () => {
+  assert.deepEqual(
+    mergeOrchestratorConfig({
+      defaults: { maxParallel: 1, unavailableModels: [] },
+      yaml: { maxParallel: 4, releasePolicy: "merged", unavailableModels: ["Fable"] },
+      cli: { maxParallel: 2 },
+    }),
+    { maxParallel: 2, releasePolicy: "merged", unavailableModels: ["Fable"] },
+  );
+});
+
+test("selects Issues with AND across dimensions and OR within a dimension", () => {
+  const items = [
+    { number: 1, priority: "P1", iteration: "Sprint 1", size: "M", dependencies: [] },
+    { number: 2, priority: "P1", iteration: "Sprint 2", size: "S", dependencies: [] },
+    { number: 3, priority: "P2", iteration: "Sprint 1", size: "M", dependencies: [] },
+  ];
+  assert.deepEqual(
+    selectProjectItems(items, { priority: ["P1"], size: ["M"] }).items.map(({ number }) => number),
+    [1],
+  );
+  assert.deepEqual(
+    selectProjectItems(items, { iteration: ["Sprint 1", "Sprint 2"] }).items.map(({ number }) => number),
+    [1, 2, 3],
+  );
+});
+
+test("adds recursive dependencies to selected Issues", () => {
+  const items = [
+    { number: 3, priority: "P1", iteration: "Sprint 1", size: "M", dependencies: [2] },
+    { number: 2, priority: "P2", iteration: "Sprint 1", size: "S", dependencies: [1] },
+    { number: 1, priority: "P2", iteration: "Sprint 1", size: "XS", dependencies: [] },
+  ];
+  assert.deepEqual(
+    selectProjectItems(items, { issues: [3] }).items.map(({ number }) => number),
+    [1, 2, 3],
+  );
+});
+
+test("treats closed Blocked by Issues as completed and stops on open dependencies", () => {
+  const items = [
+    {
+      number: 3,
+      priority: "P1",
+      iteration: "Sprint 1",
+      size: "M",
+      dependencies: [2],
+      blockedBy: [{ number: 2, state: "CLOSED" }],
+    },
+    { number: 2, priority: "P2", iteration: "Sprint 1", size: "S", dependencies: [] },
+  ];
+  const selected = selectProjectItems(items, { issues: [3] });
+  assert.deepEqual(
+    selected.items.map(({ number }) => number),
+    [3],
+  );
+  assert.deepEqual(selected.completed, [2]);
+  assert.throws(
+    () =>
+      selectProjectItems([{ ...items[0], blockedBy: [{ number: 2, state: "OPEN" }] }, items[1]], {
+        issues: [3],
+      }),
+    /dependency-open:3:2/,
+  );
+});
+
+test("requires an Issue selector and rejects run-date filtering", () => {
+  assert.throws(() => selectProjectItems([{ number: 1, dependencies: [] }], {}), /issue-filter-required/);
+  assert.throws(() => parseCliArgs(["--run-date", "2026-07-16"]), /unknown-flag:--run-date/);
+});
+
+test("reads dependencies from Blocked by instead of malformed body text", async () => {
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        items: {
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [
+            {
+              fieldValues: {
+                nodes: [
+                  { field: { name: "Status" }, name: "Ready" },
+                  { field: { name: "Start date" }, date: "2026-07-15" },
+                ],
+              },
+              content: {
+                __typename: "Issue",
+                number: 386,
+                title: "Issue",
+                url: "issue",
+                body: "<!-- implementation-assignment:start -->\n- 担当: Codex\n- 副担当: Claude\n- モデル: gpt-5\n- 実装順: 1\n- 前提: #391 の主経路方針\n<!-- implementation-assignment:end -->",
+                blockedBy: { nodes: [{ number: 391, state: "CLOSED" }] },
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
+  assert.deepEqual(result.items[0].dependencies, [391]);
+  assert.deepEqual(result.items[0].blockedBy, [{ number: 391, state: "CLOSED" }]);
+});
+
 test("extracts only the bounded implementation assignment metadata", () => {
   const body = `private prose\n<!-- implementation-assignment:start -->\n- Primary: Codex\n- Sub: Claude\n- Model: Fable\n- Order: 7\n- Dependencies: #10, 11\n<!-- implementation-assignment:end -->\nmore private prose`;
   assert.deepEqual(parseImplementationAssignment(body), {
@@ -431,15 +592,18 @@ test("does not treat multi-line assignment markers as a legacy one-line assignee
 });
 
 test("canonicalizes assignee casing from body and plan items", () => {
-  assert.equal(parseImplementationAssignment(
-    `<!-- implementation-assignment:start -->
+  assert.equal(
+    parseImplementationAssignment(
+      `<!-- implementation-assignment:start -->
 - Primary: codex
 - Sub: claude
 - Model: Fable
 - Order: 1
 - Dependencies: none
 <!-- implementation-assignment:end -->`,
-  ).primary, "Codex");
+    ).primary,
+    "Codex",
+  );
   const items = parseProjectItems([
     {
       number: 501,
@@ -587,13 +751,13 @@ test("prefers Project single-select assignees over body assignment fields", asyn
       },
     },
   });
-  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
   assert.equal(result.items[0].primary, "Codex");
   assert.equal(result.items[0].sub, "Claude");
   assert.equal(result.items[0].order, 3);
 });
 
-test("throws incomplete-assignment-metadata for missing model order or dependencies", async () => {
+test("defers incomplete-assignment-metadata until an Issue is selected", async () => {
   const graphql = async () => ({
     user: {
       projectV2: {
@@ -621,10 +785,9 @@ test("throws incomplete-assignment-metadata for missing model order or dependenc
       },
     },
   });
-  await assert.rejects(
-    fetchProjectItems({ owner: "octo", projectNumber: 9, graphql }),
-    /incomplete-assignment-metadata:702/,
-  );
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
+  assert.equal(selectProjectItems(result.items, { issues: [702] }).items[0].number, 702);
+  assert.throws(() => parseProjectItems(result.items), /missing-sub:702/);
 });
 
 test("paginates organization ProjectV2 items and discards Issue bodies from returned metadata", async () => {
@@ -662,11 +825,11 @@ test("paginates organization ProjectV2 items and discards Issue bodies from retu
   const result = await fetchProjectItems({
     owner: "acme",
     ownerType: "organization",
-    projectNumber: 9,
+    projectName: "Visibility",
     graphql,
   });
-  assert.deepEqual(calls[0].variables, { owner: "acme", number: 9, cursor: null });
-  assert.deepEqual(calls[1].variables, { owner: "acme", number: 9, cursor: "next" });
+  assert.deepEqual(calls[0].variables, { owner: "acme", name: "Visibility", cursor: null });
+  assert.deepEqual(calls[1].variables, { owner: "acme", name: "Visibility", cursor: "next" });
   assert.equal(calls[0].query.includes("body"), true);
   assert.deepEqual(
     result.items.map(({ number }) => number),
@@ -707,7 +870,7 @@ test("skips draft, pull request, and non-Issue Project items", async () => {
       },
     },
   });
-  const result = await fetchProjectItems({ owner: "octo", projectNumber: 9, graphql });
+  const result = await fetchProjectItems({ owner: "octo", projectName: "Visibility", graphql });
   assert.deepEqual(
     result.items.map(({ number }) => number),
     [401],
@@ -721,8 +884,8 @@ test("parses the documented operational Project CLI flags", () => {
       "octo",
       "--owner-type",
       "user",
-      "--project-number",
-      "9",
+      "--project-name",
+      "Visibility",
       "--dry-run",
       "--simulate-milestone",
       "--max-parallel",
@@ -733,8 +896,14 @@ test("parses the documented operational Project CLI flags", () => {
       "Fable",
       "--unavailable-model",
       "sonnet",
-      "--run-date",
-      "2026-07-15",
+      "--issues",
+      "101,102",
+      "--priority",
+      "P1",
+      "--iteration",
+      "Sprint 1",
+      "--size",
+      "M",
       "--state-path",
       "/tmp/state.json",
       "--existing-worktree",
@@ -747,22 +916,28 @@ test("parses the documented operational Project CLI flags", () => {
       "Codex",
       "--parent-model",
       "gpt-5",
+      "--config",
+      "state/custom.yaml",
     ]),
     {
       projectOwner: "octo",
       ownerType: "user",
-      projectNumber: 9,
+      projectName: "Visibility",
       dryRun: true,
       simulateMilestone: true,
       maxParallel: 2,
       releasePolicy: "pr-created",
       unavailableModels: ["Fable", "sonnet"],
-      runDate: "2026-07-15",
       statePath: "/tmp/state.json",
       existingWorktrees: [101, 102],
       milestoneJson: '{"issue":101,"type":"pr-created"}',
       parentAgent: "Codex",
       parentModel: "gpt-5",
+      configPath: "state/custom.yaml",
+      issues: ["101", "102"],
+      priority: ["P1"],
+      iteration: ["Sprint 1"],
+      size: ["M"],
     },
   );
   assert.equal(parseCliArgs(["--parent-provider", "Claude"]).parentAgent, "Claude");

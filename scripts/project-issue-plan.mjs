@@ -69,6 +69,62 @@ export function parseProjectItems(rawItems) {
   return Object.freeze(items);
 }
 
+function selectorValues(value) {
+  return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
+}
+
+/** Select matching items and recursively include their dependency closure. */
+export function selectProjectItems(rawItems, selectors = {}) {
+  const issues = selectorValues(selectors.issues).map(Number);
+  const priorities = selectorValues(selectors.priority);
+  const iterations = selectorValues(selectors.iteration);
+  const sizes = selectorValues(selectors.size);
+  if (!issues.length && !priorities.length && !iterations.length && !sizes.length)
+    throw new Error("issue-filter-required");
+  if (issues.some((issue) => !Number.isSafeInteger(issue) || issue <= 0))
+    throw new Error("invalid-issue-filter");
+
+  const dimensions = [
+    [issues, (item) => issues.includes(Number(item.number))],
+    [priorities, (item) => priorities.includes(item.priority)],
+    [iterations, (item) => iterations.includes(item.iteration)],
+    [sizes, (item) => sizes.includes(item.size)],
+  ].filter(([values]) => values.length);
+  const matches = rawItems.filter((item) => dimensions.every(([, predicate]) => predicate(item)));
+  if (!matches.length) throw new Error("no-issues-match-filter");
+
+  const byNumber = new Map(rawItems.map((item) => [Number(item.number), item]));
+  const selected = new Map();
+  const completed = new Set();
+  const visit = (item) => {
+    const number = Number(item.number);
+    if (selected.has(number)) return;
+    if (item.assignmentError) throw new Error(`${item.assignmentError}:${number}`);
+    if (!Array.isArray(item.dependencies)) throw new Error(`missing-dependencies:${number}`);
+    selected.set(number, item);
+    for (const dependency of item.dependencies) {
+      const relation = (item.blockedBy ?? []).find(
+        ({ number: blockedNumber }) => Number(blockedNumber) === Number(dependency),
+      );
+      if (relation?.state === "CLOSED") {
+        completed.add(Number(dependency));
+        continue;
+      }
+      if (relation?.state === "OPEN") throw new Error(`dependency-open:${number}:${dependency}`);
+      if (relation && relation.state !== "CLOSED" && relation.state !== "OPEN")
+        throw new Error(`dependency-state-unavailable:${number}:${dependency}`);
+      const dependencyItem = byNumber.get(Number(dependency));
+      if (!dependencyItem) throw new Error(`unknown-dependency:${number}:${dependency}`);
+      visit(dependencyItem);
+    }
+  };
+  for (const match of matches) visit(match);
+  return {
+    items: [...selected.values()].sort((left, right) => Number(left.number) - Number(right.number)),
+    completed: [...completed].sort((left, right) => left - right),
+  };
+}
+
 export function validateProjectItems(items) {
   const byNumber = new Map();
   for (const item of items) {
@@ -139,7 +195,6 @@ export function buildRunPlan(items, run = {}) {
   validateProjectItems(items);
   if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) throw new Error("invalid-max-parallel");
   if (!RELEASE_POLICIES.has(run.releasePolicy)) throw new Error("invalid-release-policy");
-  if (run.runDate !== undefined && !isCanonicalDate(run.runDate)) throw new Error("invalid-run-date");
   const completed = new Set((run.completed ?? []).map(Number));
   const unavailableModels = new Set(run.unavailableModels ?? []);
   const existingWorktrees = new Set((run.existingWorktrees ?? []).map(Number));
@@ -175,11 +230,6 @@ export function buildRunPlan(items, run = {}) {
     }
     if (incomplete.length) {
       const ready = { kind: "dependencies-incomplete", detail: incomplete.join(",") };
-      readinessByNumber.set(number, ready);
-      return ready;
-    }
-    if (run.runDate && item.startDate > run.runDate) {
-      const ready = { kind: "start-date-in-future", detail: item.startDate };
       readinessByNumber.set(number, ready);
       return ready;
     }

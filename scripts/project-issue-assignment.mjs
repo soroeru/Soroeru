@@ -120,7 +120,7 @@ export function parseDependenciesToken(raw) {
  * blocks (implementation-assignment wins on conflict for overlapping keys).
  * Also accepts the one-line legacy `<!-- implementation-assignment: codex -->`.
  */
-export function parseIssueAssignment(body) {
+export function parseIssueAssignment(body, { ignoreDependencies = false } = {}) {
   const text = String(body ?? "");
   const fromProject = parseMarkedBlock(text, "project-metadata");
   const fromImpl = parseMarkedBlock(text, "implementation-assignment");
@@ -133,7 +133,8 @@ export function parseIssueAssignment(body) {
   if (!merged.primary && legacy) merged.primary = canonicalizeAssignee(legacy);
 
   let dependencies;
-  if (Object.hasOwn(merged, "dependencies")) dependencies = parseDependenciesToken(merged.dependencies);
+  if (!ignoreDependencies && Object.hasOwn(merged, "dependencies"))
+    dependencies = parseDependenciesToken(merged.dependencies);
 
   const orderRaw = merged.order;
   let order;

@@ -1,0 +1,11 @@
+# Copy this file to state/project-issue-orchestrator.yaml and fill in the values.
+# The runtime copy is ignored by Git and is auto-loaded by the orchestrator and skill.
+project:
+  owner: ShinHaya
+  ownerType: user
+  name: Visibility
+
+run:
+  maxParallel: 4
+  releasePolicy: merged
+  unavailableModels: none

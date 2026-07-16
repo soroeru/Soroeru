@@ -1,0 +1,85 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
+import YAML from "yaml";
+
+export const DEFAULT_CONFIG_PATH = "state/project-issue-orchestrator.yaml";
+
+const PROJECT_KEYS = new Set(["owner", "ownerType", "name"]);
+const RUN_KEYS = new Set(["maxParallel", "releasePolicy", "unavailableModels"]);
+
+function fail(reason) {
+  throw new Error(reason);
+}
+
+function assertObject(value, reason) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(reason);
+  return value;
+}
+
+function assertKeys(value, allowed, prefix) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) fail(`config-unknown-key:${prefix}.${key}`);
+  }
+}
+
+function requiredString(value, field) {
+  if (typeof value !== "string" || value.trim() === "") fail(`config-missing:${field}`);
+  return value.trim();
+}
+
+function parseUnavailableModels(value) {
+  if (typeof value === "string" && value.trim().toLowerCase() === "none") return [];
+  if (!Array.isArray(value) || value.length === 0) fail("config-invalid-unavailable-models");
+  if (value.some((model) => typeof model !== "string" || model.trim() === ""))
+    fail("config-invalid-unavailable-models");
+  return value.map((model) => model.trim());
+}
+
+function normalizeDocument(document) {
+  if (document.errors.length) fail("config-invalid-yaml");
+  const root = assertObject(document.toJS(), "config-invalid-root");
+  assertKeys(root, new Set(["project", "run"]), "root");
+  const project = assertObject(root.project, "config-missing:project");
+  const run = assertObject(root.run, "config-missing:run");
+  assertKeys(project, PROJECT_KEYS, "project");
+  assertKeys(run, RUN_KEYS, "run");
+
+  const projectOwner = requiredString(project.owner, "project.owner");
+  const ownerType = requiredString(project.ownerType, "project.ownerType");
+  if (!new Set(["user", "organization"]).has(ownerType)) fail("config-invalid-owner-type");
+  const projectName = requiredString(project.name, "project.name");
+
+  if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) fail("config-invalid-max-parallel");
+  const releasePolicy = requiredString(run.releasePolicy, "run.releasePolicy");
+  if (!new Set(["pr-created", "merged"]).has(releasePolicy)) fail("config-invalid-release-policy");
+
+  return {
+    projectOwner,
+    ownerType,
+    projectName,
+    maxParallel: run.maxParallel,
+    releasePolicy,
+    unavailableModels: parseUnavailableModels(run.unavailableModels),
+  };
+}
+
+export async function loadOrchestratorConfig(filePath = DEFAULT_CONFIG_PATH, { cwd = process.cwd() } = {}) {
+  const resolvedPath = path.resolve(cwd, filePath);
+  let source;
+  try {
+    source = await fs.readFile(resolvedPath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") fail("config-file-not-found");
+    throw error;
+  }
+  return normalizeDocument(YAML.parseDocument(source, { uniqueKeys: true }));
+}
+
+export function mergeOrchestratorConfig({ defaults = {}, yaml = {}, cli = {} } = {}) {
+  const merged = { ...defaults, ...yaml, ...cli };
+  if (merged.unavailableModels === undefined) merged.unavailableModels = [];
+  if (typeof merged.unavailableModels === "string")
+    merged.unavailableModels = parseUnavailableModels(merged.unavailableModels);
+  return merged;
+}

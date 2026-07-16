@@ -1,19 +1,18 @@
-import {
-  canonicalizeAssignee,
-  OWNER_TYPES,
-  parseIssueAssignment,
-} from "./project-issue-assignment.mjs";
+import { canonicalizeAssignee, OWNER_TYPES, parseIssueAssignment } from "./project-issue-assignment.mjs";
 
 export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
   aiAssignee: "AI Assignees",
   aiSubAssignee: "AI Sub Assignees",
+  priority: "Priority",
+  iteration: "Iteration",
+  size: "Size",
   status: "Status",
   startDate: "Start date",
 });
 
 export function buildProjectItemsQuery(ownerType) {
   if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
-  return `query ProjectIssueOrchestration($owner: String!, $number: Int!, $cursor: String) { ${ownerType}(login: $owner) { projectV2(number: $number) { items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body } } } } } } }`;
+  return `query ProjectIssueOrchestration($owner: String!, $name: String!, $cursor: String) { ${ownerType}(login: $owner) { projectsV2(first: 10, query: $name) { nodes { title items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title url body blockedBy(first: 100) { nodes { number state } } } } } } } } } }`;
 }
 
 function requiredString(value, reason) {
@@ -25,6 +24,9 @@ function resolveFieldNames(fields = {}) {
   return {
     aiAssignee: fields.aiAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiAssignee,
     aiSubAssignee: fields.aiSubAssignee ?? DEFAULT_PROJECT_FIELD_NAMES.aiSubAssignee,
+    priority: fields.priority ?? DEFAULT_PROJECT_FIELD_NAMES.priority,
+    iteration: fields.iteration ?? DEFAULT_PROJECT_FIELD_NAMES.iteration,
+    size: fields.size ?? DEFAULT_PROJECT_FIELD_NAMES.size,
     status: fields.status ?? DEFAULT_PROJECT_FIELD_NAMES.status,
     startDate: fields.startDate ?? DEFAULT_PROJECT_FIELD_NAMES.startDate,
   };
@@ -35,24 +37,27 @@ function resolveFieldNames(fields = {}) {
  * Issue bodies are counted for telemetry then discarded from the returned items.
  * `fields` mirrors config/github-projects.json `fields` (aiAssignee / aiSubAssignee / …).
  */
-export async function fetchProjectItems({
-  owner,
-  ownerType = "user",
-  projectNumber,
-  graphql,
-  fields = {},
-}) {
+export async function fetchProjectItems({ owner, ownerType = "user", projectName, graphql, fields = {} }) {
   requiredString(owner, "project-owner-required");
-  if (!Number.isSafeInteger(projectNumber) || projectNumber <= 0) throw new Error("invalid-project-number");
+  requiredString(projectName, "project-name-required");
   if (typeof graphql !== "function") throw new Error("graphql-required");
   const fieldNames = resolveFieldNames(fields);
   const query = buildProjectItemsQuery(ownerType);
   const nodes = [];
   let cursor = null;
   while (true) {
-    const data = await graphql(query, { owner, number: projectNumber, cursor });
-    const items = data?.[ownerType]?.projectV2?.items;
-    if (!Array.isArray(items?.nodes)) throw new Error("project-not-found");
+    const data = await graphql(query, { owner, name: projectName, cursor });
+    const projects =
+      data?.[ownerType]?.projectsV2?.nodes ??
+      (data?.[ownerType]?.projectV2
+        ? [{ title: projectName, items: data[ownerType].projectV2.items }]
+        : null);
+    if (!Array.isArray(projects)) throw new Error("project-not-found");
+    const matches = projects.filter((project) => project?.title === projectName);
+    if (!matches.length) throw new Error("project-not-found");
+    if (matches.length !== 1) throw new Error("project-name-ambiguous");
+    const items = matches[0].items;
+    if (!Array.isArray(items?.nodes)) throw new Error("project-items-not-found");
     nodes.push(...items.nodes);
     if (!items.pageInfo?.hasNextPage) break;
     if (!items.pageInfo.endCursor) throw new Error("project-pagination-cursor-missing");
@@ -64,35 +69,48 @@ export async function fetchProjectItems({
     fetchedBytes += Buffer.byteLength(body, "utf8");
     if (node.content?.__typename !== "Issue") return [];
     const fieldValues = new Map(
-      (node.fieldValues?.nodes ?? []).map((value) => [value.field?.name, value.name ?? value.date]),
+      (node.fieldValues?.nodes ?? []).map((value) => [
+        value.field?.name,
+        value.name ?? value.date ?? value.title,
+      ]),
     );
-    const assignment = parseIssueAssignment(body);
+    let assignment;
+    let assignmentError;
+    try {
+      assignment = parseIssueAssignment(body, { ignoreDependencies: true });
+    } catch (error) {
+      assignment = {};
+      assignmentError = error.message;
+    }
     const number = node.content?.number;
     // Project single-select wins over body when present; canonicalize casing.
-    const primary = canonicalizeAssignee(
-      fieldValues.get(fieldNames.aiAssignee) ?? assignment.primary,
-    );
-    const sub = canonicalizeAssignee(
-      fieldValues.get(fieldNames.aiSubAssignee) ?? assignment.sub,
-    );
+    const primary = canonicalizeAssignee(fieldValues.get(fieldNames.aiAssignee) ?? assignment.primary);
+    const sub = canonicalizeAssignee(fieldValues.get(fieldNames.aiSubAssignee) ?? assignment.sub);
     const model = assignment.model;
     const order = assignment.order;
-    const dependencies = assignment.dependencies;
+    const blockedBy = node.content?.blockedBy?.nodes ?? [];
+    const dependencies = blockedBy.map((dependency) => Number(dependency.number));
     // Surface incomplete GitHub-shaped rows with the Issue number before planning.
-    if (model === undefined || order === undefined || dependencies === undefined)
-      throw new Error(`incomplete-assignment-metadata:${number}`);
     return [
       {
         number,
         title: node.content?.title,
         url: node.content?.url,
         status: fieldValues.get(fieldNames.status),
+        priority: fieldValues.get(fieldNames.priority),
+        iteration: fieldValues.get(fieldNames.iteration),
+        size: fieldValues.get(fieldNames.size),
         startDate: fieldValues.get(fieldNames.startDate),
         primary,
         sub,
         model,
         order,
         dependencies,
+        blockedBy: blockedBy.map(({ number: dependency, state }) => ({
+          number: Number(dependency),
+          state,
+        })),
+        ...(assignmentError ? { assignmentError } : {}),
       },
     ];
   });
