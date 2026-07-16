@@ -141,7 +141,27 @@ node --test tests/unit/project-issue-orchestrator.test.mjs \
   tests/unit/project-issue-defaults.test.mjs
 ```
 
-Capability files use `agent` (Codex/Claude/…) rather than API-provider names.
+Capability files use `agent` (Codex/Claude/…) rather than API-provider names. A
+capability may use `requestedModel` for the exact Project/Issue model label and
+`model` for the runtime's canonical model identifier, for example:
+
+```json
+{
+  "agent": "Grok",
+  "requestedModel": "Grok 4.5",
+  "model": "grok-4.5",
+  "role": "worker",
+  "selector": "grok --model grok-4.5",
+  "selectable": true,
+  "verifiable": true,
+  "timeoutMs": 30000
+}
+```
+
+The requested label must still be explicitly present in the capability record;
+the canonical runtime identifier alone is not an alias or fallback. The legacy
+shape with only `model` remains supported when it already contains the exact
+requested model label.
 Assignment body markers (`project-metadata` and `implementation-assignment`)
 share one field vocabulary via `scripts/project-issue-assignment.mjs`. The
 planner, GitHub fetch, and local state lock live in
