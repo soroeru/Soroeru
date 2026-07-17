@@ -329,7 +329,10 @@ export class VisibilityRunner {
 
   private updateImportedDisplayName(siteAccount: SiteAccount, snapshot: PageSnapshot): SiteAccount {
     if (siteAccount.displayName !== siteAccount.domain) return siteAccount;
-    if (hasLoginFields(snapshot)) return siteAccount;
+    const hasCredentialEntryField =
+      findLoginField(snapshot.fields, "password") !== undefined ||
+      snapshot.fields.some((field) => field.autocomplete === "username");
+    if (hasCredentialEntryField) return siteAccount;
     const displayName = siteDisplayNameCandidate(snapshot, siteAccount.domain);
     if (!displayName) return siteAccount;
     return this.options.domain.upsertSiteAccount({

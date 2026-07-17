@@ -1243,6 +1243,38 @@ test("visibility runner reports login-failed (not collected) when a password fie
   }
 });
 
+test("visibility runner does not rename a site from a partial login page", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "partial-stuck.example.test",
+      url: "https://partial-stuck.example.test/login",
+      displayName: "partial-stuck.example.test",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const usernameOnly = snapshot("https://partial-stuck.example.test/login", [
+      field("username", { autocomplete: "username", labels: ["ログインID"] }),
+    ]);
+    usernameOnly.siteName = "Generic Login Portal";
+    const page = new FakePageDriver([usernameOnly, usernameOnly], {});
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+    });
+
+    await runner.runSite(site.id);
+
+    assert.equal(service.getSiteAccount(site.id)?.displayName, "partial-stuck.example.test");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner still reports login-failed when a stuck login page also has an unrelated dynamic-attribute candidate field", async () => {
   const { dir, service } = await openService();
   try {
