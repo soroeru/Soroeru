@@ -43,6 +43,21 @@ body {
   max-width: 2.5rem;
 }
 
+.ledger-col-reorder {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  max-width: 2.75rem;
+}
+
+.ledger-drag-handle:focus-visible {
+  outline: 2px solid rgb(37 99 235);
+  outline-offset: 2px;
+}
+
+.ledger-row-dragging > * {
+  opacity: 0.55;
+}
+
 /* Site column width (matches Tailwind w-56). */
 .ledger-col-site {
   width: 14rem;
@@ -64,19 +79,26 @@ body {
 
 .ledger-sticky-site {
   position: sticky;
+  left: 5.25rem;
+  z-index: 12;
+}
+
+.ledger-sticky-reorder {
+  position: sticky;
   left: 2.5rem;
   z-index: 12;
 }
 
 .ledger-sticky-actions {
   position: sticky;
-  left: 16.5rem; /* select 2.5rem + site 14rem */
+  left: 19.25rem; /* select 2.5rem + reorder 2.75rem + site 14rem */
   z-index: 12;
   /* Edge line so scrolling attribute cells slide under a clear boundary. */
   box-shadow: 1px 0 0 0 rgb(229 229 229);
 }
 
 .ledger-table-viewport thead .ledger-sticky-select,
+.ledger-table-viewport thead .ledger-sticky-reorder,
 .ledger-table-viewport thead .ledger-sticky-site,
 .ledger-table-viewport thead .ledger-sticky-actions {
   z-index: 22;

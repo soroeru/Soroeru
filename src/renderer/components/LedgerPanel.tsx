@@ -29,6 +29,7 @@ import {
 import { buildLedgerColumns, buildSiteDetailDisclosureGroups, disclosureFor } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
+import { moveLedgerSite, orderLedgerSites, type LedgerSortMode } from "../ledger-ordering.js";
 import {
   collectVisibleSelectedSiteIds,
   enableSessionPersistenceForSites,
@@ -94,6 +95,9 @@ export function LedgerPanel({
   const [deleteTarget, setDeleteTarget] = useState<SiteLedgerSummary | undefined>();
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
   const [deletingSite, setDeletingSite] = useState(false);
+  const [sortMode, setSortMode] = useState<LedgerSortMode>("name-asc");
+  const [draggedSiteId, setDraggedSiteId] = useState<string | undefined>();
+  const [orderAnnouncement, setOrderAnnouncement] = useState("");
   const resumedHandoffSites = useRef<Set<string>>(new Set());
   const cancelBatchRef = useRef(false);
   /** True while `runVisibilityBatch` is in progress (including cancel unwind). */
@@ -214,11 +218,53 @@ export function LedgerPanel({
   }, []);
 
   const selectedVisibleIds = useMemo(() => collectVisibleSelectedSiteIds(sites, selected), [selected, sites]);
+  const orderedSites = useMemo(() => orderLedgerSites(sites, sortMode), [sites, sortMode]);
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
   // Saved-page guide / import stay usable after showGuide even while the batch is canceling.
   const guideInteractiveDisabled = batch.phase === "running" || batch.phase === "paused";
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
   const allSelected = sites.length > 0 && selectedVisibleIds.length === sites.length;
+
+  const persistManualOrder = useCallback(async (nextSites: SiteLedgerDetail[], movedName: string) => {
+    const previous = sitesRef.current;
+    sitesRef.current = nextSites;
+    setSites(nextSites);
+    try {
+      const result = await window.soroeru.ledger.reorderSites(nextSites.map((site) => site.siteAccountId));
+      if (!result.ok) throw new Error(result.error);
+      setOrderAnnouncement(`${movedName} の並び順を保存しました`);
+    } catch {
+      sitesRef.current = previous;
+      setSites(previous);
+      setLoadError("並び順を保存できませんでした。元の順序に戻しました。");
+    }
+  }, []);
+
+  const moveManualSite = useCallback(
+    (draggedId: string, targetId: string) => {
+      if (sortMode !== "manual") return;
+      const moved = sitesRef.current.find((site) => site.siteAccountId === draggedId);
+      const next = moveLedgerSite(sitesRef.current, draggedId, targetId);
+      if (
+        !moved ||
+        next.every((site, index) => site.siteAccountId === sitesRef.current[index]?.siteAccountId)
+      ) {
+        return;
+      }
+      void persistManualOrder(next, moved.displayName);
+    },
+    [persistManualOrder, sortMode],
+  );
+
+  const moveManualSiteBy = useCallback(
+    (siteAccountId: string, offset: -1 | 1) => {
+      if (sortMode !== "manual") return;
+      const index = sitesRef.current.findIndex((site) => site.siteAccountId === siteAccountId);
+      const target = sitesRef.current[index + offset];
+      if (target) moveManualSite(siteAccountId, target.siteAccountId);
+    },
+    [moveManualSite, sortMode],
+  );
 
   useEffect(() => {
     onCollectionBusyChange?.(batchBusy);
@@ -561,6 +607,20 @@ export function LedgerPanel({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
+        <Label htmlFor="ledger-sort-mode" className="text-sm font-medium">
+          並び順
+        </Label>
+        <select
+          id="ledger-sort-mode"
+          value={sortMode}
+          disabled={batchBusy}
+          onChange={(event) => setSortMode(event.target.value as LedgerSortMode)}
+          className="rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+        >
+          <option value="manual">手動（ドラッグ）</option>
+          <option value="name-asc">サイト名 昇順</option>
+          <option value="name-desc">サイト名 降順</option>
+        </select>
         {!allSelected && (
           <button
             type="button"
@@ -578,10 +638,15 @@ export function LedgerPanel({
         )}
       </div>
 
+      <p className="sr-only" aria-live="polite">
+        {orderAnnouncement}
+      </p>
+
       <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
         <table className="border-collapse text-left text-sm">
           <colgroup>
             <col className="ledger-col-select" />
+            <col className="ledger-col-reorder" />
             <col className="ledger-col-site" />
             <col className="ledger-col-actions" />
             {columns.map((column) => (
@@ -595,6 +660,12 @@ export function LedgerPanel({
                 className="ledger-sticky-select ledger-col-select sticky top-0 bg-neutral-50 px-2 py-2"
               >
                 <span className="sr-only">選択</span>
+              </th>
+              <th
+                scope="col"
+                className="ledger-sticky-reorder ledger-col-reorder sticky top-0 bg-neutral-50 px-1 py-2"
+              >
+                <span className="sr-only">並び替え</span>
               </th>
               <th
                 scope="col"
@@ -620,7 +691,7 @@ export function LedgerPanel({
             </tr>
           </thead>
           <tbody>
-            {sites.map((site) => {
+            {orderedSites.map((site) => {
               const detailOpen = detail?.siteAccountId === site.siteAccountId;
               const savedPageOpen = savedPageSiteId === site.siteAccountId;
               const guideOpen = guideSiteId === site.siteAccountId;
@@ -628,7 +699,17 @@ export function LedgerPanel({
               const attributeColSpan = Math.max(columns.length, 1);
               return (
                 <Fragment key={site.siteAccountId}>
-                  <tr className="border-b border-neutral-100">
+                  <tr
+                    className={`border-b border-neutral-100 ${draggedSiteId === site.siteAccountId ? "ledger-row-dragging" : ""}`}
+                    onDragOver={(event) => {
+                      if (sortMode === "manual" && draggedSiteId) event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (draggedSiteId) moveManualSite(draggedSiteId, site.siteAccountId);
+                      setDraggedSiteId(undefined);
+                    }}
+                  >
                     <td className="ledger-sticky-select ledger-col-select bg-white px-2 py-2 align-top">
                       <input
                         type="checkbox"
@@ -638,6 +719,33 @@ export function LedgerPanel({
                         aria-label={site.displayName}
                         className="mt-1"
                       />
+                    </td>
+                    <td className="ledger-sticky-reorder ledger-col-reorder bg-white px-1 py-2 align-top">
+                      <button
+                        type="button"
+                        draggable={sortMode === "manual" && !batchBusy}
+                        disabled={sortMode !== "manual" || batchBusy}
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = "move";
+                          setDraggedSiteId(site.siteAccountId);
+                        }}
+                        onDragEnd={() => setDraggedSiteId(undefined)}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                            event.preventDefault();
+                            moveManualSiteBy(site.siteAccountId, event.key === "ArrowUp" ? -1 : 1);
+                          }
+                        }}
+                        aria-label={`${site.displayName} を並び替え。上下矢印キーでも移動できます`}
+                        title={
+                          sortMode === "manual"
+                            ? "ドラッグまたは上下矢印キーで並び替え"
+                            : "手動モードで利用できます"
+                        }
+                        className="ledger-drag-handle rounded px-2 py-1 text-lg leading-none disabled:cursor-not-allowed disabled:opacity-30"
+                      >
+                        <span aria-hidden="true">⋮⋮</span>
+                      </button>
                     </td>
                     <th
                       scope="row"
@@ -709,7 +817,7 @@ export function LedgerPanel({
                   </tr>
                   {expanded && (
                     <tr className="border-b border-neutral-100 bg-neutral-50">
-                      <td colSpan={3 + attributeColSpan} className="px-3 py-3">
+                      <td colSpan={4 + attributeColSpan} className="px-3 py-3">
                         <div className="flex flex-col gap-3">
                           {savedPageOpen && (
                             <div className="flex flex-col gap-2">

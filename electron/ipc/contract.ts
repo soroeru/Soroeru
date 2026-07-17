@@ -51,6 +51,7 @@ export const IPC_CHANNELS = {
   ledgerSites: "soroeru:ledger:sites",
   ledgerSite: "soroeru:ledger:site",
   ledgerSiteDetails: "soroeru:ledger:site-details",
+  ledgerReorderSites: "soroeru:ledger:reorder-sites",
   ledgerInsights: "soroeru:ledger:insights",
   revealValue: "soroeru:ledger:reveal",
   ledgerConfirmDynamicCandidate: "soroeru:ledger:confirm-dynamic-candidate",
@@ -244,6 +245,11 @@ export interface SiteLedgerSummary {
   constraintCount: number;
   /** True once at least one Disclosure exists or the Visibility checkpoint is done. */
   collected: boolean;
+}
+
+export interface ReorderSiteAccountsResult {
+  ok: boolean;
+  error?: string;
 }
 
 /**

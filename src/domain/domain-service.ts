@@ -185,6 +185,7 @@ export class DomainService {
       id,
       domain: input.domain,
       displayName: input.displayName,
+      sortOrder: existing?.sortOrder ?? this.nextSiteAccountSortOrder(),
       createdAt: existing?.createdAt ?? Date.now(),
       updatedAt: Date.now(),
     };
@@ -200,6 +201,53 @@ export class DomainService {
 
   listSiteAccounts(): SiteAccount[] {
     return this.vault.list("siteAccount");
+  }
+
+  /** Assign canonical order to pre-#387 records without disturbing already ordered sites. */
+  ensureSiteAccountSortOrders(): boolean {
+    const sites = this.listSiteAccounts();
+    const missing = sites
+      .filter((site) => !Number.isFinite(site.sortOrder))
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, "ja") || a.id.localeCompare(b.id));
+    if (missing.length === 0) return false;
+    let next = this.nextSiteAccountSortOrder();
+    for (const site of missing) {
+      this.vault.put("siteAccount", { ...site, sortOrder: next++ });
+    }
+    return true;
+  }
+
+  listSiteAccountsInManualOrder(): SiteAccount[] {
+    return this.listSiteAccounts().sort(
+      (a, b) =>
+        (a.sortOrder ?? Number.MAX_SAFE_INTEGER) - (b.sortOrder ?? Number.MAX_SAFE_INTEGER) ||
+        a.displayName.localeCompare(b.displayName, "ja") ||
+        a.id.localeCompare(b.id),
+    );
+  }
+
+  reorderSiteAccounts(orderedIds: string[]): { ok: true } | { ok: false; error: "invalid-order" } {
+    const sites = this.listSiteAccounts();
+    if (
+      orderedIds.length !== sites.length ||
+      new Set(orderedIds).size !== orderedIds.length ||
+      sites.some((site) => !orderedIds.includes(site.id))
+    ) {
+      return { ok: false, error: "invalid-order" };
+    }
+    const byId = new Map(sites.map((site) => [site.id, site]));
+    orderedIds.forEach((id, sortOrder) => {
+      const site = byId.get(id);
+      if (site) this.vault.put("siteAccount", { ...site, sortOrder, updatedAt: Date.now() });
+    });
+    return { ok: true };
+  }
+
+  private nextSiteAccountSortOrder(): number {
+    return this.listSiteAccounts().reduce(
+      (next, site) => (Number.isFinite(site.sortOrder) ? Math.max(next, (site.sortOrder as number) + 1) : next),
+      0,
+    );
   }
 
   /**

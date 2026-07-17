@@ -28,6 +28,7 @@ import {
   type LedgerInsights,
   type LogsExportResult,
   type RecoveryKeyResult,
+  type ReorderSiteAccountsResult,
   type SavedPageManualCheckResult,
   type SavedPageImportRequest,
   type SavedPageImportResult,
@@ -77,6 +78,7 @@ export interface SoroeruApi {
     sites(): Promise<SiteLedgerSummary[]>;
     site(siteAccountId: string): Promise<SiteLedgerDetail | undefined>;
     siteDetails(): Promise<SiteLedgerDetail[]>;
+    reorderSites(orderedIds: string[]): Promise<ReorderSiteAccountsResult>;
     insights(): Promise<LedgerInsights>;
     reveal(disclosureId: string, passphrase: string): Promise<RevealResult>;
     confirmDynamicCandidate(
@@ -152,6 +154,8 @@ export function createSoroeruApi(
       site: (siteAccountId) =>
         invoke(IPC_CHANNELS.ledgerSite, siteAccountId) as Promise<SiteLedgerDetail | undefined>,
       siteDetails: () => invoke(IPC_CHANNELS.ledgerSiteDetails) as Promise<SiteLedgerDetail[]>,
+      reorderSites: (orderedIds) =>
+        invoke(IPC_CHANNELS.ledgerReorderSites, orderedIds) as Promise<ReorderSiteAccountsResult>,
       insights: () => invoke(IPC_CHANNELS.ledgerInsights) as Promise<LedgerInsights>,
       reveal: (disclosureId, passphrase) =>
         invoke(IPC_CHANNELS.revealValue, disclosureId, passphrase) as Promise<RevealResult>,
