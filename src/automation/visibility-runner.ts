@@ -17,6 +17,7 @@ import { PageExplorer } from "./page-explorer.js";
 import { RuleEngine } from "./rule-engine.js";
 import type { SiteSession } from "./page-driver.js";
 import { WallDetectionService } from "./wall-detection.js";
+import { siteDisplayNameCandidate } from "./site-display-name.js";
 
 export type VisibilityHandoff = (input: {
   siteAccount: SiteAccount;
@@ -65,7 +66,7 @@ export class VisibilityRunner {
   }
 
   async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
-    const siteAccount = this.requireSite(siteAccountId);
+    let siteAccount = this.requireSite(siteAccountId);
     const credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
 
     // Soroeru drives a web browser; a non-web credential (e.g. an Android app
@@ -218,6 +219,7 @@ export class VisibilityRunner {
         }
       }
 
+      siteAccount = this.updateImportedDisplayName(siteAccount, snapshot);
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       const explorer = new PageExplorer(
@@ -323,6 +325,21 @@ export class VisibilityRunner {
 
   private isCanceled(): boolean {
     return this.options.isCanceled?.() ?? false;
+  }
+
+  private updateImportedDisplayName(siteAccount: SiteAccount, snapshot: PageSnapshot): SiteAccount {
+    if (siteAccount.displayName !== siteAccount.domain) return siteAccount;
+    const displayName = siteDisplayNameCandidate(snapshot, siteAccount.domain);
+    if (!displayName) return siteAccount;
+    return this.options.domain.upsertSiteAccount({
+      id: siteAccount.id,
+      domain: siteAccount.domain,
+      displayName,
+      ...(siteAccount.url !== undefined ? { url: siteAccount.url } : {}),
+      ...(siteAccount.relationshipSummary !== undefined
+        ? { relationshipSummary: siteAccount.relationshipSummary }
+        : {}),
+    });
   }
 
   private canceledResult(siteAccountId: string): VisibilityRunResult {

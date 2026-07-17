@@ -60,6 +60,54 @@ test("runs to completion and emits started + finished events", async () => {
   }
 });
 
+test("replaces an imported domain display name with the observed service name", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({
+      domain: "account.example.test",
+      url: "https://account.example.test/account",
+      displayName: "account.example.test",
+    });
+    const observed = snapshot("https://account.example.test/account", [
+      field("email", { autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    observed.siteName = "Example Service";
+    const page = new FakePageDriver([observed], { email: "user@example.test" });
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
+    service.setDomain(domain);
+
+    await service.runSite(site.id);
+
+    assert.equal(domain.getSiteAccount(site.id)?.displayName, "Example Service");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("preserves a manually selected display name during collection", async () => {
+  const { dir, domain } = await openDomain();
+  try {
+    const site = domain.upsertSiteAccount({
+      domain: "account.example.test",
+      url: "https://account.example.test/account",
+      displayName: "My Example Account",
+    });
+    const observed = snapshot("https://account.example.test/account", [
+      field("email", { autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    observed.siteName = "Example Service";
+    const page = new FakePageDriver([observed], { email: "user@example.test" });
+    const service = new VisibilityService({ openSession: () => Promise.resolve(new FakeSession(page)) });
+    service.setDomain(domain);
+
+    await service.runSite(site.id);
+
+    assert.equal(domain.getSiteAccount(site.id)?.displayName, "My Example Account");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("setAiEngine wires an AI fallback through to a real run (Issue #310)", async () => {
   const { dir, domain } = await openDomain();
   try {

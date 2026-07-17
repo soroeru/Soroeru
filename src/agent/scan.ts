@@ -37,6 +37,7 @@ export async function waitForFields(page: Page, timeoutMs = 5000): Promise<PageS
  * runtime dependencies because Chrome serializes this function into the page.
  */
 export function scanInPage(): {
+  siteName?: string;
   fields: PageSnapshot["fields"];
   buttons: PageSnapshot["buttons"];
   links: PageSnapshot["links"];
@@ -428,7 +429,9 @@ export function scanInPage(): {
     pushDisplay(valueEl, valueEl.textContent ?? "", labelText, "");
   }
 
+  const siteName = document.querySelector('meta[property="og:site_name"]')?.getAttribute("content")?.trim();
   return {
+    ...(siteName ? { siteName } : {}),
     fields,
     buttons,
     links,

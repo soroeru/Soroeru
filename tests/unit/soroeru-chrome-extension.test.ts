@@ -166,6 +166,7 @@ test("content snapshot has the same structure-only shape as the Playwright scann
   try {
     const page = await browser.newPage();
     await page.setContent(`
+      <meta property="og:site_name" content="  Example Service  ">
       <label for="email">メールアドレス</label>
       <input id="email" name="email" autocomplete="email" required>
       <dl><dt>氏名</dt><dd>山田 太郎</dd></dl>
@@ -184,6 +185,8 @@ test("content snapshot has the same structure-only shape as the Playwright scann
       playwrightSnapshot.displayValues?.map(({ valueId: _valueId, ...value }) => value),
     );
     assert.equal(extensionSnapshot.visibleText, playwrightSnapshot.visibleText);
+    assert.equal(extensionSnapshot.siteName, "Example Service");
+    assert.equal(playwrightSnapshot.siteName, "Example Service");
     assert.equal(extensionSnapshot.fields[0]?.name, "email");
     assert.equal(extensionSnapshot.displayValues?.[0]?.labelText, "氏名");
     assert.equal(JSON.stringify(extensionSnapshot.fields).includes("山田 太郎"), false);
