@@ -148,6 +148,13 @@ export function runProcess(
   });
 }
 
+/** Quote a selector argument when it contains whitespace or quotes. */
+export function quoteSelectorArg(value) {
+  const text = String(value ?? "");
+  if (/[\s"']/.test(text)) return `"${text.replaceAll('"', '\\"')}"`;
+  return text;
+}
+
 /** Split a selector string into argv tokens; supports simple double quotes. */
 export function splitSelector(selector) {
   if (typeof selector !== "string" || !selector.trim()) {
@@ -232,7 +239,7 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
   child.stderr?.on("data", () => {});
 
   let timedOut = false;
-  let settled = false;
+  let exitResult;
   const killTree = (signal = "SIGTERM") => {
     if (!child.pid) return;
     try {
@@ -256,30 +263,26 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
     setTimeout(() => killTree("SIGKILL"), 1_000).unref?.();
   }, timeoutMs);
 
-  const wait = () =>
-    new Promise((resolve) => {
-      if (settled) {
-        resolve({ code: child.exitCode, signal: child.signalCode, timedOut, pid: child.pid });
-        return;
-      }
-      child.on("close", (code, signal) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ code, signal, timedOut, pid: child.pid });
-      });
-      child.on("error", () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ code: null, signal: null, timedOut, pid: child.pid, error: true });
-      });
+  // Register close/error once at spawn so late wait() callers still resolve.
+  const done = new Promise((resolve) => {
+    const finish = (result) => {
+      if (exitResult) return;
+      clearTimeout(timer);
+      exitResult = result;
+      resolve(result);
+    };
+    child.on("close", (code, signal) => {
+      finish({ code, signal, timedOut, pid: child.pid });
     });
+    child.on("error", () => {
+      finish({ code: null, signal: null, timedOut, pid: child.pid, error: true });
+    });
+  });
 
   return {
     pid: child.pid,
     kill: killTree,
-    wait,
+    wait: () => done,
     get timedOut() {
       return timedOut;
     },

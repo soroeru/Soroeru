@@ -9,6 +9,7 @@ import {
   buildWorkerPrompt,
   capabilityRecord,
   diagnostic,
+  quoteSelectorArg,
   resolveExecutable,
   runProcess,
   spawnWorker,
@@ -159,7 +160,7 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
-    const selector = `${cliPath} --model ${model}`;
+    const selector = `${cliPath} --model ${quoteSelectorArg(model)}`;
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({

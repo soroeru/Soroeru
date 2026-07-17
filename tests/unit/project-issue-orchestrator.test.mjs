@@ -560,6 +560,51 @@ test("CLI rejects unknown flags", async () => {
   );
 });
 
+test("CLI dry-run discovery does not write the capabilities cache file", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-dry-cap-"));
+  const inputPath = path.join(directory, "input.json");
+  const capabilitiesOutput = path.join(directory, "capabilities.json");
+  const fixture = await load("linear.json");
+  // No pre-baked capabilities: forces the discovery path.
+  await writeFile(
+    inputPath,
+    JSON.stringify({
+      ...fixture,
+      options: {
+        maxParallel: 3,
+        releasePolicy: "merged",
+        parent: { agent: "Codex", model: "gpt-test" },
+        dryRun: true,
+      },
+    }),
+  );
+  const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
+  // Discovery may find zero real routes in CI; we only assert no disk write.
+  try {
+    await execFileAsync(
+      process.execPath,
+      [
+        script.pathname,
+        "--input",
+        inputPath,
+        "--issues",
+        "101",
+        "--dry-run",
+        "--parent-agent",
+        "Codex",
+        "--parent-model",
+        "gpt-test",
+        "--capabilities-output",
+        capabilitiesOutput,
+      ],
+      { timeout: 120_000 },
+    );
+  } catch {
+    // routing-unavailable / no-worker-route-available is fine for this assertion
+  }
+  await assert.rejects(() => stat(capabilitiesOutput), /ENOENT/);
+});
+
 test("CLI preserves input-provided unavailable agents when YAML and flags omit them", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-input-options-"));
   const inputPath = path.join(directory, "input.json");

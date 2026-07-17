@@ -288,12 +288,12 @@ async function main() {
   } else if (cli.skipCapabilityDiscovery) {
     capabilities = undefined;
   } else {
-    const outputPath = path.resolve(
-      repositoryRoot,
-      cli.capabilitiesOutput ?? DEFAULT_CAPABILITIES_OUTPUT,
-    );
+    // Dry-run must not mutate disk (including the capabilities cache).
+    const outputPath = cli.dryRun
+      ? undefined
+      : path.resolve(repositoryRoot, cli.capabilitiesOutput ?? DEFAULT_CAPABILITIES_OUTPUT);
     const discovered = await discoverCapabilities({
-      outputPath,
+      ...(outputPath === undefined ? {} : { outputPath }),
       cwd: repositoryRoot,
     });
     capabilities = discovered.capabilities;

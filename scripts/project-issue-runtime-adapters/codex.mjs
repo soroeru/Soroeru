@@ -5,6 +5,7 @@ import {
   buildWorkerPrompt,
   capabilityRecord,
   diagnostic,
+  quoteSelectorArg,
   resolveExecutable,
   runProcess,
   spawnWorker,
@@ -18,13 +19,16 @@ const CLI_NAMES = ["codex"];
 
 function parseLoginStatus(stdout) {
   const text = String(stdout ?? "");
-  if (/logged in/i.test(text)) return true;
   try {
     const json = JSON.parse(text);
     if (json?.loggedIn === true || json?.status === "logged-in") return true;
+    if (json?.loggedIn === false) return false;
   } catch {
     // plain-text status
   }
+  // Require a positive "logged in" and reject the common "Not logged in" form.
+  if (/not\s+logged\s+in/i.test(text)) return false;
+  if (/\blogged\s+in\b/i.test(text)) return true;
   return false;
 }
 
@@ -113,7 +117,7 @@ export async function discover(ctx = {}) {
   }
 
   for (const { model, requestedModel } of models) {
-    const selector = `${cliPath} exec -m ${model}`;
+    const selector = `${cliPath} exec -m ${quoteSelectorArg(model)}`;
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({

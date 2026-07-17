@@ -362,22 +362,28 @@ test("Gemini adapter records agy models with exact display names", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-gemini-"));
   const bin = path.join(directory, "bin");
   await mkdir(bin);
-  await makeFakeBin(
-    bin,
-    "agy",
-    `
-    if (process.argv[2] === "models") {
-      process.stdout.write("Gemini 3.1 Pro (High)\\nGemini 3.5 Flash (Medium)\\n");
-      process.exit(0);
-    }
-    process.exit(2);
-    `,
-  );
+  const agyPath = path.join(bin, "agy");
+  await makeFakeBin(bin, "agy", "process.exit(0);");
   const result = await discoverAllCapabilities({
     env: { ...process.env, PATH: isolatedPath(bin) },
     pathEnv: isolatedPath(bin),
     timeoutMs: 3_000,
     workerTimeoutMs: 9_000,
+    resolveExecutable: async (name) => (name === "agy" || name === agyPath ? agyPath : null),
+    runProcess: async (command, args) => {
+      if (path.basename(command) === "agy" && args[0] === "models") {
+        return {
+          code: 0,
+          signal: null,
+          timedOut: false,
+          error: null,
+          stdout: "Gemini 3.1 Pro (High)\nGemini 3.5 Flash (Medium)\n",
+          stderr: "",
+          pid: 1,
+        };
+      }
+      return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
+    },
   });
   const geminiWorkers = result.capabilities.filter(
     (record) => record.agent === "Gemini" && record.role === "worker",
@@ -393,4 +399,56 @@ test("Gemini adapter records agy models with exact display names", async () => {
 test("capabilities CLI module is importable from the repository root", async () => {
   const script = path.join(repoRoot, "scripts/project-issue-capabilities.mjs");
   assert.equal((await stat(script)).isFile(), true);
+});
+
+test("rejects Not logged in Codex/Grok status as auth-unavailable", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-auth-"));
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  await makeFakeBin(bin, "codex", "process.exit(0);");
+  await makeFakeBin(bin, "grok", "process.exit(0);");
+  const runProcess = async (command, args) => {
+    const base = path.basename(command);
+    if (base === "codex" && args[0] === "login") {
+      return {
+        code: 0,
+        signal: null,
+        timedOut: false,
+        error: null,
+        stdout: "Not logged in\n",
+        stderr: "",
+        pid: 1,
+      };
+    }
+    if (base === "grok" && args[0] === "models") {
+      return {
+        code: 0,
+        signal: null,
+        timedOut: false,
+        error: null,
+        stdout: "Not logged in. Please run grok login.\n",
+        stderr: "",
+        pid: 2,
+      };
+    }
+    return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
+  };
+  const result = await discoverAllCapabilities({
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    runProcess,
+    resolveExecutable: async (name) =>
+      name === "codex" || name === "grok" ? path.join(bin, name) : null,
+  });
+  assert.ok(
+    result.diagnostics.some(
+      (entry) => entry.agent === "Codex" && entry.reason === REASON_CODES.AUTH_UNAVAILABLE,
+    ),
+  );
+  assert.ok(
+    result.diagnostics.some(
+      (entry) => entry.agent === "Grok" && entry.reason === REASON_CODES.AUTH_UNAVAILABLE,
+    ),
+  );
+  assert.equal(result.capabilities.length, 0);
 });

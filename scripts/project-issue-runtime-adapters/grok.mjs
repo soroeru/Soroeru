@@ -5,6 +5,7 @@ import {
   buildWorkerPrompt,
   capabilityRecord,
   diagnostic,
+  quoteSelectorArg,
   resolveExecutable,
   runProcess,
   spawnWorker,
@@ -19,7 +20,9 @@ const CLI_NAMES = ["grok"];
 function parseModelsOutput(stdout) {
   const text = String(stdout ?? "");
   if (!text.trim()) return { loggedIn: false, models: null };
-  const loggedIn = /logged in/i.test(text) || /available models/i.test(text);
+  const notLoggedIn = /not\s+logged\s+in/i.test(text);
+  const loggedIn =
+    !notLoggedIn && (/\blogged\s+in\b/i.test(text) || /available models/i.test(text));
   const models = [];
   for (const line of text.split(/\r?\n/)) {
     const bullet = line.trim().match(/^\*\s+(\S+)/);
@@ -98,7 +101,7 @@ export async function discover(ctx = {}) {
   }
 
   for (const { model, requestedModel } of models) {
-    const selector = `${cliPath} --model ${model}`;
+    const selector = `${cliPath} --model ${quoteSelectorArg(model)}`;
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({

@@ -5,6 +5,7 @@ import {
   buildWorkerPrompt,
   capabilityRecord,
   diagnostic,
+  quoteSelectorArg,
   resolveExecutable,
   runProcess,
   spawnWorker,
@@ -19,11 +20,6 @@ export const evaluationOrder = 3;
  * A bare `gemini` CLI is also accepted when present, but never invented.
  */
 const CLI_NAMES = ["agy", "gemini"];
-
-function quoteSelectorArg(value) {
-  if (/[\s"']/.test(value)) return `"${value.replaceAll('"', '\\"')}"`;
-  return value;
-}
 
 function parseAgyModels(stdout) {
   const text = String(stdout ?? "").trim();

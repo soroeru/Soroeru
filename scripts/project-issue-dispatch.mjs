@@ -37,11 +37,7 @@ export async function dispatchWorker(input, ctx = {}) {
 
   // Ensure the selector still parses and still targets the same model token.
   const tokens = splitSelector(route.selector);
-  if (!tokens.includes(route.model) && !tokens.some((token) => token === route.model)) {
-    // Model ids with spaces are a single quoted token after splitSelector.
-    const joined = tokens.join(" ");
-    if (!joined.includes(route.model)) throw new Error("model-mismatch");
-  }
+  if (!tokens.includes(route.model)) throw new Error("model-mismatch");
 
   const job = {
     issueNumber: input.issueNumber,
