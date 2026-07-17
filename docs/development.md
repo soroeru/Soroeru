@@ -85,17 +85,24 @@ Playwright path is unchanged; there is no silent fallback after the extension cu
 
 ### 3.0 GitHub Project issue defaults
 
-`.github/workflows/project-issue-defaults.yml` handles only `issues.opened` and
-configures classified Issues in `config/github-projects.json`. It resolves
-Project, field, option, item, and iteration IDs by name through GraphQL; IDs
-are intentionally not stored in the repository. The workflow sets only
-Priority, Size, Start/Target date, and Iteration. Agent/model assignment is
-decided at orchestration run time and is **not** stored in the Project or the
-Issue body; the former `AI Assignees` / `AI Sub Assignees` fields are
-abolished (the Product Owner deletes those two single-select fields from the
-Project settings UI once — the automation ignores them either way, and legacy
-Issues that still contain AI Assignee lines or an `implementation-assignment`
-block are processed with those fields ignored, never rejected).
+`.github/workflows/project-issue-defaults.yml` runs on `issues.opened` and on
+manual `workflow_dispatch` (with `issue_number`) and configures classified
+Issues listed in `config/github-projects.json`. It resolves Project, field,
+option, item, and iteration IDs by name through GraphQL; IDs are intentionally
+not stored in the repository. The workflow sets only Priority, Size,
+Start/Target date, and Iteration. Agent/model assignment is decided at
+orchestration run time and is **not** stored in the Project or the Issue body;
+the former `AI Assignees` / `AI Sub Assignees` fields are abolished (the
+Product Owner deletes those two single-select fields from the Project settings
+UI once — the automation ignores them either way, and legacy Issues that still
+contain AI Assignee lines or an `implementation-assignment` block are processed
+with those fields ignored, never rejected).
+
+The Visibility Project is organization-owned (`soroeru` org, Project number in
+`config/github-projects.json`). The workflow authenticates with a **short-lived
+GitHub App installation token** from the dedicated App
+`soroeru-project-automation` (not a long-lived PAT and not bare `GITHUB_TOKEN`
+for Project writes).
 
 The workflow is fail-close: every read and validation completes before the
 first GraphQL mutation (a validation failure performs zero mutations), and a
@@ -110,13 +117,67 @@ node --test tests/unit/project-issue-defaults.test.mjs
 node scripts/project-issue-defaults.mjs --event path/to/issues-opened.json
 ```
 
-Repository administrators must create the `SOROERU_PROJECT_TOKEN` Actions
-secret using a dedicated GitHub App installation token or fine-grained token
-with read access to Issues and write access to the target Projects V2. Do not
-use a personal token, commit a token, or print it. Rotate the token at the
-provider's normal expiry cadence and immediately after membership or scope
-changes. The workflow also declares `repository-projects: write`; the secret
-is required when the repository token cannot write a user-owned Project.
+#### GitHub App setup (repository administrators)
+
+1. Create a GitHub App (example name: `soroeru-project-automation`) owned by
+   an account that can install it on the **`soroeru` organization**.
+2. **Repository permissions:** Metadata (read), Issues (read). Leave other
+   repository permissions at No access.
+3. **Organization permissions:** Projects (read and write). Account permissions
+   do not need a Projects entry for this automation.
+4. Disable the App webhook (Active off) unless you intentionally subscribe to
+   events outside this workflow.
+5. Install the App on organization **`soroeru`**, repository access **Only
+   select repositories** → **`Soroeru` only**.
+6. Register **repository** Actions secrets on `soroeru/Soroeru` (not
+   organization-wide secrets unless multiple repos intentionally share the App):
+   - `SOROERU_PROJECT_APP_ID` — numeric App ID
+   - `SOROERU_PROJECT_APP_PRIVATE_KEY` — full PEM private key, including
+     header/footer lines
+7. Do not commit the private key, paste it into Issues/PR bodies, or print
+   tokens / keys / Issue bodies in Actions logs or artifacts.
+
+The workflow pins `actions/create-github-app-token` by commit SHA and passes
+the installation token as `GH_PROJECT_TOKEN` to
+`scripts/project-issue-defaults.mjs`. Long-lived `SOROERU_PROJECT_TOKEN` is
+not used.
+
+#### Rotate or revoke the App private key
+
+1. In the GitHub App settings, generate a new private key (or remove the
+   compromised key).
+2. Update `SOROERU_PROJECT_APP_PRIVATE_KEY` on `soroeru/Soroeru` with the new
+   PEM only (never commit it).
+3. Delete old private keys from the App settings once the new secret is in
+   place.
+4. To stop automation entirely: uninstall the App from `soroeru`, or remove
+   both secrets, or suspend/delete the App.
+
+#### Re-run Project defaults for an existing Issue
+
+Use Actions → **project-issue-defaults** → **Run workflow** and set
+`issue_number` to a number in **this** repository (for example `413`). The
+script rejects non-positive numbers, missing Issues, pull-request numbers, and
+repository mismatches before any Project mutation. Idempotent re-runs reuse the
+existing Project item and reconverge fields.
+
+```bash
+gh workflow run project-issue-defaults.yml --repo soroeru/Soroeru -f issue_number=413
+```
+
+#### Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| Token step fails / missing App credentials | `SOROERU_PROJECT_APP_ID` or `SOROERU_PROJECT_APP_PRIVATE_KEY` unset or PEM malformed |
+| `{"status":"retryable-error","reason":"project-token-required"}` | `GH_PROJECT_TOKEN` not passed into the Node step |
+| `github-graphql-failed` after a successful token step | App not installed on `soroeru`, wrong repository selection, or Organization **Projects** write missing |
+| `project-not-found` / empty project | `config/github-projects.json` owner, `ownerType`, or `number` does not match the org Project |
+| `invalid-issue-number` / `issue-not-found` / `pull-request-not-supported` | Manual `issue_number` input is wrong; no Project mutation ran |
+| `project-fields-unconverged` | Partial write; re-run the workflow for the same Issue number |
+
+Never expand logging to dump Issue bodies, GraphQL variables with secrets, or
+installation tokens when diagnosing failures.
 
 Python-based Skill validation uses `uv` and the repository-managed PyYAML
 development dependency:

@@ -2,9 +2,9 @@
   "projects": [
     {
       "name": "Visibility",
-      "number": 2,
-      "owner": "ShinHaya",
-      "ownerType": "user",
+      "number": 1,
+      "owner": "soroeru",
+      "ownerType": "organization",
       "fields": {
         "priority": "Priority",
         "size": "Size",
