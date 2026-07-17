@@ -33,8 +33,8 @@ GitHub deterministically.
 
 ## Start gate
 
-1. Enumerate the current runtime's callable agents and models per [provider-routing.md](references/provider-routing.md) and write the verified records to a capabilities file. Capability records use `{agent, requestedModel, model, role, selector, selectable, verifiable, timeoutMs}`; `role` is `parent` for the orchestrating route and `worker` for every route a worker could run on.
-2. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model> --capabilities-file <verified-capabilities.json>`; the default YAML supplies the stable Project/run values. Issue bodies are never fetched by the planner — dependencies come from GitHub `blockedBy` relations and Priority/Size/Status from Project fields. A worker fetches its own Issue body and comments immediately before implementation.
+1. Discover worker runtimes automatically per [provider-routing.md](references/provider-routing.md). The normal path is `node scripts/project-issue-capabilities.mjs` (or omit `--capabilities-file` so the orchestrator discovers for you). Adapters run in fixed order Codex → Claude → Grok → Gemini; only verified routes become capability records `{agent, requestedModel, model, role, selector, selectable, verifiable, timeoutMs}`. Do not hand-limit the pool to Codex with a handmade capabilities file.
+2. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model>` (optional `--capabilities-file` only for tests / intentional overrides). The default YAML supplies the stable Project/run values. Issue bodies are never fetched by the planner — dependencies come from GitHub `blockedBy` relations and Priority/Size/Status from Project fields. A worker fetches its own Issue body and comments immediately before implementation.
 3. Stop before any worktree mutation on unknown/cyclic `Blocked by` dependencies, open or unavailable dependency state, or an unverifiable parent route. Confirm the requested parent model can actually be selected; if exact selection cannot be verified, block that route and never relabel another model.
 4. The dry-run returns `plan.runnable` (ordered by Priority then Issue number) and `workerRoutes` (the run-scoped pool of verified worker routes after `--unavailable-agent` / `--unavailable-model` exclusions). If Issues are runnable and the pool is empty, the run stops with `no-worker-route-available`.
 
@@ -64,9 +64,10 @@ run-scoped hints. Rules:
 
 Send only the Issue number, the assigned agent/model route, release policy, and next milestone to a worker. The worker fetches its own body/comments.
 
+- Launch the selected route with the same exact `selector` / `model` from discovery — for external CLIs use `node scripts/project-issue-dispatch.mjs` (or `dispatchWorker`) so non-Codex routes start through their adapter, not a Codex-only path.
 - No worktree: worker uses `issue-implementation`.
 - Existing Issue worktree/metadata: worker uses `handoff-issue` before editing.
-- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
+- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 
 Workers return only `started`, `blocked`, `commit`, `review-complete`, `pr-created`, `merged`, or `failed`, plus a concise reason and exact usage telemetry when exposed. Do not return implementation logs or Issue bodies.
 
