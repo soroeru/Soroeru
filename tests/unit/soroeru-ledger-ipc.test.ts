@@ -97,6 +97,39 @@ test("importCsv seeds sites and the composed ledger lists them as not-yet-collec
   }
 });
 
+test("ledger reorder persists and newly imported sites append to the manual order", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const session = new SoroeruSession(path);
+    assert.equal((await session.setup(PASSPHRASE)).ok, true);
+    assert.equal((await session.importCsv(SAMPLE_CSV)).ok, true);
+    const initial = session.ledgerSites();
+
+    assert.deepEqual(await session.reorderSiteAccounts(initial.map((site) => site.siteAccountId).reverse()), {
+      ok: true,
+    });
+    assert.deepEqual(
+      session.ledgerSites().map((site) => site.siteAccountId),
+      initial.map((site) => site.siteAccountId).reverse(),
+    );
+
+    session.lock();
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+    assert.deepEqual(
+      session.ledgerSites().map((site) => site.siteAccountId),
+      initial.map((site) => site.siteAccountId).reverse(),
+    );
+
+    const added = await session.importCsv(
+      ["name,url,username,password,note", "Later,https://later.test/,later,fake-pass-3,"].join("\n"),
+    );
+    assert.equal(added.ok, true);
+    assert.equal(session.ledgerSites().at(-1)?.displayName, "Later");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("importCsv reports a sanitized reason for a malformed CSV", async () => {
   const { dir, path } = await tmpVaultPath();
   try {

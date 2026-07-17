@@ -53,6 +53,51 @@ test("setPersonalAttribute uses the attribute key as id and defaults sensitivity
   }
 });
 
+test("site accounts receive stable append-only manual sort orders", async () => {
+  const { dir, service } = await openService();
+  try {
+    const first = service.upsertSiteAccount({ id: "first", domain: "z.test", displayName: "Z" });
+    const second = service.upsertSiteAccount({ id: "second", domain: "a.test", displayName: "A" });
+    const updated = service.upsertSiteAccount({ id: first.id, domain: "z.test", displayName: "Zed" });
+
+    assert.equal(first.sortOrder, 0);
+    assert.equal(second.sortOrder, 1);
+    assert.equal(updated.sortOrder, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("legacy site accounts migrate from display-name order and reorder atomically", async () => {
+  const { dir, service, vault } = await openService();
+  try {
+    vault.put("siteAccount", { id: "z", domain: "z.test", displayName: "Zulu", createdAt: 1, updatedAt: 1 });
+    vault.put("siteAccount", { id: "a", domain: "a.test", displayName: "Alpha", createdAt: 2, updatedAt: 2 });
+
+    assert.equal(service.ensureSiteAccountSortOrders(), true);
+    assert.deepEqual(
+      service.listSiteAccountsInManualOrder().map((site) => [site.id, site.sortOrder]),
+      [
+        ["a", 0],
+        ["z", 1],
+      ],
+    );
+    assert.deepEqual(service.reorderSiteAccounts(["z", "a"]), { ok: true });
+    assert.deepEqual(
+      service.listSiteAccountsInManualOrder().map((site) => site.id),
+      ["z", "a"],
+    );
+
+    assert.deepEqual(service.reorderSiteAccounts(["a"]), { ok: false, error: "invalid-order" });
+    assert.deepEqual(
+      service.listSiteAccountsInManualOrder().map((site) => site.id),
+      ["z", "a"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("disclosure stale-state: current, stale, and unknown", async () => {
   const { dir, service } = await openService();
   try {

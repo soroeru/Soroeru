@@ -59,6 +59,8 @@ export interface SiteAccount extends DomainRecord {
   /** Login anchor / entry URL when known. */
   url?: string;
   displayName: string;
+  /** Canonical user-defined order. Absent only on vaults created before Issue #387 migration. */
+  sortOrder?: number;
   /** Short human-readable relationship summary; never raw PII. */
   relationshipSummary?: string;
   /**

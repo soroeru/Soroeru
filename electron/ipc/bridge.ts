@@ -33,6 +33,8 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.ledgerSites]: () => session.ledgerSites(),
     [IPC_CHANNELS.ledgerSite]: (siteAccountId: unknown) => session.ledgerSite(String(siteAccountId ?? "")),
     [IPC_CHANNELS.ledgerSiteDetails]: () => session.ledgerSiteDetails(),
+    [IPC_CHANNELS.ledgerReorderSites]: (orderedIds: unknown) =>
+      session.reorderSiteAccounts(toOrderedSiteIds(orderedIds)),
     [IPC_CHANNELS.ledgerInsights]: () => session.ledgerInsights(),
     [IPC_CHANNELS.revealValue]: (disclosureId: unknown, passphrase: unknown) =>
       session.revealValue(String(disclosureId ?? ""), String(passphrase ?? "")),
@@ -65,6 +67,10 @@ export function createIpcBridge(session: SoroeruSession): Record<IpcChannel, Ipc
     [IPC_CHANNELS.chromeBridgeStop]: () => session.stopChromeBridge(),
     [IPC_CHANNELS.logsExport]: () => session.exportLogs(),
   };
+}
+
+function toOrderedSiteIds(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
 }
 
 function toConfirmDynamicCandidateRequest(request: unknown): {

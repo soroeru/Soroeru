@@ -629,6 +629,7 @@ export class SoroeruSession {
     try {
       this.vault = await VaultV2.open(this.vaultPath, passphrase);
       this.domain = new DomainService(this.vault);
+      if (this.domain.ensureSiteAccountSortOrders()) await this.vault.save();
       this.visibility.setDomain(this.domain);
       this.refreshAiEngine();
       this.logger.info("vault", "vault unlocked");
@@ -651,6 +652,7 @@ export class SoroeruSession {
     try {
       this.vault = await VaultV2.openWithRecoveryKey(this.vaultPath, recoveryKey);
       this.domain = new DomainService(this.vault);
+      if (this.domain.ensureSiteAccountSortOrders()) await this.vault.save();
       this.visibility.setDomain(this.domain);
       this.refreshAiEngine();
       this.logger.info("vault", "vault unlocked with recovery key");
@@ -901,10 +903,9 @@ export class SoroeruSession {
     if (!this.domain || !this.vault || this.vault.isLocked) return [];
     const domain = this.domain;
     return domain
-      .listSiteAccounts()
+      .listSiteAccountsInManualOrder()
       .map((site) => this.composeSiteSummary(site.id))
-      .filter((summary): summary is SiteLedgerSummary => summary !== undefined)
-      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      .filter((summary): summary is SiteLedgerSummary => summary !== undefined);
   }
 
   /** Cross-cutting filters and the initial Reflection derived from the ledger (RFC-002 §5.3). */
@@ -932,10 +933,23 @@ export class SoroeruSession {
     const dynamicCandidates = this.domain.listDynamicAttributeCandidates();
     const constraints = this.domain.listConstraints();
     return this.domain
-      .listSiteAccounts()
+      .listSiteAccountsInManualOrder()
       .map((site) => this.composeSiteDetail(site.id, { dynamicCandidates, constraints }))
-      .filter((detail): detail is SiteLedgerDetail => detail !== undefined)
-      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+      .filter((detail): detail is SiteLedgerDetail => detail !== undefined);
+  }
+
+  async reorderSiteAccounts(orderedIds: string[]): Promise<{ ok: boolean; error?: string }> {
+    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
+    const previousIds = this.domain.listSiteAccountsInManualOrder().map((site) => site.id);
+    const result = this.domain.reorderSiteAccounts(orderedIds);
+    if (!result.ok) return result;
+    try {
+      await this.vault.save();
+      return { ok: true };
+    } catch {
+      this.domain.reorderSiteAccounts(previousIds);
+      return { ok: false, error: "save-failed" };
+    }
   }
 
   private composeSiteDetail(
