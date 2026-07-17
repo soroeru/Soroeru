@@ -449,7 +449,9 @@ Primary responsibilities:
 ## Orchestration Workflow
 
 In this repository, the main Claude Code model is the orchestrator: plan, decompose, and
-synthesize rather than doing every step itself.
+synthesize rather than doing every step itself. Use the `orchestrate-project-issues` skill
+when coordinating multiple Soroeru GitHub Project Issues whose implementation order,
+dependencies, and runtime routing must be managed together.
 
 - Reasoning-heavy phases (architecture, complex debugging, algorithm design) → dispatch
   to the `deep-reasoner` subagent (pinned to Opus, defined in `.claude/agents/deep-reasoner.md`).
@@ -506,8 +508,8 @@ Tooling:
   each such pair costs a full turn and can re-dump large command output (e.g.
   `ps aux` capturing an entire review prompt) into context every time.
 
-Local AI review and the `issue-implementation` skill remain in force regardless of
-which model orchestrates; subagent/Codex review does not replace them.
+Local AI review, the `issue-implementation` skill, and the `orchestrate-project-issues` skill remain
+in force regardless of which model orchestrates; subagent/Codex review does not replace them.
 
 ## Claude Code Operating Rules
 
