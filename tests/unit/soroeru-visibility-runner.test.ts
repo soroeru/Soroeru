@@ -1203,7 +1203,7 @@ test("visibility runner reports login-failed (not collected) when a password fie
     const site = service.upsertSiteAccount({
       domain: "stuck.example.test",
       url: "https://stuck.example.test/login",
-      displayName: "Stuck",
+      displayName: "stuck.example.test",
     });
     service.addCredential({
       siteAccountId: site.id,
@@ -1216,6 +1216,7 @@ test("visibility runner reports login-failed (not collected) when a password fie
       field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
       field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
     ]);
+    loginSnapshot.siteName = "Generic Login Portal";
     const page = new FakePageDriver([loginSnapshot, loginSnapshot], {});
     const { logger, entries } = recordingLogger();
     const runner = new VisibilityRunner({
@@ -1229,6 +1230,7 @@ test("visibility runner reports login-failed (not collected) when a password fie
     assert.equal(result.status, "login-failed");
     assert.equal(result.disclosures, 0);
     assert.equal(service.listDisclosuresForSite(site.id).length, 0);
+    assert.equal(service.getSiteAccount(site.id)?.displayName, "stuck.example.test");
     assert.notEqual(service.getCheckpoint("visibility", site.id)?.status, "done");
     const constraint = service.listConstraints().find((c) => c.kind === "unknown-state");
     assert.ok(constraint?.detail.startsWith("login-incomplete:"));
