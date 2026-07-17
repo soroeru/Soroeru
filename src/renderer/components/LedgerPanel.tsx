@@ -26,7 +26,7 @@ import {
   buildCollectionResultModalContent,
   type CollectionResultModalContent,
 } from "../collection-result-summary.js";
-import { buildLedgerColumns, disclosureFor } from "../ledger-table.js";
+import { buildLedgerColumns, buildSiteDetailDisclosureGroups, disclosureFor } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
 import {
@@ -69,8 +69,8 @@ interface LedgerPanelProps {
 
 /**
  * Spreadsheet-style Disclosure ledger with integrated site collection controls
- * (Issue #341). Rows are sites, columns are the union of every attribute
- * observed across all sites, plus selection, status, and row actions.
+ * (Issue #341). Rows are sites, columns are the disclosed common comparison
+ * attributes observed across all sites, plus selection, status, and actions.
  */
 export function LedgerPanel({
   reloadToken,
@@ -890,8 +890,10 @@ export function SiteDetail({
   /** Re-fetches this site's detail, e.g. after confirming a pending candidate. */
   onReload: () => void | Promise<void>;
 }): React.JSX.Element {
+  const disclosureGroups = buildSiteDetailDisclosureGroups(detail.disclosures);
+
   return (
-    <div className="flex flex-col gap-3 rounded border border-neutral-200 bg-white p-3 sm:p-4">
+    <div className="flex max-w-2xl flex-col gap-3 rounded border border-neutral-200 bg-white p-3 sm:p-4">
       <div className="flex flex-col gap-2">
         <button type="button" onClick={onClose} className="self-start text-sm underline">
           閉じる
@@ -902,11 +904,24 @@ export function SiteDetail({
       {detail.disclosures.length === 0 ? (
         <p className="text-sm text-neutral-500">このサイトの開示はまだ収集されていません。</p>
       ) : (
-        <ul className="flex flex-col gap-2">
-          {detail.disclosures.map((disclosure) => (
-            <DisclosureRow key={disclosure.disclosureId} disclosure={disclosure} />
+        <div className="flex flex-col gap-4">
+          {disclosureGroups.map((group) => (
+            <section
+              key={group.label}
+              className="flex flex-col gap-2"
+              aria-labelledby={`disclosure-${group.label}`}
+            >
+              <h4 id={`disclosure-${group.label}`} className="text-xs font-medium text-neutral-600">
+                {group.label}
+              </h4>
+              <ul className="flex flex-col gap-2">
+                {group.disclosures.map((disclosure) => (
+                  <DisclosureRow key={disclosure.disclosureId} disclosure={disclosure} />
+                ))}
+              </ul>
+            </section>
           ))}
-        </ul>
+        </div>
       )}
 
       {detail.pendingAttributeCandidates.length > 0 && (
