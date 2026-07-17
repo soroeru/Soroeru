@@ -150,6 +150,8 @@ export interface DisplayValueCandidate {
 export interface PageSnapshot {
   url: string;
   title: string;
+  /** General service/brand name from `og:site_name`, when the page declares one. */
+  siteName?: string;
   fields: FormField[];
   buttons: PageButton[];
   links: PageLink[];
