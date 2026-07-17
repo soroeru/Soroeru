@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import { OWNER_TYPES } from "./project-issue-assignment.mjs";
 import {
+  DEFAULT_CAPABILITIES_OUTPUT,
+  discoverCapabilities,
+} from "./project-issue-capabilities.mjs";
+import {
   DEFAULT_CONFIG_PATH,
   loadOrchestratorConfig,
   mergeOrchestratorConfig,
@@ -37,6 +41,8 @@ export {
   validateProjectItems,
 } from "./project-issue-plan.mjs";
 export { buildProjectItemsQuery, fetchProjectItems, githubGraphql } from "./project-issue-github.mjs";
+export { discoverCapabilities, DEFAULT_CAPABILITIES_OUTPUT } from "./project-issue-capabilities.mjs";
+export { dispatchWorker } from "./project-issue-dispatch.mjs";
 
 /**
  * Dry-run never mutates disk state and never applies milestones to the plan.
@@ -125,6 +131,7 @@ export function parseCliArgs(argv) {
     ["--milestone-json", "milestoneJson"],
     ["--milestone-file", "milestoneFile"],
     ["--capabilities-file", "capabilitiesFile"],
+    ["--capabilities-output", "capabilitiesOutput"],
     ["--parent-agent", "parentAgent"],
     ["--parent-model", "parentModel"],
     ["--config", "configPath"],
@@ -137,6 +144,10 @@ export function parseCliArgs(argv) {
     }
     if (flag === "--simulate-milestone") {
       options.simulateMilestone = true;
+      continue;
+    }
+    if (flag === "--skip-capability-discovery") {
+      options.skipCapabilityDiscovery = true;
       continue;
     }
     // Backward-compatible alias; prefer --parent-agent.
@@ -262,9 +273,33 @@ async function main() {
   const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
   if (cli.milestoneFile) input.milestone = JSON.parse(await fs.readFile(cli.milestoneFile, "utf8"));
-  const capabilities = cli.capabilitiesFile
-    ? JSON.parse(await fs.readFile(cli.capabilitiesFile, "utf8"))
-    : undefined;
+
+  // Capability source of truth for the normal CLI path is automatic discovery.
+  // Explicit sources (file or pre-baked input.options.capabilities) remain for
+  // tests and intentional non-default runs; they skip discovery entirely.
+  let capabilities;
+  let capabilityDiagnostics;
+  if (cli.capabilitiesFile) {
+    const loaded = JSON.parse(await fs.readFile(cli.capabilitiesFile, "utf8"));
+    capabilities = Array.isArray(loaded) ? loaded : loaded.capabilities;
+    if (!Array.isArray(capabilities)) throw new Error("capability-records-required");
+  } else if (Array.isArray(input.options?.capabilities)) {
+    capabilities = input.options.capabilities;
+  } else if (cli.skipCapabilityDiscovery) {
+    capabilities = undefined;
+  } else {
+    const outputPath = path.resolve(
+      repositoryRoot,
+      cli.capabilitiesOutput ?? DEFAULT_CAPABILITIES_OUTPUT,
+    );
+    const discovered = await discoverCapabilities({
+      outputPath,
+      cwd: repositoryRoot,
+    });
+    capabilities = discovered.capabilities;
+    capabilityDiagnostics = discovered.diagnostics;
+  }
+
   input.options = {
     ...(input.options ?? {}),
     ...(cli.dryRun === undefined ? {} : { dryRun: cli.dryRun }),
@@ -286,7 +321,9 @@ async function main() {
   };
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))
     throw new Error("parent-agent-and-model-required");
-  process.stdout.write(`${JSON.stringify(await runOrchestration(input))}\n`);
+  const result = await runOrchestration(input);
+  if (capabilityDiagnostics !== undefined) result.capabilityDiagnostics = capabilityDiagnostics;
+  process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))

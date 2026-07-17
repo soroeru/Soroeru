@@ -145,16 +145,28 @@ not from Issue body text. A `CLOSED` blocker is treated as completed; an
 `OPEN` blocker stops the dry-run with a deterministic dependency reason.
 
 ```bash
+# Normal path: automatic capability discovery (Codex → Claude → Grok → Gemini).
+# Writes state/project-issue-capabilities.json atomically; do not hand-limit to Codex.
+node scripts/project-issue-capabilities.mjs
+# Optional: JSON on stdout only
+# node scripts/project-issue-capabilities.mjs --stdout
+
 GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
   --dry-run --issues 380,382,384,386,387 \
   --unavailable-model MODEL --unavailable-agent Codex --existing-worktree 396 \
-  --parent-agent Codex --parent-model MODEL \
-  --capabilities-file path/to/verified-capabilities.json
+  --parent-agent Codex --parent-model MODEL
+# Optional override for tests / intentional non-default runs:
+#   --capabilities-file path/to/verified-capabilities.json
 # Optional: apply a milestone in memory only (still no state write) during dry-run:
 #   --simulate-milestone --milestone-json '{"issue":396,"type":"merged"}'
 node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json \
   --dry-run --max-parallel 2 --release-policy merged
+# Launch a selected external worker with the exact discovered selector:
+# node scripts/project-issue-dispatch.mjs \
+#   --route-json '{"agent":"Grok","model":"grok-4.5","selector":"…","selectable":true,"verifiable":true,"timeoutMs":30000}' \
+#   --issue 413 --release-policy merged --next-milestone pr-created
 node --test tests/unit/project-issue-orchestrator.test.mjs \
+  tests/unit/project-issue-capabilities.test.mjs \
   tests/unit/project-issue-defaults.test.mjs
 ```
 
@@ -164,11 +176,19 @@ constraints, and the result includes `workerRoutes` — the run-scoped pool of
 verified worker capability records after `--unavailable-agent` /
 `--unavailable-model` exclusions. The orchestrating agent assigns each
 runnable Issue to one of those routes at run time; if Issues are runnable but
-the pool is empty the run stops with `no-worker-route-available`.
+the pool is empty the run stops with `no-worker-route-available` before any
+worktree mutation.
 
-Capability files use `agent` (Codex/Claude/…) rather than API-provider names. A
-capability may use `requestedModel` for the exact Project/Issue model label and
-`model` for the runtime's canonical model identifier, for example:
+Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
+`scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
+Gemini; Gemini via Antigravity `agy` when present). Only verified routes enter
+the pool; closed diagnostic reasons include `cli-not-found`, `auth-unavailable`,
+`model-not-selectable`, `model-mismatch`, and `verification-timeout`. Dispatch of
+a selected route reuses the same exact selector through
+`scripts/project-issue-dispatch.mjs`. Capability files use `agent`
+(Codex/Claude/…) rather than API-provider names. A capability may use
+`requestedModel` for the exact display label and `model` for the runtime's
+canonical model identifier, for example:
 
 ```json
 {
