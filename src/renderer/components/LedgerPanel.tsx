@@ -269,11 +269,13 @@ export function LedgerPanel({
   const moveManualSiteBy = useCallback(
     (siteAccountId: string, offset: -1 | 1) => {
       if (sortMode !== "manual") return;
-      const index = sitesRef.current.findIndex((site) => site.siteAccountId === siteAccountId);
-      const target = sitesRef.current[index + offset];
+      // Neighbors must follow the filtered table, not the full list (Issue #388).
+      const visible = filterLedgerSitesByCollection(sitesRef.current, collectionFilter);
+      const index = visible.findIndex((site) => site.siteAccountId === siteAccountId);
+      const target = visible[index + offset];
       if (target) moveManualSite(siteAccountId, target.siteAccountId);
     },
-    [moveManualSite, sortMode],
+    [collectionFilter, moveManualSite, sortMode],
   );
 
   useEffect(() => {
@@ -638,7 +640,12 @@ export function LedgerPanel({
           id="ledger-collection-filter"
           value={collectionFilter}
           disabled={batchBusy}
-          onChange={(event) => setCollectionFilter(event.target.value as LedgerCollectionFilter)}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "all" || value === "collected" || value === "uncollected") {
+              setCollectionFilter(value);
+            }
+          }}
           className="rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
           aria-label="収集状態で絞り込む"
         >
@@ -667,12 +674,12 @@ export function LedgerPanel({
             onClick={selectAllVisible}
             className="text-sm underline"
           >
-            全てにチェックする
+            表示中をすべて選択
           </button>
         )}
         {selectedVisibleIds.length > 0 && (
           <button type="button" disabled={batchBusy} onClick={clearVisible} className="text-sm underline">
-            全てのチェックを外す
+            表示中のチェックを外す
           </button>
         )}
       </div>
