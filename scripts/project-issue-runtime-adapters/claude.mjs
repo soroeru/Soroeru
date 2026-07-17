@@ -62,12 +62,11 @@ function parseModelLines(stdout) {
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || /^available models/i.test(trimmed) || /^default model/i.test(trimmed)) continue;
-    const bullet = trimmed.replace(/^\*\s+/, "").replace(/^\-\s+/, "");
-    const id = bullet.split(/\s+/)[0];
-    if (!id || /:$/.test(id)) continue;
-    // Skip prose sentences.
-    if (/\s/.test(bullet) && !/^[a-z0-9._-]+$/i.test(id)) continue;
-    if (/^[a-z0-9][a-z0-9._+-]*$/i.test(id)) models.push({ model: id, requestedModel: id });
+    // Strict bullet/ID lines only — never invent models from prose sentences.
+    const bullet = trimmed.match(/^(?:[*•-]\s+)?([a-z0-9][a-z0-9._+-]*)$/i);
+    if (!bullet) continue;
+    const id = bullet[1];
+    models.push({ model: id, requestedModel: id });
   }
   return models.length ? models : null;
 }
@@ -160,7 +159,14 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
-    const selector = `${cliPath} --model ${quoteSelectorArg(model)}`;
+    const modelArg = quoteSelectorArg(model);
+    if (!modelArg) {
+      diagnostics.push(
+        diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE, model }),
+      );
+      continue;
+    }
+    const selector = `${cliPath} --model ${modelArg}`;
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({

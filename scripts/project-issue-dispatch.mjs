@@ -42,7 +42,7 @@ export async function dispatchWorker(input, ctx = {}) {
   const job = {
     issueNumber: input.issueNumber,
     agent: route.agent,
-    model: route.requestedModel ?? route.model,
+    model: route.model,
     requestedModel: route.requestedModel,
     selector: route.selector,
     timeoutMs: route.timeoutMs,

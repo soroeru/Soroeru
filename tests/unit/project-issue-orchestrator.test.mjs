@@ -579,7 +579,11 @@ test("CLI dry-run discovery does not write the capabilities cache file", async (
     }),
   );
   const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
-  // Discovery may find zero real routes in CI; we only assert no disk write.
+  // Isolate PATH so discovery fails fast with cli-not-found (no real agent probes).
+  const isolatedEnv = {
+    ...process.env,
+    PATH: path.dirname(process.execPath),
+  };
   try {
     await execFileAsync(
       process.execPath,
@@ -597,7 +601,7 @@ test("CLI dry-run discovery does not write the capabilities cache file", async (
         "--capabilities-output",
         capabilitiesOutput,
       ],
-      { timeout: 120_000 },
+      { timeout: 30_000, env: isolatedEnv },
     );
   } catch {
     // routing-unavailable / no-worker-route-available is fine for this assertion

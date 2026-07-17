@@ -101,7 +101,14 @@ export async function discover(ctx = {}) {
   }
 
   for (const { model, requestedModel } of models) {
-    const selector = `${cliPath} --model ${quoteSelectorArg(model)}`;
+    const modelArg = quoteSelectorArg(model);
+    if (!modelArg) {
+      diagnostics.push(
+        diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE, model }),
+      );
+      continue;
+    }
+    const selector = `${cliPath} --model ${modelArg}`;
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({

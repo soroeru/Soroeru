@@ -43,7 +43,10 @@ function parseAgyModels(stdout) {
     const name = line.trim();
     if (!name) continue;
     if (/^available models/i.test(name) || /^usage of/i.test(name)) continue;
-    // agy models prints one display name per line (may contain spaces).
+    // Reject prose/tips: require a product-style model display name.
+    // Real agy lines look like "Gemini 3.1 Pro (High)" / "Claude Sonnet 4.6 (Thinking)".
+    if (!/^(Gemini|Claude|GPT)\b/i.test(name)) continue;
+    if (/[.!?]$/.test(name)) continue;
     models.push({ model: name, requestedModel: name });
   }
   return models.length ? models : null;
@@ -93,6 +96,12 @@ export async function discover(ctx = {}) {
   for (const { model, requestedModel } of models) {
     // Prefer print/non-interactive flags for agy when launching workers.
     const modelArg = quoteSelectorArg(model);
+    if (!modelArg) {
+      diagnostics.push(
+        diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE, model }),
+      );
+      continue;
+    }
     const selector =
       cliName === "agy" || /\/agy$/.test(cliPath)
         ? `${cliPath} --model ${modelArg} --print`

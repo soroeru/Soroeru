@@ -2,6 +2,7 @@ import * as claude from "./claude.mjs";
 import * as codex from "./codex.mjs";
 import * as gemini from "./gemini.mjs";
 import * as grok from "./grok.mjs";
+import { REASON_CODES } from "./shared.mjs";
 
 /** Fixed evaluation order: Codex → Claude → Grok → Gemini. */
 export const RUNTIME_ADAPTERS = Object.freeze([codex, claude, grok, gemini]);
@@ -33,7 +34,7 @@ export async function discoverAllCapabilities(ctx = {}) {
       diagnostics.push({
         agent: adapter.agent,
         status: "failed",
-        reason: "probe-failed",
+        reason: REASON_CODES.PROBE_FAILED,
       });
     }
   }

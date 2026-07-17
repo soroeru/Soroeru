@@ -46,11 +46,10 @@ export async function resolveExecutable(command, { env = process.env, pathEnv } 
 }
 
 /**
- * Run a process with a hard timeout. On timeout, terminates the process group
- * when possible so only that CLI (not sibling workers) is stopped.
- *
- * Never returns stdout/stderr in diagnostics callers should discard sensitive
- * bodies; callers extract only machine-readable fields they need.
+ * Run a short probe process with a hard timeout. On timeout, signals the
+ * direct child (probes stay non-detached for reliable SIGTERM). Callers must
+ * extract only machine-readable fields from stdout/stderr and must not persist
+ * credentials, prompts, Issue bodies, or model response bodies in diagnostics.
  */
 export function runProcess(
   command,
@@ -148,10 +147,14 @@ export function runProcess(
   });
 }
 
-/** Quote a selector argument when it contains whitespace or quotes. */
+/**
+ * Quote a selector argument when it contains whitespace.
+ * Returns null when the value cannot be represented safely (e.g. embedded quotes).
+ */
 export function quoteSelectorArg(value) {
   const text = String(value ?? "");
-  if (/[\s"']/.test(text)) return `"${text.replaceAll('"', '\\"')}"`;
+  if (!text || /["']/.test(text)) return null;
+  if (/\s/.test(text)) return `"${text}"`;
   return text;
 }
 
