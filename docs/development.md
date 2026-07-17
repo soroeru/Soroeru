@@ -173,7 +173,7 @@ gh workflow run project-issue-defaults.yml --repo soroeru/Soroeru -f issue_numbe
 | Token step `Not Found` on `/repos/.../installation` | App is not installed on org `soroeru` with repository `Soroeru` selected (install must be on the org, not only a personal account) |
 | `{"status":"retryable-error","reason":"project-token-required"}` | `GH_PROJECT_TOKEN` not passed into the Node step |
 | `github-graphql-forbidden` after a successful token step | Organization **Projects** write missing, App install incomplete, or Projects V2 access denied for the installation |
-| `github-graphql-failed` / `github-graphql-not-found` | GraphQL rejected the request; confirm `config/github-projects.json` owner / number and App Projects permission |
+| `github-graphql-failed` / `github-graphql-not-found` | GraphQL rejected the request; confirm `config/github-projects.json` owner / number and App Projects permission. A bad field shape (e.g. `projectsV2(number:)` instead of `projectV2(number:)`) also surfaces here |
 | `project-not-found` / empty project | `config/github-projects.json` owner, `ownerType`, or `number` does not match the org Project |
 | `invalid-issue-number` / `issue-not-found` / `pull-request-not-supported` | Manual `issue_number` input is wrong; no Project mutation ran |
 | `project-fields-unconverged` | Partial write; re-run the workflow for the same Issue number |

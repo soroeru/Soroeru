@@ -60,7 +60,9 @@ export function calculateIterationDates(issueDate) {
 
 export function buildProjectQuery(ownerType) {
   const root = ownerType === "organization" ? "organization" : "user";
-  return `query Project($owner: String!, $number: Int!) { ${root}(login: $owner) { projectsV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100) { nodes { id content { ... on Issue { id number } } } } } } }`;
+  // GraphQL exposes a single project as projectV2(number:); projectsV2 is a
+  // connection and does not accept `number` (that shape returns GraphQL errors).
+  return `query Project($owner: String!, $number: Int!) { ${root}(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100) { nodes { id content { ... on Issue { id number } } } } } } }`;
 }
 
 export const ADD_ITEM_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: { projectId: $projectId contentId: $contentId }) { item { id } } }`;
@@ -385,7 +387,7 @@ async function main() {
     { owner: projectOwner, number: projectConfig.number },
     token,
   );
-  const project = data[ownerType]?.projectsV2;
+  const project = data[ownerType]?.projectV2;
   const result = await applyProjectDefaults({
     issue,
     project,

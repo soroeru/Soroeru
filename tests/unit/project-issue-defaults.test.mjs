@@ -13,6 +13,7 @@ import {
   shapeIssueRecord,
   loadRepositoryIssue,
   reasonFromGraphqlFailure,
+  buildProjectQuery,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
