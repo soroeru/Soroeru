@@ -55,6 +55,10 @@ export default defineConfig(({ mode }) => {
       outDir: at("dist/renderer"),
       emptyOutDir: true,
     },
-    server: { port: 5173, strictPort: true },
+    // Host pinned to the IPv4 loopback literal: with a hostname, Node ≥17
+    // (verbatim DNS order) binds only the resolver's first address — ::1 on
+    // macOS — and the dev script's `wait-on tcp:127.0.0.1:5173` never sees it,
+    // so Electron never launches.
+    server: { host: "127.0.0.1", port: 5173, strictPort: true },
   };
 });
