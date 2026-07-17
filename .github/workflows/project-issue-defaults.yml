@@ -20,6 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Scope the token to the org installation (all repos the App can access —
+      # currently only Soroeru). Do not pass `repositories` + narrow permission-*
+      # overrides: that combination can produce a repo-scoped token that fails
+      # organization Projects V2 GraphQL with FORBIDDEN / opaque errors.
       - name: Create GitHub App installation token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -27,10 +31,6 @@ jobs:
           app-id: ${{ secrets.SOROERU_PROJECT_APP_ID }}
           private-key: ${{ secrets.SOROERU_PROJECT_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
-          permission-issues: read
-          permission-metadata: read
-          permission-organization-projects: write
 
       - uses: actions/setup-node@v6
         with:

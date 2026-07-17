@@ -12,6 +12,7 @@ import {
   normalizeProjectIssueEvent,
   shapeIssueRecord,
   loadRepositoryIssue,
+  reasonFromGraphqlFailure,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -539,4 +540,27 @@ test("toRetryableErrorPayload maps secret and validation failures without extra 
     status: "retryable-error",
     reason: "github-graphql-failed",
   });
+  assert.deepEqual(toRetryableErrorPayload(new Error("github-graphql-forbidden")), {
+    status: "retryable-error",
+    reason: "github-graphql-forbidden",
+  });
+});
+
+test("reasonFromGraphqlFailure classifies integration and not-found errors", () => {
+  assert.equal(reasonFromGraphqlFailure(false, {}), "github-graphql-http-failed");
+  assert.equal(reasonFromGraphqlFailure(true, {}), null);
+  assert.equal(
+    reasonFromGraphqlFailure(true, {
+      errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }],
+    }),
+    "github-graphql-forbidden",
+  );
+  assert.equal(
+    reasonFromGraphqlFailure(true, { errors: [{ type: "NOT_FOUND", message: "Could not resolve" }] }),
+    "github-graphql-not-found",
+  );
+  assert.equal(
+    reasonFromGraphqlFailure(true, { errors: [{ message: "something else" }] }),
+    "github-graphql-failed",
+  );
 });
