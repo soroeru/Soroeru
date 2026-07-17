@@ -108,14 +108,13 @@ export class VisibilityRunner {
 
       const reuseAuthenticatedSession =
         credential !== undefined &&
-        hasAuthenticatedSessionMarker(snapshot) &&
-        (await this.authenticatedSessionIdentityMatches(session, snapshot, credential));
-      if (reuseAuthenticatedSession) {
-        this.logger.info("visibility", "reusing authenticated browser session", {
-          domain: siteAccount.domain,
-          reason: "visible-logout-control",
-        });
-      }
+        (await this.canReuseAuthenticatedSession(
+          session,
+          snapshot,
+          credential,
+          siteAccount,
+          "visible-logout-control",
+        ));
 
       if (credential && !reuseAuthenticatedSession) {
         snapshot = await this.ensureLoginPage(siteAccount, session, snapshot);
@@ -129,15 +128,14 @@ export class VisibilityRunner {
         // fill — re-submitting credentials here would push another machine-
         // generated login into the very gate the human just cleared and loop
         // the hand-off. Missing or mismatched identity fails closed to login.
-        const resumedAuthenticatedSession =
-          hasAuthenticatedSessionMarker(snapshot) &&
-          (await this.authenticatedSessionIdentityMatches(session, snapshot, credential));
-        if (resumedAuthenticatedSession) {
-          this.logger.info("visibility", "reusing authenticated browser session", {
-            domain: siteAccount.domain,
-            reason: "authenticated-after-login-page-handoff",
-          });
-        } else {
+        const resumedAuthenticatedSession = await this.canReuseAuthenticatedSession(
+          session,
+          snapshot,
+          credential,
+          siteAccount,
+          "authenticated-after-login-page-handoff",
+        );
+        if (!resumedAuthenticatedSession) {
           // Issue #351: SSO hand-off is single-shot per site run (independent of wall maxHandoffs).
           let ssoHandoffOffered = false;
           const loginPageSnapshot = snapshot;
@@ -409,6 +407,31 @@ export class VisibilityRunner {
     await session.page.goto(loginLink);
     await session.page.waitForReady();
     return session.page.snapshot();
+  }
+
+  /**
+   * Issue #373 skip check, shared by the initial page and the post-handoff
+   * resume path (Issue #372): true — and logged — only when the visible
+   * session is authenticated as the imported account. Missing or mismatched
+   * identity fails closed so the caller falls back to the login flow.
+   */
+  private async canReuseAuthenticatedSession(
+    session: SiteSession,
+    snapshot: PageSnapshot,
+    credential: Credential,
+    siteAccount: SiteAccount,
+    reason: string,
+  ): Promise<boolean> {
+    const reuse =
+      hasAuthenticatedSessionMarker(snapshot) &&
+      (await this.authenticatedSessionIdentityMatches(session, snapshot, credential));
+    if (reuse) {
+      this.logger.info("visibility", "reusing authenticated browser session", {
+        domain: siteAccount.domain,
+        reason,
+      });
+    }
+    return reuse;
   }
 
   /**

@@ -27,8 +27,9 @@ export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
   // Cloudflare Turnstile iframe, and classifying it as "captcha" would give
   // the human an inaccurate hand-off instruction (Issue #372). Either way the
   // response is the same — detect and hand off; never solve or bypass.
-  if (PASSWORD_RESET_REQUIRED_RE.test(snapshot.visibleText)) {
-    return { kind: "password-reset", evidence: "forced password-reset wording" };
+  const passwordResetWording = PASSWORD_RESET_REQUIRED_RE.exec(snapshot.visibleText);
+  if (passwordResetWording) {
+    return { kind: "password-reset", evidence: `wording: ${passwordResetWording[0]}` };
   }
   if (snapshot.wallMarkers.length > 0) {
     return { kind: "captcha", evidence: `widget marker: ${snapshot.wallMarkers.join(", ")}` };
