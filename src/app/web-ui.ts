@@ -161,6 +161,7 @@ const WALL_KIND_LABELS: Record<WallDetection["kind"], string> = {
   mfa: "ワンタイムコード（MFA）",
   "email-verification": "メール／SMS確認",
   "identity-verification": "本人確認",
+  "password-reset": "パスワード再設定",
   ambiguous: "確認画面",
 };
 

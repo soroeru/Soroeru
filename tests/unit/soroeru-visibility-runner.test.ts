@@ -663,6 +663,80 @@ test("visibility runner does not treat a logout marker as authenticated on a par
   }
 });
 
+test("visibility runner skips credential re-submission after a password-reset handoff leaves the session authenticated (Issue #372)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "reset.example.test",
+      url: "https://reset.example.test/",
+      displayName: "Reset",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "fake-pass",
+      source: "csv-import",
+    });
+    const home = {
+      ...snapshot("https://reset.example.test/", []),
+      links: [{ href: "https://reset.example.test/login", text: "ログイン" }],
+    };
+    // Site-forced reset gate reached instead of the login form; its own
+    // Turnstile iframe must not downgrade the wall kind to captcha.
+    const forcedReset = {
+      ...snapshot(
+        "https://reset.example.test/password-reset",
+        [],
+        "2024年8月5日（月）以降に初めてログインする方は、パスワード再設定が必要です。",
+      ),
+      iframeSrcs: ["https://challenges.cloudflare.com/turnstile/x"],
+    };
+    // The user resolved the hand-off by logging in inside the paused browser.
+    const authenticated = {
+      ...snapshot("https://reset.example.test/account", [], "", [
+        { valueId: "profile-email", labelText: "メールアドレス", nearbyText: "" },
+      ]),
+      links: [{ href: "https://reset.example.test/logout", text: "ログアウト" }],
+    };
+    const page = new FakePageDriver(
+      [home, forcedReset, authenticated],
+      {},
+      { "profile-email": "user@example.test" },
+    );
+    const { logger, entries } = recordingLogger();
+    const handoffInstructions: string[] = [];
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async (input) => {
+        handoffInstructions.push(input.instruction);
+        return "resolved";
+      },
+      logger,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(handoffInstructions.length, 1);
+    assert.ok(handoffInstructions[0]?.includes("パスワードの再設定"));
+    // Resuming must not push another machine-generated login into the gate.
+    assert.deepEqual(page.filled, {});
+    assert.deepEqual(page.clicked, []);
+    const reuseLog = entries.find((entry) => entry.message === "reusing authenticated browser session");
+    assert.deepEqual(reuseLog?.fields, {
+      domain: "reset.example.test",
+      reason: "authenticated-after-login-page-handoff",
+    });
+    const wallConstraint = service
+      .listConstraints()
+      .find((constraint) => constraint.siteAccountId === site.id && constraint.kind === "wall");
+    assert.ok(wallConstraint?.detail.startsWith("password-reset:"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner falls back to login when only an ambiguous account marker is present", async () => {
   const { dir, service } = await openService();
   try {

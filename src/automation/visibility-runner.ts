@@ -108,14 +108,13 @@ export class VisibilityRunner {
 
       const reuseAuthenticatedSession =
         credential !== undefined &&
-        hasAuthenticatedSessionMarker(snapshot) &&
-        (await this.authenticatedSessionIdentityMatches(session, snapshot, credential));
-      if (reuseAuthenticatedSession) {
-        this.logger.info("visibility", "reusing authenticated browser session", {
-          domain: siteAccount.domain,
-          reason: "visible-logout-control",
-        });
-      }
+        (await this.canReuseAuthenticatedSession(
+          session,
+          snapshot,
+          credential,
+          siteAccount,
+          "visible-logout-control",
+        ));
 
       if (credential && !reuseAuthenticatedSession) {
         snapshot = await this.ensureLoginPage(siteAccount, session, snapshot);
@@ -123,98 +122,112 @@ export class VisibilityRunner {
         snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page", credential);
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
-
-        // Issue #351: SSO hand-off is single-shot per site run (independent of wall maxHandoffs).
-        let ssoHandoffOffered = false;
-        const loginPageSnapshot = snapshot;
-        const hasUsername = findLoginField(snapshot.fields, "username") !== undefined;
-        const hasPassword = findLoginField(snapshot.fields, "password") !== undefined;
-        // Full ID+PW form (Problem 2 / design hasLoginFields). Partial forms still get login().
-        const fullLoginForm = hasUsername && hasPassword;
-
-        // Problem 1: no credential fields at all, SSO buttons only → ask the user to complete SSO.
-        if (!hasUsername && !hasPassword) {
-          const ssoOptions = findSsoLoginOptions(snapshot);
-          if (ssoOptions.length > 0) {
-            ssoHandoffOffered = true;
-            const ssoOutcome = await this.offerSsoLoginHandoff({
-              siteAccount,
-              snapshot,
-              step: "login-page",
-              detailPrefix: "sso-login-required",
-              options: ssoOptions,
-              // Problem 1: no site password to re-try; do not offer the imported credential.
-              credential: undefined,
-              instruction: ssoLoginRequiredInstruction(ssoOptions),
-            });
-            if (ssoOutcome !== "resolved") return this.handoffResult(siteAccountId);
-            if (this.isCanceled()) return this.canceledResult(siteAccountId);
-            snapshot = await session.page.snapshot();
-          }
-        }
-
-        // Fill whatever credential fields exist (username-only / password-only multi-step pages).
-        // Skip when there are none (SSO-only after hand-off, or a page with no login form).
-        if (hasUsername || hasPassword) {
-          await this.login(session, credential, snapshot);
-          if (this.isCanceled()) return this.canceledResult(siteAccountId);
-        }
-        await session.page.waitForReady();
-        if (this.isCanceled()) return this.canceledResult(siteAccountId);
-        snapshot = await this.clearOrPause(
-          siteAccount,
+        // Issue #372: resolving a login-page wall (e.g. a site-forced password
+        // reset) can end with the user already logged in inside the paused
+        // browser. Re-run the Issue #373 authenticated-session skip before any
+        // fill — re-submitting credentials here would push another machine-
+        // generated login into the very gate the human just cleared and loop
+        // the hand-off. Missing or mismatched identity fails closed to login.
+        const resumedAuthenticatedSession = await this.canReuseAuthenticatedSession(
           session,
-          await session.page.snapshot(),
-          "after-login",
+          snapshot,
           credential,
+          siteAccount,
+          "authenticated-after-login-page-handoff",
         );
-        if (this.isCanceled()) return this.canceledResult(siteAccountId);
-        if (!snapshot) return this.handoffResult(siteAccountId);
+        if (!resumedAuthenticatedSession) {
+          // Issue #351: SSO hand-off is single-shot per site run (independent of wall maxHandoffs).
+          let ssoHandoffOffered = false;
+          const loginPageSnapshot = snapshot;
+          const hasUsername = findLoginField(snapshot.fields, "username") !== undefined;
+          const hasPassword = findLoginField(snapshot.fields, "password") !== undefined;
+          // Full ID+PW form (Problem 2 / design hasLoginFields). Partial forms still get login().
+          const fullLoginForm = hasUsername && hasPassword;
 
-        // Problem 2: full ID/PW was submitted but we are still on a login page and SSO exists.
-        if (fullLoginForm && hasLoginFields(snapshot) && !ssoHandoffOffered) {
-          const afterLoginSso = findSsoLoginOptions(snapshot);
-          const ssoOptions =
-            afterLoginSso.length > 0 ? afterLoginSso : findSsoLoginOptions(loginPageSnapshot);
-          if (ssoOptions.length > 0) {
-            ssoHandoffOffered = true;
-            const ssoOutcome = await this.offerSsoLoginHandoff({
-              siteAccount,
-              snapshot,
-              step: "after-login",
-              detailPrefix: "sso-fallback-suggested",
-              options: ssoOptions,
-              // Same spirit as wall hand-off on login: user may re-try ID/PW manually.
-              credential,
-              instruction: ssoFallbackInstruction(ssoOptions),
-            });
-            if (ssoOutcome !== "resolved") {
-              this.recordLoginFailed(siteAccount, snapshot);
-              const constraints = this.options.domain
-                .listConstraints()
-                .filter((c) => c.siteAccountId === siteAccountId).length;
-              return {
-                siteAccountId,
-                status: "login-failed",
-                disclosures: 0,
-                relationships: 0,
-                constraints,
-              };
+          // Problem 1: no credential fields at all, SSO buttons only → ask the user to complete SSO.
+          if (!hasUsername && !hasPassword) {
+            const ssoOptions = findSsoLoginOptions(snapshot);
+            if (ssoOptions.length > 0) {
+              ssoHandoffOffered = true;
+              const ssoOutcome = await this.offerSsoLoginHandoff({
+                siteAccount,
+                snapshot,
+                step: "login-page",
+                detailPrefix: "sso-login-required",
+                options: ssoOptions,
+                // Problem 1: no site password to re-try; do not offer the imported credential.
+                credential: undefined,
+                instruction: ssoLoginRequiredInstruction(ssoOptions),
+              });
+              if (ssoOutcome !== "resolved") return this.handoffResult(siteAccountId);
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              snapshot = await session.page.snapshot();
             }
-            // Same as post-login: wait, re-snapshot, and wall-check before collection
-            // so IdP-side CAPTCHA/MFA after SSO is still handed off (never bypassed).
+          }
+
+          // Fill whatever credential fields exist (username-only / password-only multi-step pages).
+          // Skip when there are none (SSO-only after hand-off, or a page with no login form).
+          if (hasUsername || hasPassword) {
+            await this.login(session, credential, snapshot);
             if (this.isCanceled()) return this.canceledResult(siteAccountId);
-            await session.page.waitForReady();
-            if (this.isCanceled()) return this.canceledResult(siteAccountId);
-            snapshot = await this.clearOrPause(
-              siteAccount,
-              session,
-              await session.page.snapshot(),
-              "after-login",
-              credential,
-            );
-            if (this.isCanceled()) return this.canceledResult(siteAccountId);
-            if (!snapshot) return this.handoffResult(siteAccountId);
+          }
+          await session.page.waitForReady();
+          if (this.isCanceled()) return this.canceledResult(siteAccountId);
+          snapshot = await this.clearOrPause(
+            siteAccount,
+            session,
+            await session.page.snapshot(),
+            "after-login",
+            credential,
+          );
+          if (this.isCanceled()) return this.canceledResult(siteAccountId);
+          if (!snapshot) return this.handoffResult(siteAccountId);
+
+          // Problem 2: full ID/PW was submitted but we are still on a login page and SSO exists.
+          if (fullLoginForm && hasLoginFields(snapshot) && !ssoHandoffOffered) {
+            const afterLoginSso = findSsoLoginOptions(snapshot);
+            const ssoOptions =
+              afterLoginSso.length > 0 ? afterLoginSso : findSsoLoginOptions(loginPageSnapshot);
+            if (ssoOptions.length > 0) {
+              ssoHandoffOffered = true;
+              const ssoOutcome = await this.offerSsoLoginHandoff({
+                siteAccount,
+                snapshot,
+                step: "after-login",
+                detailPrefix: "sso-fallback-suggested",
+                options: ssoOptions,
+                // Same spirit as wall hand-off on login: user may re-try ID/PW manually.
+                credential,
+                instruction: ssoFallbackInstruction(ssoOptions),
+              });
+              if (ssoOutcome !== "resolved") {
+                this.recordLoginFailed(siteAccount, snapshot);
+                const constraints = this.options.domain
+                  .listConstraints()
+                  .filter((c) => c.siteAccountId === siteAccountId).length;
+                return {
+                  siteAccountId,
+                  status: "login-failed",
+                  disclosures: 0,
+                  relationships: 0,
+                  constraints,
+                };
+              }
+              // Same as post-login: wait, re-snapshot, and wall-check before collection
+              // so IdP-side CAPTCHA/MFA after SSO is still handed off (never bypassed).
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              await session.page.waitForReady();
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              snapshot = await this.clearOrPause(
+                siteAccount,
+                session,
+                await session.page.snapshot(),
+                "after-login",
+                credential,
+              );
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              if (!snapshot) return this.handoffResult(siteAccountId);
+            }
           }
         }
       }
@@ -394,6 +407,31 @@ export class VisibilityRunner {
     await session.page.goto(loginLink);
     await session.page.waitForReady();
     return session.page.snapshot();
+  }
+
+  /**
+   * Issue #373 skip check, shared by the initial page and the post-handoff
+   * resume path (Issue #372): true — and logged — only when the visible
+   * session is authenticated as the imported account. Missing or mismatched
+   * identity fails closed so the caller falls back to the login flow.
+   */
+  private async canReuseAuthenticatedSession(
+    session: SiteSession,
+    snapshot: PageSnapshot,
+    credential: Credential,
+    siteAccount: SiteAccount,
+    reason: string,
+  ): Promise<boolean> {
+    const reuse =
+      hasAuthenticatedSessionMarker(snapshot) &&
+      (await this.authenticatedSessionIdentityMatches(session, snapshot, credential));
+    if (reuse) {
+      this.logger.info("visibility", "reusing authenticated browser session", {
+        domain: siteAccount.domain,
+        reason,
+      });
+    }
+    return reuse;
   }
 
   /**

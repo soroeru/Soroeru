@@ -16,7 +16,7 @@
     "lint": "eslint .",
     "format": "prettier --check electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs",
     "format:write": "prettier --write electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs",
-    "dev": "npm run build && npm run build:preload && concurrently -k -s first \"vite\" \"wait-on tcp:127.0.0.1:5173 && VITE_DEV_SERVER_URL=http://localhost:5173 electron dist/compiled/electron/main.js\"",
+    "dev": "npm run build && npm run build:preload && npm run build:host && concurrently -k -s first \"vite\" \"wait-on tcp:127.0.0.1:5173 && VITE_DEV_SERVER_URL=http://localhost:5173 electron dist/compiled/electron/main.js\"",
     "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js",
     "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/run/cli.js",
     "poc:serve": "npm run poc -- serve",

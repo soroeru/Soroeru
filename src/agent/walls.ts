@@ -15,8 +15,22 @@ const EMAIL_VERIFY_RE = /確認メールを送信|認証メールを送信|メ�
 const IDENTITY_VERIFY_RE = /本人確認|身分証|運転免許証|マイナンバーカード|eKYC|顔写真の?(撮影|アップロード)|年齢確認(書類|のため)/;
 const AMBIGUOUS_WALL_RE =
   /不正なアクセス|通常と異なるアクセス|自動化されたアクセス|アクセスを一時的に制限|しばらくしてから再度|security check|suspicious activity|unusual traffic/i;
+// Site-forced password reset gate (Issue #372, seen on account.nicovideo.jp):
+// login "succeeds" but the site routes the session to a mandatory reset page.
+// Wording must be required/imperative ("〜が必要", "〜してください") so an
+// ordinary login page that merely links "パスワードの再設定はこちら" stays clear.
+const PASSWORD_RESET_REQUIRED_RE =
+  /パスワードの?再設定が必要|パスワードを再設定して\s*ください|password\s+reset\s+(is\s+)?required|(please|need\s+to|must)\s+reset\s+your\s+password/i;
 
 export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
+  // Checked before the CAPTCHA signals: the forced-reset page often embeds a
+  // Cloudflare Turnstile iframe, and classifying it as "captcha" would give
+  // the human an inaccurate hand-off instruction (Issue #372). Either way the
+  // response is the same — detect and hand off; never solve or bypass.
+  const passwordResetWording = PASSWORD_RESET_REQUIRED_RE.exec(snapshot.visibleText);
+  if (passwordResetWording) {
+    return { kind: "password-reset", evidence: `wording: ${passwordResetWording[0]}` };
+  }
   if (snapshot.wallMarkers.length > 0) {
     return { kind: "captcha", evidence: `widget marker: ${snapshot.wallMarkers.join(", ")}` };
   }
@@ -66,6 +80,8 @@ const HANDOFF_INSTRUCTIONS: Record<WallDetection["kind"], string> = {
     "メール／SMSの確認が必要です。届いた確認リンクまたはコードをあなた自身で処理してください。完了後に続行します。",
   "identity-verification":
     "本人確認（身分証の提出など）が必要です。あなた自身で手続きを進めてください。完了後に続行します。",
+  "password-reset":
+    "サイトがパスワードの再設定を要求しています。この一時停止中のブラウザ内で、あなた自身で再設定またはログインを完了してください（メールのリンクを別のブラウザで開いて完了しても、このセッションには反映されません）。完了後に続行します。",
   ambiguous:
     "通常のフォーム操作ではない確認画面が表示されています。内容を確認し、あなた自身で必要な操作を完了してください。完了後に続行します。",
 };
