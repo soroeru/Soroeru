@@ -8,6 +8,10 @@ import {
   resolveDefaults,
   applyProjectDefaults,
   toRetryableErrorPayload,
+  parseIssueNumberInput,
+  normalizeProjectIssueEvent,
+  shapeIssueRecord,
+  loadRepositoryIssue,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -351,4 +355,188 @@ test("creates the iteration before adding the Issue item", async () => {
     calls.some((query) => query.includes("AddItem")),
     false,
   );
+});
+
+test("parseIssueNumberInput accepts positive integers only", () => {
+  assert.equal(parseIssueNumberInput("413"), 413);
+  assert.equal(parseIssueNumberInput(" 7 "), 7);
+  assert.throws(() => parseIssueNumberInput(""), /invalid-issue-number/);
+  assert.throws(() => parseIssueNumberInput("0"), /invalid-issue-number/);
+  assert.throws(() => parseIssueNumberInput("-1"), /invalid-issue-number/);
+  assert.throws(() => parseIssueNumberInput("4.1"), /invalid-issue-number/);
+  assert.throws(() => parseIssueNumberInput("abc"), /invalid-issue-number/);
+});
+
+test("normalizeProjectIssueEvent shapes issues.opened and workflow_dispatch the same way", () => {
+  const opened = normalizeProjectIssueEvent(
+    {
+      action: "opened",
+      issue: {
+        id: 1,
+        node_id: "I_1",
+        number: 10,
+        title: "Visibility test",
+        body: "body",
+        labels: [{ name: "Visibility" }],
+        created_at: "2026-07-15T00:00:00Z",
+      },
+      repository: { full_name: "soroeru/Soroeru" },
+    },
+    { repositoryFullName: "soroeru/Soroeru" },
+  );
+  assert.equal(opened.source, "issues.opened");
+  assert.deepEqual(opened.issue, {
+    id: 1,
+    node_id: "I_1",
+    number: 10,
+    title: "Visibility test",
+    body: "body",
+    labels: [{ name: "Visibility" }],
+    created_at: "2026-07-15T00:00:00Z",
+  });
+
+  const dispatch = normalizeProjectIssueEvent(
+    {
+      inputs: { issue_number: "413" },
+      repository: { full_name: "soroeru/Soroeru" },
+    },
+    { repositoryFullName: "soroeru/Soroeru" },
+  );
+  assert.deepEqual(dispatch, {
+    source: "workflow_dispatch",
+    issueNumber: 413,
+    issue: null,
+  });
+});
+
+test("normalizeProjectIssueEvent rejects PRs, invalid numbers, and repository mismatch", () => {
+  assert.throws(
+    () =>
+      normalizeProjectIssueEvent({
+        issue: {
+          id: 1,
+          node_id: "I_1",
+          created_at: "2026-07-15T00:00:00Z",
+          pull_request: { url: "https://example.invalid" },
+        },
+      }),
+    /pull-request-not-supported/,
+  );
+  assert.throws(
+    () => normalizeProjectIssueEvent({ inputs: { issue_number: "0" } }),
+    /invalid-issue-number/,
+  );
+  assert.throws(
+    () =>
+      normalizeProjectIssueEvent(
+        {
+          issue: { id: 1, node_id: "I_1", created_at: "2026-07-15T00:00:00Z" },
+          repository: { full_name: "other/Repo" },
+        },
+        { repositoryFullName: "soroeru/Soroeru" },
+      ),
+    /repository-mismatch/,
+  );
+  assert.throws(() => normalizeProjectIssueEvent({}), /issue-event-required/);
+});
+
+test("shapeIssueRecord rejects incomplete and PR payloads before mutation", () => {
+  assert.throws(() => shapeIssueRecord(null), /issue-event-required/);
+  assert.throws(
+    () => shapeIssueRecord({ id: 1, created_at: "2026-07-15T00:00:00Z" }),
+    /issue-node-id-required/,
+  );
+  assert.throws(
+    () =>
+      shapeIssueRecord({
+        id: 1,
+        node_id: "I_1",
+        created_at: "2026-07-15T00:00:00Z",
+        pull_request: {},
+      }),
+    /pull-request-not-supported/,
+  );
+});
+
+test("loadRepositoryIssue fetches and shapes only same-repo Issues", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, hasAuth: Boolean(init?.headers?.Authorization) });
+    return {
+      status: 200,
+      ok: true,
+      async json() {
+        return {
+          id: 99,
+          node_id: "I_99",
+          number: 413,
+          title: "Visibility collection",
+          body: "x",
+          labels: [],
+          created_at: "2026-07-15T00:00:00Z",
+        };
+      },
+    };
+  };
+  const issue = await loadRepositoryIssue(
+    { owner: "soroeru", repo: "Soroeru", issueNumber: "413", token: "test-token" },
+    fetchImpl,
+  );
+  assert.equal(issue.number, 413);
+  assert.equal(issue.node_id, "I_99");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/repos\/soroeru\/Soroeru\/issues\/413$/);
+  assert.equal(calls[0].hasAuth, true);
+});
+
+test("loadRepositoryIssue rejects missing tokens, 404s, and pull requests before mutation", async () => {
+  await assert.rejects(
+    loadRepositoryIssue({ owner: "soroeru", repo: "Soroeru", issueNumber: 1, token: "" }),
+    /project-token-required/,
+  );
+  await assert.rejects(
+    loadRepositoryIssue(
+      { owner: "soroeru", repo: "Soroeru", issueNumber: 1, token: "t" },
+      async () => ({ status: 404, ok: false, async json() { return {}; } }),
+    ),
+    /issue-not-found/,
+  );
+  await assert.rejects(
+    loadRepositoryIssue(
+      { owner: "soroeru", repo: "Soroeru", issueNumber: 5, token: "t" },
+      async () => ({
+        status: 200,
+        ok: true,
+        async json() {
+          return {
+            id: 1,
+            node_id: "I_1",
+            number: 5,
+            created_at: "2026-07-15T00:00:00Z",
+            pull_request: { url: "x" },
+          };
+        },
+      }),
+    ),
+    /pull-request-not-supported/,
+  );
+});
+
+test("toRetryableErrorPayload maps secret and validation failures without extra detail", () => {
+  assert.deepEqual(toRetryableErrorPayload(new Error("project-token-required")), {
+    status: "retryable-error",
+    reason: "project-token-required",
+  });
+  assert.deepEqual(toRetryableErrorPayload(new Error("invalid-issue-number")), {
+    status: "retryable-error",
+    reason: "invalid-issue-number",
+  });
+  assert.deepEqual(toRetryableErrorPayload(new Error("pull-request-not-supported")), {
+    status: "retryable-error",
+    reason: "pull-request-not-supported",
+  });
+  assert.deepEqual(toRetryableErrorPayload(new Error("github-graphql-failed")), {
+    status: "retryable-error",
+    reason: "github-graphql-failed",
+  });
 });

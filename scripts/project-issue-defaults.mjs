@@ -235,18 +235,118 @@ export function toRetryableErrorPayload(error) {
   return payload;
 }
 
+/**
+ * Shape a GitHub Issue (event or REST) into the closed form used by applyProjectDefaults.
+ * Never logs body/title; callers must keep payloads out of Actions logs.
+ */
+export function shapeIssueRecord(issue) {
+  if (issue == null || typeof issue !== "object") throw new Error("issue-event-required");
+  if (issue.pull_request) throw new Error("pull-request-not-supported");
+  if (issue.id == null || !issue.created_at) throw new Error("issue-event-required");
+  if (!issue.node_id) throw new Error("issue-node-id-required");
+  return {
+    id: issue.id,
+    node_id: issue.node_id,
+    number: issue.number,
+    title: issue.title ?? "",
+    body: issue.body ?? "",
+    labels: issue.labels ?? [],
+    created_at: issue.created_at,
+  };
+}
+
+export function parseIssueNumberInput(value) {
+  const raw = String(value ?? "").trim();
+  if (!/^[1-9]\d*$/.test(raw)) throw new Error("invalid-issue-number");
+  const number = Number(raw);
+  if (!Number.isSafeInteger(number)) throw new Error("invalid-issue-number");
+  return number;
+}
+
+/**
+ * Normalize issues.opened and workflow_dispatch(issue_number) into one Issue shape.
+ * For workflow_dispatch, issueNumber is required and issue is loaded separately.
+ */
+export function normalizeProjectIssueEvent(event, { repositoryFullName } = {}) {
+  if (event == null || typeof event !== "object") throw new Error("issue-event-required");
+
+  const eventRepo = event.repository?.full_name;
+  if (repositoryFullName && eventRepo && eventRepo !== repositoryFullName)
+    throw new Error("repository-mismatch");
+
+  const hasDispatchInput =
+    event.inputs != null && Object.prototype.hasOwnProperty.call(event.inputs, "issue_number");
+
+  if (hasDispatchInput && !event.issue) {
+    return {
+      source: "workflow_dispatch",
+      issueNumber: parseIssueNumberInput(event.inputs.issue_number),
+      issue: null,
+    };
+  }
+
+  if (event.issue) {
+    return {
+      source: "issues.opened",
+      issueNumber: event.issue.number ?? null,
+      issue: shapeIssueRecord(event.issue),
+    };
+  }
+
+  throw new Error("issue-event-required");
+}
+
+export async function loadRepositoryIssue(
+  { owner, repo, issueNumber, token },
+  fetchImpl = globalThis.fetch,
+) {
+  if (!owner || !repo) throw new Error("repository-env-required");
+  if (!token) throw new Error("project-token-required");
+  const number = parseIssueNumberInput(issueNumber);
+  const response = await fetchImpl(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${number}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "soroeru-project-issue-defaults",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    },
+  );
+  if (response.status === 404) throw new Error("issue-not-found");
+  if (!response.ok) throw new Error("issue-fetch-failed");
+  const payload = await response.json();
+  if (payload.pull_request) throw new Error("pull-request-not-supported");
+  if (payload.number !== number) throw new Error("issue-number-mismatch");
+  return shapeIssueRecord(payload);
+}
+
 async function main() {
   const eventPath = process.argv[2] === "--event" ? process.argv[3] : process.env.GITHUB_EVENT_PATH;
   if (!eventPath) throw new Error("event-path-required");
   const event = JSON.parse(await fs.readFile(eventPath, "utf8"));
-  const issue = event.issue;
-  if (!issue?.id || !issue.created_at) throw new Error("issue-event-required");
   const config = JSON.parse(
     await fs.readFile(new URL("../config/github-projects.json", import.meta.url), "utf8"),
   );
-  const token = process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN;
+  // Prefer the short-lived App installation token. Do not fall back to a PAT secret.
+  const token = process.env.GH_PROJECT_TOKEN;
   if (!token) throw new Error("project-token-required");
-  const owner = process.env.GITHUB_REPOSITORY_OWNER;
+
+  const repositoryFullName = process.env.GITHUB_REPOSITORY;
+  const [repoOwner, repoName] = (repositoryFullName ?? "").split("/");
+  if (!repoOwner || !repoName) throw new Error("repository-env-required");
+
+  const normalized = normalizeProjectIssueEvent(event, { repositoryFullName });
+  const issue =
+    normalized.issue ??
+    (await loadRepositoryIssue({
+      owner: repoOwner,
+      repo: repoName,
+      issueNumber: normalized.issueNumber,
+      token,
+    }));
+
   const projectName = classifyProject(
     issue,
     config.projects
@@ -258,9 +358,14 @@ async function main() {
     return;
   }
   const projectConfig = config.projects.find((candidate) => candidate.name === projectName);
-  if (!owner || !projectConfig?.number) throw new Error("project-config-incomplete");
+  const projectOwner = projectConfig?.owner || process.env.GITHUB_REPOSITORY_OWNER || repoOwner;
+  if (!projectOwner || !projectConfig?.number) throw new Error("project-config-incomplete");
   const ownerType = projectConfig.ownerType ?? "user";
-  const data = await githubGraphql(buildProjectQuery(ownerType), { owner, number: projectConfig.number });
+  const data = await githubGraphql(
+    buildProjectQuery(ownerType),
+    { owner: projectOwner, number: projectConfig.number },
+    token,
+  );
   const project = data[ownerType]?.projectsV2;
   const result = await applyProjectDefaults({
     issue,
@@ -275,6 +380,7 @@ async function main() {
       project: result.projectName,
       iteration: result.iteration,
       reasons: result.reasons,
+      source: normalized.source,
     }),
   );
 }

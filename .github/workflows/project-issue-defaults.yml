@@ -3,22 +3,42 @@ name: project-issue-defaults
 on:
   issues:
     types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Repository issue number to (re)apply Project defaults
+        required: true
+        type: string
 
+# Project writes use a short-lived GitHub App installation token, not GITHUB_TOKEN.
 permissions:
   contents: read
-  issues: read
-  repository-projects: write
 
 jobs:
   configure-project:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Create GitHub App installation token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SOROERU_PROJECT_APP_ID }}
+          private-key: ${{ secrets.SOROERU_PROJECT_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-issues: read
+          permission-metadata: read
+          permission-organization-projects: write
+
       - uses: actions/setup-node@v6
         with:
           node-version: 22
+
       - name: Add issue to Project and apply defaults
         env:
-          GH_PROJECT_TOKEN: ${{ secrets.SOROERU_PROJECT_TOKEN }}
+          GH_PROJECT_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
         run: node scripts/project-issue-defaults.mjs --event "$GITHUB_EVENT_PATH"
