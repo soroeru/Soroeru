@@ -337,9 +337,12 @@ not the supported product installation or binding UX. To use it during local dev
 3. **Start the app and save the bridge settings:**
 
    ```bash
-   SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
    npm run dev
    ```
+
+   `npm run dev` also builds the host bundle and the dev app resolves it from
+   `dist/native-host/host.cjs` automatically, mirroring the packaged app;
+   `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an explicit override.
 
    Open **設定 → Chrome と接続**, enter the extension ID from step 2, select
    **Chrome 拡張ブリッジを有効にする**, and save. Restart Soroeru when the settings panel
@@ -354,7 +357,6 @@ not the supported product installation or binding UX. To use it during local dev
 
    ```bash
    SOROERU_ENABLE_CHROME_BRIDGE=1 SOROERU_CHROME_EXTENSION_ID=<extension-id-from-step-2> \
-   SOROERU_CHROME_BRIDGE_HOST_BINARY=$(pwd)/dist/native-host/host.cjs \
    npm run dev
    ```
 

@@ -29,10 +29,15 @@ const DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const PRELOAD_PATH = join(appRoot, "dist", "preload", "preload.cjs");
 const RENDERER_INDEX = join(appRoot, "dist", "renderer", "index.html");
 // Packaged builds bundle the self-contained host at Resources/native-host/
-// (forge.config.cjs extraResource); dev builds pass an explicit path.
+// (forge.config.cjs extraResource); dev builds use the `build:host` output at
+// dist/native-host/ (built by `npm run dev`), so native-host registration
+// works identically without SOROERU_CHROME_BRIDGE_HOST_BINARY. The env var
+// remains as an explicit override for both modes.
 const CHROME_HOST_BINARY =
   process.env["SOROERU_CHROME_BRIDGE_HOST_BINARY"] ??
-  (app.isPackaged ? join(process.resourcesPath, "native-host", "host.cjs") : "");
+  (app.isPackaged
+    ? join(process.resourcesPath, "native-host", "host.cjs")
+    : join(appRoot, "dist", "native-host", "host.cjs"));
 
 function configurePackagedPlaywrightBrowsers(): void {
   if (!app.isPackaged || process.env["PLAYWRIGHT_BROWSERS_PATH"]) return;

@@ -66,10 +66,12 @@ This UI is a developer-only prototype and remains hidden unless
 `SOROERU_ENABLE_CHROME_BRIDGE=1`. Use only a fake HTTPS fixture and fake values.
 Never enter a real credential, cookie, card value, or personal value during this test.
 
-- [ ] Build the extension and host bundle (`npm run build:extension && npm run build:host`),
-      set `SOROERU_CHROME_EXTENSION_ID` to the unpacked extension ID and
-      `SOROERU_CHROME_BRIDGE_HOST_BINARY` to `dist/native-host/host.cjs`, then start the app
-      with `SOROERU_ENABLE_CHROME_BRIDGE=1`. Without the flag, confirm the Chrome section is absent.
+- [ ] Build the extension bundle (`npm run build:extension`),
+      set `SOROERU_CHROME_EXTENSION_ID` to the unpacked extension ID, then start the app
+      with `SOROERU_ENABLE_CHROME_BRIDGE=1` (`npm run dev` builds the host bundle and the dev
+      app resolves `dist/native-host/host.cjs` automatically;
+      `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override). Without the flag, confirm the
+      Chrome section is absent.
 - [ ] In **設定 → Chrome と接続**, choose **host を登録して接続を始める**. Confirm the UI first
       reports registration / extension-install guidance and explicitly includes instructions to reload the
       extension (or restart the service worker) in chrome://extensions if it was already loaded. Confirm the UI changes
