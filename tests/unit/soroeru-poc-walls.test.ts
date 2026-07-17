@@ -92,8 +92,55 @@ test("an ordinary registration page is not a wall", () => {
   assert.equal(detectWall(snapshot({ visibleText: "会員登録フォーム。氏名とメールアドレスを入力してください。" })), undefined);
 });
 
+test("site-forced password reset wording is detected (Issue #372)", () => {
+  // Wording modelled on account.nicovideo.jp's forced-reset gate (no real personal data).
+  assert.equal(
+    detectWall(
+      snapshot({ visibleText: "2024年8月5日（月）以降に初めてログインする方は、パスワード再設定が必要です。" }),
+    )?.kind,
+    "password-reset",
+  );
+  assert.equal(
+    detectWall(snapshot({ visibleText: "ご利用を続けるには、パスワードを再設定してください。" }))?.kind,
+    "password-reset",
+  );
+  assert.equal(
+    detectWall(snapshot({ visibleText: "Password reset required to continue." }))?.kind,
+    "password-reset",
+  );
+});
+
+test("password-reset wins over the reset page's own Turnstile iframe (Issue #372)", () => {
+  // The forced-reset page embeds a Cloudflare Turnstile; kind must still be
+  // password-reset so the human gets the accurate hand-off instruction.
+  const wall = detectWall(
+    snapshot({
+      visibleText: "パスワードの再設定が必要です。",
+      iframeSrcs: ["https://challenges.cloudflare.com/turnstile/x"],
+      wallMarkers: ["cf-turnstile"],
+    }),
+  );
+  assert.equal(wall?.kind, "password-reset");
+});
+
+test("a login page that merely links to voluntary password reset is not a wall", () => {
+  assert.equal(
+    detectWall(
+      snapshot({ visibleText: "ログイン。パスワードをお忘れの方はこちらからパスワードの再設定はこちら。" }),
+    ),
+    undefined,
+  );
+});
+
 test("handoff instruction asks the human to resolve the wall, never how to bypass it", () => {
-  const kinds: WallDetection["kind"][] = ["captcha", "mfa", "email-verification", "identity-verification", "ambiguous"];
+  const kinds: WallDetection["kind"][] = [
+    "captcha",
+    "mfa",
+    "email-verification",
+    "identity-verification",
+    "password-reset",
+    "ambiguous",
+  ];
   for (const kind of kinds) {
     const msg = handoffInstruction({ kind, evidence: "x" });
     assert.ok(msg.length > 0, kind);
@@ -101,6 +148,13 @@ test("handoff instruction asks the human to resolve the wall, never how to bypas
     // Copy must not suggest solving/bypassing/automating the wall (SEC-002).
     assert.ok(!/自動|回避|解除|突破|スキップ|bypass/i.test(msg), `${kind} copy must not suggest bypass`);
   }
+});
+
+test("password-reset handoff copy points at the paused browser session (Issue #372)", () => {
+  // A reset finished via a mail link in the user's default browser leaves this
+  // session unauthenticated, so the copy must anchor the fix to this browser.
+  const msg = handoffInstruction({ kind: "password-reset", evidence: "x" });
+  assert.ok(msg.includes("一時停止中のブラウザ"));
 });
 
 test("clearWalls re-observes after a resolved handoff and returns the resumed page", async () => {
@@ -213,6 +267,10 @@ test("clearWalls aborts on every wall kind when no handoff is wired (fail-safe, 
     {
       kind: "identity-verification",
       snap: snapshot({ visibleText: "本人確認のため、運転免許証をアップロードしてください。" }),
+    },
+    {
+      kind: "password-reset",
+      snap: snapshot({ visibleText: "パスワード再設定が必要です。" }),
     },
     {
       kind: "ambiguous",
