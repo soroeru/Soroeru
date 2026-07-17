@@ -13,6 +13,7 @@ import {
   shapeIssueRecord,
   loadRepositoryIssue,
   reasonFromGraphqlFailure,
+  buildProjectQuery,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -563,4 +564,11 @@ test("reasonFromGraphqlFailure classifies integration and not-found errors", () 
     reasonFromGraphqlFailure(true, { errors: [{ message: "something else" }] }),
     "github-graphql-failed",
   );
+});
+test("buildProjectQuery uses projectV2(number) not the projectsV2 connection", () => {
+  const orgQuery = buildProjectQuery("organization");
+  assert.match(orgQuery, /organization\(login: \$owner\) \{ projectV2\(number: \$number\)/);
+  assert.equal(orgQuery.includes("projectsV2(number:"), false);
+  const userQuery = buildProjectQuery("user");
+  assert.match(userQuery, /user\(login: \$owner\) \{ projectV2\(number: \$number\)/);
 });
