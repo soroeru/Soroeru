@@ -1,5 +1,5 @@
 // Pure column-building logic for the spreadsheet-style Disclosure ledger view
-// (Issue #301). Kept free of React so it is unit-testable without a DOM. Each
+// (Issue #301). Kept free of React so it is unit-testable without a DOM.
 // The comparison table intentionally exposes only attributes that are useful
 // to compare across sites. Site-specific, password, and card disclosures stay
 // in the complete per-site detail view.
