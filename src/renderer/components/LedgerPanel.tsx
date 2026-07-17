@@ -29,6 +29,7 @@ import {
 import { buildLedgerColumns, buildSiteDetailDisclosureGroups, disclosureFor } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
+import { filterLedgerSitesByCollection, type LedgerCollectionFilter } from "../ledger-filter.js";
 import { moveLedgerSite, orderLedgerSites, type LedgerSortMode } from "../ledger-ordering.js";
 import {
   collectVisibleSelectedSiteIds,
@@ -96,6 +97,8 @@ export function LedgerPanel({
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
   const [deletingSite, setDeletingSite] = useState(false);
   const [sortMode, setSortMode] = useState<LedgerSortMode>("name-asc");
+  /** Display-only; does not clear selection of hidden rows (Issue #388). */
+  const [collectionFilter, setCollectionFilter] = useState<LedgerCollectionFilter>("all");
   const [draggedSiteId, setDraggedSiteId] = useState<string | undefined>();
   const [orderAnnouncement, setOrderAnnouncement] = useState("");
   const resumedHandoffSites = useRef<Set<string>>(new Set());
@@ -217,13 +220,20 @@ export function LedgerPanel({
     return unsubscribe;
   }, []);
 
-  const selectedVisibleIds = useMemo(() => collectVisibleSelectedSiteIds(sites, selected), [selected, sites]);
-  const orderedSites = useMemo(() => orderLedgerSites(sites, sortMode), [sites, sortMode]);
+  const visibleSites = useMemo(
+    () => filterLedgerSitesByCollection(sites, collectionFilter),
+    [collectionFilter, sites],
+  );
+  const selectedVisibleIds = useMemo(
+    () => collectVisibleSelectedSiteIds(visibleSites, selected),
+    [selected, visibleSites],
+  );
+  const orderedSites = useMemo(() => orderLedgerSites(visibleSites, sortMode), [sortMode, visibleSites]);
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
   // Saved-page guide / import stay usable after showGuide even while the batch is canceling.
   const guideInteractiveDisabled = batch.phase === "running" || batch.phase === "paused";
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
-  const allSelected = sites.length > 0 && selectedVisibleIds.length === sites.length;
+  const allSelected = visibleSites.length > 0 && selectedVisibleIds.length === visibleSites.length;
 
   const persistManualOrder = useCallback(async (nextSites: SiteLedgerDetail[], movedName: string) => {
     const previous = sitesRef.current;
@@ -259,11 +269,13 @@ export function LedgerPanel({
   const moveManualSiteBy = useCallback(
     (siteAccountId: string, offset: -1 | 1) => {
       if (sortMode !== "manual") return;
-      const index = sitesRef.current.findIndex((site) => site.siteAccountId === siteAccountId);
-      const target = sitesRef.current[index + offset];
+      // Neighbors must follow the filtered table, not the full list (Issue #388).
+      const visible = filterLedgerSitesByCollection(sitesRef.current, collectionFilter);
+      const index = visible.findIndex((site) => site.siteAccountId === siteAccountId);
+      const target = visible[index + offset];
       if (target) moveManualSite(siteAccountId, target.siteAccountId);
     },
-    [moveManualSite, sortMode],
+    [collectionFilter, moveManualSite, sortMode],
   );
 
   useEffect(() => {
@@ -536,11 +548,19 @@ export function LedgerPanel({
     });
   }, []);
   const selectAllVisible = useCallback(() => {
-    setSelected(new Set(sites.map((site) => site.siteAccountId)));
-  }, [sites]);
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const site of visibleSites) next.add(site.siteAccountId);
+      return next;
+    });
+  }, [visibleSites]);
+  /** Clears checks on currently visible rows only; hidden selections stay. */
   const clearVisible = useCallback(() => {
-    setSelected(new Set());
-  }, []);
+    setSelected((current) => {
+      const visibleIds = new Set(visibleSites.map((site) => site.siteAccountId));
+      return new Set([...current].filter((siteAccountId) => !visibleIds.has(siteAccountId)));
+    });
+  }, [visibleSites]);
 
   if (loading) return <p className="text-sm text-neutral-500">読み込み中…</p>;
 
@@ -573,7 +593,13 @@ export function LedgerPanel({
   return (
     <section className="flex w-full min-w-0 flex-1 flex-col self-stretch gap-4">
       <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-medium">開示台帳（{sites.length} サイト）</h2>
+        <h2 className="text-lg font-medium">
+          開示台帳（
+          {collectionFilter === "all"
+            ? `${sites.length} サイト`
+            : `${sites.length} 件中 ${visibleSites.length} 件を表示`}
+          ）
+        </h2>
         <p className="text-sm text-neutral-500">
           サイトを行、項目を列にした表形式です。チェックしたサイトを収集できます。CAPTCHA / MFA /
           検証ウォールは自動で突破せず、表示中のブラウザでご自身に解決をお願いします。
@@ -585,7 +611,7 @@ export function LedgerPanel({
 
       <BatchCollectionBar
         selectedCount={selectedVisibleIds.length}
-        totalVisible={sites.length}
+        totalVisible={visibleSites.length}
         batch={batch}
         currentSiteName={currentSite?.displayName}
         disabled={batchBusy}
@@ -607,6 +633,26 @@ export function LedgerPanel({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
+        <Label htmlFor="ledger-collection-filter" className="text-sm font-medium">
+          収集状態
+        </Label>
+        <select
+          id="ledger-collection-filter"
+          value={collectionFilter}
+          disabled={batchBusy}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "all" || value === "collected" || value === "uncollected") {
+              setCollectionFilter(value);
+            }
+          }}
+          className="rounded border border-neutral-300 bg-white px-2 py-1 text-sm"
+          aria-label="収集状態で絞り込む"
+        >
+          <option value="all">すべて</option>
+          <option value="collected">収集済み</option>
+          <option value="uncollected">未収集</option>
+        </select>
         <Label htmlFor="ledger-sort-mode" className="text-sm font-medium">
           並び順
         </Label>
@@ -624,16 +670,16 @@ export function LedgerPanel({
         {!allSelected && (
           <button
             type="button"
-            disabled={batchBusy || sites.length === 0}
+            disabled={batchBusy || visibleSites.length === 0}
             onClick={selectAllVisible}
             className="text-sm underline"
           >
-            全てにチェックする
+            表示中をすべて選択
           </button>
         )}
         {selectedVisibleIds.length > 0 && (
           <button type="button" disabled={batchBusy} onClick={clearVisible} className="text-sm underline">
-            全てのチェックを外す
+            表示中のチェックを外す
           </button>
         )}
       </div>
