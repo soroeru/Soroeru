@@ -67,8 +67,57 @@ export function buildProjectQuery(ownerType) {
 
 export const ADD_ITEM_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: { projectId: $projectId contentId: $contentId }) { item { id } } }`;
 export const UPDATE_ITEM_MUTATION = `mutation UpdateItem($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId itemId: $itemId fieldId: $fieldId value: $value }) { projectV2Item { id } } }`;
-export const UPDATE_ITERATION_MUTATION = `mutation UpdateIteration($fieldId: ID!, $configuration: ProjectV2IterationFieldConfigurationInput!) { updateProjectV2Field(input: { fieldId: $fieldId iterationConfiguration: $configuration }) { projectV2Field { ... on ProjectV2IterationField { id configuration { iterations { id title startDate duration } } } } } }`;
+export const UPDATE_ITERATION_MUTATION = `mutation UpdateIteration($fieldId: ID!, $configuration: ProjectV2IterationFieldConfigurationInput!) { updateProjectV2Field(input: { fieldId: $fieldId iterationConfiguration: $configuration }) { projectV2Field { ... on ProjectV2IterationField { id configuration { duration startDay iterations { id title startDate duration } } } } } }`;
+export const ITERATION_FIELD_QUERY = `query IterationField($fieldId: ID!) { node(id: $fieldId) { ... on ProjectV2IterationField { id configuration { duration startDay iterations { id title startDate duration } } } } }`;
 export const ITEM_FIELD_VALUES_QUERY = `query ItemFieldValues($itemId: ID!) { node(id: $itemId) { ... on ProjectV2Item { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } } } }`;
+
+/**
+ * Pick a startDate that does not collide with existing iterations.
+ * GitHub rejects or drops new iterations that reuse an occupied startDate.
+ */
+export function nextAvailableIterationStartDate(existingIterations, preferredStartDate) {
+  const used = new Set(
+    (existingIterations ?? []).map((iteration) => iteration.startDate).filter(Boolean),
+  );
+  let candidate = preferredStartDate;
+  for (let i = 0; i < 366; i += 1) {
+    if (!used.has(candidate)) return candidate;
+    const date = new Date(`${candidate}T00:00:00Z`);
+    if (Number.isNaN(date.valueOf())) throw new Error("invalid-issue-date");
+    date.setUTCDate(date.getUTCDate() + 1);
+    candidate = date.toISOString().slice(0, 10);
+  }
+  throw new Error("iteration-start-date-unavailable");
+}
+
+/**
+ * Build ProjectV2IterationFieldConfigurationInput for adding one iteration.
+ * Schema (current GitHub API): { startDate!, duration!, iterations! } where each
+ * iteration is { title, startDate, duration } — no field-level startDay and no
+ * per-iteration id on the input object.
+ */
+export function buildIterationConfiguration(iterationField, { title, startDate, duration = 1 }) {
+  const configuration = iterationField?.configuration ?? {};
+  const existing = configuration.iterations ?? [];
+  const newStartDate = nextAvailableIterationStartDate(existing, startDate);
+  const iterations = [
+    ...existing.map((iteration) => ({
+      title: iteration.title,
+      startDate: iteration.startDate,
+      duration: iteration.duration ?? duration,
+    })),
+    { title, startDate: newStartDate, duration },
+  ];
+  return {
+    startDate: iterations[0]?.startDate ?? newStartDate,
+    duration: configuration.duration ?? duration,
+    iterations,
+  };
+}
+
+function findIterationByTitle(iterations, title) {
+  return (iterations ?? []).find((candidate) => candidate.title === title) ?? null;
+}
 
 /**
  * Fail-close Project configuration: every read and validation completes
@@ -121,29 +170,28 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   const iterationTitle = metadata.featureGroup || dates.name;
 
   // All reads and validations are complete; mutations start here.
-  let iteration = iterationField.configuration?.iterations?.find(
-    (candidate) => candidate.title === iterationTitle,
-  );
+  let iteration = findIterationByTitle(iterationField.configuration?.iterations, iterationTitle);
   if (!iteration) {
-    const iterations = iterationField.configuration?.iterations ?? [];
+    // ProjectV2IterationFieldConfigurationInput requires duration + startDay (not
+    // startDate at the field level). Preserve existing iteration ids so GitHub
+    // updates rather than replacing the series.
+    const configuration = buildIterationConfiguration(iterationField, {
+      title: iterationTitle,
+      startDate: dates.startDate,
+      duration: 1,
+    });
     const updateResult = await graphql(UPDATE_ITERATION_MUTATION, {
       fieldId: iterationField.id,
-      configuration: {
-        duration: 1,
-        startDate: iterationField.configuration?.iterations?.[0]?.startDate ?? dates.startDate,
-        iterations: [
-          ...iterations.map(({ title: existingTitle, startDate, duration }) => ({
-            title: existingTitle,
-            startDate,
-            duration,
-          })),
-          { title: iterationTitle, startDate: dates.startDate, duration: 1 },
-        ],
-      },
+      configuration,
     });
-    iteration = updateResult.updateProjectV2Field.projectV2Field.configuration.iterations.find(
-      (candidate) => candidate.title === iterationTitle,
+    iteration = findIterationByTitle(
+      updateResult?.updateProjectV2Field?.projectV2Field?.configuration?.iterations,
+      iterationTitle,
     );
+    if (!iteration) {
+      const refreshed = await graphql(ITERATION_FIELD_QUERY, { fieldId: iterationField.id });
+      iteration = findIterationByTitle(refreshed?.node?.configuration?.iterations, iterationTitle);
+    }
     if (!iteration) throw new Error("iteration-create-not-confirmed");
   }
   const existing = project.items?.nodes?.find((item) => item.content?.id === issueNodeId);

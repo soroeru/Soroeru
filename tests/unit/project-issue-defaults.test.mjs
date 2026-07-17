@@ -14,6 +14,8 @@ import {
   loadRepositoryIssue,
   reasonFromGraphqlFailure,
   buildProjectQuery,
+  buildIterationConfiguration,
+  nextAvailableIterationStartDate,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -571,4 +573,96 @@ test("buildProjectQuery uses projectV2(number) not the projectsV2 connection", (
   assert.equal(orgQuery.includes("projectsV2(number:"), false);
   const userQuery = buildProjectQuery("user");
   assert.match(userQuery, /user\(login: \$owner\) \{ projectV2\(number: \$number\)/);
+});
+
+test("nextAvailableIterationStartDate skips occupied dates", () => {
+  assert.equal(
+    nextAvailableIterationStartDate(
+      [{ startDate: "2026-07-18" }, { startDate: "2026-07-19" }],
+      "2026-07-18",
+    ),
+    "2026-07-20",
+  );
+});
+
+test("buildIterationConfiguration uses startDate and avoids date collisions", () => {
+  const configuration = buildIterationConfiguration(
+    {
+      configuration: {
+        duration: 1,
+        iterations: [{ id: "it-1", title: "既存", startDate: "2026-07-18", duration: 1 }],
+      },
+    },
+    { title: "AI探索・収集基盤", startDate: "2026-07-18", duration: 1 },
+  );
+  assert.deepEqual(configuration, {
+    startDate: "2026-07-18",
+    duration: 1,
+    iterations: [
+      { title: "既存", startDate: "2026-07-18", duration: 1 },
+      { title: "AI探索・収集基盤", startDate: "2026-07-19", duration: 1 },
+    ],
+  });
+  assert.equal("startDay" in configuration, false);
+  assert.equal("id" in configuration.iterations[0], false);
+});
+
+test("creates a missing iteration with non-colliding startDate", async () => {
+  const calls = [];
+  const project = projectFixture();
+  project.items.nodes = [];
+  project.fields.nodes.find((field) => field.name === "Iteration").configuration = {
+    duration: 1,
+    iterations: [{ id: "it-existing", title: "既存", startDate: "2026-07-16", duration: 1 }],
+  };
+  const issue = issueFixture();
+  issue.body =
+    "<!-- project-metadata:start -->\n- Priority: P2\n- Size: M\n- Feature group: New group\n<!-- project-metadata:end -->";
+  issue.node_id = "issue-node-new";
+  const graphql = async (query, variables) => {
+    calls.push({ query, variables });
+    if (query.includes("UpdateIteration")) {
+      return {
+        updateProjectV2Field: {
+          projectV2Field: {
+            configuration: {
+              iterations: [
+                { id: "it-existing", title: "既存", startDate: "2026-07-16", duration: 1 },
+                { id: "it-new", title: "New group", startDate: "2026-07-17", duration: 1 },
+              ],
+            },
+          },
+        },
+      };
+    }
+    if (query.includes("AddItem")) return { addProjectV2ItemById: { item: { id: "item-new" } } };
+    if (query.includes("ItemFieldValues")) {
+      return {
+        node: {
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P2" },
+              { field: { name: "Size" }, name: "M" },
+              { field: { name: "Start date" }, date: "2026-07-16" },
+              { field: { name: "Target date" }, date: "2026-07-16" },
+              { field: { name: "Iteration" }, title: "New group" },
+            ],
+          },
+        },
+      };
+    }
+    return {};
+  };
+  const result = await applyProjectDefaults({
+    issue,
+    project,
+    graphql,
+    config: { projectName: "Visibility" },
+  });
+  assert.equal(result.iteration, "New group");
+  const update = calls.find(({ query }) => query.includes("UpdateIteration"));
+  assert.equal(update.variables.configuration.startDate, "2026-07-16");
+  assert.equal(update.variables.configuration.iterations[1].title, "New group");
+  // Preferred date 2026-07-16 is occupied by 既存, so the new iteration shifts forward.
+  assert.equal(update.variables.configuration.iterations[1].startDate, "2026-07-17");
 });
