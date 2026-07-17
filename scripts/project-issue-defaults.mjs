@@ -210,18 +210,37 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   return { itemId, projectName: project.title, iteration: iteration.title, reasons: resolved.reasons };
 }
 
+/**
+ * Map GraphQL transport/API failures to stable retryable reasons.
+ * Only uses error type/message codes from GitHub — never Issue bodies or tokens.
+ */
+export function reasonFromGraphqlFailure(responseOk, payload) {
+  if (!responseOk) return "github-graphql-http-failed";
+  const errors = payload?.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  const first = errors[0] ?? {};
+  const message = String(first.message ?? "");
+  const type = String(first.type ?? "");
+  if (type === "FORBIDDEN" || /not accessible by integration/i.test(message))
+    return "github-graphql-forbidden";
+  if (type === "NOT_FOUND" || /could not resolve/i.test(message)) return "github-graphql-not-found";
+  if (/rate limit/i.test(message)) return "github-graphql-rate-limited";
+  return "github-graphql-failed";
+}
+
 async function githubGraphql(query, variables, token) {
   const response = await fetch("https://api.github.com/graphql", {
     method: "POST",
     headers: {
-      Authorization: `bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       "User-Agent": "soroeru-project-issue-defaults",
     },
     body: JSON.stringify({ query, variables }),
   });
   const payload = await response.json();
-  if (!response.ok || payload.errors?.length) throw new Error("github-graphql-failed");
+  const reason = reasonFromGraphqlFailure(response.ok, payload);
+  if (reason) throw new Error(reason);
   return payload.data;
 }
 
