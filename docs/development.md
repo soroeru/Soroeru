@@ -333,6 +333,11 @@ not the supported product installation or binding UX. To use it during local dev
    - Enable **Developer mode** (toggle in the top right).
    - Click **Load unpacked** and select the `dist/extension/` directory.
    - Note the extension ID shown on the extension card (you will need it below).
+   - An unpacked extension's ID is derived from the **absolute directory path**: loading
+     `dist/extension/` from a different checkout or worktree produces a **different ID**.
+     After such a change, re-enter the new ID in settings, restart, and re-run step 4 —
+     the previously registered manifest still allowlists the old ID and Chrome will
+     refuse the connection until it is re-registered.
 
 3. **Start the app and save the bridge settings:**
 
@@ -366,17 +371,42 @@ not the supported product installation or binding UX. To use it during local dev
    the reachability, #381 invariant, binding, permission, packaging, and distribution gates in
    `architecture.md` §2.2 pass.
 
-4. **In the app:**
+4. **In the app (order matters — register first, then reload the extension):**
    - Go to **設定 → Chrome と接続** and select **host を登録して接続を始める**.
    - The manifest is registered at
      `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`,
      pointing at the copy in `~/Library/Application Support/Soroeru/native-host/` (never
-     into `.app`, which App Translocation can relocate).
+     into `.app`, which App Translocation can relocate). Registration is what writes the
+     saved extension ID into the manifest's `allowed_origins`; reloading the extension
+     before this step reconnects against the stale manifest and fails.
+   - Then reload the extension (or restart its service worker) in `chrome://extensions`
+     so it reconnects to the freshly registered host.
    - The handshake completes when the extension confirms the native-messaging connection.
    - When done, choose **切断して登録物を掃除** to unregister and remove the host binary.
    - Turning the bridge setting OFF runs the same cleanup first. OFF is saved only after listener,
      permission, and native-host cleanup completes; failed or uncertain cleanup remains visible and
      leaves the saved setting ON. Restart to make OFF the next startup state.
+
+**Troubleshooting the connection:**
+
+- Extension console shows `Unchecked runtime.lastError: Access to the specified native
+  messaging host is forbidden.` — the extension's current ID is not in the registered
+  manifest's `allowed_origins` (stale registration, typically after the extension was
+  loaded from a new path or the ID in settings changed). Verify the saved ID matches the
+  card in `chrome://extensions`, re-run **host を登録して接続を始める**, then reload the
+  extension. Compare against
+  `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`.
+- App stays at 「接続中」 with no error — the extension has not (re)connected yet; reload
+  it in `chrome://extensions`, or use the extension popup's **アプリに再接続**. The
+  popup's reconnect cannot fix a stale manifest; only app-side registration rewrites it.
+- Connecting reports `feature-disabled` — the bridge listener or extension ID was not
+  active at process startup (settings apply on restart), or the dev host bundle
+  `dist/native-host/host.cjs` is missing (`npm run dev` builds it; `npm run build:host`
+  builds it standalone).
+- A successful registration writes `registering native host` /
+  `native host registered successfully` lines to the app log (**ログをダウンロード** in
+  the app, or `~/Library/Application Support/Soroeru/logs/soroeru.log`). If those lines
+  are absent, registration never ran in the current app instance.
 
 **Runtime caveat:** Chrome launches the installed host with launchd's minimal `PATH`, so
 an `env node` shebang would fail silently on most machines. Registration therefore
