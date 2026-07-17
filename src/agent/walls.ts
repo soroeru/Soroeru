@@ -20,7 +20,7 @@ const AMBIGUOUS_WALL_RE =
 // Wording must be required/imperative ("〜が必要", "〜してください") so an
 // ordinary login page that merely links "パスワードの再設定はこちら" stays clear.
 const PASSWORD_RESET_REQUIRED_RE =
-  /パスワードの?再設定が必要|パスワードを再設定して\s*ください|password\s+reset\s+(is\s+)?required|(need\s+to|must)\s+reset\s+your\s+password/i;
+  /パスワードの?再設定が必要|パスワードを再設定して\s*ください|password\s+reset\s+(is\s+)?required|(please|need\s+to|must)\s+reset\s+your\s+password/i;
 
 export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
   // Checked before the CAPTCHA signals: the forced-reset page often embeds a

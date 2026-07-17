@@ -108,6 +108,10 @@ test("site-forced password reset wording is detected (Issue #372)", () => {
     detectWall(snapshot({ visibleText: "Password reset required to continue." }))?.kind,
     "password-reset",
   );
+  assert.equal(
+    detectWall(snapshot({ visibleText: "Please reset your password to continue." }))?.kind,
+    "password-reset",
+  );
 });
 
 test("password-reset wins over the reset page's own Turnstile iframe (Issue #372)", () => {

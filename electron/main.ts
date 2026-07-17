@@ -7,6 +7,7 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { SoroeruSession } from "./session.js";
 import { createChromeExtensionBridge } from "./chrome-extension-bridge-runtime.js";
@@ -32,12 +33,18 @@ const RENDERER_INDEX = join(appRoot, "dist", "renderer", "index.html");
 // (forge.config.cjs extraResource); dev builds use the `build:host` output at
 // dist/native-host/ (built by `npm run dev`), so native-host registration
 // works identically without SOROERU_CHROME_BRIDGE_HOST_BINARY. The env var
-// remains as an explicit override for both modes.
+// remains as an explicit override for both modes. When the dev output has not
+// been built (Electron launched without `npm run dev`), fall back to "" so
+// connecting reports the self-explanatory feature-disabled instead of an
+// opaque registration-failed from the missing file.
+const DEV_HOST_BINARY = join(appRoot, "dist", "native-host", "host.cjs");
 const CHROME_HOST_BINARY =
   process.env["SOROERU_CHROME_BRIDGE_HOST_BINARY"] ??
   (app.isPackaged
     ? join(process.resourcesPath, "native-host", "host.cjs")
-    : join(appRoot, "dist", "native-host", "host.cjs"));
+    : existsSync(DEV_HOST_BINARY)
+      ? DEV_HOST_BINARY
+      : "");
 
 function configurePackagedPlaywrightBrowsers(): void {
   if (!app.isPackaged || process.env["PLAYWRIGHT_BROWSERS_PATH"]) return;
