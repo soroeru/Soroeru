@@ -11,6 +11,7 @@ import { AiEngine as AiEngineImpl, type RedactionValueSource } from "../src/auto
 import { aiProviderFromEnv, type AiProvider } from "../src/agent/ai/provider.js";
 import type { AiEngine } from "../src/automation/decision-engine.js";
 import { DomainService } from "../src/domain/domain-service.js";
+import { FIXED_ATTRIBUTE_LABELS, displayLabelWithAttributeKey } from "../src/domain/attribute-labels.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
 import { vaultExists } from "../src/store/vault.js";
 import { importPasswordCsv, CsvImportError } from "../src/domain/csv-import.js";
@@ -988,11 +989,15 @@ export class SoroeruSession {
       .map((disclosure) => {
         const sensitivity = sensitivityFor(disclosure.attributeKey);
         const canonical = this.domain?.getPersonalAttribute(disclosure.attributeKey);
+        const label =
+          canonical?.label ??
+          dynamicLabels.get(disclosure.attributeKey) ??
+          FIXED_ATTRIBUTE_LABELS.get(disclosure.attributeKey);
         const raw = disclosure.siteHeldValue;
         return {
           disclosureId: disclosure.id,
           attributeKey: disclosure.attributeKey,
-          label: canonical?.label ?? dynamicLabels.get(disclosure.attributeKey) ?? disclosure.attributeKey,
+          label: displayLabelWithAttributeKey(disclosure.attributeKey, label),
           sensitivity,
           staleState: disclosure.staleState,
           sourceKind: disclosure.sourceKind,
