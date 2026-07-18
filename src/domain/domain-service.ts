@@ -498,12 +498,22 @@ export class DomainService {
           candidate.normalizedValueHash === disclosure.normalizedValueHash,
       );
       if (existing) {
+        const isNewerObservation = observedAt > existing.observedAt;
         const updated: Disclosure = {
           ...existing,
           observedAt: Math.max(existing.observedAt, observedAt),
           evidenceIds: [...new Set([...existing.evidenceIds, ...disclosure.evidenceIds])],
           staleState: this.deriveStaleState(existing),
         };
+        if (isNewerObservation) {
+          updated.sourceKind = disclosure.sourceKind;
+          updated.confidence = disclosure.confidence;
+          if (disclosure.sourcePageUrl !== undefined) {
+            updated.sourcePageUrl = disclosure.sourcePageUrl;
+          } else {
+            delete updated.sourcePageUrl;
+          }
+        }
         this.vault.put("disclosure", updated);
         return updated;
       }
