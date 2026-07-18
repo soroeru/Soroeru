@@ -217,7 +217,7 @@ export function scanInPage(): {
   const CAPTCHA_IFRAME_RE = /recaptcha|hcaptcha|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i;
   // A visible badge/anchor may still be passive. Only URLs that identify the
   // challenge view itself are elevated before a password form is attempted.
-  const CAPTCHA_CHALLENGE_IFRAME_RE = /\/(?:bframe|challenge)(?:[/?]|$)|challenge-platform/i;
+  const CAPTCHA_CHALLENGE_IFRAME_RE = /\/(?:bframe|challenge)(?:[/?]|$)|challenge-platform|\/(?:fc\/(?:gc|api)|fun(?:captcha)?)(?:[/?]|$)/i;
   const iframes = Array.from(document.querySelectorAll("iframe"));
   const iframeSrcs = iframes.map((frame) => frame.src);
   const visibleCaptchaChallengeIframeSrcs = iframes

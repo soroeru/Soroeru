@@ -190,7 +190,8 @@ export class VisibilityRunner {
             const ssoOptions =
               afterLoginSso.length > 0 ? afterLoginSso : findSsoLoginOptions(loginPageSnapshot);
             if (ssoOptions.length > 0) {
-              const passkeyOptions = findPasskeyLoginOptions(snapshot);
+              const fallbackSnapshot = afterLoginSso.length > 0 ? snapshot : loginPageSnapshot;
+              const passkeyOptions = findPasskeyLoginOptions(fallbackSnapshot);
               ssoHandoffOffered = true;
               const ssoOutcome = await this.offerSsoLoginHandoff({
                 siteAccount,
@@ -752,7 +753,9 @@ export class VisibilityRunner {
       siteAccountId: input.siteAccount.id,
       pageUrl: input.snapshot.url,
       observedAt: this.now(),
-      maskedSnippet: `passkey login options: ${input.options.join(", ")}`,
+      // Control labels are untrusted page text and may include an account name.
+      // Evidence records only the structural signal, never the label itself.
+      maskedSnippet: `passkey login controls detected: ${input.options.length}`,
     });
     this.options.domain.addConstraint({
       siteAccountId: input.siteAccount.id,

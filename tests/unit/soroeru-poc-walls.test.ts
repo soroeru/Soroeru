@@ -40,6 +40,16 @@ test("an iframe-only CAPTCHA marker can be treated as passive only at a recogniz
     detectWall(snapshot({ visibleText: "私はロボットではありません" }), { ignorePassiveCaptchaIframes: true })?.kind,
     "captcha",
   );
+  assert.equal(
+    detectWall(
+      snapshot({
+        iframeSrcs: ["https://client-api.arkoselabs.com/fc/gc/?token=fake"],
+        visibleCaptchaChallengeIframeSrcs: ["https://client-api.arkoselabs.com/fc/gc/?token=fake"],
+      }),
+      { ignorePassiveCaptchaIframes: true },
+    )?.kind,
+    "captcha",
+  );
 });
 
 test("otp / mfa fields are detected by traits", () => {
