@@ -23,8 +23,11 @@ export class WallDetectionService {
    * Detect a CAPTCHA / MFA / verification wall on the page, or undefined if
    * none. Detection only — the caller hands off; nothing here circumvents.
    */
-  detect(snapshot: PageSnapshot): WallDetection | undefined {
-    return detectWall(snapshot);
+  detect(
+    snapshot: PageSnapshot,
+    options: { ignorePassiveCaptchaIframes?: boolean } = {},
+  ): WallDetection | undefined {
+    return detectWall(snapshot, options);
   }
 
   /** Human-facing instruction for resolving a detected wall (no bypass). */

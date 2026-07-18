@@ -125,6 +125,35 @@ test("visibility runner logs in, collects redacted evidence, disclosures, relati
   }
 });
 
+test("visibility runner submits a recognized login form despite an iframe-only CAPTCHA marker", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "passive-captcha.example.test",
+      url: "https://passive-captcha.example.test/login",
+      displayName: "PassiveCaptcha",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    const loginPage = snapshot("https://passive-captcha.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+    ]);
+    loginPage.iframeSrcs = ["https://www.google.com/recaptcha/enterprise/anchor"];
+    const accountPage = snapshot("https://passive-captcha.example.test/account", [
+      field("email", { type: "email", autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    const page = new FakePageDriver([loginPage, accountPage], { email: "user@example.test" });
+    const runner = new VisibilityRunner({ domain: service, openSession: () => Promise.resolve(new FakeSession(page)) });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.deepEqual(page.clicked, ["button[type=submit]"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("visibility runner consults the optional AiEngine when the RuleEngine cannot confidently decide (Issue #310 wiring)", async () => {
   const { dir, service } = await openService();
   try {
@@ -1053,6 +1082,7 @@ test("visibility runner offers SSO fallback with credential after ID/PW failure;
     loginWithSso.buttons = [
       { selector: "button[type=submit]", text: "ログイン" },
       { selector: "button.line", text: "LINEでログイン" },
+      { selector: "button.passkey", text: "パスキーでログイン" },
     ];
     const page = new FakePageDriver([loginWithSso, loginWithSso, loginWithSso]);
     let handoffInput: { instruction: string; credential?: unknown } | undefined;
@@ -1071,12 +1101,53 @@ test("visibility runner offers SSO fallback with credential after ID/PW failure;
     assert.ok(handoffInput);
     assert.match(handoffInput.instruction, /IDとパスワードでのログインができませんでした/);
     assert.match(handoffInput.instruction, /LINE/);
+    assert.match(handoffInput.instruction, /パスキーでログインしてください/);
     assert.ok(handoffInput.credential, "Problem 2 must offer the imported credential for manual re-try");
     const ssoConstraint = service.listConstraints().find((c) => c.detail.startsWith("sso-fallback-suggested:"));
     assert.ok(ssoConstraint);
     assert.match(ssoConstraint.detail, /line/);
     const loginConstraint = service.listConstraints().find((c) => c.detail.startsWith("login-incomplete:"));
     assert.ok(loginConstraint);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner hands off with passkey guidance after a failed password login", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "passkey-fallback.example.test",
+      url: "https://passkey-fallback.example.test/login",
+      displayName: "PasskeyFallback",
+    });
+    service.addCredential({ siteAccountId: site.id, username: "user", password: "fake-pass", source: "csv-import" });
+    const loginWithPasskey = snapshot("https://passkey-fallback.example.test/login", [
+      field("email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("password", { type: "password", autocomplete: "current-password", labels: ["パスワード"] }),
+    ]);
+    loginWithPasskey.buttons = [
+      { selector: "button[type=submit]", text: "ログイン" },
+      { selector: "button.passkey", text: "パスキーでログイン" },
+    ];
+    const page = new FakePageDriver([loginWithPasskey, loginWithPasskey, loginWithPasskey]);
+    let instruction = "";
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async (input) => {
+        instruction = input.instruction;
+        return "abort";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "login-failed");
+    assert.match(instruction, /IDとパスワードでのログインができませんでした/);
+    assert.match(instruction, /パスキーを使ってログインしてください/);
+    assert.equal(page.clicked.includes("button.passkey"), false, "must never automate passkey controls");
+    assert.ok(service.listConstraints().some((constraint) => constraint.detail === "passkey-fallback-suggested"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

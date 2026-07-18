@@ -159,6 +159,8 @@ export interface PageSnapshot {
   visibleText: string;
   /** iframe src URLs (CAPTCHA widgets live in iframes). */
   iframeSrcs: string[];
+  /** Visible CAPTCHA iframe URLs whose URL identifies an interactive challenge. */
+  visibleCaptchaChallengeIframeSrcs?: string[];
   /** Known wall-widget DOM markers found on the page (e.g. "g-recaptcha"). */
   wallMarkers: string[];
   /**

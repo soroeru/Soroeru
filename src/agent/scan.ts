@@ -43,6 +43,7 @@ export function scanInPage(): {
   links: PageSnapshot["links"];
   visibleText: string;
   iframeSrcs: string[];
+  visibleCaptchaChallengeIframeSrcs: string[];
   wallMarkers: string[];
   displayValues: NonNullable<PageSnapshot["displayValues"]>;
 } {
@@ -209,8 +210,20 @@ export function scanInPage(): {
 
   const wallMarkers: string[] = [];
   for (const marker of ["g-recaptcha", "h-captcha", "cf-turnstile"]) {
-    if (document.querySelector(`.${marker}`)) wallMarkers.push(marker);
+    const widget = document.querySelector(`.${marker}`);
+    if (widget instanceof HTMLElement && isVisible(widget)) wallMarkers.push(marker);
   }
+
+  const CAPTCHA_IFRAME_RE = /recaptcha|hcaptcha|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i;
+  // A visible badge/anchor may still be passive. Only URLs that identify the
+  // challenge view itself are elevated before a password form is attempted.
+  const CAPTCHA_CHALLENGE_IFRAME_RE = /\/(?:bframe|challenge)(?:[/?]|$)|challenge-platform|\/(?:fc\/(?:gc|api)|fun(?:captcha)?)(?:[/?]|$)/i;
+  const iframes = Array.from(document.querySelectorAll("iframe"));
+  const iframeSrcs = iframes.map((frame) => frame.src);
+  const visibleCaptchaChallengeIframeSrcs = iframes
+    .filter((frame): frame is HTMLIFrameElement => frame instanceof HTMLIFrameElement)
+    .filter((frame) => CAPTCHA_IFRAME_RE.test(frame.src) && CAPTCHA_CHALLENGE_IFRAME_RE.test(frame.src) && isVisible(frame))
+    .map((frame) => frame.src);
 
   // --- Read-only display values (account pages that render registered info as text) ---
   // The runner collects these the same way as form fields, but the raw value is
@@ -436,7 +449,8 @@ export function scanInPage(): {
     buttons,
     links,
     visibleText: (document.body?.innerText ?? "").slice(0, 8000),
-    iframeSrcs: Array.from(document.querySelectorAll("iframe")).map((f) => f.src),
+    iframeSrcs,
+    visibleCaptchaChallengeIframeSrcs,
     wallMarkers,
     displayValues,
   };

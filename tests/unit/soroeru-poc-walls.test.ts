@@ -26,6 +26,32 @@ test("captcha widgets are detected (never solved)", () => {
   assert.equal(detectWall(snapshot({ visibleText: "私はロボットではありません" }))?.kind, "captcha");
 });
 
+test("an iframe-only CAPTCHA marker can be treated as passive only at a recognized login form", () => {
+  const passiveMarker = snapshot({ iframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"] });
+  assert.equal(detectWall(passiveMarker)?.kind, "captcha");
+  assert.equal(detectWall(passiveMarker, { ignorePassiveCaptchaIframes: true }), undefined);
+
+  const visibleChallenge = snapshot({
+    iframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"],
+    visibleCaptchaChallengeIframeSrcs: ["https://www.google.com/recaptcha/enterprise/bframe"],
+  });
+  assert.equal(detectWall(visibleChallenge, { ignorePassiveCaptchaIframes: true })?.kind, "captcha");
+  assert.equal(
+    detectWall(snapshot({ visibleText: "私はロボットではありません" }), { ignorePassiveCaptchaIframes: true })?.kind,
+    "captcha",
+  );
+  assert.equal(
+    detectWall(
+      snapshot({
+        iframeSrcs: ["https://client-api.arkoselabs.com/fc/gc/?token=fake"],
+        visibleCaptchaChallengeIframeSrcs: ["https://client-api.arkoselabs.com/fc/gc/?token=fake"],
+      }),
+      { ignorePassiveCaptchaIframes: true },
+    )?.kind,
+    "captcha",
+  );
+});
+
 test("otp / mfa fields are detected by traits", () => {
   const byAutocomplete = snapshot({
     fields: [

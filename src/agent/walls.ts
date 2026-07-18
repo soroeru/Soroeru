@@ -22,7 +22,10 @@ const AMBIGUOUS_WALL_RE =
 const PASSWORD_RESET_REQUIRED_RE =
   /パスワードの?再設定が必要|パスワードを再設定して\s*ください|password\s+reset\s+(is\s+)?required|(please|need\s+to|must)\s+reset\s+your\s+password/i;
 
-export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
+export function detectWall(
+  snapshot: PageSnapshot,
+  options: { ignorePassiveCaptchaIframes?: boolean } = {},
+): WallDetection | undefined {
   // Checked before the CAPTCHA signals: the forced-reset page often embeds a
   // Cloudflare Turnstile iframe, and classifying it as "captcha" would give
   // the human an inaccurate hand-off instruction (Issue #372). Either way the
@@ -34,8 +37,12 @@ export function detectWall(snapshot: PageSnapshot): WallDetection | undefined {
   if (snapshot.wallMarkers.length > 0) {
     return { kind: "captcha", evidence: `widget marker: ${snapshot.wallMarkers.join(", ")}` };
   }
+  const visibleCaptchaFrame = snapshot.visibleCaptchaChallengeIframeSrcs?.find((src) => CAPTCHA_IFRAME_RE.test(src));
+  if (visibleCaptchaFrame) return { kind: "captcha", evidence: `visible iframe: ${visibleCaptchaFrame}` };
   const captchaFrame = snapshot.iframeSrcs.find((src) => CAPTCHA_IFRAME_RE.test(src));
-  if (captchaFrame) return { kind: "captcha", evidence: `iframe: ${captchaFrame}` };
+  if (captchaFrame && !options.ignorePassiveCaptchaIframes) {
+    return { kind: "captcha", evidence: `iframe: ${captchaFrame}` };
+  }
   if (CAPTCHA_TEXT_RE.test(snapshot.visibleText)) {
     return { kind: "captcha", evidence: "visible captcha wording" };
   }
