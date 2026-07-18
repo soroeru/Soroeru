@@ -26,6 +26,22 @@ test("captcha widgets are detected (never solved)", () => {
   assert.equal(detectWall(snapshot({ visibleText: "私はロボットではありません" }))?.kind, "captcha");
 });
 
+test("an iframe-only CAPTCHA marker can be treated as passive only at a recognized login form", () => {
+  const passiveMarker = snapshot({ iframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"] });
+  assert.equal(detectWall(passiveMarker)?.kind, "captcha");
+  assert.equal(detectWall(passiveMarker, { ignorePassiveCaptchaIframes: true }), undefined);
+
+  const visibleChallenge = snapshot({
+    iframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"],
+    visibleCaptchaIframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"],
+  });
+  assert.equal(detectWall(visibleChallenge, { ignorePassiveCaptchaIframes: true })?.kind, "captcha");
+  assert.equal(
+    detectWall(snapshot({ visibleText: "私はロボットではありません" }), { ignorePassiveCaptchaIframes: true })?.kind,
+    "captcha",
+  );
+});
+
 test("otp / mfa fields are detected by traits", () => {
   const byAutocomplete = snapshot({
     fields: [

@@ -43,6 +43,7 @@ export function scanInPage(): {
   links: PageSnapshot["links"];
   visibleText: string;
   iframeSrcs: string[];
+  visibleCaptchaIframeSrcs: string[];
   wallMarkers: string[];
   displayValues: NonNullable<PageSnapshot["displayValues"]>;
 } {
@@ -209,8 +210,17 @@ export function scanInPage(): {
 
   const wallMarkers: string[] = [];
   for (const marker of ["g-recaptcha", "h-captcha", "cf-turnstile"]) {
-    if (document.querySelector(`.${marker}`)) wallMarkers.push(marker);
+    const widget = document.querySelector(`.${marker}`);
+    if (widget instanceof HTMLElement && isVisible(widget)) wallMarkers.push(marker);
   }
+
+  const CAPTCHA_IFRAME_RE = /recaptcha|hcaptcha|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i;
+  const iframes = Array.from(document.querySelectorAll("iframe"));
+  const iframeSrcs = iframes.map((frame) => frame.src);
+  const visibleCaptchaIframeSrcs = iframes
+    .filter((frame): frame is HTMLIFrameElement => frame instanceof HTMLIFrameElement)
+    .filter((frame) => CAPTCHA_IFRAME_RE.test(frame.src) && isVisible(frame))
+    .map((frame) => frame.src);
 
   // --- Read-only display values (account pages that render registered info as text) ---
   // The runner collects these the same way as form fields, but the raw value is
@@ -436,7 +446,8 @@ export function scanInPage(): {
     buttons,
     links,
     visibleText: (document.body?.innerText ?? "").slice(0, 8000),
-    iframeSrcs: Array.from(document.querySelectorAll("iframe")).map((f) => f.src),
+    iframeSrcs,
+    visibleCaptchaIframeSrcs,
     wallMarkers,
     displayValues,
   };

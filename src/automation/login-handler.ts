@@ -52,7 +52,7 @@ export class LoginHandler {
     // Walls are checked after every snapshot. §7 checks once before filling;
     // checking earlier is strictly more conservative — it prevents navigating
     // away from a wall the human must resolve in this same session.
-    let wall = this.wallDetection.detect(snapshot);
+    let wall = this.wallDetection.detect(snapshot, { ignorePassiveCaptchaIframes: hasLoginFields(snapshot) });
     if (wall) return { success: false, wall };
 
     // Step 2: detect the login form; when absent, look for a login page.
@@ -62,7 +62,7 @@ export class LoginHandler {
       if (loginPage.wall) return { success: false, wall: loginPage.wall };
       if (!loginPage.found) return { success: false, error: "login-page-not-found" };
       snapshot = await page.snapshot();
-      wall = this.wallDetection.detect(snapshot);
+      wall = this.wallDetection.detect(snapshot, { ignorePassiveCaptchaIframes: hasLoginFields(snapshot) });
       if (wall) return { success: false, wall };
       detection = await this.decisionEngine.decide({ kind: "detect-login-form", snapshot, context });
     }
@@ -129,6 +129,19 @@ export function hasLoginFields(snapshot: PageSnapshot): boolean {
     findLoginField(snapshot.fields, "password") !== undefined &&
     findLoginField(snapshot.fields, "username") !== undefined
   );
+}
+
+const PASSKEY_ACTION_RE = /パスキー.*(?:ログイン|サインイン)|(?:ログイン|サインイン).*パスキー|passkey.*(?:log|sign)[\s-]?in|(?:log|sign)[\s-]?in.*passkey|生体認証.*(?:ログイン|サインイン)/i;
+
+/**
+ * Visible passkey controls are a human-only fallback after password login
+ * fails. Detection never makes them a wall and never invokes WebAuthn.
+ */
+export function findPasskeyLoginOptions(snapshot: PageSnapshot): string[] {
+  const labels = [...snapshot.buttons.map((button) => button.text), ...snapshot.links.map((link) => link.text)]
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0 && PASSKEY_ACTION_RE.test(text));
+  return [...new Set(labels)];
 }
 
 /**

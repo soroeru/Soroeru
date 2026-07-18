@@ -7,6 +7,7 @@ import {
   findLoginField,
   findLoginLink,
   findLoginSubmitButton,
+  findPasskeyLoginOptions,
   findSsoLoginOptions,
   hasAuthenticatedSessionMarker,
   hasLoginFields,
@@ -189,6 +190,7 @@ export class VisibilityRunner {
             const ssoOptions =
               afterLoginSso.length > 0 ? afterLoginSso : findSsoLoginOptions(loginPageSnapshot);
             if (ssoOptions.length > 0) {
+              const passkeyOptions = findPasskeyLoginOptions(snapshot);
               ssoHandoffOffered = true;
               const ssoOutcome = await this.offerSsoLoginHandoff({
                 siteAccount,
@@ -198,7 +200,7 @@ export class VisibilityRunner {
                 options: ssoOptions,
                 // Same spirit as wall hand-off on login: user may re-try ID/PW manually.
                 credential,
-                instruction: ssoFallbackInstruction(ssoOptions),
+                instruction: ssoFallbackInstruction(ssoOptions, passkeyOptions.length > 0),
               });
               if (ssoOutcome !== "resolved") {
                 this.recordLoginFailed(siteAccount, snapshot);
@@ -215,6 +217,46 @@ export class VisibilityRunner {
               }
               // Same as post-login: wait, re-snapshot, and wall-check before collection
               // so IdP-side CAPTCHA/MFA after SSO is still handed off (never bypassed).
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              await session.page.waitForReady();
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              snapshot = await this.clearOrPause(
+                siteAccount,
+                session,
+                await session.page.snapshot(),
+                "after-login",
+                credential,
+              );
+              if (this.isCanceled()) return this.canceledResult(siteAccountId);
+              if (!snapshot) return this.handoffResult(siteAccountId);
+            }
+          }
+
+          // A failed password attempt can fall back to a passkey, but Soroeru
+          // never triggers WebAuthn or selects a credential: this is a
+          // human-only handoff in the already-open browser session.
+          if (fullLoginForm && hasLoginFields(snapshot) && !ssoHandoffOffered) {
+            const passkeyOptions = findPasskeyLoginOptions(snapshot);
+            if (passkeyOptions.length > 0) {
+              const passkeyOutcome = await this.offerPasskeyLoginHandoff({
+                siteAccount,
+                snapshot,
+                credential,
+                options: passkeyOptions,
+              });
+              if (passkeyOutcome !== "resolved") {
+                this.recordLoginFailed(siteAccount, snapshot);
+                const constraints = this.options.domain
+                  .listConstraints()
+                  .filter((c) => c.siteAccountId === siteAccountId).length;
+                return {
+                  siteAccountId,
+                  status: "login-failed",
+                  disclosures: 0,
+                  relationships: 0,
+                  constraints,
+                };
+              }
               if (this.isCanceled()) return this.canceledResult(siteAccountId);
               await session.page.waitForReady();
               if (this.isCanceled()) return this.canceledResult(siteAccountId);
@@ -480,7 +522,12 @@ export class VisibilityRunner {
     const maxHandoffs = this.options.maxHandoffs ?? 3;
     let current = snapshot;
     for (let handoffs = 0; handoffs <= maxHandoffs; handoffs++) {
-      const wall = this.wallDetection.detect(current);
+      const wall = this.wallDetection.detect(current, {
+        // A hidden CAPTCHA badge must not prevent an otherwise recognizable
+        // password form from being tried. Visible challenge evidence, text,
+        // MFA, and every post-submit check still hand off immediately.
+        ignorePassiveCaptchaIframes: (step === "initial" || step === "login-page") && hasLoginFields(current),
+      });
       if (!wall) return current;
 
       const evidence = this.options.domain.addEvidence({
@@ -695,6 +742,44 @@ export class VisibilityRunner {
     return "resolved";
   }
 
+  private async offerPasskeyLoginHandoff(input: {
+    siteAccount: SiteAccount;
+    snapshot: PageSnapshot;
+    credential: Credential;
+    options: string[];
+  }): Promise<"resolved" | "abort"> {
+    const evidence = this.options.domain.addEvidence({
+      siteAccountId: input.siteAccount.id,
+      pageUrl: input.snapshot.url,
+      observedAt: this.now(),
+      maskedSnippet: `passkey login options: ${input.options.join(", ")}`,
+    });
+    this.options.domain.addConstraint({
+      siteAccountId: input.siteAccount.id,
+      kind: "unknown-state",
+      detail: "passkey-fallback-suggested",
+      evidenceIds: [evidence.id],
+      observedAt: this.now(),
+    });
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: input.siteAccount.id,
+      step: "after-login",
+      status: "handoff",
+      resumeData: { handoff: "passkey-login", url: input.snapshot.url },
+    });
+    this.logger.warn("visibility", "passkey login suggested after password login failed", {
+      domain: input.siteAccount.domain,
+    });
+    if (!this.options.handoff) return "abort";
+    return this.options.handoff({
+      siteAccount: input.siteAccount,
+      credential: input.credential,
+      evidence: "passkey login control detected after password login failed",
+      instruction: passkeyFallbackInstruction(),
+    });
+  }
+
   private recordUnreachable(siteAccount: SiteAccount, reason: string): void {
     const evidenceInput: Parameters<DomainService["addEvidence"]>[0] = {
       siteAccountId: siteAccount.id,
@@ -903,11 +988,20 @@ function ssoLoginRequiredInstruction(options: SsoLoginOption[]): string {
   );
 }
 
-function ssoFallbackInstruction(options: SsoLoginOption[]): string {
+function ssoFallbackInstruction(options: SsoLoginOption[], hasPasskeyOption = false): string {
   const providers = formatSsoProviderList(options);
   return (
     `IDとパスワードでのログインができませんでした。${providers}でのSSOログインをお試しください。` +
+    (hasPasskeyOption ? "このサイトはパスキーでのログインにも対応しています。パスキーでログインしてください。" : "") +
     "開いているブラウザ画面で、あなた自身でログインし、使用するアカウントを選択してください。" +
+    "完了後に続行すると、Soroeruが残りの収集を引き継ぎます。"
+  );
+}
+
+function passkeyFallbackInstruction(): string {
+  return (
+    "IDとパスワードでのログインができませんでした。このサイトはパスキーでのログインに対応しています。" +
+    "表示中のブラウザで、あなた自身でパスキーを使ってログインしてください。" +
     "完了後に続行すると、Soroeruが残りの収集を引き継ぎます。"
   );
 }
