@@ -456,17 +456,23 @@ export class DomainService {
   // --- Disclosures (the ledger edge) ---
 
   /**
-   * Record a Disclosure: a value a site holds for an attribute. The normalized
-   * hash and stale-state are derived at insert time against the current
-   * canonical attribute; both are recomputed whenever the attribute changes.
+   * Record a Disclosure: a value a site holds for an attribute. Re-observing
+   * the same normalized value for the same site and attribute refreshes the
+   * existing ledger edge instead of creating a duplicate. A changed value has
+   * a different hash and remains a separate history row.
+   *
+   * The normalized hash and stale-state are derived at insert time against the
+   * current canonical attribute; both are recomputed whenever the attribute
+   * changes.
    */
   addDisclosure(input: AddDisclosureInput): Disclosure {
     const storedSiteHeldValue = disclosureStoredValue(input.attributeKey, input.siteHeldValue);
+    const observedAt = input.observedAt ?? Date.now();
     const disclosure: Disclosure = {
       id: randomUUID(),
       siteAccountId: input.siteAccountId,
       attributeKey: input.attributeKey,
-      observedAt: input.observedAt ?? Date.now(),
+      observedAt,
       sourceKind: input.sourceKind,
       confidence: input.confidence ?? 1,
       evidenceIds: input.evidenceIds ?? [],
@@ -483,6 +489,36 @@ export class DomainService {
     }
     if (input.sourcePageUrl !== undefined) disclosure.sourcePageUrl = input.sourcePageUrl;
     disclosure.staleState = this.deriveStaleState(disclosure);
+
+    if (disclosure.normalizedValueHash !== undefined) {
+      const existing = this.vault.list("disclosure").find(
+        (candidate) =>
+          candidate.siteAccountId === disclosure.siteAccountId &&
+          candidate.attributeKey === disclosure.attributeKey &&
+          candidate.normalizedValueHash === disclosure.normalizedValueHash,
+      );
+      if (existing) {
+        const isNewerObservation = observedAt > existing.observedAt;
+        const updated: Disclosure = {
+          ...existing,
+          observedAt: Math.max(existing.observedAt, observedAt),
+          evidenceIds: [...new Set([...existing.evidenceIds, ...disclosure.evidenceIds])],
+          staleState: this.deriveStaleState(existing),
+        };
+        if (isNewerObservation) {
+          updated.sourceKind = disclosure.sourceKind;
+          updated.confidence = disclosure.confidence;
+          if (disclosure.sourcePageUrl !== undefined) {
+            updated.sourcePageUrl = disclosure.sourcePageUrl;
+          } else {
+            delete updated.sourcePageUrl;
+          }
+        }
+        this.vault.put("disclosure", updated);
+        return updated;
+      }
+    }
+
     this.vault.put("disclosure", disclosure);
     return disclosure;
   }

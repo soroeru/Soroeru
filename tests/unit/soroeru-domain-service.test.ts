@@ -143,6 +143,79 @@ test("disclosure stale-state: current, stale, and unknown", async () => {
   }
 });
 
+test("addDisclosure aggregates repeated observations of the same site-held value", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.com", displayName: "Example" });
+
+    const first = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "account.id",
+      siteHeldValue: "user@example.test",
+      observedAt: 100,
+      sourceKind: "form-field",
+      confidence: 0.7,
+      sourcePageUrl: "https://example.com/login",
+      evidenceIds: ["evidence-1"],
+    });
+    const repeated = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "account.id",
+      siteHeldValue: "user@example.test",
+      observedAt: 200,
+      sourceKind: "profile-text",
+      confidence: 0.9,
+      sourcePageUrl: "https://example.com/profile",
+      evidenceIds: ["evidence-1", "evidence-2"],
+    });
+    const outOfOrder = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "account.id",
+      siteHeldValue: "user@example.test",
+      observedAt: 150,
+      sourceKind: "user-confirmed",
+      confidence: 1,
+      sourcePageUrl: "https://example.com/older-observation",
+      evidenceIds: ["evidence-3"],
+    });
+
+    assert.equal(repeated.id, first.id);
+    assert.equal(outOfOrder.observedAt, 200);
+    assert.equal(outOfOrder.sourceKind, "profile-text");
+    assert.equal(outOfOrder.confidence, 0.9);
+    assert.equal(outOfOrder.sourcePageUrl, "https://example.com/profile");
+    assert.deepEqual(outOfOrder.evidenceIds, ["evidence-1", "evidence-2", "evidence-3"]);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("addDisclosure preserves changed site-held values as separate history rows", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "example.com", displayName: "Example" });
+
+    const previous = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "account.id",
+      siteHeldValue: "previous@example.test",
+      sourceKind: "form-field",
+    });
+    const changed = service.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "account.id",
+      siteHeldValue: "changed@example.test",
+      sourceKind: "form-field",
+    });
+
+    assert.notEqual(changed.id, previous.id);
+    assert.equal(service.listDisclosuresForSite(site.id).length, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("addDisclosure centralizes collected card and cvv storage policy", async () => {
   const { dir, service } = await openService();
   try {
