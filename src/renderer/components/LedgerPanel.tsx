@@ -447,6 +447,7 @@ export function LedgerPanel({
     const result = await window.soroeru.savedPage.openSite(siteAccountId);
     if (!result.ok) setLoadError(reasonMessage(result.error));
   }, []);
+
   const openDetail = useCallback(async (siteAccountId: string, opts?: { refresh?: boolean }) => {
     if (!opts?.refresh) {
       const cached = sitesRef.current.find((site) => site.siteAccountId === siteAccountId);
@@ -799,9 +800,21 @@ export function LedgerPanel({
                     >
                       <span className="flex flex-col gap-1">
                         <span>{site.displayName}</span>
-                        <span className="break-all text-xs font-normal text-neutral-400">
-                          {site.url ?? site.domain}
-                        </span>
+                        {(site.url ?? site.domain) ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void openSite(site.siteAccountId);
+                            }}
+                            className="break-all text-left text-xs font-normal text-sky-700 underline decoration-sky-400 decoration-dotted underline-offset-2 hover:text-sky-800"
+                            title="既定ブラウザで開く"
+                          >
+                            {site.url ?? site.domain}
+                          </button>
+                        ) : (
+                          <span className="break-all text-xs font-normal text-neutral-400">URL なし</span>
+                        )}
                         <SiteStatusChips site={site} running={runningSiteId === site.siteAccountId} />
                       </span>
                     </th>
