@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DecisionEngine } from "../../src/automation/decision-engine.js";
-import { findSsoLoginOptions, LoginHandler } from "../../src/automation/login-handler.js";
+import { findPasskeyLoginOptions, findSsoLoginOptions, LoginHandler } from "../../src/automation/login-handler.js";
 import type { PageDriver } from "../../src/automation/page-driver.js";
 import { RuleEngine } from "../../src/automation/rule-engine.js";
 import { WallDetectionService } from "../../src/automation/wall-detection.js";
@@ -191,6 +191,21 @@ test("login hands off on a wall at the entry page without filling anything", asy
   assert.deepEqual(page.visited, ["https://example.test/login"]);
 });
 
+test("login attempts credentials when a recognizable form only has a passive CAPTCHA iframe", async () => {
+  const passiveCaptchaLogin = snapshot("https://example.test/login", {
+    ...loginPage(),
+    iframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"],
+  });
+  const page = new FakePageDriver([passiveCaptchaLogin, loggedInPage()]);
+
+  const result = await handler().login(page, credential(), siteAccount());
+
+  assert.deepEqual(result, { success: true });
+  assert.equal(page.filled["f-user"], "user@example.test");
+  assert.equal(page.filled["f-pass"], "fake-pass");
+  assert.deepEqual(page.clicked, ["button[type=submit]"]);
+});
+
 test("login hands off on a post-login MFA wall", async () => {
   const otpPage = snapshot("https://example.test/otp", {
     fields: [field("f-otp", { autocomplete: "one-time-code" })],
@@ -315,4 +330,21 @@ test("findSsoLoginOptions rejects share / follow / tweet controls", () => {
   });
 
   assert.deepEqual(findSsoLoginOptions(page), []);
+});
+
+test("findPasskeyLoginOptions detects visible Japanese and English passkey controls only", () => {
+  const page = snapshot("https://passkey.example.test/login", {
+    buttons: [
+      { selector: "button.passkey", text: "パスキーでログイン" },
+      { selector: "button.en", text: "Sign in with passkey" },
+      { selector: "button.other", text: "生体認証でログイン" },
+    ],
+    links: [{ text: "パスキーについて", href: "/help/passkeys" }],
+  });
+
+  assert.deepEqual(findPasskeyLoginOptions(page), [
+    "パスキーでログイン",
+    "Sign in with passkey",
+    "生体認証でログイン",
+  ]);
 });
