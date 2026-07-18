@@ -37,7 +37,7 @@ export function detectWall(
   if (snapshot.wallMarkers.length > 0) {
     return { kind: "captcha", evidence: `widget marker: ${snapshot.wallMarkers.join(", ")}` };
   }
-  const visibleCaptchaFrame = snapshot.visibleCaptchaIframeSrcs?.find((src) => CAPTCHA_IFRAME_RE.test(src));
+  const visibleCaptchaFrame = snapshot.visibleCaptchaChallengeIframeSrcs?.find((src) => CAPTCHA_IFRAME_RE.test(src));
   if (visibleCaptchaFrame) return { kind: "captcha", evidence: `visible iframe: ${visibleCaptchaFrame}` };
   const captchaFrame = snapshot.iframeSrcs.find((src) => CAPTCHA_IFRAME_RE.test(src));
   if (captchaFrame && !options.ignorePassiveCaptchaIframes) {

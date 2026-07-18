@@ -33,7 +33,7 @@ test("an iframe-only CAPTCHA marker can be treated as passive only at a recogniz
 
   const visibleChallenge = snapshot({
     iframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"],
-    visibleCaptchaIframeSrcs: ["https://www.google.com/recaptcha/enterprise/anchor"],
+    visibleCaptchaChallengeIframeSrcs: ["https://www.google.com/recaptcha/enterprise/bframe"],
   });
   assert.equal(detectWall(visibleChallenge, { ignorePassiveCaptchaIframes: true })?.kind, "captcha");
   assert.equal(

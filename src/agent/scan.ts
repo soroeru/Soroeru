@@ -43,7 +43,7 @@ export function scanInPage(): {
   links: PageSnapshot["links"];
   visibleText: string;
   iframeSrcs: string[];
-  visibleCaptchaIframeSrcs: string[];
+  visibleCaptchaChallengeIframeSrcs: string[];
   wallMarkers: string[];
   displayValues: NonNullable<PageSnapshot["displayValues"]>;
 } {
@@ -215,11 +215,14 @@ export function scanInPage(): {
   }
 
   const CAPTCHA_IFRAME_RE = /recaptcha|hcaptcha|challenges\.cloudflare\.com|arkoselabs|funcaptcha/i;
+  // A visible badge/anchor may still be passive. Only URLs that identify the
+  // challenge view itself are elevated before a password form is attempted.
+  const CAPTCHA_CHALLENGE_IFRAME_RE = /\/(?:bframe|challenge)(?:[/?]|$)|challenge-platform/i;
   const iframes = Array.from(document.querySelectorAll("iframe"));
   const iframeSrcs = iframes.map((frame) => frame.src);
-  const visibleCaptchaIframeSrcs = iframes
+  const visibleCaptchaChallengeIframeSrcs = iframes
     .filter((frame): frame is HTMLIFrameElement => frame instanceof HTMLIFrameElement)
-    .filter((frame) => CAPTCHA_IFRAME_RE.test(frame.src) && isVisible(frame))
+    .filter((frame) => CAPTCHA_IFRAME_RE.test(frame.src) && CAPTCHA_CHALLENGE_IFRAME_RE.test(frame.src) && isVisible(frame))
     .map((frame) => frame.src);
 
   // --- Read-only display values (account pages that render registered info as text) ---
@@ -447,7 +450,7 @@ export function scanInPage(): {
     links,
     visibleText: (document.body?.innerText ?? "").slice(0, 8000),
     iframeSrcs,
-    visibleCaptchaIframeSrcs,
+    visibleCaptchaChallengeIframeSrcs,
     wallMarkers,
     displayValues,
   };
