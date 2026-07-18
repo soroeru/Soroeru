@@ -164,6 +164,57 @@ test("collects disclosures from every explored page, including read-only display
   });
 });
 
+test("repeated values across explored pages and collection runs share one disclosure", async () => {
+  await withDomain(async (domain) => {
+    const site = domain.upsertSiteAccount({
+      domain: "account.example.test",
+      url: "https://account.example.test/mypage",
+      displayName: "Account",
+    });
+    const accountIdField = field("account-id", {
+      autocomplete: "username",
+      labels: ["ログインID"],
+    });
+    const pages = new Map([
+      [
+        "https://account.example.test/mypage",
+        snapshot("https://account.example.test/mypage", {
+          fields: [accountIdField],
+          links: links(["会員情報", "/profile"]),
+        }),
+      ],
+      [
+        "https://account.example.test/profile",
+        snapshot("https://account.example.test/profile", { fields: [accountIdField] }),
+      ],
+    ]);
+    const driver = new FakeExplorationDriver(
+      pages,
+      new Map([
+        ["https://account.example.test/mypage", { "account-id": "member@example.test" }],
+        ["https://account.example.test/profile", { "account-id": "member@example.test" }],
+      ]),
+    );
+    let observedAt = 100;
+    const collect = () =>
+      collectDuringExploration(makeExplorer().explore(driver, site.url!, site), {
+        domain,
+        siteAccount: site,
+        pageDriver: driver,
+        now: () => observedAt++,
+      });
+
+    await collect();
+    await collect();
+
+    const disclosures = domain.listDisclosuresForSite(site.id);
+    assert.equal(disclosures.length, 1);
+    assert.equal(disclosures[0]?.attributeKey, "account.id");
+    assert.equal(disclosures[0]?.evidenceIds.length, 4);
+    assert.equal(disclosures[0]?.observedAt, 107);
+  });
+});
+
 test("card numbers reached via exploration keep last-4 only and CVV is never stored", async () => {
   await withDomain(async (domain) => {
     const site = domain.upsertSiteAccount({
