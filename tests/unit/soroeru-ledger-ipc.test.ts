@@ -28,16 +28,46 @@ async function tmpVaultPath(): Promise<{ dir: string; path: string }> {
 }
 
 /** Seed a vault on disk with one site and a mix of disclosures, then lock it. */
-async function seedLedger(path: string): Promise<{ siteId: string; emailDisclosureId: string; addressDisclosureId: string; cvvDisclosureId: string }> {
+async function seedLedger(
+  path: string,
+): Promise<{
+  siteId: string;
+  emailDisclosureId: string;
+  addressDisclosureId: string;
+  cvvDisclosureId: string;
+}> {
   const vault = await VaultV2.open(path, PASSPHRASE);
   const domain = new DomainService(vault);
 
-  const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/", displayName: "Example" });
-  domain.addCredential({ siteAccountId: site.id, username: "user@example.test", password: "fake-pass", source: "csv-import" });
-  domain.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "new@example.test", valueType: "email" });
-  domain.setPersonalAttribute({ attributeKey: "phone.full", label: "電話", value: "09011112222", valueType: "phone" });
+  const site = domain.upsertSiteAccount({
+    domain: "example.test",
+    url: "https://example.test/",
+    displayName: "Example",
+  });
+  domain.addCredential({
+    siteAccountId: site.id,
+    username: "user@example.test",
+    password: "fake-pass",
+    source: "csv-import",
+  });
+  domain.setPersonalAttribute({
+    attributeKey: "email",
+    label: "メール",
+    value: "new@example.test",
+    valueType: "email",
+  });
+  domain.setPersonalAttribute({
+    attributeKey: "phone.full",
+    label: "電話",
+    value: "09011112222",
+    valueType: "phone",
+  });
 
-  const evidence = domain.addEvidence({ siteAccountId: site.id, pageUrl: "https://example.test/account", maskedSnippet: "•••" });
+  const evidence = domain.addEvidence({
+    siteAccountId: site.id,
+    pageUrl: "https://example.test/account",
+    maskedSnippet: "•••",
+  });
 
   // stale: site holds an old email vs the new canonical value.
   const emailDisclosure = domain.addDisclosure({
@@ -48,13 +78,28 @@ async function seedLedger(path: string): Promise<{ siteId: string; emailDisclosu
     evidenceIds: [evidence.id],
   });
   // current: site holds the canonical phone value.
-  domain.addDisclosure({ siteAccountId: site.id, attributeKey: "phone.full", siteHeldValue: "09011112222", sourceKind: "form-field" });
+  domain.addDisclosure({
+    siteAccountId: site.id,
+    attributeKey: "phone.full",
+    siteHeldValue: "09011112222",
+    sourceKind: "form-field",
+  });
   // most-sensitive: a CVV value the ledger must never reveal. Use a distinctive
   // canary (not a 3-digit value) so the no-leak substring check below cannot
   // coincidentally match random hex in UUIDs/timestamps.
-  const cvvDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "card.cvv", siteHeldValue: "CVV-CANARY-LEAK", sourceKind: "billing-page" });
+  const cvvDisclosure = domain.addDisclosure({
+    siteAccountId: site.id,
+    attributeKey: "card.cvv",
+    siteHeldValue: "CVV-CANARY-LEAK",
+    sourceKind: "billing-page",
+  });
   // unknown / hash-only: no raw value to reveal.
-  const addressDisclosure = domain.addDisclosure({ siteAccountId: site.id, attributeKey: "address.full", normalizedValueHash: "deadbeef", sourceKind: "profile-text" });
+  const addressDisclosure = domain.addDisclosure({
+    siteAccountId: site.id,
+    attributeKey: "address.full",
+    normalizedValueHash: "deadbeef",
+    sourceKind: "profile-text",
+  });
   domain.recordDynamicAttributeCandidate({
     siteAccountId: site.id,
     label: "職業",
@@ -62,15 +107,35 @@ async function seedLedger(path: string): Promise<{ siteId: string; emailDisclosu
     proposedAttributeKey: "custom.occupation",
     matchTerms: ["職業"],
   });
-  domain.addDisclosure({ siteAccountId: site.id, attributeKey: "custom.unknown.occupation", siteHeldValue: "会社員", sourceKind: "form-field" });
+  domain.addDisclosure({
+    siteAccountId: site.id,
+    attributeKey: "custom.unknown.occupation",
+    siteHeldValue: "会社員",
+    sourceKind: "form-field",
+  });
 
-  domain.addAccountRelationship({ siteAccountId: site.id, kind: "newsletter", state: "active", detail: "newsletter wording" });
+  domain.addAccountRelationship({
+    siteAccountId: site.id,
+    kind: "newsletter",
+    state: "active",
+    detail: "newsletter wording",
+  });
   domain.addConstraint({ siteAccountId: site.id, kind: "wall", detail: "MFA wall" });
-  vault.put("mandate", { id: "site-mandate", siteAccountId: site.id, operation: "collection", authorizedAt: 1 });
+  vault.put("mandate", {
+    id: "site-mandate",
+    siteAccountId: site.id,
+    operation: "collection",
+    authorizedAt: 1,
+  });
 
   await vault.save();
   vault.lock();
-  return { siteId: site.id, emailDisclosureId: emailDisclosure.id, addressDisclosureId: addressDisclosure.id, cvvDisclosureId: cvvDisclosure.id };
+  return {
+    siteId: site.id,
+    emailDisclosureId: emailDisclosure.id,
+    addressDisclosureId: addressDisclosure.id,
+    cvvDisclosureId: cvvDisclosure.id,
+  };
 }
 
 test("importCsv seeds sites and the composed ledger lists them as not-yet-collected", async () => {
@@ -169,14 +234,14 @@ test("the composed ledger detail shows normal disclosures plainly and masks only
     // plainly and immediately, no reveal gate (Issue #300).
     const email = detail.disclosures.find((d) => d.disclosureId === emailDisclosureId);
     assert.equal(email?.staleState, "stale");
-    assert.equal(email?.label, "メール");
+    assert.equal(email?.label, "メール（email）");
     assert.equal(email?.sensitivity, "normal");
     assert.equal(email?.revealable, false);
     assert.equal(email?.evidenceCount, 1);
     assert.equal(email?.preview, "old@example.test");
 
     const dynamic = detail.disclosures.find((d) => d.attributeKey === "custom.unknown.occupation");
-    assert.equal(dynamic?.label, "職業");
+    assert.equal(dynamic?.label, "職業（custom.unknown.occupation）");
     assert.equal(dynamic?.sensitivity, "normal");
     assert.equal(dynamic?.revealable, false);
     assert.equal(dynamic?.preview, "会社員");
@@ -187,7 +252,9 @@ test("the composed ledger detail shows normal disclosures plainly and masks only
     assert.equal(cvv?.revealable, false);
     assert.equal(cvv?.preview, "");
 
-    const pending = detail.pendingAttributeCandidates.find((c) => c.proposedAttributeKey === "custom.occupation");
+    const pending = detail.pendingAttributeCandidates.find(
+      (c) => c.proposedAttributeKey === "custom.occupation",
+    );
     assert.equal(pending?.label, "職業");
 
     // The CVV canary must never appear unmasked anywhere in the serialized view.
@@ -207,8 +274,17 @@ test("ledgerSiteDetails returns every site's full detail in one call, matching l
     const domain = new DomainService(vault);
     // A second site with a different (heterogeneous) attribute set, per Issue
     // #301's spreadsheet-style ledger view, which unions columns across sites.
-    const otherSite = domain.upsertSiteAccount({ domain: "shop.test", url: "https://shop.test/", displayName: "Shop" });
-    domain.addDisclosure({ siteAccountId: otherSite.id, attributeKey: "phone.full", siteHeldValue: "09033334444", sourceKind: "form-field" });
+    const otherSite = domain.upsertSiteAccount({
+      domain: "shop.test",
+      url: "https://shop.test/",
+      displayName: "Shop",
+    });
+    domain.addDisclosure({
+      siteAccountId: otherSite.id,
+      attributeKey: "phone.full",
+      siteHeldValue: "09033334444",
+      sourceKind: "form-field",
+    });
     await vault.save();
     vault.lock();
 
@@ -231,6 +307,73 @@ test("ledgerSiteDetails returns every site's full detail in one call, matching l
   }
 });
 
+test("ledger detail labels prefer canonical, dynamic, fixed, then raw keys with display-key formatting", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(path, PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({
+      domain: "labels.test",
+      url: "https://labels.test/",
+      displayName: "Labels",
+    });
+    domain.setPersonalAttribute({
+      attributeKey: "email",
+      label: "連絡先メール",
+      value: "user@example.test",
+      valueType: "email",
+    });
+    domain.recordDynamicAttributeCandidate({
+      siteAccountId: site.id,
+      label: "会員ランク",
+      fieldId: "member-rank",
+      proposedAttributeKey: "custom.member_rank",
+      matchTerms: ["会員ランク"],
+    });
+    domain.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "email",
+      siteHeldValue: "user@example.test",
+      sourceKind: "form-field",
+    });
+    domain.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "custom.member_rank",
+      siteHeldValue: "gold",
+      sourceKind: "form-field",
+    });
+    domain.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "birth.year",
+      siteHeldValue: "1990",
+      sourceKind: "form-field",
+    });
+    domain.addDisclosure({
+      siteAccountId: site.id,
+      attributeKey: "custom.unlabeled",
+      siteHeldValue: "raw",
+      sourceKind: "form-field",
+    });
+    await vault.save();
+    vault.lock();
+
+    const session = new SoroeruSession(path);
+    assert.equal((await session.unlock(PASSPHRASE)).ok, true);
+
+    const detail = session.ledgerSite(site.id);
+    assert.ok(detail);
+    const labels = new Map(
+      detail.disclosures.map((disclosure) => [disclosure.attributeKey, disclosure.label]),
+    );
+    assert.equal(labels.get("email"), "連絡先メール（email）");
+    assert.equal(labels.get("custom.member_rank"), "会員ランク（custom.member_rank）");
+    assert.equal(labels.get("birth.year"), "生年（birth.year）");
+    assert.equal(labels.get("custom.unlabeled"), "custom.unlabeled");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("ledgerSiteDetails returns an empty list while locked", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
@@ -247,7 +390,11 @@ test("a sensitive disclosure (card number) still masks its preview and requires 
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const site = domain.upsertSiteAccount({ domain: "shop.test", url: "https://shop.test/", displayName: "Shop" });
+    const site = domain.upsertSiteAccount({
+      domain: "shop.test",
+      url: "https://shop.test/",
+      displayName: "Shop",
+    });
     const cardDisclosure = domain.addDisclosure({
       siteAccountId: site.id,
       attributeKey: "card.number",
@@ -334,10 +481,18 @@ test("ledger and import refuse to operate while locked", async () => {
     assert.equal((await session.importCsv(SAMPLE_CSV)).error, "locked");
     assert.equal((await session.revealValue("x", PASSPHRASE)).error, "locked");
     assert.equal(
-      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "職業" })).error,
+      (
+        await session.confirmDynamicAttributeCandidate({
+          proposedAttributeKey: "custom.occupation",
+          label: "職業",
+        })
+      ).error,
       "locked",
     );
-    assert.equal((await session.deleteSiteAccount({ siteAccountId: "anything", confirmedFourthBoundary: true })).error, "locked");
+    assert.equal(
+      (await session.deleteSiteAccount({ siteAccountId: "anything", confirmedFourthBoundary: true })).error,
+      "locked",
+    );
     assert.equal(
       (
         await session.updateSiteCredential({
@@ -421,7 +576,10 @@ test("deleteSiteAccount persists the cascade and refreshes composed ledger data"
     assert.equal(session.ledgerSites().length, 1);
     assert.ok(session.ledgerSite(siteId));
 
-    const missingConfirmation = await session.deleteSiteAccount({ siteAccountId: siteId, confirmedFourthBoundary: false });
+    const missingConfirmation = await session.deleteSiteAccount({
+      siteAccountId: siteId,
+      confirmedFourthBoundary: false,
+    });
     assert.equal(missingConfirmation.ok, false);
     assert.equal(missingConfirmation.error, "confirmation-required");
     assert.equal(session.ledgerSites().length, 1);
@@ -456,15 +614,30 @@ test("confirming a pending dynamic-attribute candidate removes it from the site'
     await session.unlock(PASSPHRASE);
 
     assert.equal(
-      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "not-a-custom-key", label: "職業" })).error,
+      (
+        await session.confirmDynamicAttributeCandidate({
+          proposedAttributeKey: "not-a-custom-key",
+          label: "職業",
+        })
+      ).error,
       "invalid-request",
     );
     assert.equal(
-      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.occupation", label: "  " })).error,
+      (
+        await session.confirmDynamicAttributeCandidate({
+          proposedAttributeKey: "custom.occupation",
+          label: "  ",
+        })
+      ).error,
       "invalid-request",
     );
     assert.equal(
-      (await session.confirmDynamicAttributeCandidate({ proposedAttributeKey: "custom.never-observed", label: "x" })).error,
+      (
+        await session.confirmDynamicAttributeCandidate({
+          proposedAttributeKey: "custom.never-observed",
+          label: "x",
+        })
+      ).error,
       "not-found",
     );
 
@@ -478,7 +651,10 @@ test("confirming a pending dynamic-attribute candidate removes it from the site'
     assert.equal(confirmed.ok, true);
 
     const after = session.ledgerSite(siteId);
-    assert.equal(after?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
+    assert.equal(
+      after?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"),
+      false,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -489,8 +665,16 @@ test("two sites independently observing the same unmapped field both keep it pen
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const siteA = domain.upsertSiteAccount({ domain: "a.example.test", url: "https://a.example.test/", displayName: "A" });
-    const siteB = domain.upsertSiteAccount({ domain: "b.example.test", url: "https://b.example.test/", displayName: "B" });
+    const siteA = domain.upsertSiteAccount({
+      domain: "a.example.test",
+      url: "https://a.example.test/",
+      displayName: "A",
+    });
+    const siteB = domain.upsertSiteAccount({
+      domain: "b.example.test",
+      url: "https://b.example.test/",
+      displayName: "B",
+    });
     // Both sites independently surface an unmapped field that slugs to the same
     // proposed key — the underlying candidate record is shared (keyed by
     // proposedAttributeKey), so confirming site B's observation must not make
@@ -517,8 +701,12 @@ test("two sites independently observing the same unmapped field both keep it pen
 
     const beforeA = session.ledgerSite(siteA.id);
     const beforeB = session.ledgerSite(siteB.id);
-    assert.ok(beforeA?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
-    assert.ok(beforeB?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"));
+    assert.ok(
+      beforeA?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"),
+    );
+    assert.ok(
+      beforeB?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"),
+    );
 
     // Once confirmed (from either site's perspective), it becomes a reusable
     // global attribute and must stop appearing as "pending" everywhere.
@@ -530,8 +718,14 @@ test("two sites independently observing the same unmapped field both keep it pen
 
     const afterA = session.ledgerSite(siteA.id);
     const afterB = session.ledgerSite(siteB.id);
-    assert.equal(afterA?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
-    assert.equal(afterB?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"), false);
+    assert.equal(
+      afterA?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"),
+      false,
+    );
+    assert.equal(
+      afterB?.pendingAttributeCandidates.some((c) => c.proposedAttributeKey === "custom.occupation"),
+      false,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -542,8 +736,16 @@ test("two sites observing the same candidate under different labels both keep th
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const siteA = domain.upsertSiteAccount({ domain: "a.example.test", url: "https://a.example.test/", displayName: "A" });
-    const siteB = domain.upsertSiteAccount({ domain: "b.example.test", url: "https://b.example.test/", displayName: "B" });
+    const siteA = domain.upsertSiteAccount({
+      domain: "a.example.test",
+      url: "https://a.example.test/",
+      displayName: "A",
+    });
+    const siteB = domain.upsertSiteAccount({
+      domain: "b.example.test",
+      url: "https://b.example.test/",
+      displayName: "B",
+    });
 
     domain.recordDynamicAttributeCandidate({
       siteAccountId: siteA.id,
@@ -562,7 +764,9 @@ test("two sites observing the same candidate under different labels both keep th
       matchTerms: ["ご職業"],
     });
 
-    const candidate = domain.listDynamicAttributeCandidates().find((c) => c.proposedAttributeKey === "custom.occupation");
+    const candidate = domain
+      .listDynamicAttributeCandidates()
+      .find((c) => c.proposedAttributeKey === "custom.occupation");
     assert.ok(candidate?.matchTerms.includes("職業"));
     assert.ok(candidate?.matchTerms.includes("ご職業"));
   } finally {
@@ -575,7 +779,11 @@ test("a candidate persisted under the pre-siteAccountIds shape still appears in 
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const site = domain.upsertSiteAccount({ domain: "legacy.example.test", url: "https://legacy.example.test/", displayName: "Legacy" });
+    const site = domain.upsertSiteAccount({
+      domain: "legacy.example.test",
+      url: "https://legacy.example.test/",
+      displayName: "Legacy",
+    });
 
     // Simulate a candidate written by the earlier shape that tracked a single
     // `siteAccountId` field rather than an array, to guard against a schema
@@ -614,7 +822,11 @@ test("session persistence: set/clear toggles the ledger detail view and enforces
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/", displayName: "Example" });
+    const site = domain.upsertSiteAccount({
+      domain: "example.test",
+      url: "https://example.test/",
+      displayName: "Example",
+    });
     await vault.save();
     vault.lock();
 
@@ -638,7 +850,11 @@ test("session persistence: set/clear toggles the ledger detail view and enforces
 async function seedPersistedSession(path: string): Promise<{ siteId: string }> {
   const vault = await VaultV2.open(path, PASSPHRASE);
   const domain = new DomainService(vault);
-  const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/", displayName: "Example" });
+  const site = domain.upsertSiteAccount({
+    domain: "example.test",
+    url: "https://example.test/",
+    displayName: "Example",
+  });
   domain.setSessionPersistenceEnabled(site.id, true);
   domain.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[],"origins":[]}' });
   await vault.save();
@@ -746,9 +962,16 @@ test("session persistence: a real run passes the persisted storageState into the
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/account", displayName: "Example" });
+    const site = domain.upsertSiteAccount({
+      domain: "example.test",
+      url: "https://example.test/account",
+      displayName: "Example",
+    });
     domain.setSessionPersistenceEnabled(site.id, true);
-    domain.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[{"name":"old"}],"origins":[]}' });
+    domain.savePersistedSessionState({
+      siteAccountId: site.id,
+      storageState: '{"cookies":[{"name":"old"}],"origins":[]}',
+    });
     await vault.save();
     vault.lock();
 
@@ -756,7 +979,9 @@ test("session persistence: a real run passes the persisted storageState into the
     const exportedStorageState = '{"cookies":[{"name":"fresh"}],"origins":[]}';
     const engine: SessionEngine = {
       openSession: async (_site, options) => {
-        openSessionCalls.push({ ...(options?.storageState !== undefined ? { storageState: options.storageState } : {}) });
+        openSessionCalls.push({
+          ...(options?.storageState !== undefined ? { storageState: options.storageState } : {}),
+        });
         const page = new NoDataPageDriver();
         const fakeSession: SiteSession = {
           page,
@@ -797,9 +1022,16 @@ test("session persistence: disabling the toggle mid-run still skips the export o
   try {
     const vault = await VaultV2.open(path, PASSPHRASE);
     const domain = new DomainService(vault);
-    const site = domain.upsertSiteAccount({ domain: "example.test", url: "https://example.test/account", displayName: "Example" });
+    const site = domain.upsertSiteAccount({
+      domain: "example.test",
+      url: "https://example.test/account",
+      displayName: "Example",
+    });
     domain.setSessionPersistenceEnabled(site.id, true);
-    domain.savePersistedSessionState({ siteAccountId: site.id, storageState: '{"cookies":[{"name":"old"}],"origins":[]}' });
+    domain.savePersistedSessionState({
+      siteAccountId: site.id,
+      storageState: '{"cookies":[{"name":"old"}],"origins":[]}',
+    });
     await vault.save();
     vault.lock();
 
