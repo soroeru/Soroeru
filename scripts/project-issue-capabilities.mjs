@@ -16,6 +16,8 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
+  PROBE_SCHEMA_VERSION,
+  getRepositoryCommit,
   readCliVersion,
   runProcess,
   writeJsonAtomic,
@@ -86,7 +88,15 @@ export async function discoverCapabilities(options = {}) {
     cli[agentName] = { path: meta.path, ...(version ? { version } : {}) };
   }
 
-  const payload = { capabilities, diagnostics, cli, probedAt: new Date().toISOString() };
+  const repositoryCommit = await getRepositoryCommit(options.cwd ?? process.cwd());
+  const payload = { 
+    capabilities, 
+    diagnostics, 
+    cli, 
+    probedAt: new Date().toISOString(),
+    repositoryCommit,
+    probeSchemaVersion: PROBE_SCHEMA_VERSION
+  };
 
   let outputPath;
   if (options.outputPath) {
@@ -167,7 +177,11 @@ export async function loadOrRefreshCapabilities(options = {}) {
     }
   }
 
-  if (!cached || refresh) {
+  const currentRepositoryCommit = await getRepositoryCommit(options.cwd ?? process.cwd());
+  const schemaMismatch = cached && cached.probeSchemaVersion !== PROBE_SCHEMA_VERSION;
+  const commitMismatch = cached && currentRepositoryCommit && cached.repositoryCommit !== currentRepositoryCommit;
+
+  if (!cached || refresh || schemaMismatch || commitMismatch) {
     const fresh = await discoverCapabilities({
       ...discoveryOptions,
       ...(dryRun ? {} : { outputPath: cachePath }),
@@ -206,6 +220,8 @@ export async function loadOrRefreshCapabilities(options = {}) {
       diagnostics: cached.diagnostics ?? [],
       cli: cached.cli ?? {},
       probedAt: cached.probedAt,
+      repositoryCommit: cached.repositoryCommit,
+      probeSchemaVersion: cached.probeSchemaVersion,
       reused: true,
     };
   }
@@ -222,6 +238,8 @@ export async function loadOrRefreshCapabilities(options = {}) {
     ],
     cli: { ...(cached.cli ?? {}), ...targeted.cli },
     probedAt: targeted.probedAt,
+    repositoryCommit: targeted.repositoryCommit,
+    probeSchemaVersion: targeted.probeSchemaVersion,
   };
   if (!dryRun && cachePath) await writeJsonAtomic(cachePath, merged);
   return { ...merged, reused: false, reprobedAgents: [...staleAgents] };

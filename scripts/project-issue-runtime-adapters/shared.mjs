@@ -28,6 +28,8 @@ export const DEFAULT_WORKER_TIMEOUT_MS = 3_600_000;
 // status check), so it gets its own, longer budget.
 export const DEFAULT_HEADLESS_PROBE_TIMEOUT_MS = 120_000;
 
+export const PROBE_SCHEMA_VERSION = 2;
+
 /** Stderr/stdout patterns that indicate the CLI demanded a real TTY/PTY. */
 const TTY_REQUIRED_PATTERN =
   /(device not configured|inappropriate ioctl for device|enotty|not a tty|no such device or address|raw mode is not supported)/i;
@@ -286,6 +288,46 @@ export async function readCliVersion(cliPath, { run = runProcess, timeoutMs = 10
     return text || null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Returns the current HEAD commit SHA.
+ */
+export async function getRepositoryCommit(cwd) {
+  try {
+    const result = await runProcess("git", ["rev-parse", "HEAD"], { cwd });
+    if (result.code !== 0) return null;
+    return String(result.stdout ?? "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify that the repository checkout is not stale compared to origin/main.
+ * Throws if fetch fails or if HEAD does not contain origin/main.
+ */
+export async function verifyRepositoryFreshness(cwd) {
+  const fetchResult = await runProcess("git", ["fetch", "origin", "main"], { cwd });
+  if (fetchResult.code !== 0) {
+    throw new Error("orchestrator-checkout-stale:fetch-failed");
+  }
+
+  const mergeBaseResult = await runProcess("git", ["merge-base", "--is-ancestor", "origin/main", "HEAD"], { cwd });
+  if (mergeBaseResult.code !== 0) {
+    const headResult = await runProcess("git", ["rev-parse", "HEAD"], { cwd });
+    const originMainResult = await runProcess("git", ["rev-parse", "origin/main"], { cwd });
+    
+    const formatSha = (res) => {
+      const out = String(res.stdout ?? "").trim();
+      const err = String(res.stderr ?? "").trim();
+      return out || (err ? `error(${err.replace(/\\n/g, " ")})` : "unknown");
+    };
+
+    const headSha = formatSha(headResult);
+    const originMainSha = formatSha(originMainResult);
+    throw new Error(`orchestrator-checkout-stale:head=${headSha},origin/main=${originMainSha}`);
   }
 }
 
