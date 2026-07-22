@@ -11,6 +11,7 @@ import { Command, MemorySaver, isInterrupted } from "@langchain/langgraph";
 import {
   buildOrchestrationGraph,
   buildSummary,
+  createDefaultDeps,
   parseGraphCliArgs,
 } from "../../scripts/project-issue-graph.mjs";
 import { FileCheckpointSaver } from "../../scripts/project-issue-graph-checkpointer.mjs";
@@ -347,7 +348,12 @@ test("lost-notification check probes executions and hands off dead workers", asy
   const result = await run.resume({ type: "check" });
   assert.equal(isInterrupted(result), true);
   const state = await run.state();
-  assert.equal(state.workerExecutions[0].agent, "Claude");
+  // A probe-detected death is not evidence against the agent CLI itself:
+  // the agent stays in the pool (and is picked again here), unlike an
+  // explicit interruption or dispatch failure.
+  assert.deepEqual(state.unavailableAgents, []);
+  assert.equal(state.workerExecutions[0].agent, "Codex");
+  assert.equal(state.workerExecutions[0].mode, "handoff-issue");
   assert.equal(state.workerExecutions[0].attempt, 2);
 });
 
@@ -369,6 +375,42 @@ test("worker-started events attach process metadata to the execution", async () 
   const state = await run.state();
   assert.equal(state.workerExecutions[0].pid, 4242);
   assert.equal(state.workerExecutions[0].pgid, 4242);
+  // The probe compares against the PID report time, not the earlier
+  // dispatch record, so late-launched instruction-mode workers stay alive.
+  assert.equal(state.workerExecutions[0].pidReportedAt, "2026-07-22T00:00:00.000Z");
+});
+
+test("the default probe accepts a live worker whose PID was reported after launch", async (t) => {
+  const { spawn } = await import("node:child_process");
+  const child = spawn("sleep", ["60"], { stdio: "ignore" });
+  t.after(() => child.kill("SIGKILL"));
+  await new Promise((resolve) => child.once("spawn", resolve));
+  const { probeProcess } = createDefaultDeps({ cwd: process.cwd() });
+
+  // Instruction-mode flow: dispatch was recorded long before the agent
+  // actually launched the worker; the PID report time is what must match.
+  const dispatchRecordedAt = new Date(Date.now() - 3_600_000).toISOString();
+  assert.equal(
+    await probeProcess({
+      pid: child.pid,
+      startedAt: dispatchRecordedAt,
+      pidReportedAt: new Date().toISOString(),
+    }),
+    "alive",
+  );
+  // A PID recorded long ago but whose process started now is a reused PID.
+  assert.equal(
+    await probeProcess({ pid: child.pid, startedAt: dispatchRecordedAt }),
+    "mismatch",
+  );
+  assert.equal(await probeProcess({ startedAt: dispatchRecordedAt }), "unknown");
+
+  child.kill("SIGKILL");
+  await new Promise((resolve) => child.once("exit", resolve));
+  assert.equal(
+    await probeProcess({ pid: child.pid, pidReportedAt: new Date().toISOString() }),
+    "dead",
+  );
 });
 
 test("dispatches independent Issues in parallel and tolerates reversed completion order", async () => {
@@ -419,9 +461,9 @@ test("summary keeps the established report fields", async () => {
   assert.deepEqual(result.summary.usage.issues, [{ number: 1, usage: "unavailable" }]);
 });
 
-test("buildSummary marks the parent unavailable on routing failures", () => {
-  const summary = buildSummary({ failureReason: "routing-unavailable:parent:Codex:gpt-5" }, "failed");
-  assert.equal(summary.routing.parent, "unavailable");
+test("buildSummary reports the parent routing status recorded by discovery", () => {
+  assert.equal(buildSummary({ parentRouting: "unavailable" }, "failed").routing.parent, "unavailable");
+  assert.equal(buildSummary({}, "failed").routing.parent, "verified");
 });
 
 test("resumes after a process restart from the file checkpointer with the same thread id", async () => {

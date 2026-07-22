@@ -132,6 +132,8 @@ export const OrchestrationState = Annotation.Root({
   /** Issues needing handoff: {issue, reason, proposedRoute?}; null clears. */
   pendingInterrupted: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
   lastEventError: Annotation(),
+  /** "verified" | "unavailable" — set by discover_capabilities. */
+  parentRouting: Annotation(),
   runStatus: Annotation(),
   failureReason: Annotation(),
   summary: Annotation(),
@@ -174,7 +176,10 @@ function skippedNumbers(state) {
 }
 
 function allComplete(state) {
-  if (!state.items?.length) return false;
+  // Undefined items = the run never got past selection; an empty selection
+  // (unreachable via selectProjectItems, which rejects empty matches) is
+  // trivially complete rather than "blocked".
+  if (!state.items) return false;
   const done = new Set([...(state.completed ?? []), ...skippedNumbers(state)]);
   return state.items.every(({ number }) => done.has(number));
 }
@@ -214,11 +219,7 @@ function routeLabels(route) {
 export function buildSummary(state, runStatus) {
   const issueNumbers = (state.items ?? []).map(({ number }) => number);
   return {
-    routing: {
-      parent: String(state.failureReason ?? "").startsWith("routing-unavailable")
-        ? "unavailable"
-        : "verified",
-    },
+    routing: { parent: state.parentRouting ?? "verified" },
     runnable: (state.plan?.runnable ?? []).map(({ number }) => number),
     assignments: (state.assignments ?? []).map(({ number, agent, model }) => ({ number, agent, model })),
     blocked: state.plan?.blocked ?? [],
@@ -258,19 +259,24 @@ function loadConfigNode(state) {
 }
 
 async function discoverCapabilitiesNode(state, config) {
+  let capabilities;
   try {
-    const capabilities = state.capabilities ?? (await getDeps(config).loadCapabilities(state.config));
+    capabilities = state.capabilities ?? (await getDeps(config).loadCapabilities(state.config));
     validateCapabilities(
       [{ agent: state.config.parent.agent, model: state.config.parent.model, role: "parent" }],
       capabilities,
     );
+  } catch (error) {
+    return { failureReason: error.message, parentRouting: "unavailable" };
+  }
+  try {
     const workerRoutes = selectWorkerRoutes(capabilities, {
       unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     });
-    return { capabilities, workerRoutes };
+    return { capabilities, workerRoutes, parentRouting: "verified" };
   } catch (error) {
-    return { failureReason: error.message };
+    return { failureReason: error.message, parentRouting: "verified" };
   }
 }
 
@@ -475,6 +481,10 @@ async function waitForEventsNode(state, config) {
           ...execution,
           ...(event.pid === undefined ? {} : { pid: Number(event.pid) }),
           ...(event.pgid === undefined ? {} : { pgid: Number(event.pgid) }),
+          // Instruction-mode workers launch after the dispatch node ran, so
+          // the liveness probe must compare against the moment the PID was
+          // reported, not the (earlier) dispatch record time.
+          pidReportedAt: getDeps(config).now(),
         },
       ],
       lastEventError: null,
@@ -504,22 +514,22 @@ async function waitForEventsNode(state, config) {
 
   // "check": lost-notification fallback. Re-verify recorded executions via
   // the injected probe; a PID match alone is never sufficient (PID reuse).
+  // Unlike a dispatch-time failure or an explicit interruption report, a
+  // worker found dead by the probe says little about its agent CLI, so the
+  // agent stays in the run's route pool (the handoff may pick it again).
   const deps = getDeps(config);
   const updates = { lastEventError: null };
   const interruptedNow = [];
   const executionUpdates = [];
-  const unavailable = [];
   for (const execution of activeExecutions(state)) {
     const verdict = await deps.probeProcess(execution);
     if (verdict === "alive" || verdict === "unknown") continue;
     executionUpdates.push({ ...execution, status: "interrupted", reason: `probe:${verdict}` });
     interruptedNow.push({ issue: execution.issue, reason: `probe:${verdict}` });
-    unavailable.push(execution.agent);
   }
   if (executionUpdates.length) {
     updates.workerExecutions = executionUpdates;
     updates.pendingInterrupted = interruptedNow;
-    updates.unavailableAgents = unavailable;
   }
   return updates;
 }
@@ -765,7 +775,10 @@ export function createDefaultDeps({ cwd }) {
       }
       const started = new Date(stdout.trim());
       if (Number.isNaN(started.getTime())) return "unknown";
-      const recorded = new Date(execution.startedAt);
+      // Compare against when the PID was reported (instruction-mode workers
+      // launch after the dispatch record was written), falling back to the
+      // dispatch time for direct spawns.
+      const recorded = new Date(execution.pidReportedAt ?? execution.startedAt);
       // Allow 5s skew between our ISO record and ps's second granularity.
       if (started.getTime() > recorded.getTime() + 5_000) return "mismatch";
       return "alive";
