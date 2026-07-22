@@ -9,6 +9,7 @@ import { discoverCapabilities, loadOrRefreshCapabilities } from "../../scripts/p
 import { dispatchWorker } from "../../scripts/project-issue-dispatch.mjs";
 import { discoverAllCapabilities, RUNTIME_ADAPTERS } from "../../scripts/project-issue-runtime-adapters/index.mjs";
 import {
+  DEFAULT_PROBE_TIMEOUT_MS,
   REASON_CODES,
   runHeadlessExecProbe,
   splitSelector,
@@ -759,4 +760,149 @@ test("loadOrRefreshCapabilities never writes the cache file during a dry run", a
     timeoutMs: 2_000,
   });
   await assert.rejects(() => stat(cachePath), /ENOENT/);
+});
+
+test("loadOrRefreshCapabilities canonicalizes invalidateAgents casing before diffing against the cache", async () => {
+  // Regression for a review finding on this Issue: a lowercase --invalidate-agent
+  // name must not survive into the case-sensitive cache-merge filter, or the
+  // stale cached record for that agent (canonical casing) would never be
+  // dropped while the re-probe's fresh record for it gets appended anyway —
+  // duplicate/conflicting routes for the same agent in the rewritten cache.
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-casing-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const grokPath = await makeFakeBin(
+    bin,
+    "grok",
+    `
+    if (process.argv[2] === "models") {
+      process.stdout.write("You are logged in.\\nAvailable models:\\n  * grok-fresh\\n");
+      process.exit(0);
+    }
+    process.exit(2);
+    `,
+  );
+  const cached = {
+    capabilities: [
+      {
+        agent: "Grok",
+        model: "grok-cached",
+        role: "worker",
+        selector: `${grokPath} --model grok-cached`,
+        selectable: true,
+        verifiable: true,
+        timeoutMs: 60_000,
+      },
+    ],
+    diagnostics: [{ agent: "Grok", status: "ok", model: "grok-cached" }],
+    cli: { Grok: { path: grokPath, version: "v1" } },
+    probedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await writeJsonAtomic(cachePath, cached);
+  const result = await loadOrRefreshCapabilities({
+    cachePath,
+    invalidateAgents: ["grok"], // lowercase, unlike the canonical "Grok" in the cache
+    headlessExecProbe: async () => ({ ok: true }),
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+  });
+  assert.equal(result.reprobedAgents.length, 1);
+  // Exactly one Grok worker route survives — the fresh one, not a duplicate
+  // of the stale cached one plus the fresh one.
+  const grokWorkers = result.capabilities.filter((record) => record.agent === "Grok" && record.role === "worker");
+  assert.equal(grokWorkers.length, 1);
+  assert.equal(grokWorkers[0].model, "grok-fresh");
+});
+
+test("loadOrRefreshCapabilities rejects an --invalidate-agent name that matches no adapter", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-invalidate-unknown-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  await writeJsonAtomic(cachePath, {
+    capabilities: [],
+    diagnostics: [],
+    cli: {},
+    probedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await assert.rejects(
+    () => loadOrRefreshCapabilities({ cachePath, invalidateAgents: ["Foo"] }),
+    /unknown-invalidate-agent:Foo/,
+  );
+});
+
+test("loadOrRefreshCapabilities always re-probes a cached agent whose last diagnostic was failed", async () => {
+  // A transient failure (auth lapse, a one-off timeout) must not be trusted
+  // as permanent just because the agent has no `cli` metadata to detect
+  // drift against — otherwise it stays excluded from routing until a human
+  // notices and passes --refresh/--invalidate-agent (Issue #434 review).
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-failed-restale-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const grokPath = await makeFakeBin(
+    bin,
+    "grok",
+    `
+    if (process.argv[2] === "models") {
+      process.stdout.write("You are logged in.\\nAvailable models:\\n  * grok-recovered\\n");
+      process.exit(0);
+    }
+    process.exit(2);
+    `,
+  );
+  await writeJsonAtomic(cachePath, {
+    capabilities: [],
+    diagnostics: [{ agent: "Grok", status: "failed", reason: REASON_CODES.AUTH_UNAVAILABLE }],
+    cli: {},
+    probedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const result = await loadOrRefreshCapabilities({
+    cachePath,
+    headlessExecProbe: async () => ({ ok: true }),
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+  });
+  assert.equal(result.reused, false);
+  assert.deepEqual(result.reprobedAgents, ["Grok"]);
+  assert.ok(result.capabilities.some((record) => record.agent === "Grok" && record.model === "grok-recovered"));
+});
+
+test("loadOrRefreshCapabilities's freshness check uses discovery's timeout budget, not readCliVersion's own shorter default", async () => {
+  // Regression for a review finding: discoverCapabilities records `version`
+  // under a 60s budget, but the freshness re-check previously defaulted to
+  // readCliVersion's own 10s default whenever the caller didn't pass an
+  // explicit timeoutMs — reading `null` for a slow-but-unchanged CLI, judging
+  // it stale, and re-probing (and rewriting the cache) on every single run.
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-freshness-timeout-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const grokPath = await makeFakeBin(bin, "grok", "process.exit(0);");
+  await writeJsonAtomic(cachePath, {
+    capabilities: [
+      {
+        agent: "Grok",
+        model: "grok-cached",
+        role: "worker",
+        selector: `${grokPath} --model grok-cached`,
+        selectable: true,
+        verifiable: true,
+        timeoutMs: 60_000,
+      },
+    ],
+    diagnostics: [{ agent: "Grok", status: "ok", model: "grok-cached" }],
+    cli: { Grok: { path: grokPath, version: "v1" } },
+    probedAt: "2026-01-01T00:00:00.000Z",
+  });
+  let observedTimeoutMs;
+  const runProcess = async (command, args, opts) => {
+    if (args[0] === "--version") {
+      observedTimeoutMs = opts.timeoutMs;
+      return { code: 0, signal: null, timedOut: false, error: null, stdout: "v1\n", stderr: "", pid: 1 };
+    }
+    return { code: 2, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: 2 };
+  };
+  const result = await loadOrRefreshCapabilities({ cachePath, runProcess }); // no explicit timeoutMs
+  assert.equal(result.reused, true);
+  assert.equal(observedTimeoutMs, DEFAULT_PROBE_TIMEOUT_MS);
 });

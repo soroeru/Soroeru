@@ -20,9 +20,15 @@ import {
   runProcess,
   writeJsonAtomic,
 } from "./project-issue-runtime-adapters/shared.mjs";
-import { discoverAllCapabilities } from "./project-issue-runtime-adapters/index.mjs";
+import { RUNTIME_ADAPTERS, discoverAllCapabilities } from "./project-issue-runtime-adapters/index.mjs";
 
 export const DEFAULT_CAPABILITIES_OUTPUT = "state/project-issue-capabilities.json";
+
+/** Resolve a user-supplied agent name to its canonical `RUNTIME_ADAPTERS` casing, or null. */
+function canonicalAgentName(name) {
+  const needle = String(name ?? "").trim().toLowerCase();
+  return RUNTIME_ADAPTERS.find((adapter) => adapter.agent.toLowerCase() === needle)?.agent ?? null;
+}
 
 /**
  * Run discovery (optionally limited to `options.only` adapter names) and
@@ -97,7 +103,10 @@ export async function discoverCapabilities(options = {}) {
  * reported as stale and must be re-probed before its cached records are
  * trusted again.
  */
-async function findStaleCachedAgents(cliMeta, { env, timeoutMs, runProcess: run = runProcess } = {}) {
+async function findStaleCachedAgents(
+  cliMeta,
+  { env, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS, runProcess: run = runProcess } = {},
+) {
   const stale = [];
   for (const [agentName, meta] of Object.entries(cliMeta ?? {})) {
     if (typeof meta?.path !== "string" || !meta.path) {
@@ -110,6 +119,9 @@ async function findStaleCachedAgents(cliMeta, { env, timeoutMs, runProcess: run 
       stale.push(agentName);
       continue;
     }
+    // Same budget discoverCapabilities used to record `meta.version`
+    // (Issue #434 review): a shorter default here would read `null` for a
+    // slow-but-unchanged CLI, judge it stale, and re-probe every run forever.
     const version = await readCliVersion(meta.path, { run, timeoutMs, env });
     if (version !== (meta.version ?? null)) stale.push(agentName);
   }
@@ -163,9 +175,31 @@ export async function loadOrRefreshCapabilities(options = {}) {
     return { ...fresh, reused: false };
   }
 
-  const staleAgents = new Set(
-    [...(invalidateAgents ?? []).map(String), ...(await findStaleCachedAgents(cached.cli, discoveryOptions))],
-  );
+  const unknownInvalidateAgents = [];
+  const canonicalInvalidateAgents = [];
+  for (const name of invalidateAgents ?? []) {
+    const canonical = canonicalAgentName(name);
+    if (canonical) canonicalInvalidateAgents.push(canonical);
+    else unknownInvalidateAgents.push(String(name));
+  }
+  if (unknownInvalidateAgents.length) {
+    throw new Error(`unknown-invalidate-agent:${unknownInvalidateAgents.join(",")}`);
+  }
+
+  // A cached "failed" diagnostic is never trusted as permanent: re-checking
+  // it is cheap (an auth/model-list probe that fails fast, or nothing at all
+  // when the CLI still isn't on PATH) and the alternative — silently
+  // excluding that agent from routing forever once its `cli` entry (if any)
+  // stops drifting — is the outcome Issue #434's review flagged.
+  const previouslyFailedAgents = (cached.diagnostics ?? [])
+    .filter((entry) => entry.status === "failed")
+    .map((entry) => entry.agent);
+
+  const staleAgents = new Set([
+    ...canonicalInvalidateAgents,
+    ...previouslyFailedAgents,
+    ...(await findStaleCachedAgents(cached.cli, discoveryOptions)),
+  ]);
   if (!staleAgents.size) {
     return {
       capabilities: cached.capabilities ?? [],

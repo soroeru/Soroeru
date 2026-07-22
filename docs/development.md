@@ -291,6 +291,17 @@ canonical model identifier, for example:
 }
 ```
 
+The permission-bypass flags described above are baked into the **selector
+itself**, not just the probe invocation — `project-issue-dispatch.mjs`
+launches every real worker/parent for these agents with that exact same
+selector, so a dispatched Claude, Grok, or Antigravity worker always runs
+with permission prompts fully bypassed, the same way `codex exec` already
+does. This is required for unattended dispatch to work at all (there is no
+human present to answer an approval prompt), not a change specific to this
+repository's risk posture; the review-and-confirm gate, the three guards, and
+the never-bypass-walls rule for the Soroeru *product* these workers implement
+are unaffected.
+
 The written capabilities file also carries `cli` (per-agent `{path, version}`
 from `--version`) and `probedAt`. `project-issue-orchestrator.mjs` uses those
 to decide whether to reuse the file as-is (default), targeted-re-probe only
