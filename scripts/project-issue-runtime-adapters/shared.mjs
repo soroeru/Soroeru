@@ -318,8 +318,15 @@ export async function verifyRepositoryFreshness(cwd) {
   if (mergeBaseResult.code !== 0) {
     const headResult = await runProcess("git", ["rev-parse", "HEAD"], { cwd });
     const originMainResult = await runProcess("git", ["rev-parse", "origin/main"], { cwd });
-    const headSha = String(headResult.stdout ?? "").trim() || "unknown";
-    const originMainSha = String(originMainResult.stdout ?? "").trim() || "unknown";
+    
+    const formatSha = (res) => {
+      const out = String(res.stdout ?? "").trim();
+      const err = String(res.stderr ?? "").trim();
+      return out || (err ? `error(${err.replace(/\\n/g, " ")})` : "unknown");
+    };
+
+    const headSha = formatSha(headResult);
+    const originMainSha = formatSha(originMainResult);
     throw new Error(`orchestrator-checkout-stale:head=${headSha},origin/main=${originMainSha}`);
   }
 }

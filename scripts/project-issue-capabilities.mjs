@@ -88,7 +88,7 @@ export async function discoverCapabilities(options = {}) {
     cli[agentName] = { path: meta.path, ...(version ? { version } : {}) };
   }
 
-  const repositoryCommit = await getRepositoryCommit(options.cwd);
+  const repositoryCommit = await getRepositoryCommit(options.cwd ?? process.cwd());
   const payload = { 
     capabilities, 
     diagnostics, 
@@ -177,7 +177,7 @@ export async function loadOrRefreshCapabilities(options = {}) {
     }
   }
 
-  const currentRepositoryCommit = await getRepositoryCommit(options.cwd);
+  const currentRepositoryCommit = await getRepositoryCommit(options.cwd ?? process.cwd());
   const schemaMismatch = cached && cached.probeSchemaVersion !== PROBE_SCHEMA_VERSION;
   const commitMismatch = cached && currentRepositoryCommit && cached.repositoryCommit !== currentRepositoryCommit;
 
