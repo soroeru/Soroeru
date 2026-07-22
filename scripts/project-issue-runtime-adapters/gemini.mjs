@@ -1,4 +1,5 @@
 import {
+  DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   REASON_CODES,
@@ -7,6 +8,7 @@ import {
   diagnostic,
   quoteSelectorArg,
   resolveExecutable,
+  runHeadlessExecProbe,
   runProcess,
   spawnWorker,
   splitSelector,
@@ -93,6 +95,7 @@ export async function discover(ctx = {}) {
     return { records, diagnostics };
   }
 
+  const candidates = [];
   for (const { model, requestedModel } of models) {
     // Prefer print/non-interactive flags for agy when launching workers.
     const modelArg = quoteSelectorArg(model);
@@ -102,10 +105,39 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
+    // `--dangerously-skip-permissions` is required for a tool call (file
+    // write) to complete headlessly; without it `--print` answers in prose
+    // and exits 0 with no artifact produced. Flag order is load-bearing:
+    // agy uses Go-style flag parsing where `--print` is a *string* flag that
+    // consumes the next argv token as the prompt, so `--print` must be the
+    // final selector token with the prompt appended directly after it —
+    // `--print --dangerously-skip-permissions <prompt>` makes agy treat the
+    // permissions flag itself as the prompt and ignore the real one.
     const selector =
       cliName === "agy" || /\/agy$/.test(cliPath)
-        ? `${cliPath} --model ${modelArg} --print`
+        ? `${cliPath} --model ${modelArg} --dangerously-skip-permissions --print`
         : `${cliPath} --model ${modelArg}`;
+    candidates.push({ model, requestedModel, selector });
+  }
+  if (!candidates.length) return { records, diagnostics };
+
+  const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
+  const probeTokens = splitSelector(candidates[0].selector);
+  const probeResult = await probe({
+    cliPath: probeTokens[0],
+    args: probeTokens.slice(1),
+    run,
+    timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+    env,
+  });
+  if (!probeResult.ok) {
+    diagnostics.push(
+      diagnostic({ agent, status: "failed", reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED }),
+    );
+    return { records, diagnostics };
+  }
+
+  for (const { model, requestedModel, selector } of candidates) {
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({
@@ -120,7 +152,7 @@ export async function discover(ctx = {}) {
     }
     diagnostics.push(diagnostic({ agent, status: "ok", model }));
   }
-  return { records, diagnostics };
+  return { records, diagnostics, cliPath };
 }
 
 export async function launch(ctx, job) {

@@ -208,16 +208,23 @@ not from Issue body text. A `CLOSED` blocker is treated as completed; an
 `OPEN` blocker stops the dry-run with a deterministic dependency reason.
 
 ```bash
-# Normal path: automatic capability discovery (Codex → Claude → Grok → Gemini).
+# Unconditional path: full re-discovery of every adapter (Codex → Claude → Grok → Gemini),
+# each gated by a real headless execution probe, not just an auth/model-list check.
 # Writes state/project-issue-capabilities.json atomically; do not hand-limit to Codex.
 node scripts/project-issue-capabilities.mjs
 # Optional: JSON on stdout only
 # node scripts/project-issue-capabilities.mjs --stdout
 
+# Normal path: the orchestrator reuses that cache file by default instead of
+# re-probing every adapter on every run. --refresh forces a full re-discovery;
+# --invalidate-agent drops and re-probes only the agent(s) that just failed at
+# dispatch time (see below), leaving the rest of the cache untouched.
 GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
   --dry-run --issues 380,382,384,386,387 \
   --unavailable-model MODEL --unavailable-agent Codex --existing-worktree 396 \
   --parent-agent Codex --parent-model MODEL
+# node scripts/project-issue-orchestrator.mjs ... --refresh
+# node scripts/project-issue-orchestrator.mjs ... --invalidate-agent Grok
 # Optional override for tests / intentional non-default runs:
 #   --capabilities-file path/to/verified-capabilities.json
 # Optional: apply a milestone in memory only (still no state write) during dry-run:
@@ -244,12 +251,36 @@ worktree mutation.
 
 Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
 `scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
-Gemini; Gemini via Antigravity `agy` when present). Only verified routes enter
-the pool; closed diagnostic reasons include `cli-not-found`, `auth-unavailable`,
-`model-not-selectable`, `model-mismatch`, and `verification-timeout`. Dispatch of
-a selected route reuses the same exact selector through
-`scripts/project-issue-dispatch.mjs`. Capability files use `agent`
-(Codex/Claude/…) rather than API-provider names. A capability may use
+Gemini; Gemini via Antigravity `agy` when present). An adapter that passes
+auth/model-list checks is still not enough: each adapter also runs a
+**headless execution probe** once per adapter (`runHeadlessExecProbe` in
+`project-issue-runtime-adapters/shared.mjs`) — spawn the CLI with no TTY and a
+minimal, locally-generated tool-use task ("create this exact file with this
+exact marker" in a throwaway sandbox directory), then check the artifact. Only
+a route that actually completed that task under `DEFAULT_HEADLESS_PROBE_TIMEOUT_MS`
+(120s) becomes verified; the probe never persists the generated prompt, the
+marker, or stdout/stderr. This is why `claude`, `grok`, and `agy` selectors now
+include a permission-bypass flag (`--permission-mode bypassPermissions` /
+`--dangerously-skip-permissions`) and, for `grok`, `-p`/`--single` instead of a
+bare positional prompt — without them the CLI either stops at an edit-approval
+prompt with no human to answer it, or (for `grok`) tries to open an interactive
+session that requires a real TTY.
+
+Only verified routes enter the pool; closed diagnostic reasons include
+`cli-not-found`, `auth-unavailable`, `model-not-selectable`, `model-mismatch`,
+`verification-timeout`, `probe-failed`, and the headless-probe-specific
+`tty-required` (the CLI demanded a real terminal), `non-agentic-print-mode`
+(exited cleanly but never produced the artifact — observed for `agy --print`
+without the skip-permissions flag or with the flags mis-ordered), and
+`headless-exec-failed` (any other unexplained failure). Two launch quirks
+found by live verification: `agy`'s `--print` is a Go-style *string* flag
+that consumes the next argv token as the prompt, so it must be the final
+selector token with the prompt appended directly after it; and `codex exec`
+refuses to run outside a trusted/git directory, so the Codex probe passes
+`--skip-git-repo-check` (probe-only — real dispatch runs inside the Issue's
+git worktree and needs no such flag). Dispatch of a selected route reuses the same exact
+selector through `scripts/project-issue-dispatch.mjs`. Capability files use
+`agent` (Codex/Claude/…) rather than API-provider names. A capability may use
 `requestedModel` for the exact display label and `model` for the runtime's
 canonical model identifier, for example:
 
@@ -265,6 +296,28 @@ canonical model identifier, for example:
   "timeoutMs": 30000
 }
 ```
+
+The permission-bypass flags described above are baked into the **selector
+itself**, not just the probe invocation — `project-issue-dispatch.mjs`
+launches every real worker/parent for these agents with that exact same
+selector, so a dispatched Claude, Grok, or Antigravity worker always runs
+with permission prompts fully bypassed, the same way `codex exec` already
+does. This is required for unattended dispatch to work at all (there is no
+human present to answer an approval prompt), not a change specific to this
+repository's risk posture; the review-and-confirm gate, the three guards, and
+the never-bypass-walls rule for the Soroeru *product* these workers implement
+are unaffected.
+
+The written capabilities file also carries `cli` (per-agent `{path, version}`
+from `--version`) and `probedAt`. `project-issue-orchestrator.mjs` uses those
+to decide whether to reuse the file as-is (default), targeted-re-probe only
+the agents whose CLI path/version drifted, that `--invalidate-agent` named, or
+whose last cached diagnostic was `"failed"` (never trusted as permanent), or
+(with `--refresh`) ignore the cache and re-probe every adapter. A dry run
+never writes the cache regardless of which of those three paths it took.
+`loadOrRefreshCapabilities` in `project-issue-capabilities.mjs` implements
+this; `discoverCapabilities` remains the unconditional "probe now" primitive
+it wraps.
 
 The requested label must still be explicitly present in the capability record;
 the canonical runtime identifier alone is not an alias or fallback. The legacy

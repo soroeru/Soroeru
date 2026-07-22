@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -609,6 +609,85 @@ test("CLI dry-run discovery does not write the capabilities cache file", async (
   await assert.rejects(() => stat(capabilitiesOutput), /ENOENT/);
 });
 
+test("CLI reuses a fresh capabilities cache instead of re-probing every adapter (Issue #434)", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-cache-reuse-"));
+  const inputPath = path.join(directory, "input.json");
+  const capabilitiesOutput = path.join(directory, "capabilities.json");
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const codexPath = path.join(bin, "codex");
+  // If the orchestrator ever re-probed instead of reusing the cache, this
+  // fake bin would fail every real check (exit 9) except --version, which
+  // must keep matching the cached version so freshness passes trivially.
+  await writeFile(
+    codexPath,
+    `#!${process.execPath}\nif (process.argv[2] === "--version") { process.stdout.write("codex-fake 1.0.0\\n"); process.exit(0); }\nprocess.exit(9);\n`,
+    "utf8",
+  );
+  await chmod(codexPath, 0o755);
+
+  const cachedRoute = {
+    agent: "Codex",
+    model: "gpt-cached",
+    selector: `${codexPath} exec -m gpt-cached`,
+    selectable: true,
+    verifiable: true,
+    timeoutMs: 3_600_000,
+  };
+  await writeFile(
+    capabilitiesOutput,
+    JSON.stringify({
+      capabilities: [
+        { ...cachedRoute, role: "worker" },
+        { ...cachedRoute, role: "parent" },
+      ],
+      diagnostics: [{ agent: "Codex", status: "ok", model: "gpt-cached" }],
+      cli: { Codex: { path: codexPath, version: "codex-fake 1.0.0" } },
+      probedAt: "2026-01-01T00:00:00.000Z",
+    }),
+  );
+
+  const fixture = await load("linear.json");
+  await writeFile(
+    inputPath,
+    JSON.stringify({
+      ...fixture,
+      options: {
+        maxParallel: 3,
+        releasePolicy: "merged",
+        parent: { agent: "Codex", model: "gpt-cached" },
+        dryRun: true,
+      },
+    }),
+  );
+  const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
+  const isolatedEnv = { ...process.env, PATH: bin };
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      script.pathname,
+      "--input",
+      inputPath,
+      "--issues",
+      "101",
+      "--dry-run",
+      "--parent-agent",
+      "Codex",
+      "--parent-model",
+      "gpt-cached",
+      "--capabilities-output",
+      capabilitiesOutput,
+    ],
+    { timeout: 30_000, env: isolatedEnv },
+  );
+  const result = JSON.parse(stdout);
+  assert.equal(result.capabilityCacheStatus, "reused");
+  assert.deepEqual(
+    result.workerRoutes.map(({ agent, model }) => `${agent}:${model}`),
+    ["Codex:gpt-cached"],
+  );
+});
+
 test("CLI preserves input-provided unavailable agents when YAML and flags omit them", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-orchestrator-input-options-"));
   const inputPath = path.join(directory, "input.json");
@@ -971,6 +1050,9 @@ test("parses the documented operational Project CLI flags", () => {
       "sonnet",
       "--unavailable-agent",
       "Codex",
+      "--refresh",
+      "--invalidate-agent",
+      "Grok",
       "--issues",
       "101,102",
       "--priority",
@@ -1004,6 +1086,8 @@ test("parses the documented operational Project CLI flags", () => {
       releasePolicy: "pr-created",
       unavailableModels: ["Fable", "sonnet"],
       unavailableAgents: ["Codex"],
+      refresh: true,
+      invalidateAgents: ["Grok"],
       statePath: "/tmp/state.json",
       existingWorktrees: [101, 102],
       milestoneJson: '{"issue":101,"type":"pr-created"}',

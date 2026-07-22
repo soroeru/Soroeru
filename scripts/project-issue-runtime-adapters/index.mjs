@@ -15,13 +15,22 @@ export function getAdapter(agentName) {
 }
 
 /**
- * Probe every adapter in fixed order. Partial failures never abort later adapters.
- * Returns capability records (success only) plus non-sensitive diagnostics.
+ * Probe every adapter in fixed order, or only the adapters named in
+ * `ctx.only` (case-insensitive agent names) for a targeted re-probe after a
+ * cache-freshness or runtime-failure invalidation. Partial failures never
+ * abort later adapters. Returns capability records (success only), plus
+ * non-sensitive diagnostics, plus the resolved CLI path per adapter that got
+ * far enough to attempt discovery (used only for cache freshness checks).
  */
 export async function discoverAllCapabilities(ctx = {}) {
   const capabilities = [];
   const diagnostics = [];
+  const cli = {};
+  const only = Array.isArray(ctx.only) && ctx.only.length
+    ? new Set(ctx.only.map((name) => String(name).trim().toLowerCase()))
+    : null;
   for (const adapter of RUNTIME_ADAPTERS) {
+    if (only && !only.has(adapter.agent.toLowerCase())) continue;
     const adapterCtx = {
       ...ctx,
       ...(ctx.adapters?.[adapter.agent] ?? {}),
@@ -30,6 +39,9 @@ export async function discoverAllCapabilities(ctx = {}) {
       const result = await adapter.discover(adapterCtx);
       capabilities.push(...(result.records ?? []));
       diagnostics.push(...(result.diagnostics ?? []));
+      if (typeof result.cliPath === "string" && result.cliPath) {
+        cli[adapter.agent] = { path: result.cliPath };
+      }
     } catch {
       diagnostics.push({
         agent: adapter.agent,
@@ -38,7 +50,7 @@ export async function discoverAllCapabilities(ctx = {}) {
       });
     }
   }
-  return { capabilities, diagnostics };
+  return { capabilities, diagnostics, cli };
 }
 
 export async function launchWithAdapter(agentName, job, ctx = {}) {

@@ -1,4 +1,5 @@
 import {
+  DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   REASON_CODES,
@@ -7,6 +8,7 @@ import {
   diagnostic,
   quoteSelectorArg,
   resolveExecutable,
+  runHeadlessExecProbe,
   runProcess,
   spawnWorker,
   splitSelector,
@@ -100,6 +102,7 @@ export async function discover(ctx = {}) {
     return { records, diagnostics };
   }
 
+  const candidates = [];
   for (const { model, requestedModel } of models) {
     const modelArg = quoteSelectorArg(model);
     if (!modelArg) {
@@ -108,7 +111,33 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
-    const selector = `${cliPath} --model ${modelArg}`;
+    // `--permission-mode bypassPermissions` is required for tool calls (file
+    // writes) to complete with no human present to answer an approval
+    // prompt. `-p`/`--single` (see launch()) forces the CLI's headless
+    // single-turn mode instead of the default interactive TUI, which demands
+    // a real TTY and fails with a raw-terminal error when spawned headless.
+    const selector = `${cliPath} --model ${modelArg} --permission-mode bypassPermissions`;
+    candidates.push({ model, requestedModel, selector });
+  }
+  if (!candidates.length) return { records, diagnostics };
+
+  const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
+  const probeTokens = splitSelector(candidates[0].selector);
+  const probeResult = await probe({
+    cliPath: probeTokens[0],
+    args: [...probeTokens.slice(1), "-p"],
+    run,
+    timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+    env,
+  });
+  if (!probeResult.ok) {
+    diagnostics.push(
+      diagnostic({ agent, status: "failed", reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED }),
+    );
+    return { records, diagnostics };
+  }
+
+  for (const { model, requestedModel, selector } of candidates) {
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({
@@ -123,7 +152,7 @@ export async function discover(ctx = {}) {
     }
     diagnostics.push(diagnostic({ agent, status: "ok", model }));
   }
-  return { records, diagnostics };
+  return { records, diagnostics, cliPath };
 }
 
 export async function launch(ctx, job) {
@@ -134,7 +163,10 @@ export async function launch(ctx, job) {
   const command = tokens[0];
   const cliPath = (await resolve(command, { env, pathEnv: ctx.pathEnv })) ?? command;
   const prompt = buildWorkerPrompt(job);
-  const args = [...tokens.slice(1), prompt];
+  // `-p`/`--single <PROMPT>` forces grok's headless single-turn mode; a bare
+  // trailing positional prompt is treated as the initial prompt for an
+  // *interactive* session and requires a TTY.
+  const args = [...tokens.slice(1), "-p", prompt];
   return runSpawn(cliPath, args, {
     timeoutMs: job.timeoutMs,
     env,

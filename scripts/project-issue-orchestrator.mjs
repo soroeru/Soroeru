@@ -8,6 +8,7 @@ import { OWNER_TYPES } from "./project-issue-assignment.mjs";
 import {
   DEFAULT_CAPABILITIES_OUTPUT,
   discoverCapabilities,
+  loadOrRefreshCapabilities,
 } from "./project-issue-capabilities.mjs";
 import {
   DEFAULT_CONFIG_PATH,
@@ -41,7 +42,11 @@ export {
   validateProjectItems,
 } from "./project-issue-plan.mjs";
 export { buildProjectItemsQuery, fetchProjectItems, githubGraphql } from "./project-issue-github.mjs";
-export { discoverCapabilities, DEFAULT_CAPABILITIES_OUTPUT } from "./project-issue-capabilities.mjs";
+export {
+  discoverCapabilities,
+  loadOrRefreshCapabilities,
+  DEFAULT_CAPABILITIES_OUTPUT,
+} from "./project-issue-capabilities.mjs";
 export { dispatchWorker } from "./project-issue-dispatch.mjs";
 
 /**
@@ -126,6 +131,7 @@ export function parseCliArgs(argv) {
     ["--size", "size"],
     ["--unavailable-model", "unavailableModels"],
     ["--unavailable-agent", "unavailableAgents"],
+    ["--invalidate-agent", "invalidateAgents"],
     ["--state-path", "statePath"],
     ["--existing-worktree", "existingWorktrees"],
     ["--milestone-json", "milestoneJson"],
@@ -150,6 +156,12 @@ export function parseCliArgs(argv) {
       options.skipCapabilityDiscovery = true;
       continue;
     }
+    // Forces a full re-discovery of every adapter, ignoring any cached
+    // state/project-issue-capabilities.json (Issue #434).
+    if (flag === "--refresh") {
+      options.refresh = true;
+      continue;
+    }
     // Backward-compatible alias; prefer --parent-agent.
     if (flag === "--parent-provider") {
       const value = argv[++index];
@@ -162,9 +174,16 @@ export function parseCliArgs(argv) {
     const value = argv[++index];
     if (value === undefined || value.startsWith("--")) throw new Error(`missing-flag-value:${flag}`);
     if (
-      ["unavailableModels", "unavailableAgents", "existingWorktrees", "issues", "priority", "iteration", "size"].includes(
-        key,
-      )
+      [
+        "unavailableModels",
+        "unavailableAgents",
+        "invalidateAgents",
+        "existingWorktrees",
+        "issues",
+        "priority",
+        "iteration",
+        "size",
+      ].includes(key)
     ) {
       options[key] ??= [];
       if (["issues", "priority", "iteration", "size"].includes(key))
@@ -274,11 +293,14 @@ async function main() {
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
   if (cli.milestoneFile) input.milestone = JSON.parse(await fs.readFile(cli.milestoneFile, "utf8"));
 
-  // Capability source of truth for the normal CLI path is automatic discovery.
-  // Explicit sources (file or pre-baked input.options.capabilities) remain for
-  // tests and intentional non-default runs; they skip discovery entirely.
+  // Capability source of truth for the normal CLI path is automatic discovery,
+  // which by default reuses state/project-issue-capabilities.json instead of
+  // re-probing every adapter on every run (Issue #434). Explicit sources
+  // (file or pre-baked input.options.capabilities) remain for tests and
+  // intentional non-default runs; they skip discovery entirely.
   let capabilities;
   let capabilityDiagnostics;
+  let capabilityCacheStatus;
   if (cli.capabilitiesFile) {
     const loaded = JSON.parse(await fs.readFile(cli.capabilitiesFile, "utf8"));
     capabilities = Array.isArray(loaded) ? loaded : loaded.capabilities;
@@ -288,16 +310,21 @@ async function main() {
   } else if (cli.skipCapabilityDiscovery) {
     capabilities = undefined;
   } else {
-    // Dry-run must not mutate disk (including the capabilities cache).
-    const outputPath = cli.dryRun
-      ? undefined
-      : path.resolve(repositoryRoot, cli.capabilitiesOutput ?? DEFAULT_CAPABILITIES_OUTPUT);
-    const discovered = await discoverCapabilities({
-      ...(outputPath === undefined ? {} : { outputPath }),
+    const cachePath = path.resolve(repositoryRoot, cli.capabilitiesOutput ?? DEFAULT_CAPABILITIES_OUTPUT);
+    const discovered = await loadOrRefreshCapabilities({
+      cachePath,
+      refresh: Boolean(cli.refresh),
+      invalidateAgents: cli.invalidateAgents,
+      dryRun: Boolean(cli.dryRun),
       cwd: repositoryRoot,
     });
     capabilities = discovered.capabilities;
     capabilityDiagnostics = discovered.diagnostics;
+    capabilityCacheStatus = discovered.reused
+      ? "reused"
+      : discovered.reprobedAgents
+        ? `reprobed:${discovered.reprobedAgents.join(",")}`
+        : "refreshed";
   }
 
   input.options = {
@@ -323,6 +350,7 @@ async function main() {
     throw new Error("parent-agent-and-model-required");
   const result = await runOrchestration(input);
   if (capabilityDiagnostics !== undefined) result.capabilityDiagnostics = capabilityDiagnostics;
+  if (capabilityCacheStatus !== undefined) result.capabilityCacheStatus = capabilityCacheStatus;
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
