@@ -161,11 +161,11 @@ export class JsonlTelemetrySink extends TelemetrySink {
       );
       await fs.rename(this.filePath, rotatedPath);
 
-      // Prune old rotated files if exceeding rotationMaxFiles
+      // Prune old rotated files if exceeding rotationMaxFiles (oldest first by name)
       const files = await fs.readdir(this.config.telemetryDir);
       const rotatedFiles = files
         .filter((f) => f.startsWith(`${this.config.jsonlFileName}.`))
-        .sort();
+        .sort((a, b) => a.localeCompare(b));
 
       while (rotatedFiles.length > this.config.rotationMaxFiles) {
         const oldest = rotatedFiles.shift();
@@ -182,7 +182,7 @@ export class JsonlTelemetrySink extends TelemetrySink {
       const files = await fs.readdir(this.config.telemetryDir);
       const rotatedFiles = files
         .filter((f) => f.startsWith(`${this.config.jsonlFileName}.`))
-        .sort(); // Oldest rotated files first
+        .sort((a, b) => a.localeCompare(b)); // Oldest rotated files first
 
       const jsonlFiles = [...rotatedFiles];
       if (files.includes(this.config.jsonlFileName)) {
@@ -256,13 +256,13 @@ export class SqliteTelemetrySink extends TelemetrySink {
       if (this.disabledFallback) return;
 
       const event = validateTelemetryEvent(rawEvent);
-      // Properly quote strings for sqlite3 CLI execution
-      const escapeSqlString = (str) => String(str).replace(/'/g, "''");
-      const sql = `INSERT OR REPLACE INTO telemetry_events (event_id, correlation_id, occurred_at, event_type, issue_number, payload_json) VALUES ('${escapeSqlString(
+      // Properly quote and escape strings and numbers for sqlite3 CLI execution
+      const escapeSql = (str) => String(str).replace(/'/g, "''").replace(/\x00/g, "");
+      const sql = `INSERT OR REPLACE INTO telemetry_events (event_id, correlation_id, occurred_at, event_type, issue_number, payload_json) VALUES ('${escapeSql(
         event.eventId
-      )}', '${escapeSqlString(event.correlationId)}', '${escapeSqlString(
+      )}', '${escapeSql(event.correlationId)}', '${escapeSql(
         event.occurredAt
-      )}', '${escapeSqlString(event.type)}', ${Number(event.issueNumber)}, '${escapeSqlString(
+      )}', '${escapeSql(event.type)}', ${Number(event.issueNumber) || 0}, '${escapeSql(
         JSON.stringify(event.payload)
       )}');`;
 
@@ -388,6 +388,7 @@ export function generateLLMOpsReport(events = []) {
   }
 
   let totalHandoffs = 0;
+  let runsWithHandoffs = 0;
   let handoffsWithSuccess = 0;
   let totalHumanInterventions = 0;
   const latenciesMs = [];
@@ -421,6 +422,7 @@ export function generateLLMOpsReport(events = []) {
 
       if (term.payload.handoffCount > 0) {
         totalHandoffs += term.payload.handoffCount;
+        runsWithHandoffs += 1;
         if (isSuccess) handoffsWithSuccess += 1;
       }
       if (term.payload.humanIntervention) {
@@ -481,8 +483,8 @@ export function generateLLMOpsReport(events = []) {
       humanInterventionRatePercent: Object.keys(runsByCorrelation).length > 0
         ? Number(((totalHumanInterventions / Object.keys(runsByCorrelation).length) * 100).toFixed(1))
         : 0,
-      handoffSuccessRatePercent: totalHandoffs > 0
-        ? Number(((handoffsWithSuccess / Object.keys(runsByCorrelation).length) * 100).toFixed(1))
+      handoffSuccessRatePercent: runsWithHandoffs > 0
+        ? Number(((handoffsWithSuccess / runsWithHandoffs) * 100).toFixed(1))
         : 0,
       latency: {
         medianMs: medianLatencyMs,
