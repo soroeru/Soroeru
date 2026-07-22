@@ -190,6 +190,23 @@ test("interactive assignment pauses with the verified pool and accepts only pool
   );
 });
 
+test("an invalid interactive assignment re-prompts instead of killing the run", async () => {
+  const run = makeRun();
+  await run.invoke(makeInput({ items: [item(1)], config: { autoAssign: false } }));
+  const rejected = await run.resume({
+    assignments: [{ number: 1, agent: "Codex", model: "gpt-6-imagined" }],
+  });
+  assert.equal(isInterrupted(rejected), true);
+  const payload = rejected.__interrupt__[0].value;
+  assert.equal(payload.lastEventError, "invalid-assignment:1:Codex:gpt-6-imagined");
+  assert.ok(payload.assign, "re-presents the candidate set and verified pool");
+  assert.equal(run.deps.dispatched.length, 0);
+  // A corrected proposal then proceeds normally.
+  const accepted = await run.resume({ assignments: [{ number: 1, agent: "Codex", model: "gpt-5" }] });
+  assert.equal(isInterrupted(accepted), true);
+  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+});
+
 test("schedules dependent Issues only after the release milestone passes the gate", async () => {
   const run = makeRun();
   let result = await run.invoke(makeInput({ items: [item(1), item(2, [1])] }));
@@ -338,6 +355,16 @@ test("a route failing at dispatch time is excluded and the Issue handed off", as
   const state = await run.state();
   assert.deepEqual(state.unavailableAgents, ["Codex"]);
   assert.equal(state.workerExecutions[0].agent, "Claude");
+  // The failed dispatch never started a worker, so no worktree exists yet:
+  // the retry keeps the mode that attempt was going to use.
+  assert.equal(state.workerExecutions[0].mode, "issue-implementation");
+});
+
+test("an interrupted worker with a pre-existing worktree hands off in handoff-issue mode", async () => {
+  const run = makeRun();
+  await run.invoke(makeInput({ items: [item(1)] }));
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "session-limit" });
+  const state = await run.state();
   assert.equal(state.workerExecutions[0].mode, "handoff-issue");
 });
 
@@ -572,11 +599,52 @@ test("the graph CLI starts, pauses, and resumes across separate processes", asyn
   }
 });
 
+test("the file checkpointer rejects unsupported and corrupt files with stable reasons", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-checkpoint-"));
+  const { writeFile } = await import("node:fs/promises");
+  try {
+    const wrongFormat = path.join(directory, "wrong.json");
+    await writeFile(wrongFormat, JSON.stringify({ format: "something-else/v9" }));
+    await assert.rejects(FileCheckpointSaver.load(wrongFormat), /checkpoint-format-unsupported/);
+
+    const corrupt = path.join(directory, "corrupt.json");
+    await writeFile(corrupt, "{ not json");
+    await assert.rejects(FileCheckpointSaver.load(corrupt), /checkpoint-file-corrupt/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("deleteThread persists across a checkpointer reload", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-checkpoint-"));
+  const checkpointFile = path.join(directory, "run.json");
+  try {
+    const first = makeRun({
+      checkpointer: await FileCheckpointSaver.load(checkpointFile),
+      threadId: "wipe",
+    });
+    await first.invoke(makeInput({ items: [item(1)] }));
+
+    const saver = await FileCheckpointSaver.load(checkpointFile);
+    assert.notEqual(await saver.getTuple({ configurable: { thread_id: "wipe" } }), undefined);
+    await saver.deleteThread("wipe");
+
+    const reloaded = await FileCheckpointSaver.load(checkpointFile);
+    assert.equal(await reloaded.getTuple({ configurable: { thread_id: "wipe" } }), undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("parseGraphCliArgs validates thread id and resume sources", () => {
   assert.throws(() => parseGraphCliArgs([]), /thread-id-required/);
   assert.throws(
     () => parseGraphCliArgs(["--thread-id", "t", "--resume-json", "{}", "--resume-file", "x"]),
     /resume-source-conflict/,
+  );
+  assert.throws(
+    () => parseGraphCliArgs(["--thread-id", "t", "--existing-worktree", "foo"]),
+    /invalid-flag-value:--existing-worktree:foo/,
   );
   const options = parseGraphCliArgs([
     "--thread-id",

@@ -46,7 +46,12 @@ export class FileCheckpointSaver extends MemorySaver {
       if (error.code === "ENOENT") return saver;
       throw error;
     }
-    const parsed = JSON.parse(raw);
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("checkpoint-file-corrupt");
+    }
     if (parsed?.format !== FILE_FORMAT) throw new Error("checkpoint-format-unsupported");
     for (const [threadId, namespaces] of Object.entries(parsed.storage ?? {})) {
       saver.storage[threadId] = Object.create(null);
@@ -115,8 +120,9 @@ export class FileCheckpointSaver extends MemorySaver {
 }
 
 const FILE_FORMAT = "project-issue-graph-checkpoint/v1";
+const decoder = new TextDecoder();
 
 function asString(value) {
   if (typeof value === "string") return value;
-  return new TextDecoder().decode(value);
+  return decoder.decode(value);
 }

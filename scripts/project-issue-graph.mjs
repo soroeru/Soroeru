@@ -262,6 +262,12 @@ async function discoverCapabilitiesNode(state, config) {
   let capabilities;
   try {
     capabilities = state.capabilities ?? (await getDeps(config).loadCapabilities(state.config));
+  } catch (error) {
+    // Discovery infrastructure failed; that says nothing about the parent
+    // route itself.
+    return { failureReason: error.message };
+  }
+  try {
     validateCapabilities(
       [{ agent: state.config.parent.agent, model: state.config.parent.model, role: "parent" }],
       capabilities,
@@ -347,6 +353,10 @@ function assignRoutesNode(state) {
     (state.proposedAssignments ?? []).map((proposal) => [Number(proposal.number), proposal]),
   );
   let proposals = proposedByNumber;
+  // A rejected proposal from a resume re-prompts (the run stays alive,
+  // matching the other interrupts); a rejected pre-supplied proposal fails
+  // the run closed (there is no caller waiting to correct it).
+  let fromResume = false;
   if (!state.config.autoAssign && !candidates.every(({ number }) => proposedByNumber.has(number))) {
     // Dynamic assignment is the orchestrating agent's judgment: pause and
     // present the deterministic candidate set plus the verified pool. The
@@ -358,9 +368,12 @@ function assignRoutesNode(state) {
       },
       ...(state.lastEventError ? { lastEventError: state.lastEventError } : {}),
     });
-    if (!Array.isArray(resume?.assignments)) return { failureReason: "invalid-assignment:shape" };
+    fromResume = true;
+    if (!Array.isArray(resume?.assignments)) return { lastEventError: "invalid-assignment:shape" };
     proposals = new Map(resume.assignments.map((proposal) => [Number(proposal.number), proposal]));
   }
+  const rejectProposal = (reason) =>
+    fromResume ? { lastEventError: reason } : { failureReason: reason };
 
   const assignments = [];
   for (const [index, item] of candidates.entries()) {
@@ -369,11 +382,11 @@ function assignRoutesNode(state) {
     if (proposal !== undefined) {
       route = resolveRoute(pool, proposal);
       if (!route)
-        return { failureReason: `invalid-assignment:${item.number}:${proposal.agent}:${proposal.model}` };
+        return rejectProposal(`invalid-assignment:${item.number}:${proposal.agent}:${proposal.model}`);
     } else if (state.config.autoAssign) {
       route = pool[index % pool.length];
     } else {
-      return { failureReason: `invalid-assignment:${item.number}:missing` };
+      return rejectProposal(`invalid-assignment:${item.number}:missing`);
     }
     assignments.push({
       number: item.number,
@@ -426,7 +439,15 @@ async function dispatchWorkerNode(payload, config) {
     // orchestrator run should re-probe it (--invalidate-agent).
     return {
       workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
-      pendingInterrupted: [{ issue: assignment.number, reason: `dispatch-failed:${error.message}` }],
+      pendingInterrupted: [
+        {
+          issue: assignment.number,
+          reason: `dispatch-failed:${error.message}`,
+          // The worker never started, so no worktree was created by it;
+          // hand off in the mode this dispatch attempt was going to use.
+          mode: assignment.mode,
+        },
+      ],
       unavailableAgents: [assignment.agent],
     };
   }
@@ -602,12 +623,14 @@ function selectHandoffRouteNode(state) {
     }
     // Handoff continues in the same Issue worktree: mode handoff-issue,
     // inherited WIP preserved (the worker was terminated, not the tree).
+    // Exception: a dispatch-time failure never started the worker, so the
+    // entry carries the mode that attempt was going to use.
     assignments.push({
       number: entry.issue,
       ...routeLabels(route),
       route,
       attempt: attemptFor(state, entry.issue),
-      mode: "handoff-issue",
+      mode: entry.mode ?? "handoff-issue",
     });
   }
   return { assignments, workerRoutes: pool, pendingInterrupted: null };
@@ -632,6 +655,10 @@ const failOr = (next) => (state) => (state.failureReason ? "fail_run" : next);
 
 function dispatchRouter(state) {
   if (state.failureReason) return "fail_run";
+  // A rejected interactive assignment proposal re-prompts instead of
+  // terminating: the candidates are still undispatched.
+  if (String(state.lastEventError ?? "").startsWith("invalid-assignment") && dispatchCandidates(state).length)
+    return "assign_routes";
   const dispatches = pendingDispatches(state);
   if (dispatches.length)
     return dispatches.map(
@@ -769,7 +796,11 @@ export function createDefaultDeps({ cwd }) {
       if (!Number.isSafeInteger(execution.pid)) return "unknown";
       let stdout;
       try {
-        ({ stdout } = await execFileAsync("ps", ["-p", String(execution.pid), "-o", "lstart="]));
+        // C locale pins lstart to the parseable "Tue Jul 22 17:43:07 2026"
+        // format regardless of the user's LC_TIME.
+        ({ stdout } = await execFileAsync("ps", ["-p", String(execution.pid), "-o", "lstart="], {
+          env: { ...process.env, LC_ALL: "C" },
+        }));
       } catch {
         return "dead";
       }
@@ -844,7 +875,12 @@ export function parseGraphCliArgs(argv) {
             .map((item) => item.trim())
             .filter(Boolean),
         );
-      else options[key].push(key === "existingWorktrees" ? Number(value) : value);
+      else if (key === "existingWorktrees") {
+        const issue = Number(value);
+        if (!Number.isSafeInteger(issue) || issue <= 0)
+          throw new Error(`invalid-flag-value:--existing-worktree:${value}`);
+        options[key].push(issue);
+      } else options[key].push(value);
     } else options[key] = key === "maxParallel" ? Number(value) : value;
   }
   if (!options.threadId) throw new Error("thread-id-required");
