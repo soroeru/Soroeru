@@ -5,10 +5,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { discoverCapabilities } from "../../scripts/project-issue-capabilities.mjs";
+import { discoverCapabilities, loadOrRefreshCapabilities } from "../../scripts/project-issue-capabilities.mjs";
 import { dispatchWorker } from "../../scripts/project-issue-dispatch.mjs";
 import { discoverAllCapabilities, RUNTIME_ADAPTERS } from "../../scripts/project-issue-runtime-adapters/index.mjs";
-import { REASON_CODES, splitSelector, writeJsonAtomic } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
+import {
+  REASON_CODES,
+  runHeadlessExecProbe,
+  splitSelector,
+  writeJsonAtomic,
+} from "../../scripts/project-issue-runtime-adapters/shared.mjs";
 import { selectWorkerRoutes } from "../../scripts/project-issue-orchestrator.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -91,6 +96,9 @@ test("discovers only verified routes and keeps partial failures isolated", async
     pathEnv: isolatedPath(bin),
     timeoutMs: 5_000,
     workerTimeoutMs: 60_000,
+    // Headless-exec wiring is covered by its own tests; stub it here so this
+    // test stays focused on auth/model-list discovery.
+    headlessExecProbe: async () => ({ ok: true }),
   });
 
   const workers = result.capabilities.filter((record) => record.role === "worker");
@@ -180,6 +188,7 @@ test("records verification-timeout without aborting later adapters", async () =>
     workerTimeoutMs: 30_000,
     runProcess,
     resolveExecutable,
+    headlessExecProbe: async () => ({ ok: true }),
   });
 
   assert.ok(
@@ -259,6 +268,7 @@ test("writes capabilities atomically and never leaves a partial final file", asy
     pathEnv: isolatedPath(bin),
     timeoutMs: 3_000,
     workerTimeoutMs: 12_000,
+    headlessExecProbe: async () => ({ ok: true }),
   });
   assert.equal(result.outputPath, outputPath);
   const after = JSON.parse(await readFile(outputPath, "utf8"));
@@ -384,6 +394,7 @@ test("Gemini adapter records agy models with exact display names", async () => {
       }
       return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
     },
+    headlessExecProbe: async () => ({ ok: true }),
   });
   const geminiWorkers = result.capabilities.filter(
     (record) => record.agent === "Gemini" && record.role === "worker",
@@ -451,4 +462,301 @@ test("rejects Not logged in Codex/Grok status as auth-unavailable", async () => 
     ),
   );
   assert.equal(result.capabilities.length, 0);
+});
+
+/**
+ * Fake bin that parses the probe's own prompt out of its final argv element
+ * and reacts one of four documented ways, so `runHeadlessExecProbe` can be
+ * exercised end-to-end without a real agent CLI (Issue #434).
+ */
+async function makeProbeReactingBin(directory, name, behavior) {
+  const bodies = {
+    completes: `
+      const fs = require("node:fs");
+      const prompt = process.argv[process.argv.length - 1];
+      const pathMatch = prompt.match(/exact path:\\s*(\\S+)/);
+      const markerMatch = prompt.match(/nothing else:\\s*(\\S+)/);
+      if (pathMatch && markerMatch) fs.writeFileSync(pathMatch[1], markerMatch[1]);
+      process.exit(0);
+    `,
+    ttyRequired: `
+      process.stderr.write("Error: Device not configured (os error 6)\\n");
+      process.exit(1);
+    `,
+    printOnly: `
+      process.stdout.write("Sure — here is a description of that file.\\n");
+      process.exit(0);
+    `,
+    execFails: `
+      process.stderr.write("unexpected internal error\\n");
+      process.exit(1);
+    `,
+    hangs: `
+      setInterval(() => {}, 60_000);
+    `,
+  };
+  return makeFakeBin(directory, name, bodies[behavior]);
+}
+
+test("runHeadlessExecProbe passes when the CLI writes the exact requested artifact", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-headless-probe-ok-"));
+  const cliPath = await makeProbeReactingBin(directory, "probe-cli", "completes");
+  const result = await runHeadlessExecProbe({ cliPath, args: ["--model", "x"], timeoutMs: 10_000 });
+  assert.deepEqual(result, { ok: true });
+});
+
+test("runHeadlessExecProbe reports tty-required when the CLI demands a real terminal", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-headless-probe-tty-"));
+  const cliPath = await makeProbeReactingBin(directory, "probe-cli", "ttyRequired");
+  const result = await runHeadlessExecProbe({ cliPath, args: [], timeoutMs: 10_000 });
+  assert.deepEqual(result, { ok: false, reason: REASON_CODES.TTY_REQUIRED });
+});
+
+test("runHeadlessExecProbe reports non-agentic-print-mode on a clean exit with no artifact", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-headless-probe-print-"));
+  const cliPath = await makeProbeReactingBin(directory, "probe-cli", "printOnly");
+  const result = await runHeadlessExecProbe({ cliPath, args: [], timeoutMs: 10_000 });
+  assert.deepEqual(result, { ok: false, reason: REASON_CODES.NON_AGENTIC_PRINT_MODE });
+});
+
+test("runHeadlessExecProbe reports headless-exec-failed on an unexplained non-zero exit", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-headless-probe-failed-"));
+  const cliPath = await makeProbeReactingBin(directory, "probe-cli", "execFails");
+  const result = await runHeadlessExecProbe({ cliPath, args: [], timeoutMs: 10_000 });
+  assert.deepEqual(result, { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED });
+});
+
+test("runHeadlessExecProbe reports verification-timeout and cleans up its sandbox", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-headless-probe-timeout-"));
+  const cliPath = await makeProbeReactingBin(directory, "probe-cli", "hangs");
+  const result = await runHeadlessExecProbe({ cliPath, args: [], timeoutMs: 300 });
+  assert.deepEqual(result, { ok: false, reason: REASON_CODES.VERIFICATION_TIMEOUT });
+});
+
+test("runHeadlessExecProbe never leaks the generated prompt or marker in its result", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-headless-probe-secrecy-"));
+  const cliPath = await makeProbeReactingBin(directory, "probe-cli", "printOnly");
+  const result = await runHeadlessExecProbe({ cliPath, args: [], timeoutMs: 10_000 });
+  assert.deepEqual(Object.keys(result).sort(), ["ok", "reason"]);
+});
+
+test("a failed headless probe zeroes out an adapter's records instead of trusting auth/model checks alone", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-probe-wiring-"));
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  await makeFakeBin(
+    bin,
+    "grok",
+    `
+    if (process.argv[2] === "models") {
+      process.stdout.write("You are logged in with grok.com.\\n\\nAvailable models:\\n  * grok-test\\n");
+      process.exit(0);
+    }
+    process.exit(2);
+    `,
+  );
+  const result = await discoverAllCapabilities({
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    timeoutMs: 5_000,
+    only: ["Grok"],
+    headlessExecProbe: async () => ({ ok: false, reason: REASON_CODES.TTY_REQUIRED }),
+  });
+  assert.deepEqual(result.capabilities, []);
+  assert.deepEqual(
+    result.diagnostics.filter((entry) => entry.agent === "Grok"),
+    [{ agent: "Grok", status: "failed", reason: REASON_CODES.TTY_REQUIRED }],
+  );
+});
+
+test("discoverAllCapabilities respects an only filter for targeted re-probes", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-only-filter-"));
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  await makeFakeBin(bin, "codex", "process.exit(2);");
+  await makeFakeBin(bin, "grok", "process.exit(2);");
+  const result = await discoverAllCapabilities({
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    timeoutMs: 2_000,
+    only: ["grok"],
+  });
+  // Only Grok was asked for; Codex/Claude/Gemini never ran (no diagnostics at all).
+  assert.deepEqual(result.diagnostics.map((entry) => entry.agent), ["Grok"]);
+});
+
+test("discoverCapabilities records per-agent CLI path/version metadata and a probedAt timestamp", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-metadata-"));
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  await makeFakeBin(
+    bin,
+    "grok",
+    `
+    if (process.argv[2] === "--version") {
+      process.stdout.write("grok-fake 9.9.9\\n");
+      process.exit(0);
+    }
+    if (process.argv[2] === "models") {
+      process.stdout.write("You are logged in.\\nAvailable models:\\n  * grok-meta\\n");
+      process.exit(0);
+    }
+    process.exit(2);
+    `,
+  );
+  const result = await discoverCapabilities({
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    timeoutMs: 3_000,
+    workerTimeoutMs: 12_000,
+    headlessExecProbe: async () => ({ ok: true }),
+  });
+  assert.equal(result.cli.Grok.path, path.join(bin, "grok"));
+  assert.equal(result.cli.Grok.version, "grok-fake 9.9.9");
+  assert.equal(typeof result.probedAt, "string");
+  assert.ok(!Number.isNaN(Date.parse(result.probedAt)));
+});
+
+test("loadOrRefreshCapabilities reuses a fresh cache without spawning any adapter", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-reuse-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const cliPath = await makeFakeBin(bin, "grok", "process.exit(9);"); // would fail if ever re-invoked
+  const cached = {
+    capabilities: [
+      {
+        agent: "Grok",
+        model: "grok-cached",
+        role: "worker",
+        selector: `${cliPath} --model grok-cached`,
+        selectable: true,
+        verifiable: true,
+        timeoutMs: 60_000,
+      },
+    ],
+    diagnostics: [{ agent: "Grok", status: "ok", model: "grok-cached" }],
+    cli: { Grok: { path: cliPath, version: "cached-version-9.9.9" } },
+    probedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await writeJsonAtomic(cachePath, cached);
+  // Fake bin's own --version differs from the cache -> would be detected as
+  // stale by a real run; stub readCliVersion via runProcess to match instead,
+  // proving the freshness check (not just file presence) drives reuse.
+  const runProcess = async (command, args) => {
+    if (args[0] === "--version") {
+      return { code: 0, signal: null, timedOut: false, error: null, stdout: "cached-version-9.9.9\n", stderr: "", pid: 1 };
+    }
+    return { code: 9, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: 2 };
+  };
+  const result = await loadOrRefreshCapabilities({ cachePath, runProcess });
+  assert.equal(result.reused, true);
+  assert.deepEqual(result.capabilities, cached.capabilities);
+});
+
+test("loadOrRefreshCapabilities re-probes only the agent invalidated by a runtime failure", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-invalidate-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const grokPath = await makeFakeBin(bin, "grok", "process.exit(9);");
+  const codexPath = await makeFakeBin(bin, "codex", "process.exit(9);");
+  const cached = {
+    capabilities: [
+      {
+        agent: "Grok",
+        model: "grok-cached",
+        role: "worker",
+        selector: `${grokPath} --model grok-cached`,
+        selectable: true,
+        verifiable: true,
+        timeoutMs: 60_000,
+      },
+      {
+        agent: "Codex",
+        model: "gpt-cached",
+        role: "worker",
+        selector: `${codexPath} exec -m gpt-cached`,
+        selectable: true,
+        verifiable: true,
+        timeoutMs: 60_000,
+      },
+    ],
+    diagnostics: [
+      { agent: "Grok", status: "ok", model: "grok-cached" },
+      { agent: "Codex", status: "ok", model: "gpt-cached" },
+    ],
+    cli: {
+      Grok: { path: grokPath, version: "v1" },
+      Codex: { path: codexPath, version: "v1" },
+    },
+    probedAt: "2026-01-01T00:00:00.000Z",
+  };
+  await writeJsonAtomic(cachePath, cached);
+  const runProcess = async (command, args) => {
+    if (args[0] === "--version") return { code: 0, signal: null, timedOut: false, error: null, stdout: "v1\n", stderr: "", pid: 1 };
+    return { code: 2, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: 2 };
+  };
+  const result = await loadOrRefreshCapabilities({
+    cachePath,
+    runProcess,
+    resolveExecutable: async (name) => (name === "grok" ? grokPath : name === "codex" ? codexPath : null),
+    invalidateAgents: ["Grok"],
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+  });
+  assert.equal(result.reused, false);
+  assert.deepEqual(result.reprobedAgents, ["Grok"]);
+  // Codex's cached "ok" entry survives untouched; Grok was dropped and
+  // re-probed (and failed, since the fake bin only knows how to exit 9).
+  assert.deepEqual(
+    result.capabilities.map((record) => record.agent),
+    ["Codex"],
+  );
+  const onDisk = JSON.parse(await readFile(cachePath, "utf8"));
+  assert.deepEqual(onDisk.capabilities.map((record) => record.agent), ["Codex"]);
+});
+
+test("loadOrRefreshCapabilities --refresh ignores the cache and re-probes everything", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-refresh-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  await writeJsonAtomic(cachePath, {
+    capabilities: [
+      {
+        agent: "Grok",
+        model: "stale",
+        role: "worker",
+        selector: "stale-selector",
+        selectable: true,
+        verifiable: true,
+        timeoutMs: 1_000,
+      },
+    ],
+    diagnostics: [],
+    cli: {},
+    probedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const result = await loadOrRefreshCapabilities({
+    cachePath,
+    refresh: true,
+    env: { ...process.env, PATH: path.dirname(process.execPath) }, // no real agent CLIs visible
+    pathEnv: path.dirname(process.execPath),
+    timeoutMs: 2_000,
+  });
+  assert.equal(result.reused, false);
+  assert.deepEqual(result.capabilities, []);
+  assert.ok(result.diagnostics.every((entry) => entry.reason === REASON_CODES.CLI_NOT_FOUND));
+});
+
+test("loadOrRefreshCapabilities never writes the cache file during a dry run", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-dryrun-cache-"));
+  const cachePath = path.join(directory, "capabilities.json");
+  await loadOrRefreshCapabilities({
+    cachePath,
+    dryRun: true,
+    env: { ...process.env, PATH: path.dirname(process.execPath) },
+    pathEnv: path.dirname(process.execPath),
+    timeoutMs: 2_000,
+  });
+  await assert.rejects(() => stat(cachePath), /ENOENT/);
 });

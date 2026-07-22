@@ -1,4 +1,5 @@
 import {
+  DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   REASON_CODES,
@@ -7,6 +8,7 @@ import {
   diagnostic,
   quoteSelectorArg,
   resolveExecutable,
+  runHeadlessExecProbe,
   runProcess,
   spawnWorker,
   splitSelector,
@@ -116,6 +118,7 @@ export async function discover(ctx = {}) {
     return { records, diagnostics };
   }
 
+  const candidates = [];
   for (const { model, requestedModel } of models) {
     const modelArg = quoteSelectorArg(model);
     if (!modelArg) {
@@ -124,7 +127,29 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
-    const selector = `${cliPath} exec -m ${modelArg}`;
+    candidates.push({ model, requestedModel, selector: `${cliPath} exec -m ${modelArg}` });
+  }
+  if (!candidates.length) return { records, diagnostics };
+
+  // `codex exec` already runs headlessly by design; still probe it, once per
+  // adapter, so a future CLI regression is caught the same way as the others.
+  const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
+  const probeTokens = splitSelector(candidates[0].selector);
+  const probeResult = await probe({
+    cliPath: probeTokens[0],
+    args: probeTokens.slice(1),
+    run,
+    timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+    env,
+  });
+  if (!probeResult.ok) {
+    diagnostics.push(
+      diagnostic({ agent, status: "failed", reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED }),
+    );
+    return { records, diagnostics };
+  }
+
+  for (const { model, requestedModel, selector } of candidates) {
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({
@@ -139,7 +164,7 @@ export async function discover(ctx = {}) {
     }
     diagnostics.push(diagnostic({ agent, status: "ok", model }));
   }
-  return { records, diagnostics };
+  return { records, diagnostics, cliPath };
 }
 
 export async function launch(ctx, job) {

@@ -1,5 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 /** Closed diagnostic reason codes (no free-form secrets). */
@@ -10,10 +12,25 @@ export const REASON_CODES = Object.freeze({
   MODEL_MISMATCH: "model-mismatch",
   VERIFICATION_TIMEOUT: "verification-timeout",
   PROBE_FAILED: "probe-failed",
+  // Headless execution probe outcomes (Issue #434): a route only becomes
+  // `verifiable: true` after it actually completes a minimal tool-use task
+  // with no TTY attached, not merely after auth/model-list checks pass.
+  TTY_REQUIRED: "tty-required",
+  NON_AGENTIC_PRINT_MODE: "non-agentic-print-mode",
+  HEADLESS_EXEC_FAILED: "headless-exec-failed",
 });
 
-export const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
+// Bumped from 30s (Issue #434): the Claude CLI's `auth status` / `models`
+// probes were observed timing out at 30s and passing at 120s in real runs.
+export const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
 export const DEFAULT_WORKER_TIMEOUT_MS = 3_600_000;
+// The headless execution probe spins up a real agent turn (not just a CLI
+// status check), so it gets its own, longer budget.
+export const DEFAULT_HEADLESS_PROBE_TIMEOUT_MS = 120_000;
+
+/** Stderr/stdout patterns that indicate the CLI demanded a real TTY/PTY. */
+const TTY_REQUIRED_PATTERN =
+  /(device not configured|inappropriate ioctl for device|enotty|not a tty|no such device or address|raw mode is not supported)/i;
 
 /**
  * Resolve an executable on PATH (or an absolute path). Returns absolute path or null.
@@ -148,6 +165,59 @@ export function runProcess(
 }
 
 /**
+ * Verify that a CLI can actually complete a minimal tool-use task headlessly
+ * (no TTY, no human present) rather than merely answering an auth/model-list
+ * check. Spawns the CLI in a throwaway sandbox directory with a fixed,
+ * generated task ("create this exact file with this exact marker") and
+ * classifies the result with a closed reason code. Never persists the
+ * prompt text, stdout, stderr, or the marker itself — only the pass/fail
+ * verdict and (on failure) a reason code leave this function.
+ *
+ * @param {object} options
+ * @param {string} options.cliPath - resolved absolute path to the CLI.
+ * @param {string[]} options.args - selector args (model flags etc.) to place
+ *   before the generated task prompt; must not include the prompt itself.
+ * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
+ */
+export async function runHeadlessExecProbe({
+  cliPath,
+  args = [],
+  run = runProcess,
+  timeoutMs = DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+  env = process.env,
+} = {}) {
+  const sandboxDir = await fs.mkdtemp(path.join(os.tmpdir(), "soroeru-headless-probe-"));
+  try {
+    const marker = randomBytes(8).toString("hex");
+    const artifactPath = path.join(sandboxDir, "probe.txt");
+    const prompt = [
+      `Create a new file at this exact path: ${artifactPath}`,
+      `The file must contain exactly this text and nothing else: ${marker}`,
+      "Do not modify or create any other file. Do not ask questions. Do not explain your steps.",
+    ].join("\n");
+
+    const result = await run(cliPath, [...args, prompt], { timeoutMs, env, cwd: sandboxDir });
+
+    let artifactMatches = false;
+    try {
+      artifactMatches = (await fs.readFile(artifactPath, "utf8")).trim() === marker;
+    } catch {
+      artifactMatches = false;
+    }
+    if (artifactMatches) return { ok: true };
+    if (result.timedOut) return { ok: false, reason: REASON_CODES.VERIFICATION_TIMEOUT };
+    const combinedOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    if (TTY_REQUIRED_PATTERN.test(combinedOutput)) return { ok: false, reason: REASON_CODES.TTY_REQUIRED };
+    // Exited cleanly but produced no artifact: a print/response-only mode
+    // that never actually exercised a tool (observed for `agy --print`).
+    if (result.code === 0) return { ok: false, reason: REASON_CODES.NON_AGENTIC_PRINT_MODE };
+    return { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED };
+  } finally {
+    await fs.rm(sandboxDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/**
  * Quote a selector argument when it contains whitespace.
  * Returns null when the value cannot be represented safely (e.g. embedded quotes).
  */
@@ -201,6 +271,22 @@ export function diagnostic({ agent, status, reason, model } = {}) {
   if (reason !== undefined) entry.reason = reason;
   if (model !== undefined) entry.model = model;
   return entry;
+}
+
+/**
+ * Best-effort `<cli> --version` read for cache-freshness comparison only.
+ * Never throws; returns null on any failure so a version check never blocks
+ * discovery. Output is a short version string, not prompt/response content.
+ */
+export async function readCliVersion(cliPath, { run = runProcess, timeoutMs = 10_000, env = process.env } = {}) {
+  try {
+    const result = await run(cliPath, ["--version"], { timeoutMs, env });
+    if (result.timedOut || result.code !== 0) return null;
+    const text = String(result.stdout ?? "").trim();
+    return text || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Write JSON atomically so partial output is never a successful result. */
