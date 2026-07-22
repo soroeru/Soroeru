@@ -48,7 +48,17 @@ export {
   loadOrRefreshCapabilities,
   DEFAULT_CAPABILITIES_OUTPUT,
 } from "./project-issue-capabilities.mjs";
-export { dispatchWorker } from "./project-issue-dispatch.mjs";
+export {
+  EXECUTION_MODES,
+  VALID_MODES,
+  DEFAULT_MODE_CONFIGS,
+  RISK_CATEGORIES,
+  determineEligibleModes,
+  rankAndSelectMode,
+  assignRoutesForMode,
+  validateWorktreeConcurrency,
+  createModeTelemetryRecord,
+} from "./project-issue-modes.mjs";
 
 /**
  * Dry-run never mutates disk state and never applies milestones to the plan.
