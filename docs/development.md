@@ -271,8 +271,14 @@ Only verified routes enter the pool; closed diagnostic reasons include
 `verification-timeout`, `probe-failed`, and the headless-probe-specific
 `tty-required` (the CLI demanded a real terminal), `non-agentic-print-mode`
 (exited cleanly but never produced the artifact — observed for `agy --print`
-without the skip-permissions flag), and `headless-exec-failed` (any other
-unexplained failure). Dispatch of a selected route reuses the same exact
+without the skip-permissions flag or with the flags mis-ordered), and
+`headless-exec-failed` (any other unexplained failure). Two launch quirks
+found by live verification: `agy`'s `--print` is a Go-style *string* flag
+that consumes the next argv token as the prompt, so it must be the final
+selector token with the prompt appended directly after it; and `codex exec`
+refuses to run outside a trusted/git directory, so the Codex probe passes
+`--skip-git-repo-check` (probe-only — real dispatch runs inside the Issue's
+git worktree and needs no such flag). Dispatch of a selected route reuses the same exact
 selector through `scripts/project-issue-dispatch.mjs`. Capability files use
 `agent` (Codex/Claude/…) rather than API-provider names. A capability may use
 `requestedModel` for the exact display label and `model` for the runtime's

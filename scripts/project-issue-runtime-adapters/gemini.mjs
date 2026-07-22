@@ -105,12 +105,17 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
-    // `--dangerously-skip-permissions` is required alongside `--print` for a
-    // tool call (file write) to complete headlessly; without it `--print`
-    // was observed to answer in prose and exit 0 with no artifact produced.
+    // `--dangerously-skip-permissions` is required for a tool call (file
+    // write) to complete headlessly; without it `--print` answers in prose
+    // and exits 0 with no artifact produced. Flag order is load-bearing:
+    // agy uses Go-style flag parsing where `--print` is a *string* flag that
+    // consumes the next argv token as the prompt, so `--print` must be the
+    // final selector token with the prompt appended directly after it —
+    // `--print --dangerously-skip-permissions <prompt>` makes agy treat the
+    // permissions flag itself as the prompt and ignore the real one.
     const selector =
       cliName === "agy" || /\/agy$/.test(cliPath)
-        ? `${cliPath} --model ${modelArg} --print --dangerously-skip-permissions`
+        ? `${cliPath} --model ${modelArg} --dangerously-skip-permissions --print`
         : `${cliPath} --model ${modelArg}`;
     candidates.push({ model, requestedModel, selector });
   }

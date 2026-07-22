@@ -133,11 +133,14 @@ export async function discover(ctx = {}) {
 
   // `codex exec` already runs headlessly by design; still probe it, once per
   // adapter, so a future CLI regression is caught the same way as the others.
+  // `--skip-git-repo-check` is probe-only: the probe sandbox is a bare tmp
+  // dir and `codex exec` refuses to run outside a trusted/git directory,
+  // while real dispatch always runs inside the Issue's git worktree.
   const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
   const probeTokens = splitSelector(candidates[0].selector);
   const probeResult = await probe({
     cliPath: probeTokens[0],
-    args: probeTokens.slice(1),
+    args: [...probeTokens.slice(1), "--skip-git-repo-check"],
     run,
     timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
     env,
