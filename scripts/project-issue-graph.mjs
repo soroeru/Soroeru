@@ -56,6 +56,7 @@ import {
   validateCapabilities,
 } from "./project-issue-plan.mjs";
 import { FileCheckpointSaver } from "./project-issue-graph-checkpointer.mjs";
+import { verifyRepositoryFreshness } from "./project-issue-runtime-adapters/shared.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -949,6 +950,7 @@ async function buildStartInput(cli, repositoryRoot) {
 async function main() {
   const cli = parseGraphCliArgs(process.argv.slice(2));
   const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  await verifyRepositoryFreshness(repositoryRoot);
   const checkpointFile = path.resolve(
     repositoryRoot,
     cli.checkpointFile ?? path.join(DEFAULT_CHECKPOINT_DIR, `${cli.threadId}.json`),

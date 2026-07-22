@@ -27,6 +27,7 @@ import {
   validateCapabilities,
 } from "./project-issue-plan.mjs";
 import { readState, withStateLock, writeState } from "./project-issue-state.mjs";
+import { verifyRepositoryFreshness } from "./project-issue-runtime-adapters/shared.mjs";
 
 // Re-export pure surface for tests and programmatic callers.
 export {
@@ -259,6 +260,8 @@ async function readInput(cli) {
 async function main() {
   const cli = parseCliArgs(process.argv.slice(2));
   const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  
+  await verifyRepositoryFreshness(repositoryRoot);
   let yamlConfig = {};
   try {
     yamlConfig = await loadOrchestratorConfig(cli.configPath ?? DEFAULT_CONFIG_PATH, {

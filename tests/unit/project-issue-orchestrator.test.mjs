@@ -27,6 +27,7 @@ import {
   loadOrchestratorConfig,
   mergeOrchestratorConfig,
 } from "../../scripts/project-issue-config.mjs";
+import { PROBE_SCHEMA_VERSION, getRepositoryCommit } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
 
 const fixtures = new URL("../fixtures/project-issue-orchestrator/", import.meta.url);
 const load = async (name) => JSON.parse(await readFile(new URL(name, fixtures), "utf8"));
@@ -578,11 +579,16 @@ test("CLI dry-run discovery does not write the capabilities cache file", async (
       },
     }),
   );
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  await writeFile(path.join(bin, "git"), `#!${process.execPath}\nprocess.exit(0);\n`, "utf8");
+  await chmod(path.join(bin, "git"), 0o755);
+
   const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
   // Isolate PATH so discovery fails fast with cli-not-found (no real agent probes).
   const isolatedEnv = {
     ...process.env,
-    PATH: path.dirname(process.execPath),
+    PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}`,
   };
   try {
     await execFileAsync(
@@ -625,6 +631,8 @@ test("CLI reuses a fresh capabilities cache instead of re-probing every adapter 
     "utf8",
   );
   await chmod(codexPath, 0o755);
+  await writeFile(path.join(bin, "git"), `#!${process.execPath}\nprocess.exit(0);\n`, "utf8");
+  await chmod(path.join(bin, "git"), 0o755);
 
   const cachedRoute = {
     agent: "Codex",
@@ -644,6 +652,8 @@ test("CLI reuses a fresh capabilities cache instead of re-probing every adapter 
       diagnostics: [{ agent: "Codex", status: "ok", model: "gpt-cached" }],
       cli: { Codex: { path: codexPath, version: "codex-fake 1.0.0" } },
       probedAt: "2026-01-01T00:00:00.000Z",
+      probeSchemaVersion: PROBE_SCHEMA_VERSION,
+      repositoryCommit: await getRepositoryCommit(process.cwd()),
     }),
   );
 
@@ -699,7 +709,13 @@ test("CLI preserves input-provided unavailable agents when YAML and flags omit t
       options: { ...runOptions, dryRun: true, unavailableAgents: ["Codex"] },
     }),
   );
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  await writeFile(path.join(bin, "git"), `#!${process.execPath}\nprocess.exit(0);\n`, "utf8");
+  await chmod(path.join(bin, "git"), 0o755);
+  
   const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
+  const isolatedEnv = { ...process.env, PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}` };
 
   const { stdout } = await execFileAsync(process.execPath, [
     script.pathname,
@@ -707,7 +723,7 @@ test("CLI preserves input-provided unavailable agents when YAML and flags omit t
     inputPath,
     "--issues",
     "101",
-  ]);
+  ], { env: isolatedEnv });
 
   assert.deepEqual(
     JSON.parse(stdout).workerRoutes.map(({ agent }) => agent),
