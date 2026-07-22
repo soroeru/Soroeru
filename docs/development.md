@@ -305,8 +305,9 @@ are unaffected.
 The written capabilities file also carries `cli` (per-agent `{path, version}`
 from `--version`) and `probedAt`. `project-issue-orchestrator.mjs` uses those
 to decide whether to reuse the file as-is (default), targeted-re-probe only
-the agents whose CLI path/version drifted or that `--invalidate-agent` named,
-or (with `--refresh`) ignore the cache and re-probe every adapter. A dry run
+the agents whose CLI path/version drifted, that `--invalidate-agent` named, or
+whose last cached diagnostic was `"failed"` (never trusted as permanent), or
+(with `--refresh`) ignore the cache and re-probe every adapter. A dry run
 never writes the cache regardless of which of those three paths it took.
 `loadOrRefreshCapabilities` in `project-issue-capabilities.mjs` implements
 this; `discoverCapabilities` remains the unconditional "probe now" primitive
