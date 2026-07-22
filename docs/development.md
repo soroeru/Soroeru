@@ -237,7 +237,8 @@ node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json 
 #   --issue 413 --release-policy merged --next-milestone pr-created
 node --test tests/unit/project-issue-orchestrator.test.mjs \
   tests/unit/project-issue-capabilities.test.mjs \
-  tests/unit/project-issue-defaults.test.mjs
+  tests/unit/project-issue-defaults.test.mjs \
+  tests/unit/project-issue-graph.test.mjs
 ```
 
 Items carry no per-Issue agent/model assignment: the plan orders runnable
@@ -329,6 +330,54 @@ the `implementation-assignment` block are ignored. The planner, GitHub fetch,
 and local state lock live in `project-issue-plan.mjs`,
 `project-issue-github.mjs`, and `project-issue-state.mjs`; the CLI entrypoint
 is `project-issue-orchestrator.mjs`.
+
+#### LangGraph StateGraph runner (Issue #439)
+
+`scripts/project-issue-graph.mjs` models the same orchestration as an explicit
+LangGraph `StateGraph` (config → capability discovery → Project fetch →
+dependency validation → plan → route assignment → `Send` fan-out dispatch →
+event wait → integration gate → dependent release → summary), with
+checkpointing and `thread_id`-based resume. It calls the same planning,
+capability, milestone, and dispatch functions as the classic CLI — runtime
+adapters, worktree lifecycle, and CLI process launch stay outside the graph.
+The classic `project-issue-orchestrator.mjs` CLI is unchanged and remains the
+dry-run/compatibility path.
+
+Judgment stays with the orchestrating agent: the run pauses (`interrupt`) for
+dynamic route assignment (unless `--auto-assign` picks deterministically from
+the verified pool), for every integration-gate verdict, and while waiting for
+worker events. Resume payloads are validated against deterministic state — an
+assignment or handoff proposal can only reference a verified worker route,
+and an exhausted pool fails the run closed before any worktree mutation.
+
+```bash
+# Start a run: pauses at the first interrupt and prints the interrupt payload,
+# pending dispatch instructions, and a summary snapshot.
+node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
+  --issues 380,382 --max-parallel 2 --release-policy merged \
+  --parent-agent Codex --parent-model gpt-5 --auto-assign
+# Resume the same thread with a worker event or a gate verdict:
+# node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
+#   --resume-json '{"type":"milestone","issue":380,"milestone":"pr-created"}'
+# node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
+#   --resume-json '{"accepted":true}'
+# Other events: {"type":"worker-started","issue":380,"pid":1234}
+#               {"type":"worker-interrupted","issue":380,"reason":"timeout",
+#                "proposedRoute":{"agent":"Claude","model":"sonnet"}}
+#               {"type":"check"}   # lost-notification fallback: probe workers
+node --test tests/unit/project-issue-graph.test.mjs
+```
+
+Checkpoints are stored per thread under `state/project-issue-graph/` by a
+file-backed saver (`project-issue-graph-checkpointer.mjs`) so a run survives a
+process restart; resume re-verifies recorded worker processes via a
+PID-reuse-safe probe (`{"type":"check"}`), never by PID alone. Graph state and
+checkpoints carry only non-sensitive orchestration data (Issue
+numbers/titles/URLs, routing labels, milestones, timestamps, exact usage) —
+never Issue bodies, prompts, diffs, or credentials. A worker interruption
+keeps the Issue worktree untouched and hands off on a remaining verified
+route in `handoff-issue` mode; dependents are released only after the
+integration gate accepts the release-policy milestone.
 
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)

@@ -87,6 +87,16 @@ review. If the gate finds a problem, return the Issue to its worker with a conci
 not release dependents; otherwise record the milestone. The gate reads the PR diff and the
 related Issues' acceptance criteria; it never copies Issue bodies or diffs into parent state.
 
+## Optional: LangGraph StateGraph runner
+
+`node scripts/project-issue-graph.mjs --thread-id <id> …` runs this same workflow as an
+explicit checkpointed state machine (see `docs/development.md` §3.1): it pauses for route
+assignment, worker events, and every integration-gate verdict, and resumes with
+`--resume-json`. Resume payloads are validated against the verified route pool — the rules
+above (choose only from `workerRoutes`, fail closed on exhaustion, release only on the
+configured milestone, preserve worktrees on handoff) are enforced by the graph itself.
+The classic `project-issue-orchestrator.mjs` dry-run remains the default planning path.
+
 ## State and reporting
 
 Store only non-sensitive Issue numbers, milestones, release policy, routing labels, timestamps, and exact usage values in ignored local state. Never store credentials, Issue bodies, prompts, diffs, or personal data.
