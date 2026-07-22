@@ -659,3 +659,18 @@ test("parseGraphCliArgs validates thread id and resume sources", () => {
   assert.deepEqual(options.existingWorktrees, [3]);
   assert.equal(options.autoAssign, true);
 });
+
+test("classifies failure taxonomy into recoverable and unrecoverable reasons", async () => {
+  const { classifyFailure, FAILURE_TAXONOMY, FAILURE_TRANSITIONS, idempotencyKey } = await import("../../scripts/project-issue-graph.mjs");
+  assert.equal(classifyFailure("timeout").recoverable, true);
+  assert.equal(classifyFailure("session-limit").recoverable, true);
+  assert.equal(classifyFailure("provider-unavailable").recoverable, true);
+  assert.equal(classifyFailure("worker-crashed").recoverable, true);
+  assert.equal(classifyFailure("auth-failed").recoverable, false);
+  assert.equal(classifyFailure("policy-blocked").recoverable, false);
+  assert.equal(classifyFailure("invalid-input").recoverable, false);
+
+  assert.deepEqual(Array.from(FAILURE_TRANSITIONS.running), ["retrying", "handing_off", "failed"]);
+  assert.equal(idempotencyKey(1, "dispatch", 1), "issue-1:dispatch:1");
+});
+
