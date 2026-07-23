@@ -187,9 +187,11 @@ export class OfflineReplayEngine {
 
     // Hard Invariant 1: Candidate set restriction check
     const isModeEligible = episode.eligible_modes.includes(candidateConfig.execution_mode);
-    const isRouteEligible = episode.eligible_routes.includes(candidateConfig.implementer_route);
+    const isImplementerRouteEligible = episode.eligible_routes.includes(candidateConfig.implementer_route);
+    const isReviewerRouteEligible =
+      !candidateConfig.reviewer_route || episode.eligible_routes.includes(candidateConfig.reviewer_route);
 
-    if (!isModeEligible || !isRouteEligible) {
+    if (!isModeEligible || !isImplementerRouteEligible || !isReviewerRouteEligible) {
       return {
         episode_id: episode.episode_id,
         issue_id: episode.issue_id,
@@ -248,7 +250,7 @@ export class OfflineReplayEngine {
         reviewer: reviewerTokens,
       },
       latency_ms: totalLatencyMs,
-      human_intervention: actualTerminal.human_intervention || false,
+      human_intervention: Boolean(actualTerminal.human_intervention),
       hard_constraint_violations: actualTerminal.hard_constraint_violations || 0,
       reviewer_findings_count: actualTerminal.reviewer_findings_count || 0,
     };
@@ -281,7 +283,7 @@ export class OfflineReplayEngine {
 
       const terminalSuccessRate = totalCount > 0 ? successfulCount / totalCount : 0;
       const prMergeRate = totalCount > 0 ? prMergedCount / totalCount : 0;
-      const avgTokensPerSuccess = successfulCount > 0 ? totalTokens / successfulCount : totalTokens;
+      const avgTokensPerSuccess = successfulCount > 0 ? totalTokens / successfulCount : 0;
 
       // Sample size warning
       const sampleSizeWarning = totalCount < 10 ? "Sample size N < 10 is low; confidence interval may be wide." : null;
