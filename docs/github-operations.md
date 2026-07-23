@@ -98,8 +98,7 @@ Operational notes:
   tree, so worktrees do not contend for the same review lock. Wait for reviews
   only under the worktree where the commit was made.
 - Issue lifecycle metadata selects the current reviewer and handoff epoch (see
-  §8 and `local-ai-review.md`). Agent prefixes remain a migration fallback only
-  for branches created before this policy.
+  §8 and `local-ai-review.md`).
 - Each worktree needs its own `node_modules` / tool installs if you run quality
   gates there; they are not shared automatically.
 - Never repurpose a dirty Issue worktree for another Issue. Never auto-stash,
@@ -132,14 +131,6 @@ Do not hand off while a Git operation or local AI review is active. Preserve a
 dirty worktree in place; never auto-stash, auto-commit, reset, clean, or copy it.
 Record the handoff epoch, agents, redacted session identifiers, HEAD, local
 state, review usage, and next step in the Issue or PR.
-
-### 2.5 Fixed-lane migration
-
-`.worktrees/{codex,claude,grok,gemini}` and agent-prefixed branches may remain
-while existing WIP is inventoried. They are not valid starts for new Issues.
-`scripts/ensure-agent-worktree.sh` is diagnosis-only during migration and must
-not create a missing fixed lane. Remove legacy worktrees only after their WIP,
-push state, PR state, and review processes have been checked individually.
 
 ## 3. Issue Workflow
 
