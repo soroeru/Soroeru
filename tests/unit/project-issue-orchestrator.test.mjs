@@ -27,7 +27,10 @@ import {
   loadOrchestratorConfig,
   mergeOrchestratorConfig,
 } from "../../scripts/project-issue-config.mjs";
-import { PROBE_SCHEMA_VERSION, getRepositoryCommit } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
+import {
+  PROBE_SCHEMA_VERSION,
+  getRepositoryCommit,
+} from "../../scripts/project-issue-runtime-adapters/shared.mjs";
 
 const fixtures = new URL("../fixtures/project-issue-orchestrator/", import.meta.url);
 const load = async (name) => JSON.parse(await readFile(new URL(name, fixtures), "utf8"));
@@ -190,7 +193,7 @@ test("dry-run returns a plan without writing state and ignores milestones unless
   );
   assert.deepEqual(
     result.workerRoutes.map(({ agent }) => agent),
-    ["Codex", "Claude"],
+    ["Claude"],
   );
 
   const simulated = await runOrchestration({
@@ -434,6 +437,47 @@ test("builds the run-scoped worker route pool from capability records", () => {
   );
 });
 
+test("excludes every model of the parent agent from the worker route pool", () => {
+  const capabilities = [
+    workerRoute("Codex", "gpt-5"),
+    workerRoute("Codex", "gpt-5-mini"),
+    workerRoute("Claude", "sonnet"),
+    workerRoute("agy", "gemini-2.5-pro"),
+    workerRoute("Grok", "grok-4"),
+  ];
+  assert.deepEqual(
+    selectWorkerRoutes(capabilities, { parentAgent: "Codex" }).map(({ agent, model }) => `${agent}:${model}`),
+    ["Claude:sonnet", "agy:gemini-2.5-pro", "Grok:grok-4"],
+  );
+});
+
+test("treats agy as the Gemini parent runtime alias", () => {
+  const capabilities = [workerRoute("Gemini", "Gemini 3.1 Pro (High)"), workerRoute("Claude", "sonnet")];
+  assert.deepEqual(
+    selectWorkerRoutes(capabilities, { parentAgent: "agy" }).map(({ agent }) => agent),
+    ["Claude"],
+  );
+  assert.equal(
+    validateCapabilities(
+      [{ agent: "agy", model: "Gemini 3.1 Pro (High)", role: "parent" }],
+      [{ ...capabilities[0], role: "parent", requestedModel: "Gemini 3.1 Pro (High)" }],
+    )[0].agent,
+    "Gemini",
+  );
+});
+
+test("orchestration degrades to the remaining agents below maxParallel", async () => {
+  const input = await load("branching.json");
+  const result = await runOrchestration({
+    ...input,
+    options: { ...runOptions, dryRun: true, maxParallel: 4 },
+  });
+  assert.deepEqual(
+    result.workerRoutes.map(({ agent }) => agent),
+    ["Claude"],
+  );
+});
+
 test("excludes run-scoped unavailable agents and models from the route pool", () => {
   const routes = selectWorkerRoutes(runOptions.capabilities, { unavailableAgents: ["codex"] });
   assert.deepEqual(
@@ -441,9 +485,7 @@ test("excludes run-scoped unavailable agents and models from the route pool", ()
     ["Claude"],
   );
   assert.deepEqual(
-    selectWorkerRoutes(runOptions.capabilities, { unavailableModels: ["sonnet"] }).map(
-      ({ agent }) => agent,
-    ),
+    selectWorkerRoutes(runOptions.capabilities, { unavailableModels: ["sonnet"] }).map(({ agent }) => agent),
     ["Codex"],
   );
   const requested = [
@@ -456,10 +498,7 @@ test("excludes run-scoped unavailable agents and models from the route pool", ()
 });
 
 test("matches unavailable agent names case-insensitively outside the built-in vocabulary", () => {
-  assert.deepEqual(
-    selectWorkerRoutes([workerRoute("Qwen", "qwen-3")], { unavailableAgents: ["qwen"] }),
-    [],
-  );
+  assert.deepEqual(selectWorkerRoutes([workerRoute("Qwen", "qwen-3")], { unavailableAgents: ["qwen"] }), []);
 });
 
 test("skips unverified routes and rejects malformed worker capability records", () => {
@@ -518,7 +557,7 @@ test("a run-scoped unavailable agent removes only that route, never a substitute
   const recovered = await runOrchestration({ ...input, options: { ...runOptions, dryRun: true } });
   assert.deepEqual(
     recovered.workerRoutes.map(({ agent }) => agent),
-    ["Codex", "Claude"],
+    ["Claude"],
   );
 });
 
@@ -642,12 +681,21 @@ test("CLI reuses a fresh capabilities cache instead of re-probing every adapter 
     verifiable: true,
     timeoutMs: 3_600_000,
   };
+  const cachedClaudeRoute = {
+    agent: "Claude",
+    model: "sonnet-cached",
+    selector: "claude --model sonnet-cached",
+    selectable: true,
+    verifiable: true,
+    timeoutMs: 3_600_000,
+  };
   await writeFile(
     capabilitiesOutput,
     JSON.stringify({
       capabilities: [
         { ...cachedRoute, role: "worker" },
         { ...cachedRoute, role: "parent" },
+        { ...cachedClaudeRoute, role: "worker" },
       ],
       diagnostics: [{ agent: "Codex", status: "ok", model: "gpt-cached" }],
       cli: { Codex: { path: codexPath, version: "codex-fake 1.0.0" } },
@@ -694,7 +742,7 @@ test("CLI reuses a fresh capabilities cache instead of re-probing every adapter 
   assert.equal(result.capabilityCacheStatus, "reused");
   assert.deepEqual(
     result.workerRoutes.map(({ agent, model }) => `${agent}:${model}`),
-    ["Codex:gpt-cached"],
+    ["Claude:sonnet-cached"],
   );
 });
 
@@ -713,17 +761,15 @@ test("CLI preserves input-provided unavailable agents when YAML and flags omit t
   await mkdir(bin);
   await writeFile(path.join(bin, "git"), `#!${process.execPath}\nprocess.exit(0);\n`, "utf8");
   await chmod(path.join(bin, "git"), 0o755);
-  
+
   const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
   const isolatedEnv = { ...process.env, PATH: `${bin}${path.delimiter}${path.dirname(process.execPath)}` };
 
-  const { stdout } = await execFileAsync(process.execPath, [
-    script.pathname,
-    "--input",
-    inputPath,
-    "--issues",
-    "101",
-  ], { env: isolatedEnv });
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [script.pathname, "--input", inputPath, "--issues", "101"],
+    { env: isolatedEnv },
+  );
 
   assert.deepEqual(
     JSON.parse(stdout).workerRoutes.map(({ agent }) => agent),

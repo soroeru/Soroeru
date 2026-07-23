@@ -160,9 +160,10 @@ export function validateCapabilities(requiredRoutes, capabilities) {
     throw new Error("capability-records-required");
   const validated = [];
   for (const route of requiredRoutes) {
+    const requiredAgent = canonicalizeAgent(route.agent);
     const match = capabilities.find(
       (candidate) =>
-        candidate.agent === route.agent &&
+        candidate.agent === requiredAgent &&
         // `requestedModel` preserves the requested display name while
         // `model` remains the runtime's canonical model identifier. Keep
         // accepting the legacy shape where `model` is the requested name,
@@ -192,17 +193,23 @@ export function validateCapabilities(requiredRoutes, capabilities) {
 
 /**
  * Run-time worker route pool: every role=worker capability record that is
- * well-formed, selectable, verifiable, and not excluded by the run-scoped
- * unavailable agent/model lists. The orchestrating agent assigns each
- * runnable Issue to one of these routes; the pool never invents a route.
+ * well-formed, selectable, verifiable, and not excluded by the parent agent
+ * or run-scoped unavailable agent/model lists. The orchestrating agent assigns
+ * each runnable Issue to one of these routes; the pool never invents a route.
  */
-export function selectWorkerRoutes(capabilities, { unavailableAgents = [], unavailableModels = [] } = {}) {
+export function selectWorkerRoutes(
+  capabilities,
+  { parentAgent, unavailableAgents = [], unavailableModels = [] } = {},
+) {
   if (!Array.isArray(capabilities)) throw new Error("capability-records-required");
   const excludedAgents = new Set(
-    unavailableAgents
-      .map((agent) => (canonicalizeAgent(agent) ?? "").toLowerCase())
-      .filter(Boolean),
+    unavailableAgents.map((agent) => (canonicalizeAgent(agent) ?? "").toLowerCase()).filter(Boolean),
   );
+  if (parentAgent !== undefined) {
+    const canonicalParent = canonicalizeAgent(parentAgent);
+    if (!canonicalParent) throw new Error("invalid-parent-agent");
+    excludedAgents.add(canonicalParent.toLowerCase());
+  }
   const excludedModels = new Set(unavailableModels);
   const routes = [];
   for (const record of capabilities) {

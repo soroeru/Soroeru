@@ -245,10 +245,13 @@ Items carry no per-Issue agent/model assignment: the plan orders runnable
 Issues by Priority (P0 first) then Issue number under the dependency
 constraints, and the result includes `workerRoutes` — the run-scoped pool of
 verified worker capability records after `--unavailable-agent` /
-`--unavailable-model` exclusions. The orchestrating agent assigns each
-runnable Issue to one of those routes at run time; if Issues are runnable but
-the pool is empty the run stops with `no-worker-route-available` before any
-worktree mutation.
+`--unavailable-model` exclusions and Parent-agent exclusion. The Parent agent
+runtime is excluded by agent identity, including all of its models and
+selectors: a Codex Parent means no Codex worker route. The orchestrating agent
+assigns each runnable Issue to one of the remaining routes at run time. If the
+remaining pool is smaller than `maxParallel`, the run proceeds with the
+available capacity; if Issues are runnable but the pool is empty the run stops
+with `no-worker-route-available` before any worktree mutation.
 
 Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
 `scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
@@ -347,8 +350,9 @@ Judgment stays with the orchestrating agent: the run pauses (`interrupt`) for
 dynamic route assignment (unless `--auto-assign` picks deterministically from
 the verified pool), for every integration-gate verdict, and while waiting for
 worker events. Resume payloads are validated against deterministic state — an
-assignment or handoff proposal can only reference a verified worker route,
-and an exhausted pool fails the run closed before any worktree mutation.
+assignment or handoff proposal can only reference a verified worker route
+belonging to an agent other than the Parent, and an exhausted pool fails the
+run closed before any worktree mutation.
 
 ```bash
 # Start a run: pauses at the first interrupt and prints the interrupt payload,
@@ -375,9 +379,10 @@ PID-reuse-safe probe (`{"type":"check"}`), never by PID alone. Graph state and
 checkpoints carry only non-sensitive orchestration data (Issue
 numbers/titles/URLs, routing labels, milestones, timestamps, exact usage) —
 never Issue bodies, prompts, diffs, or credentials. A worker interruption
-keeps the Issue worktree untouched and hands off on a remaining verified
-route in `handoff-issue` mode; dependents are released only after the
-integration gate accepts the release-policy milestone.
+keeps the Issue worktree untouched and hands off on a remaining verified route
+from another agent in `handoff-issue` mode; the Parent agent is never a handoff
+target. Dependents are released only after the integration gate accepts the
+release-policy milestone.
 
 ```bash
 npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)
