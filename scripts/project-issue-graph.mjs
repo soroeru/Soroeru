@@ -65,6 +65,23 @@ export const DEFAULT_CHECKPOINT_DIR = "state/project-issue-graph";
 const RELEASE_POLICIES = new Set(["pr-created", "merged"]);
 const MILESTONE_TYPES = new Set(["pr-created", "merged"]);
 const EVENT_TYPES = new Set(["milestone", "worker-interrupted", "worker-started", "check"]);
+export const FAILURE_TAXONOMY = Object.freeze({
+  recoverable: new Set(["timeout", "session-limit", "provider-unavailable", "worker-crashed"]),
+  unrecoverable: new Set(["auth-failed", "policy-blocked", "invalid-input"]),
+});
+export const FAILURE_TRANSITIONS = Object.freeze({
+  running: new Set(["retrying", "handing_off", "failed"]),
+  retrying: new Set(["running", "failed"]),
+  handing_off: new Set(["running", "failed"]),
+  failed: new Set(["manual_intervention"]),
+});
+export function classifyFailure(reason = "unknown") {
+  const kind = String(reason).split(":", 1)[0];
+  return { kind, recoverable: FAILURE_TAXONOMY.recoverable.has(kind) };
+}
+export function idempotencyKey(issue, action, attempt) {
+  return `issue-${issue}:${action}:${attempt}`;
+}
 const GATE_CHECKS = Object.freeze([
   "conflicts-with-other-issues-in-run",
   "contract-consistency-with-dependencies-and-dependents",
@@ -132,6 +149,10 @@ export const OrchestrationState = Annotation.Root({
   pendingGate: Annotation(),
   /** Issues needing handoff: {issue, reason, proposedRoute?}; null clears. */
   pendingInterrupted: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
+  retryCounts: Annotation({ reducer: (left = {}, right = {}) => ({ ...left, ...right }), default: () => ({}) }),
+  handoffCounts: Annotation({ reducer: (left = {}, right = {}) => ({ ...left, ...right }), default: () => ({}) }),
+  resumeFrom: Annotation({ reducer: (left, right) => right ?? left }),
+  recoveryEvents: Annotation({ reducer: (left = [], right = []) => [...left, ...(right ?? [])], default: () => [] }),
   lastEventError: Annotation(),
   /** "verified" | "unavailable" — set by discover_capabilities. */
   parentRouting: Annotation(),
@@ -413,6 +434,7 @@ async function dispatchWorkerNode(payload, config) {
     worktreeId: `issue-${assignment.number}`,
     expectedMilestone: payload.nextMilestone,
     startedAt: deps.now(),
+    idempotencyKey: idempotencyKey(assignment.number, "dispatch", assignment.attempt),
   };
   try {
     const started = await deps.dispatch({
@@ -422,6 +444,7 @@ async function dispatchWorkerNode(payload, config) {
       nextMilestone: payload.nextMilestone,
       mode: assignment.mode,
       uuid: base.uuid,
+      idempotencyKey: base.idempotencyKey,
     });
     return {
       workerExecutions: [
