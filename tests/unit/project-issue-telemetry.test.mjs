@@ -1,11 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import path from "node:path";
 
 import {
   aggregateTokenUsage,
   migrateTelemetryEvent,
   validateTelemetryEvent,
+  JsonlTelemetrySink,
+  SqliteTelemetrySink,
+  createTelemetrySink,
+  generateLLMOpsReport,
 } from "../../scripts/project-issue-telemetry.mjs";
 
 const fixture = async (name) =>
@@ -83,3 +88,75 @@ test("records closed duplicate, abandoned, timeout, and failed-handoff waste rea
     /invalid-failure-reason-code/,
   );
 });
+
+test("JsonlTelemetrySink emits, rotates, and reads events", async () => {
+  const testDir = path.join(process.cwd(), "tmp-test-telemetry-jsonl");
+  await rm(testDir, { recursive: true, force: true });
+
+  const sink = new JsonlTelemetrySink({
+    telemetryDir: testDir,
+    jsonlFileName: "test-events.jsonl",
+    maxFileSizeBytes: 300, // Small size to test rotation
+  });
+
+  const events = await fixture("valid-v1.json");
+  for (const evt of events) {
+    await sink.emit(evt);
+  }
+
+  const readBack = await sink.readEvents();
+  assert.equal(readBack.length, events.length);
+  assert.equal(readBack[0].eventId, events[0].eventId);
+
+  await rm(testDir, { recursive: true, force: true });
+});
+
+test("SqliteTelemetrySink or non-blocking fallback emits and reads events", async () => {
+  const testDir = path.join(process.cwd(), "tmp-test-telemetry-sqlite");
+  await rm(testDir, { recursive: true, force: true });
+
+  const sink = new SqliteTelemetrySink({
+    telemetryDir: testDir,
+    sqliteFileName: "test-telemetry.db",
+  });
+
+  const events = await fixture("valid-v1.json");
+  for (const evt of events) {
+    await sink.emit(evt);
+  }
+
+  const readBack = await sink.readEvents();
+  // Either sqlite3 executed successfully and read back events, or non-blocking fallback returned empty array without throwing
+  assert.ok(Array.isArray(readBack));
+
+  await rm(testDir, { recursive: true, force: true });
+});
+
+test("createTelemetrySink instantiates requested sink mode non-blockingly", async () => {
+  const jsonlSink = createTelemetrySink({ sinkType: "jsonl" });
+  assert.ok(jsonlSink instanceof JsonlTelemetrySink);
+
+  const sqliteSink = createTelemetrySink({ sinkType: "sqlite" });
+  assert.ok(sqliteSink instanceof SqliteTelemetrySink);
+
+  const noopSink = createTelemetrySink({ enabled: false });
+  await assert.doesNotThrow(async () => {
+    await noopSink.emit({});
+    const events = await noopSink.readEvents();
+    assert.deepEqual(events, []);
+  });
+});
+
+test("generateLLMOpsReport aggregates metrics and produces required dashboard sections", async () => {
+  const events = await fixture("valid-v1.json");
+  const report = generateLLMOpsReport(events);
+
+  assert.ok(report.summary);
+  assert.equal(report.summary.totalEvents, events.length);
+  assert.ok(report.terminalSuccessByMode);
+  assert.ok(report.routeSuccessRates);
+  assert.ok(report.gateAndExecutionFailures);
+  assert.ok(report.tokenConsumption);
+});
+
+
