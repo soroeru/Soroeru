@@ -525,9 +525,8 @@ not the supported product installation or binding UX. To use it during local dev
    - Note the extension ID shown on the extension card (you will need it below).
    - An unpacked extension's ID is derived from the **absolute directory path**: loading
      `dist/extension/` from a different checkout or worktree produces a **different ID**.
-     After such a change, re-enter the new ID in settings, restart, and re-run step 4 —
-     the previously registered manifest still allowlists the old ID and Chrome will
-     refuse the connection until it is re-registered.
+      After such a change, re-enter the new ID in settings and re-run step 4 (**host を登録して接続を始める**)
+      to update the native host manifest's `allowed_origins` with the latest stored ID (re-registration uses the latest stored ID without requiring an app restart).
 
 3. **Start the app and save the bridge settings:**
 

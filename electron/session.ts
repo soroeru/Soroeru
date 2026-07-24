@@ -419,15 +419,26 @@ export class SoroeruSession {
     if (configuration.restartRequired && !configuration.stored.enabled) {
       return { ok: false, error: "restart-required" };
     }
+    // Prefer the latest stored ID when not environment-overridden. Setup is
+    // fixed at process start; registering the startup ID after the user saved a
+    // different extension ID leave Chrome's allowlist mismatched and the
+    // service worker stuck OFFLINE (connectNative refused).
+    const extensionId =
+      configuration.effective.extensionIdSource === "environment"
+        ? configuration.effective.extensionId
+        : configuration.stored.extensionId || this.chromeBridgeSetup.extensionId;
+    if (!isValidChromeExtensionId(extensionId)) {
+      return { ok: false, error: "invalid-extension-id" };
+    }
     try {
       this.log("info", "chrome-bridge", "registering native host", {
         hasSourceBinary: !!this.chromeBridgeSetup.sourceBinary,
-        hasExtensionId: !!this.chromeBridgeSetup.extensionId,
+        hasExtensionId: true,
         hasPaths: !!this.chromeBridgeSetup.paths,
       });
       await registerNativeHost(
         this.chromeBridgeSetup.sourceBinary,
-        this.chromeBridgeSetup.extensionId,
+        extensionId,
         this.chromeBridgeSetup.paths,
       );
       this.log("info", "chrome-bridge", "native host registered successfully");
@@ -445,7 +456,7 @@ export class SoroeruSession {
       this.log("error", "chrome-bridge", "native host registration failed", {
         reason,
         hasSourceBinary: !!this.chromeBridgeSetup.sourceBinary,
-        hasExtensionId: !!this.chromeBridgeSetup.extensionId,
+        hasExtensionId: true,
         hasPaths: !!this.chromeBridgeSetup.paths,
       });
       return { ok: false, error: "registration-failed" };

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -202,15 +202,101 @@ test("Chrome bridge registration failure logs detailed error", async () => {
       logger,
     });
     const result = await session.connectChromeBridge();
+    // Invalid IDs fail closed before registration so the allowlist is never written wrong.
     assert.equal(result.ok, false);
-    assert.equal(result.error, "registration-failed");
-    
-    const failLog = logged.find(e => e.level === "error" && e.category === "chrome-bridge" && e.message === "native host registration failed");
-    assert.ok(failLog);
-    assert.equal(failLog.fields.reason, "invalid-extension-id");
-    assert.equal(failLog.fields.hasSourceBinary, true);
-    assert.equal(failLog.fields.hasExtensionId, true);
-    assert.equal(failLog.fields.hasPaths, true);
+    assert.equal(result.error, "invalid-extension-id");
+    assert.equal(
+      logged.some(
+        (e) =>
+          e.level === "error" &&
+          e.category === "chrome-bridge" &&
+          e.message === "native host registration failed",
+      ),
+      false,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("connect registers the stored extension ID when it differs from startup setup", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-ipc-chrome-stored-id-"));
+  const sourceBinary = join(dir, "host-source");
+  const paths = {
+    appSupportDir: join(dir, "Application Support"),
+    chromeNativeMessagingDir: join(dir, "Chrome", "NativeMessagingHosts"),
+  };
+  const startupId = "a".repeat(32);
+  const storedId = "b".repeat(32);
+  try {
+    await writeFile(sourceBinary, "#!/usr/bin/env node\n");
+    const session = new SoroeruSession(join(dir, "vault.json"), {
+      chromeBridge: {
+        isConnected: () => false,
+        sendCommand: async () => undefined,
+        start: async () => undefined,
+      },
+      chromeBridgeSetup: { sourceBinary, extensionId: startupId, paths },
+      chromeBridgeSettings: {
+        initial: {
+          stored: { version: 1, enabled: true, extensionId: storedId },
+          effective: {
+            enabled: true,
+            extensionId: startupId,
+            enabledSource: "stored",
+            extensionIdSource: "stored",
+          },
+        },
+        save: async (input) => ({ version: 1 as const, ...input }),
+      },
+    });
+    assert.equal((await session.connectChromeBridge()).ok, true);
+    const manifest = JSON.parse(
+      await readFile(join(paths.chromeNativeMessagingDir, "jp.soroeru.bridge.json"), "utf8"),
+    ) as { allowed_origins: string[] };
+    assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${storedId}/`]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("connect registers the environment override extension ID when env override is present", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-ipc-chrome-env-id-"));
+  const sourceBinary = join(dir, "host-source");
+  const paths = {
+    appSupportDir: join(dir, "Application Support"),
+    chromeNativeMessagingDir: join(dir, "Chrome", "NativeMessagingHosts"),
+  };
+  const startupId = "a".repeat(32);
+  const storedId = "b".repeat(32);
+  const envId = "c".repeat(32);
+  try {
+    await writeFile(sourceBinary, "#!/usr/bin/env node\n");
+    const session = new SoroeruSession(join(dir, "vault.json"), {
+      chromeBridge: {
+        isConnected: () => false,
+        sendCommand: async () => undefined,
+        start: async () => undefined,
+      },
+      chromeBridgeSetup: { sourceBinary, extensionId: startupId, paths },
+      chromeBridgeSettings: {
+        initial: {
+          stored: { version: 1, enabled: true, extensionId: storedId },
+          effective: {
+            enabled: true,
+            extensionId: envId,
+            enabledSource: "stored",
+            extensionIdSource: "environment",
+          },
+        },
+        save: async (input) => ({ version: 1 as const, ...input }),
+      },
+    });
+    assert.equal((await session.connectChromeBridge()).ok, true);
+    const manifest = JSON.parse(
+      await readFile(join(paths.chromeNativeMessagingDir, "jp.soroeru.bridge.json"), "utf8"),
+    ) as { allowed_origins: string[] };
+    assert.deepEqual(manifest.allowed_origins, [`chrome-extension://${envId}/`]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
