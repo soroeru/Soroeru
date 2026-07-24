@@ -521,8 +521,8 @@ test("Gemini adapter records agy models with exact display names", async () => {
   assert.ok(geminiWorkers[0].selector.includes("Gemini 3.1 Pro (High)"));
   // agy's `--print` is a Go string flag consuming the next argv token as the
   // prompt, so it must be the last selector token (launch appends the prompt
-  // right after it) and skip-permissions must come before it.
-  assert.match(geminiWorkers[0].selector, /--dangerously-skip-permissions --print$/);
+  // right after it) and skip-permissions/print-timeout must come before it.
+  assert.match(geminiWorkers[0].selector, /--dangerously-skip-permissions --print-timeout 9000ms --print$/);
 });
 
 test("capabilities CLI module is importable from the repository root", async () => {
