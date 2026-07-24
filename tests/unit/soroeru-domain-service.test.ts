@@ -364,6 +364,65 @@ test("updateCredential overwrites password and username without leaving the old 
   }
 });
 
+test("markSiteCredentialsPasswordStale flags passwords and updateCredential clears the flag (Issue #416)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({ domain: "reset.example.test", displayName: "Reset" });
+    const other = service.upsertSiteAccount({ domain: "other.example.test", displayName: "Other" });
+    const primary = service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "old-pass",
+      source: "csv-import",
+    });
+    service.addCredential({
+      siteAccountId: other.id,
+      username: "other@example.test",
+      password: "other-pass",
+      source: "csv-import",
+    });
+
+    const marked = service.markSiteCredentialsPasswordStale(site.id, 1_700_000_000_000);
+    assert.equal(marked.length, 1);
+    assert.equal(marked[0]?.id, primary.id);
+    assert.equal(marked[0]?.passwordStale, true);
+    assert.equal(marked[0]?.password, "old-pass");
+    assert.equal(marked[0]?.source, "csv-import");
+    assert.equal(marked[0]?.updatedAt, 1_700_000_000_000);
+    // Other sites are untouched.
+    assert.equal(service.listCredentialsForSite(other.id)[0]?.passwordStale, undefined);
+
+    // Idempotent: already-stale rows are returned without rewriting source/password.
+    const again = service.markSiteCredentialsPasswordStale(site.id, 1_700_000_000_100);
+    assert.equal(again.length, 1);
+    assert.equal(again[0]?.passwordStale, true);
+    assert.equal(again[0]?.updatedAt, 1_700_000_000_000);
+
+    const usernameOnly = service.updateCredential({
+      credentialId: primary.id,
+      username: "new-user@example.test",
+    });
+    assert.equal(usernameOnly.ok, true);
+    if (usernameOnly.ok) {
+      // Username-only edit keeps the stale signal — password was not replaced.
+      assert.equal(usernameOnly.credential.passwordStale, true);
+    }
+
+    const passwordUpdate = service.updateCredential({
+      credentialId: primary.id,
+      password: "new-pass-after-reset",
+    });
+    assert.equal(passwordUpdate.ok, true);
+    if (passwordUpdate.ok) {
+      assert.equal(passwordUpdate.credential.password, "new-pass-after-reset");
+      assert.equal(passwordUpdate.credential.passwordStale, undefined);
+    }
+    assert.equal(service.getCredential(primary.id)?.passwordStale, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("updateCredential rejects empty changes and missing ids", async () => {
   const { dir, service } = await openService();
   try {

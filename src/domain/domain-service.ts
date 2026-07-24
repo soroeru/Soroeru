@@ -367,8 +367,35 @@ export class DomainService {
       source: "user",
       updatedAt: Date.now(),
     };
+    // A new password is the user's current secret; clear the post-reset stale flag.
+    if (passwordChange) delete credential.passwordStale;
     this.vault.put("credential", credential);
     return { ok: true, credential };
+  }
+
+  /**
+   * Mark every stored password for a site as stale (Issue #416). Used after a
+   * password-reset wall hand-off resolves: the vault value is definitionally
+   * out of date if the user just reset it on the site. Idempotent; returns the
+   * credentials that are now flagged (including ones already flagged).
+   */
+  markSiteCredentialsPasswordStale(siteAccountId: string, now: number = Date.now()): Credential[] {
+    const updated: Credential[] = [];
+    for (const existing of this.listCredentialsForSite(siteAccountId)) {
+      if (existing.passwordStale) {
+        updated.push(existing);
+        continue;
+      }
+      const credential: Credential = {
+        ...existing,
+        passwordStale: true,
+        // Do not flip source / rewrite the secret — only the freshness signal.
+        updatedAt: now,
+      };
+      this.vault.put("credential", credential);
+      updated.push(credential);
+    }
+    return updated;
   }
 
   getCredential(credentialId: string): Credential | undefined {

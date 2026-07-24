@@ -325,6 +325,11 @@ export interface SiteCredentialView {
   username: string;
   updatedAt: number;
   source: "csv-import" | "user";
+  /**
+   * True when the vault password is known to be out of date (e.g. after a
+   * resolved password-reset handoff). Password itself never crosses IPC.
+   */
+  passwordStale: boolean;
 }
 
 /** The per-site composed ledger view: the summary plus its masked detail rows. */

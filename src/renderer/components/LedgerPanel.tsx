@@ -1244,6 +1244,12 @@ function SiteCredentialUpdateForm({
         サイト側でパスワードを変更した場合などに、Soroeru
         内の保存値を上書きします。既存のパスワードは表示しません（入力はマスク）。
       </p>
+      {credential.passwordStale && (
+        <p className="rounded border border-red-200 bg-red-50 px-2 py-1 text-red-800">
+          保存パスワードは{staleLabel("stale")}
+          です（パスワード再設定後など）。サイト側の新しいパスワードを入力して更新してください。再収集では古いパスワードは送信しません。
+        </p>
+      )}
       {credentialCount > 1 && (
         <p className="text-amber-800">
           このサイトには認証情報が {credentialCount} 件あります。先頭の 1 件を編集します（ログイン ID:{" "}

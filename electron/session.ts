@@ -1202,6 +1202,7 @@ function toSiteCredentialView(credential: Credential): SiteCredentialView {
     username: credential.username,
     updatedAt: credential.updatedAt,
     source: credential.source,
+    passwordStale: credential.passwordStale === true,
   };
 }
 
