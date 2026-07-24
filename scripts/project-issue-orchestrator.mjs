@@ -220,7 +220,7 @@ async function loadProjectConfig(cli) {
   );
   return selectProjectConfig(config.projects, {
     owner: cli.projectOwner,
-    ownerType: cli.ownerType ?? "user",
+    ownerType: cli.ownerType ?? "organization",
     name: cli.projectName,
   });
 }
@@ -251,7 +251,7 @@ async function readInput(cli) {
     const project = await loadProjectConfig(cli);
     const fetched = await fetchProjectItems({
       owner: cli.projectOwner,
-      ownerType: cli.ownerType ?? "user",
+      ownerType: cli.ownerType ?? "organization",
       projectName: cli.projectName,
       fields: project.fields,
       graphql: (query, variables) =>

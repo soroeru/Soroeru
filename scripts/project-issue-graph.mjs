@@ -791,12 +791,12 @@ export function createDefaultDeps({ cwd }) {
       );
       const project = selectProjectConfig(projects.projects, {
         owner: config.projectOwner,
-        ownerType: config.ownerType ?? "user",
+        ownerType: config.ownerType ?? "organization",
         name: config.projectName,
       });
       return fetchProjectItems({
         owner: config.projectOwner,
-        ownerType: config.ownerType ?? "user",
+        ownerType: config.ownerType ?? "organization",
         projectName: config.projectName,
         fields: project.fields,
         graphql: (query, variables) =>
@@ -958,7 +958,7 @@ async function buildStartInput(cli, repositoryRoot) {
   const input = {
     config: {
       projectOwner: merged.projectOwner,
-      ownerType: merged.ownerType ?? "user",
+      ownerType: merged.ownerType ?? "organization",
       projectName: merged.projectName,
       maxParallel: merged.maxParallel,
       releasePolicy: merged.releasePolicy,
