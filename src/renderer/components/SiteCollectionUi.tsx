@@ -93,6 +93,7 @@ export function BatchCollectionBar({
             type="button"
             disabled={selectedCount === 0 || bulkBusy}
             onClick={onDeleteSelected}
+            aria-label={`選択した ${selectedCount} 件のサイトを削除`}
             className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {deleteBulkRunning ? "削除中…" : "選択したサイトを削除"}

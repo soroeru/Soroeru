@@ -594,6 +594,8 @@ export function LedgerPanel({
       setDeleteAcknowledged(false);
       // Reload inline so loadSites success cannot clear partial-delete messaging, and
       // reload failure cannot misreport irreversible deletes as delete-failed.
+      // Parent onCollected bumps reloadToken → loadSites, which clears loadError on
+      // success — only invoke it after a fully successful delete so failure copy stays.
       try {
         const nextSites = await window.soroeru.ledger.siteDetails();
         setSites(nextSites);
@@ -606,7 +608,9 @@ export function LedgerPanel({
           return nextSites.find((site) => site.siteAccountId === current.siteAccountId);
         });
         setLoadError(deleteOutcomeError);
-        onCollectedRef.current();
+        if (deleteOutcomeError === undefined) {
+          onCollectedRef.current();
+        }
       } catch {
         setLoadError(
           deleteOutcomeError
