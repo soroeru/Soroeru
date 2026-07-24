@@ -12,9 +12,18 @@ export const WALL_REPEAT_SUGGEST_THRESHOLD = 2;
 /**
  * Stable Constraint / checkpoint marker for diagnostics (collection-failure
  * analysis). UI copy lives in the renderer; this string is structure-only.
+ * Used only when the same wall kind repeated before auto-collect stopped.
  */
 export const WALL_REPEAT_STOPPED_DETAIL =
   "wall-repeat-auto-collect-stopped: manual-read-suggested" as const;
+
+/**
+ * Budget / no-handoff exhaustion without a same-kind repeat — still points the
+ * user at the manual/saved-page path, but keeps diagnostics distinct from
+ * same-kind wall-repeat stops.
+ */
+export const HANDOFF_BUDGET_STOPPED_DETAIL =
+  "handoff-budget-exhausted: manual-read-suggested" as const;
 
 /** Soft observation: we suggested the alternate path while still paused at a wall. */
 export const WALL_REPEAT_SUGGESTED_DETAIL_PREFIX = "wall-repeat-suggest-saved-page" as const;
@@ -45,4 +54,8 @@ export function wallRepeatSuggestedDetail(kind: WallKind, count: number): string
 
 export function wallRepeatStoppedDetail(kind: WallKind, count: number): string {
   return `${WALL_REPEAT_STOPPED_DETAIL}: ${kind} x${count}`;
+}
+
+export function handoffBudgetStoppedDetail(kind: WallKind, count: number): string {
+  return `${HANDOFF_BUDGET_STOPPED_DETAIL}: ${kind} x${count}`;
 }

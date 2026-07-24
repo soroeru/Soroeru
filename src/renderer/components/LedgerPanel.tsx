@@ -221,14 +221,12 @@ export function LedgerPanel({
           // Batch progress owns ledger refresh (`refreshAfterSite`); this event
           // only clears transient run UI so we do not re-fetch full siteDetails
           // three extra times per site after folding collection into the ledger.
+          // Terminal suggestSavedPageImport is persisted on BatchResultEntry and
+          // surfaced when the batch summary modal opens (next run-started would
+          // clear mid-batch guide state).
           setRunningSiteId(undefined);
           setHandoff(undefined);
           resumedHandoffSites.current.delete(event.result.siteAccountId);
-          // Budget exhaustion may never emit a live hand-off; still open the guide.
-          if (event.result.suggestSavedPageImport) {
-            setGuideSiteId(event.result.siteAccountId);
-            setSavedPageSiteId(event.result.siteAccountId);
-          }
           break;
       }
     });
@@ -360,6 +358,13 @@ export function LedgerPanel({
               siteAccountId,
           );
           if (content) setResultModal(content);
+          // After the batch settles, open the guide for the first site that
+          // asked for the alternate path (Issue #421; survives multi-site runs).
+          const suggested = summary.results.find((entry) => entry.suggestSavedPageImport);
+          if (suggested) {
+            setGuideSiteId(suggested.siteAccountId);
+            setSavedPageSiteId(suggested.siteAccountId);
+          }
         }
       } catch {
         setLoadError(reasonMessage(undefined));

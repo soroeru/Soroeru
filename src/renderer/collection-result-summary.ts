@@ -18,6 +18,11 @@ export interface CollectionFailureEntry {
   canRetry: boolean;
   /** Whether offering the saved-page import fallback makes sense for this status. */
   canImportSavedPage: boolean;
+  /**
+   * Issue #421: the engine explicitly suggested the “read the page you opened”
+   * path (same-kind wall repeat or hand-off budget exhaustion).
+   */
+  suggestSavedPageImport?: boolean;
 }
 
 export interface CollectionResultModalContent {
@@ -45,19 +50,30 @@ function canImportSavedPage(status: VisibilityRunStatus): boolean {
  * on success alone.
  */
 export function buildCollectionResultModalContent(
-  results: readonly { siteAccountId: string; status: VisibilityRunStatus }[],
+  results: readonly {
+    siteAccountId: string;
+    status: VisibilityRunStatus;
+    suggestSavedPageImport?: boolean;
+  }[],
   siteNameOf: (siteAccountId: string) => string,
 ): CollectionResultModalContent | undefined {
   const failures: CollectionFailureEntry[] = results
     .filter((entry) => entry.status !== "collected")
-    .map((entry) => ({
-      siteAccountId: entry.siteAccountId,
-      siteName: siteNameOf(entry.siteAccountId),
-      status: entry.status,
-      reason: visibilityStatusLabel(entry.status),
-      canRetry: canRetry(entry.status),
-      canImportSavedPage: canImportSavedPage(entry.status),
-    }));
+    .map((entry) => {
+      const suggest = entry.suggestSavedPageImport === true;
+      return {
+        siteAccountId: entry.siteAccountId,
+        siteName: siteNameOf(entry.siteAccountId),
+        status: entry.status,
+        reason: suggest
+          ? "自動収集が難しいため、表示したページから読み取る方法を試してください"
+          : visibilityStatusLabel(entry.status),
+        canRetry: canRetry(entry.status),
+        // Engine suggestion always implies the alternate path is available.
+        canImportSavedPage: suggest || canImportSavedPage(entry.status),
+        ...(suggest ? { suggestSavedPageImport: true } : {}),
+      };
+    });
 
   if (failures.length === 0) return undefined;
 

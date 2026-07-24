@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  handoffBudgetStoppedDetail,
   noteWallOccurrence,
   shouldSuggestSavedPageImport,
   WALL_REPEAT_SUGGEST_THRESHOLD,
@@ -38,5 +39,9 @@ test("wall-repeat detail strings stay structure-only for diagnostics", () => {
   assert.equal(
     wallRepeatStoppedDetail("password-reset", 3),
     "wall-repeat-auto-collect-stopped: manual-read-suggested: password-reset x3",
+  );
+  assert.equal(
+    handoffBudgetStoppedDetail("mfa", 1),
+    "handoff-budget-exhausted: manual-read-suggested: mfa x1",
   );
 });

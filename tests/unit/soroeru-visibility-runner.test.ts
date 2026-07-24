@@ -412,7 +412,7 @@ test("visibility runner reports the actual wall constraint count when handoff ca
     const result = await runner.runSite(site.id);
 
     assert.equal(result.status, "handoff");
-    // Two wall constraints plus Issue #421 stop marker when the hand-off budget is exhausted.
+    // Two wall constraints plus Issue #421 budget-exhaust marker (mixed kinds, not same-kind repeat).
     assert.equal(result.constraints, 3);
     assert.equal(
       service
@@ -427,7 +427,7 @@ test("visibility runner reports the actual wall constraint count when handoff ca
           (c) =>
             c.siteAccountId === site.id &&
             typeof c.detail === "string" &&
-            c.detail.startsWith("wall-repeat-auto-collect-stopped:"),
+            c.detail.startsWith("handoff-budget-exhausted:"),
         ),
       true,
     );
@@ -1967,15 +1967,27 @@ test("visibility runner records wall-repeat stop when hand-off budget is exhaust
 
     assert.equal(result.status, "handoff");
     assert.equal(result.suggestSavedPageImport, true);
-    const stopped = service
+    // First wall of its kind with no hand-off budget uses the budget marker, not wall-repeat.
+    const budgetStopped = service
       .listConstraints()
       .filter(
         (c) =>
           c.siteAccountId === site.id &&
           typeof c.detail === "string" &&
-          c.detail.startsWith("wall-repeat-auto-collect-stopped:"),
+          c.detail.startsWith("handoff-budget-exhausted:"),
       );
-    assert.equal(stopped.length, 1);
+    assert.equal(budgetStopped.length, 1);
+    assert.equal(
+      service
+        .listConstraints()
+        .some(
+          (c) =>
+            c.siteAccountId === site.id &&
+            typeof c.detail === "string" &&
+            c.detail.startsWith("wall-repeat-auto-collect-stopped:"),
+        ),
+      false,
+    );
     const checkpoint = service.getCheckpoint("visibility", site.id);
     assert.equal(checkpoint?.status, "handoff");
     assert.equal(checkpoint?.resumeData?.suggestSavedPageImport, "true");

@@ -20,6 +20,7 @@ import type { SiteSession } from "./page-driver.js";
 import { WallDetectionService } from "./wall-detection.js";
 import { siteDisplayNameCandidate } from "./site-display-name.js";
 import {
+  handoffBudgetStoppedDetail,
   noteWallOccurrence,
   shouldSuggestSavedPageImport,
   WALL_REPEAT_SUGGEST_THRESHOLD,
@@ -83,6 +84,8 @@ export class VisibilityRunner {
   private wallKindCounts = new Map<WallKind, number>();
   /** Latched once any wall observation suggests the alternate import path. */
   private suggestedSavedPageImport = false;
+  /** Per site-run: avoid duplicate stop constraints within one `runSite` only. */
+  private recordedStopThisRun = false;
 
   constructor(private readonly options: VisibilityRunnerOptions) {
     this.now = options.now ?? Date.now;
@@ -92,6 +95,7 @@ export class VisibilityRunner {
   async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
     this.wallKindCounts = new Map();
     this.suggestedSavedPageImport = false;
+    this.recordedStopThisRun = false;
     let siteAccount = this.requireSite(siteAccountId);
     // Re-read after hand-offs that may mark the stored password stale (Issue #416).
     let credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
@@ -737,10 +741,13 @@ export class VisibilityRunner {
       });
     }
     if (suggest && input.handoffExhausted) {
+      this.recordedStopThisRun = true;
       this.options.domain.addConstraint({
         siteAccountId: input.siteAccount.id,
         kind: "unknown-state",
-        detail: wallRepeatStoppedDetail(input.wall.kind, count),
+        detail: sameKindRepeat
+          ? wallRepeatStoppedDetail(input.wall.kind, count)
+          : handoffBudgetStoppedDetail(input.wall.kind, count),
         evidenceIds: [evidence.id],
         observedAt: this.now(),
       });
@@ -782,22 +789,7 @@ export class VisibilityRunner {
   ): void {
     const count = this.wallKindCounts.get(kind) ?? 0;
     if (count < WALL_REPEAT_SUGGEST_THRESHOLD) return;
-    const already = this.options.domain
-      .listConstraints()
-      .some(
-        (c) =>
-          c.siteAccountId === siteAccount.id &&
-          typeof c.detail === "string" &&
-          c.detail.startsWith("wall-repeat-auto-collect-stopped:"),
-      );
-    if (already) return;
-    this.options.domain.addConstraint({
-      siteAccountId: siteAccount.id,
-      kind: "unknown-state",
-      detail: wallRepeatStoppedDetail(kind, count),
-      evidenceIds: [],
-      observedAt: this.now(),
-    });
+    // Always refresh the checkpoint so a prior site-run's stop does not hide this abort.
     this.options.domain.saveCheckpoint({
       workflow: "visibility",
       siteAccountId: siteAccount.id,
@@ -807,8 +799,18 @@ export class VisibilityRunner {
         wall: kind,
         url: pageUrl,
         suggestSavedPageImport: "true",
+        sameKindWallRepeat: "true",
         wallRepeatStopped: "true",
       },
+    });
+    if (this.recordedStopThisRun) return;
+    this.recordedStopThisRun = true;
+    this.options.domain.addConstraint({
+      siteAccountId: siteAccount.id,
+      kind: "unknown-state",
+      detail: wallRepeatStoppedDetail(kind, count),
+      evidenceIds: [],
+      observedAt: this.now(),
     });
   }
 

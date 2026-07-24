@@ -141,7 +141,7 @@ export function CollectionResultModal({
                     onClick={() => onImportSavedPage(failure.siteAccountId)}
                     className="text-sm underline"
                   >
-                    保存ページを取り込む
+                    {failure.suggestSavedPageImport ? "表示したページから読み取る" : "保存ページを取り込む"}
                   </button>
                 )}
               </span>
