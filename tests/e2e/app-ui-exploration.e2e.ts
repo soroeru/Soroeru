@@ -78,9 +78,10 @@ test("Electron app UI: multi-page exploration collects from profile/address/paym
     //    and pauses — wait for the real hand-off banner.
     await page.getByText("ウォールの解決が必要です").waitFor({ timeout: 120_000 });
 
-    // 5. Resolve the hand-off: the fixture's second GET of /explore-flow/payment
-    //    (triggered by PageExplorer.resume()'s re-navigation) now returns the
-    //    card fields instead of the wall.
+    // 5. Resolve the hand-off: the fixture clears the CAPTCHA wall in-place
+    //    (~2s client-side) so Issue #420 resume can re-observe the current
+    //    payment page without re-goto. Wait for that settle, then resume.
+    await page.waitForTimeout(2500);
     await page.getByRole("button", { name: "解決して再開" }).click();
 
     // 6. Exploration completes; the ledger now reflects all three pages.
