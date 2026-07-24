@@ -6,7 +6,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteLedgerSummary, VisibilityHandoffCredentialView } from "../../../electron/ipc/contract.js";
-import type { BatchResultEntry } from "../site-management-batch.js";
+import {
+  DELETE_TARGET_LIST_PREVIEW_LIMIT,
+  deleteTargetListVisibility,
+  type BatchResultEntry,
+} from "../site-management-batch.js";
 import type { CollectionResultModalContent } from "../collection-result-summary.js";
 import { Modal } from "./Modal.js";
 
@@ -49,6 +53,9 @@ export function BatchCollectionBar({
   onEnableSessionPersistence,
   sessionPersistenceBulkRunning,
   sessionPersistenceBulkError,
+  onDeleteSelected,
+  deleteBulkRunning,
+  deleteConfirmOpen,
 }: {
   selectedCount: number;
   totalVisible: number;
@@ -60,15 +67,21 @@ export function BatchCollectionBar({
   onEnableSessionPersistence: () => void;
   sessionPersistenceBulkRunning: boolean;
   sessionPersistenceBulkError: string | undefined;
+  onDeleteSelected?: () => void;
+  deleteBulkRunning?: boolean;
+  /** True while the fourth-boundary delete modal is open (exclusive with other bulk actions). */
+  deleteConfirmOpen?: boolean;
 }): React.JSX.Element {
   const successful = batch.results.filter((entry) => entry.status === "collected").length;
   const failed = batch.results.filter((entry) => entry.status !== "collected").length;
+  const bulkBusy =
+    disabled || sessionPersistenceBulkRunning || Boolean(deleteBulkRunning) || Boolean(deleteConfirmOpen);
   return (
     <div className="flex flex-col gap-2 rounded border border-neutral-200 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          disabled={selectedCount === 0 || disabled}
+          disabled={selectedCount === 0 || bulkBusy}
           onClick={onStart}
           className="rounded bg-neutral-900 px-3 py-1.5 text-sm text-white disabled:cursor-not-allowed disabled:bg-neutral-300"
         >
@@ -76,12 +89,23 @@ export function BatchCollectionBar({
         </button>
         <button
           type="button"
-          disabled={selectedCount === 0 || disabled || sessionPersistenceBulkRunning}
+          disabled={selectedCount === 0 || bulkBusy}
           onClick={onEnableSessionPersistence}
           className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
         >
           {sessionPersistenceBulkRunning ? "設定中…" : "選択したサイトのログインセッションを保持する"}
         </button>
+        {onDeleteSelected && (
+          <button
+            type="button"
+            disabled={selectedCount === 0 || bulkBusy}
+            onClick={onDeleteSelected}
+            aria-label={`選択した ${selectedCount} 件のサイトを削除`}
+            className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleteBulkRunning ? "削除中…" : "選択したサイトを削除"}
+          </button>
+        )}
         {disabled && (
           <button type="button" onClick={onCancel} className="text-sm text-red-700 underline">
             一括収集を中止
@@ -331,29 +355,57 @@ function CopyableCredential({
 }
 
 export function DeleteSiteModal({
-  site,
+  sites,
   acknowledged,
   deleting,
   onAcknowledgedChange,
   onCancel,
   onConfirm,
 }: {
-  site: SiteLedgerSummary;
+  sites: readonly SiteLedgerSummary[];
   acknowledged: boolean;
   deleting: boolean;
   onAcknowledgedChange: (checked: boolean) => void;
   onCancel: () => void;
   onConfirm: () => void;
 }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+
+  const totalCount = sites.length;
+  const listVisibility = deleteTargetListVisibility(totalCount, expanded, DELETE_TARGET_LIST_PREVIEW_LIMIT);
+  const visibleSites = sites.slice(0, listVisibility.visibleCount);
+
   return (
     <Modal title="サイト情報の削除" onClose={onCancel}>
       <div className="flex flex-col gap-3">
         <p className="text-sm text-neutral-800">
-          「{site.displayName}」の情報を Soroeru
-          から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、取り消せません。
+          {totalCount === 1
+            ? `「${sites[0]?.displayName ?? ""}」の情報を Soroeru から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、取り消せません。`
+            : `選択された ${totalCount} 件のサイトの情報を Soroeru から削除します。ログイン情報・開示・関係・根拠・要確認を含めて削除され、取り消せません。`}
         </p>
+
+        <div className="flex flex-col gap-1.5 rounded border border-neutral-200 bg-neutral-50 p-2.5 text-xs">
+          <p className="font-medium text-neutral-700">削除対象サイト（計 {totalCount} 件）:</p>
+          <ul className="flex flex-col gap-1 max-h-48 overflow-y-auto pl-4 list-disc text-neutral-800">
+            {visibleSites.map((site) => (
+              <li key={site.siteAccountId}>{site.displayName}</li>
+            ))}
+          </ul>
+          {listVisibility.foldable && !expanded && (
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="self-start text-xs text-sky-700 underline hover:text-sky-800 mt-1"
+            >
+              他 {listVisibility.hiddenCount} 件を表示
+            </button>
+          )}
+        </div>
+
         <p className="text-sm text-red-700">
-          これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。
+          {totalCount === 1
+            ? "これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。"
+            : "これはサイトからの退会ではなく、Soroeru 内部に保存したこれらのサイト記録の削除です。"}
         </p>
         <label className="flex items-start gap-2 text-sm text-neutral-700">
           <input

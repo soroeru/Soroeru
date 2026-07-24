@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  canConfirmSiteDeletion,
   collectVisibleSelectedSiteIds,
+  DELETE_TARGET_LIST_PREVIEW_LIMIT,
+  deleteSitesForBatch,
+  deleteTargetListVisibility,
   enableSessionPersistenceForSites,
   runVisibilityBatch,
 } from "../../src/renderer/site-management-batch.js";
@@ -134,3 +138,79 @@ test("enableSessionPersistenceForSites records a failure entry when the setter t
   assert.deepEqual(summary.results, [{ siteAccountId: "amazon", ok: false, error: "unknown" }]);
   assert.equal(summary.failedCount, 1);
 });
+
+test("deleteSitesForBatch deletes each selected site sequentially and tallies failures", async () => {
+  const deleted: string[] = [];
+
+  const summary = await deleteSitesForBatch(
+    ["amazon", "rakuten", "yoyostore"],
+    async (siteAccountId) => {
+      deleted.push(siteAccountId);
+      if (siteAccountId === "rakuten") return { ok: false, error: "not-found" };
+      return { ok: true };
+    },
+  );
+
+  assert.deepEqual(deleted, ["amazon", "rakuten", "yoyostore"]);
+  assert.deepEqual(
+    summary.results.map((entry) => [entry.siteAccountId, entry.ok, entry.error]),
+    [
+      ["amazon", true, undefined],
+      ["rakuten", false, "not-found"],
+      ["yoyostore", true, undefined],
+    ],
+  );
+  assert.equal(summary.failedCount, 1);
+});
+
+test("deleteSitesForBatch records a failure entry when the delete function throws", async () => {
+  const summary = await deleteSitesForBatch(["amazon"], async () => {
+    throw new Error("delete error");
+  });
+
+  assert.deepEqual(summary.results, [{ siteAccountId: "amazon", ok: false, error: "delete-failed" }]);
+  assert.equal(summary.failedCount, 1);
+});
+
+test("canConfirmSiteDeletion requires acknowledgment and at least one target (fourth absolute boundary)", () => {
+  assert.equal(
+    canConfirmSiteDeletion({ targetCount: 2, acknowledged: false, deleting: false }),
+    false,
+  );
+  assert.equal(
+    canConfirmSiteDeletion({ targetCount: 0, acknowledged: true, deleting: false }),
+    false,
+  );
+  assert.equal(
+    canConfirmSiteDeletion({ targetCount: 2, acknowledged: true, deleting: true }),
+    false,
+  );
+  assert.equal(
+    canConfirmSiteDeletion({ targetCount: 2, acknowledged: true, deleting: false }),
+    true,
+  );
+});
+
+test("deleteTargetListVisibility folds beyond the first ten sites until expanded", () => {
+  assert.deepEqual(deleteTargetListVisibility(10, false), {
+    visibleCount: 10,
+    hiddenCount: 0,
+    foldable: false,
+  });
+  assert.deepEqual(deleteTargetListVisibility(11, false), {
+    visibleCount: DELETE_TARGET_LIST_PREVIEW_LIMIT,
+    hiddenCount: 1,
+    foldable: true,
+  });
+  assert.deepEqual(deleteTargetListVisibility(23, false), {
+    visibleCount: DELETE_TARGET_LIST_PREVIEW_LIMIT,
+    hiddenCount: 13,
+    foldable: true,
+  });
+  assert.deepEqual(deleteTargetListVisibility(23, true), {
+    visibleCount: 23,
+    hiddenCount: 0,
+    foldable: true,
+  });
+});
+

@@ -8,8 +8,10 @@
 // row/cell unmounts, and is never persisted.
 //
 // Issue #341 also owns selection, batch Visibility collection, session
-// persistence bulk-enable, per-row detail / saved-page import / delete, and
-// status chips that used to live on the dedicated Site Management tab.
+// persistence bulk-enable, per-row detail / saved-page import, and status
+// chips that used to live on the dedicated Site Management tab. Issue #384
+// moves site deletion to a selected-sites bulk action with the same fourth
+// absolute boundary confirmation gate.
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Label } from "@radix-ui/react-label";
@@ -40,7 +42,9 @@ import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
 import { filterLedgerSitesByCollection, type LedgerCollectionFilter } from "../ledger-filter.js";
 import { moveLedgerSite, orderLedgerSites, type LedgerSortMode } from "../ledger-ordering.js";
 import {
+  canConfirmSiteDeletion,
   collectVisibleSelectedSiteIds,
+  deleteSitesForBatch,
   enableSessionPersistenceForSites,
   runVisibilityBatch,
   type BatchResultEntry,
@@ -101,9 +105,9 @@ export function LedgerPanel({
   const [sessionPersistenceBulkRunning, setSessionPersistenceBulkRunning] = useState(false);
   const [sessionPersistenceBulkError, setSessionPersistenceBulkError] = useState<string | undefined>();
   const [resultModal, setResultModal] = useState<CollectionResultModalContent | undefined>();
-  const [deleteTarget, setDeleteTarget] = useState<SiteLedgerSummary | undefined>();
+  const [deleteTargets, setDeleteTargets] = useState<SiteLedgerSummary[] | undefined>();
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
-  const [deletingSite, setDeletingSite] = useState(false);
+  const [deletingSites, setDeletingSites] = useState(false);
   const [sortMode, setSortMode] = useState<LedgerSortMode>("name-asc");
   /** Display-only; does not clear selection of hidden rows (Issue #388). */
   const [collectionFilter, setCollectionFilter] = useState<LedgerCollectionFilter>("all");
@@ -119,6 +123,8 @@ export function LedgerPanel({
   const cancelBatchRef = useRef(false);
   /** True while `runVisibilityBatch` is in progress (including cancel unwind). */
   const batchInFlightRef = useRef(false);
+  /** Sync re-entrancy guard for irreversible multi-site delete (React state alone is too late). */
+  const deleteInFlightRef = useRef(false);
   const onCollectedRef = useRef(onCollected);
   const sitesRef = useRef(sites);
   const columnResizeRef = useRef<{
@@ -261,6 +267,9 @@ export function LedgerPanel({
   );
   const orderedSites = useMemo(() => orderLedgerSites(visibleSites, sortMode), [sortMode, visibleSites]);
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
+  /** Open delete confirmation or in-flight delete excludes other bulk vault mutations. */
+  const deleteExclusiveBusy = deletingSites || (deleteTargets?.length ?? 0) > 0;
+  const bulkExclusiveBusy = batchBusy || sessionPersistenceBulkRunning || deleteExclusiveBusy;
   // Saved-page guide / import stay usable after showGuide even while the batch is canceling.
   const guideInteractiveDisabled = batch.phase === "running" || batch.phase === "paused";
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
@@ -331,7 +340,15 @@ export function LedgerPanel({
   const startBatch = useCallback(
     async (overrideIds?: string[]) => {
       const queue = overrideIds ?? [...selectedVisibleIds];
-      if (queue.length === 0 || batchBusy || batchInFlightRef.current) return;
+      if (
+        queue.length === 0 ||
+        batchBusy ||
+        sessionPersistenceBulkRunning ||
+        deleteExclusiveBusy ||
+        batchInFlightRef.current
+      ) {
+        return;
+      }
       const ready = await prepareChromeBridgeRun(window.soroeru.chromeBridge, (message) =>
         window.confirm(message),
       );
@@ -392,7 +409,7 @@ export function LedgerPanel({
         batchInFlightRef.current = false;
       }
     },
-    [batchBusy, refreshAfterSite, selectedVisibleIds],
+    [batchBusy, deleteExclusiveBusy, refreshAfterSite, selectedVisibleIds, sessionPersistenceBulkRunning],
   );
 
   const cancelBatch = useCallback(() => {
@@ -506,7 +523,7 @@ export function LedgerPanel({
   }, []);
   const enableSessionPersistenceForSelected = useCallback(async () => {
     const ids = [...selectedVisibleIds];
-    if (ids.length === 0 || sessionPersistenceBulkRunning) return;
+    if (ids.length === 0 || bulkExclusiveBusy) return;
     setSessionPersistenceBulkRunning(true);
     setSessionPersistenceBulkError(undefined);
     try {
@@ -524,7 +541,7 @@ export function LedgerPanel({
     } finally {
       setSessionPersistenceBulkRunning(false);
     }
-  }, [detail, loadSites, openDetail, selectedVisibleIds, sessionPersistenceBulkRunning]);
+  }, [bulkExclusiveBusy, detail, loadSites, openDetail, selectedVisibleIds]);
   const retrySite = useCallback(
     (siteAccountId: string) => {
       setResultModal(undefined);
@@ -536,47 +553,116 @@ export function LedgerPanel({
     setResultModal(undefined);
     setSavedPageSiteId(siteAccountId);
   }, []);
-  const requestDelete = useCallback((site: SiteLedgerSummary) => {
+  const requestDeleteSelected = useCallback(() => {
+    if (bulkExclusiveBusy) return;
     setLoadError(undefined);
     setDeleteAcknowledged(false);
-    setDeleteTarget(site);
-  }, []);
+    const targets: SiteLedgerSummary[] = [];
+    for (const id of selectedVisibleIds) {
+      const site = visibleSites.find((entry) => entry.siteAccountId === id);
+      if (site) targets.push(site);
+    }
+    if (targets.length === 0) return;
+    setDeleteTargets(targets);
+  }, [bulkExclusiveBusy, selectedVisibleIds, visibleSites]);
   const closeDeleteModal = useCallback(() => {
-    if (deletingSite) return;
-    setDeleteTarget(undefined);
+    if (deletingSites) return;
+    setDeleteTargets(undefined);
     setDeleteAcknowledged(false);
-  }, [deletingSite]);
+  }, [deletingSites]);
   const confirmDelete = useCallback(async () => {
-    if (!deleteTarget || !deleteAcknowledged || deletingSite) return;
-    setDeletingSite(true);
+    if (
+      deleteInFlightRef.current ||
+      !canConfirmSiteDeletion({
+        targetCount: deleteTargets?.length ?? 0,
+        acknowledged: deleteAcknowledged,
+        deleting: deletingSites,
+      }) ||
+      !deleteTargets ||
+      batchBusy ||
+      sessionPersistenceBulkRunning
+    ) {
+      return;
+    }
+    deleteInFlightRef.current = true;
+    setDeletingSites(true);
     try {
-      const siteAccountId = deleteTarget.siteAccountId;
-      const result = await window.soroeru.ledger.deleteSite({
-        siteAccountId,
-        confirmedFourthBoundary: true,
-      });
-      if (!result.ok) {
-        setLoadError(reasonMessage(result.error));
-        return;
+      const ids = deleteTargets.map((site) => site.siteAccountId);
+      const nameById = new Map(deleteTargets.map((site) => [site.siteAccountId, site.displayName]));
+      const summary = await deleteSitesForBatch(ids, (siteAccountId) =>
+        window.soroeru.ledger.deleteSite({
+          siteAccountId,
+          confirmedFourthBoundary: true,
+        }),
+      );
+
+      const successfulIds = new Set(
+        summary.results.filter((entry) => entry.ok).map((entry) => entry.siteAccountId),
+      );
+      const failed = summary.results.filter((entry) => !entry.ok);
+      const successCount = summary.results.length - failed.length;
+
+      let deleteOutcomeError: string | undefined;
+      if (failed.length > 0) {
+        const failedDetails = failed
+          .map((entry) => {
+            const name = nameById.get(entry.siteAccountId) ?? entry.siteAccountId;
+            return `${name}（${reasonMessage(entry.error)}）`;
+          })
+          .join("、");
+        deleteOutcomeError =
+          successCount === 0
+            ? `${failed.length} 件の削除に失敗しました: ${failedDetails}`
+            : `${successCount} 件を削除しましたが ${failed.length} 件は失敗しました: ${failedDetails}`;
       }
+
       setSelected((current) => {
         const next = new Set(current);
-        next.delete(siteAccountId);
+        for (const id of successfulIds) {
+          next.delete(id);
+        }
         return next;
       });
-      setDetail((current) => (current?.siteAccountId === siteAccountId ? undefined : current));
-      setSavedPageSiteId((current) => (current === siteAccountId ? undefined : current));
-      setGuideSiteId((current) => (current === siteAccountId ? undefined : current));
-      setDeleteTarget(undefined);
+
+      setDetail((current) => (current && successfulIds.has(current.siteAccountId) ? undefined : current));
+      setSavedPageSiteId((current) => (current && successfulIds.has(current) ? undefined : current));
+      setGuideSiteId((current) => (current && successfulIds.has(current) ? undefined : current));
+
+      setDeleteTargets(undefined);
       setDeleteAcknowledged(false);
-      await loadSites();
-      onCollectedRef.current();
+      // Reload inline so loadSites success cannot clear partial-delete messaging, and
+      // reload failure cannot misreport irreversible deletes as delete-failed.
+      // Parent onCollected bumps reloadToken → loadSites, which clears loadError on
+      // success — only invoke it after a fully successful delete so failure copy stays.
+      try {
+        const nextSites = await window.soroeru.ledger.siteDetails();
+        setSites(nextSites);
+        setSelected((current) => {
+          const validIds = new Set(nextSites.map((site) => site.siteAccountId));
+          return new Set([...current].filter((siteAccountId) => validIds.has(siteAccountId)));
+        });
+        setDetail((current) => {
+          if (!current) return current;
+          return nextSites.find((site) => site.siteAccountId === current.siteAccountId);
+        });
+        setLoadError(deleteOutcomeError);
+        if (deleteOutcomeError === undefined) {
+          onCollectedRef.current();
+        }
+      } catch {
+        setLoadError(
+          deleteOutcomeError
+            ? `${deleteOutcomeError}（台帳の再読み込みにも失敗しました）`
+            : "削除は完了しましたが、台帳の再読み込みに失敗しました。",
+        );
+      }
     } catch {
       setLoadError(reasonMessage("delete-failed"));
     } finally {
-      setDeletingSite(false);
+      deleteInFlightRef.current = false;
+      setDeletingSites(false);
     }
-  }, [deleteAcknowledged, deleteTarget, deletingSite, loadSites]);
+  }, [batchBusy, deleteAcknowledged, deleteTargets, deletingSites, sessionPersistenceBulkRunning]);
 
   const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
     setSelected((current) => {
@@ -720,6 +806,9 @@ export function LedgerPanel({
         onEnableSessionPersistence={() => void enableSessionPersistenceForSelected()}
         sessionPersistenceBulkRunning={sessionPersistenceBulkRunning}
         sessionPersistenceBulkError={sessionPersistenceBulkError}
+        onDeleteSelected={requestDeleteSelected}
+        deleteBulkRunning={deletingSites}
+        deleteConfirmOpen={(deleteTargets?.length ?? 0) > 0}
       />
 
       {handoff && (
@@ -770,7 +859,7 @@ export function LedgerPanel({
         {!allSelected && (
           <button
             type="button"
-            disabled={batchBusy || visibleSites.length === 0}
+            disabled={bulkExclusiveBusy || visibleSites.length === 0}
             onClick={selectAllVisible}
             className="text-sm underline"
           >
@@ -778,7 +867,12 @@ export function LedgerPanel({
           </button>
         )}
         {selectedVisibleIds.length > 0 && (
-          <button type="button" disabled={batchBusy} onClick={clearVisible} className="text-sm underline">
+          <button
+            type="button"
+            disabled={bulkExclusiveBusy}
+            onClick={clearVisible}
+            className="text-sm underline"
+          >
             表示中のチェックを外す
           </button>
         )}
@@ -914,7 +1008,7 @@ export function LedgerPanel({
                       <input
                         type="checkbox"
                         checked={selected.has(site.siteAccountId)}
-                        disabled={batchBusy}
+                        disabled={bulkExclusiveBusy}
                         onChange={(event) => selectSite(site.siteAccountId, event.target.checked)}
                         aria-label={site.displayName}
                         className="mt-1"
@@ -998,16 +1092,6 @@ export function LedgerPanel({
                         >
                           保存ページを取り込む
                         </button>
-                        <button
-                          type="button"
-                          disabled={batchBusy}
-                          onClick={() => requestDelete(site)}
-                          title={`${site.displayName} の情報を削除`}
-                          aria-label={`${site.displayName} の情報を削除`}
-                          className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          削除
-                        </button>
                       </span>
                     </td>
                     {columns.length === 0 ? (
@@ -1085,11 +1169,11 @@ export function LedgerPanel({
           onImportSavedPage={importSavedPageFor}
         />
       )}
-      {deleteTarget && (
+      {deleteTargets && deleteTargets.length > 0 && (
         <DeleteSiteModal
-          site={deleteTarget}
+          sites={deleteTargets}
           acknowledged={deleteAcknowledged}
-          deleting={deletingSite}
+          deleting={deletingSites}
           onAcknowledgedChange={setDeleteAcknowledged}
           onCancel={closeDeleteModal}
           onConfirm={() => void confirmDelete()}
