@@ -698,6 +698,9 @@ export class VisibilityRunner {
     const username = findLoginField(snapshot.fields, "username");
     const password = findLoginField(snapshot.fields, "password");
     if (!username && !password) return;
+    // Issue #416 defense in depth: never fill a known-stale password even if a
+    // call site forgets the outer fail-closed guard.
+    if (credential.passwordStale && password) return;
     if (username) await session.page.fillField(username.fieldId, credential.username);
     if (password) await session.page.fillField(password.fieldId, credential.password);
     const submit = findLoginSubmitButton(snapshot.buttons);
@@ -892,7 +895,18 @@ export class VisibilityRunner {
     pageUrl: string,
     wallEvidence: string,
   ): void {
+    const before = this.options.domain.listCredentialsForSite(siteAccount.id);
+    const alreadyAllStale =
+      before.length > 0 && before.every((credential) => credential.passwordStale === true);
     const marked = this.options.domain.markSiteCredentialsPasswordStale(siteAccount.id, this.now());
+    // Avoid flooding the ledger when a sticky reset wall resolves more than once.
+    if (alreadyAllStale) {
+      this.logger.info("visibility", "stored password already marked stale after password-reset handoff", {
+        domain: siteAccount.domain,
+        credentials: marked.length,
+      });
+      return;
+    }
     const evidence = this.options.domain.addEvidence({
       siteAccountId: siteAccount.id,
       pageUrl,
