@@ -36,6 +36,8 @@ export type VisibilityHandoff = (input: {
   credential?: Credential;
   /** Issue #421: offer the saved-page / current-page read path for this pause. */
   suggestSavedPageImport?: boolean;
+  /** True only when the same wall kind has repeated in this site run. */
+  sameKindWallRepeat?: boolean;
 }) => Promise<"resolved" | "abort">;
 
 export interface VisibilityRunnerOptions {
@@ -573,18 +575,13 @@ export class VisibilityRunner {
       if (!wall) return current;
 
       const handoffExhausted = !this.options.handoff || handoffs === maxHandoffs;
-      // On the last callable hand-off slot, also surface the alternate path so the
-      // user sees it before the budget is fully spent (exhaust itself has no live UI).
-      const lastCallableHandoff = handoffs === maxHandoffs - 1 && Boolean(this.options.handoff);
-      const suggest = this.recordWallObservation({
+      const observed = this.recordWallObservation({
         siteAccount,
         wall,
         pageUrl: current.url,
         step,
         handoffExhausted,
       });
-      const offerAlternate = suggest || lastCallableHandoff;
-      if (offerAlternate) this.suggestedSavedPageImport = true;
 
       if (handoffExhausted) return undefined;
       const outcome = await this.options.handoff!({
@@ -592,7 +589,8 @@ export class VisibilityRunner {
         instruction: this.wallDetection.instructionFor(wall),
         evidence: wall.evidence,
         ...(credential && shouldOfferHandoffCredential(step, current, wall.kind) ? { credential } : {}),
-        ...(offerAlternate ? { suggestSavedPageImport: true } : {}),
+        ...(observed.suggestSavedPageImport ? { suggestSavedPageImport: true } : {}),
+        ...(observed.sameKindWallRepeat ? { sameKindWallRepeat: true } : {}),
       });
       if (outcome !== "resolved") {
         this.recordWallRepeatStoppedIfNeeded(siteAccount, wall.kind, current.url, step);
@@ -638,17 +636,13 @@ export class VisibilityRunner {
     while (collected.wall) {
       const wall = collected.wall;
       const handoffExhausted = !this.options.handoff || handoffs >= maxHandoffs;
-      const lastCallableHandoff =
-        handoffs === maxHandoffs - 1 && Boolean(this.options.handoff) && !handoffExhausted;
-      const suggest = this.recordWallObservation({
+      const observed = this.recordWallObservation({
         siteAccount,
         wall: wall.wall,
         pageUrl: wall.url,
         step: "exploration",
         handoffExhausted,
       });
-      const offerAlternate = suggest || lastCallableHandoff;
-      if (offerAlternate) this.suggestedSavedPageImport = true;
 
       if (handoffExhausted) {
         return {
@@ -662,7 +656,8 @@ export class VisibilityRunner {
         siteAccount,
         instruction: this.wallDetection.instructionFor(wall.wall),
         evidence: wall.wall.evidence,
-        ...(offerAlternate ? { suggestSavedPageImport: true } : {}),
+        ...(observed.suggestSavedPageImport ? { suggestSavedPageImport: true } : {}),
+        ...(observed.sameKindWallRepeat ? { sameKindWallRepeat: true } : {}),
       });
       if (outcome !== "resolved") {
         this.recordWallRepeatStoppedIfNeeded(siteAccount, wall.wall.kind, wall.url, "exploration");
@@ -709,7 +704,7 @@ export class VisibilityRunner {
     pageUrl: string;
     step: string;
     handoffExhausted: boolean;
-  }): boolean {
+  }): { suggestSavedPageImport: boolean; sameKindWallRepeat: boolean } {
     const { count, sameKindRepeat } = noteWallOccurrence(this.wallKindCounts, input.wall.kind);
     const suggest = shouldSuggestSavedPageImport({
       sameKindRepeat,
@@ -731,7 +726,8 @@ export class VisibilityRunner {
       observedAt: this.now(),
     });
 
-    if (suggest && !input.handoffExhausted) {
+    // Soft marker only for same-kind repeat while still offering a live hand-off.
+    if (sameKindRepeat && !input.handoffExhausted) {
       this.options.domain.addConstraint({
         siteAccountId: input.siteAccount.id,
         kind: "unknown-state",
@@ -761,6 +757,7 @@ export class VisibilityRunner {
         ...(suggest
           ? {
               suggestSavedPageImport: "true",
+              ...(sameKindRepeat ? { sameKindWallRepeat: "true" } : {}),
               ...(input.handoffExhausted ? { wallRepeatStopped: "true" } : {}),
             }
           : {}),
@@ -771,8 +768,9 @@ export class VisibilityRunner {
       wall: input.wall.kind,
       step: input.step,
       ...(suggest ? { suggestSavedPageImport: true } : {}),
+      ...(sameKindRepeat ? { sameKindWallRepeat: true } : {}),
     });
-    return suggest;
+    return { suggestSavedPageImport: suggest, sameKindWallRepeat: sameKindRepeat };
   }
 
   /** User aborted a hand-off after a same-kind repeat had already been suggested. */

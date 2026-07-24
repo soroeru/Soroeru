@@ -497,6 +497,8 @@ export type VisibilityEvent =
        * the saved-page / "read the page you opened" path in the hand-off UI.
        */
       suggestSavedPageImport?: boolean;
+      /** True only when the same wall kind has repeated in this site run. */
+      sameKindWallRepeat?: boolean;
     }
   | { type: "resumed"; siteAccountId: string }
   | { type: "run-finished"; result: VisibilityRunResultView };

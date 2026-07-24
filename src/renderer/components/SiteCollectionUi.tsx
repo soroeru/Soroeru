@@ -30,8 +30,9 @@ export interface HandoffState {
   /** Any alternate-path offer (engine flag and/or second hand-off after resume). */
   fallbackSuggested: boolean;
   /**
-   * Engine said same-kind wall repeat / hand-off budget — only then use the
-   * “same kind of wall keeps appearing” wording (Issue #421).
+   * Engine said the same wall kind repeated in this site run — only then use
+   * the “same kind of wall keeps appearing” wording (Issue #421). Budget
+   * exhaustion without a same-kind repeat stays on `fallbackSuggested` alone.
    */
   wallRepeatSuggested: boolean;
   credential: VisibilityHandoffCredentialView | undefined;

@@ -1773,12 +1773,14 @@ test("visibility runner suggests saved-page import on the second same-kind wall 
       "email-current": "user@example.test",
     });
     const suggestions: boolean[] = [];
+    const sameKindFlags: boolean[] = [];
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
       maxHandoffs: 3,
       handoff: async (input) => {
         suggestions.push(input.suggestSavedPageImport === true);
+        sameKindFlags.push(input.sameKindWallRepeat === true);
         return "resolved";
       },
     });
@@ -1786,7 +1788,10 @@ test("visibility runner suggests saved-page import on the second same-kind wall 
     const result = await runner.runSite(site.id);
 
     assert.equal(result.status, "collected");
+    // Soft suggest is delivered on the live hand-off; terminal flag is for
+    // budget-exhaust / aborted paths that may never emit a second pause.
     assert.deepEqual(suggestions, [false, true]);
+    assert.deepEqual(sameKindFlags, [false, true]);
     const suggested = service
       .listConstraints()
       .filter(
@@ -1848,11 +1853,13 @@ test("visibility runner does not suggest saved-page import on a single wall (Iss
       { "email-current": "user@example.test" },
     );
     const suggestions: boolean[] = [];
+    const sameKindFlags: boolean[] = [];
     const runner = new VisibilityRunner({
       domain: service,
       openSession: () => Promise.resolve(new FakeSession(page)),
       handoff: async (input) => {
         suggestions.push(input.suggestSavedPageImport === true);
+        sameKindFlags.push(input.sameKindWallRepeat === true);
         return "resolved";
       },
     });
@@ -1860,7 +1867,9 @@ test("visibility runner does not suggest saved-page import on a single wall (Iss
     const result = await runner.runSite(site.id);
 
     assert.equal(result.status, "collected");
+    assert.equal(result.suggestSavedPageImport, undefined);
     assert.deepEqual(suggestions, [false]);
+    assert.deepEqual(sameKindFlags, [false]);
     assert.equal(
       service
         .listConstraints()
@@ -1870,6 +1879,66 @@ test("visibility runner does not suggest saved-page import on a single wall (Iss
             typeof c.detail === "string" &&
             (c.detail.startsWith("wall-repeat-suggest-saved-page:") ||
               c.detail.startsWith("wall-repeat-auto-collect-stopped:")),
+        ),
+      false,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner does not soft-suggest across different wall kinds (Issue #421)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "mixed-wall.example.test",
+      url: "https://mixed-wall.example.test/login",
+      displayName: "Mixed Wall",
+    });
+    const captcha = snapshot(
+      "https://mixed-wall.example.test/captcha",
+      [],
+      "私はロボットではありません",
+    );
+    const otp = snapshot("https://mixed-wall.example.test/otp", [
+      field("otp", { autocomplete: "one-time-code", labels: ["認証コード"] }),
+    ]);
+    const account = snapshot("https://mixed-wall.example.test/account", [
+      field("email-current", { autocomplete: "email", labels: ["メールアドレス"] }),
+    ]);
+    const page = new FakePageDriver([captcha, otp, account], {
+      "email-current": "user@example.test",
+    });
+    const handoffs: Array<{ suggest: boolean; sameKind: boolean }> = [];
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      maxHandoffs: 3,
+      handoff: async (input) => {
+        handoffs.push({
+          suggest: input.suggestSavedPageImport === true,
+          sameKind: input.sameKindWallRepeat === true,
+        });
+        return "resolved";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "collected");
+    assert.equal(result.suggestSavedPageImport, undefined);
+    assert.deepEqual(handoffs, [
+      { suggest: false, sameKind: false },
+      { suggest: false, sameKind: false },
+    ]);
+    assert.equal(
+      service
+        .listConstraints()
+        .some(
+          (c) =>
+            c.siteAccountId === site.id &&
+            typeof c.detail === "string" &&
+            c.detail.startsWith("wall-repeat-suggest-saved-page:"),
         ),
       false,
     );
@@ -1897,6 +1966,7 @@ test("visibility runner records wall-repeat stop when hand-off budget is exhaust
     const result = await runner.runSite(site.id);
 
     assert.equal(result.status, "handoff");
+    assert.equal(result.suggestSavedPageImport, true);
     const stopped = service
       .listConstraints()
       .filter(
@@ -1910,6 +1980,58 @@ test("visibility runner records wall-repeat stop when hand-off budget is exhaust
     assert.equal(checkpoint?.status, "handoff");
     assert.equal(checkpoint?.resumeData?.suggestSavedPageImport, "true");
     assert.equal(checkpoint?.resumeData?.wallRepeatStopped, "true");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner records stop when user aborts after same-kind soft suggest (Issue #421)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "abort-after-repeat.example.test",
+      url: "https://abort-after-repeat.example.test/login",
+      displayName: "Abort After Repeat",
+    });
+    const captcha = snapshot(
+      "https://abort-after-repeat.example.test/captcha",
+      [],
+      "私はロボットではありません",
+    );
+    const page = new FakePageDriver([captcha, captcha]);
+    let handoffs = 0;
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      maxHandoffs: 3,
+      handoff: async (input) => {
+        handoffs += 1;
+        if (handoffs === 1) {
+          assert.equal(input.suggestSavedPageImport, undefined);
+          assert.equal(input.sameKindWallRepeat, undefined);
+          return "resolved";
+        }
+        assert.equal(input.suggestSavedPageImport, true);
+        assert.equal(input.sameKindWallRepeat, true);
+        return "abort";
+      },
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "handoff");
+    assert.equal(result.suggestSavedPageImport, true);
+    assert.equal(
+      service
+        .listConstraints()
+        .some(
+          (c) =>
+            c.siteAccountId === site.id &&
+            typeof c.detail === "string" &&
+            c.detail.startsWith("wall-repeat-auto-collect-stopped:"),
+        ),
+      true,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -75,9 +75,11 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           resumedHandoffSites.current.delete(event.siteAccountId);
           break;
         case "handoff": {
-          const wallRepeatSuggested = event.suggestSavedPageImport === true;
+          const wallRepeatSuggested = event.sameKindWallRepeat === true;
           const fallbackSuggested =
-            wallRepeatSuggested || resumedHandoffSites.current.has(event.siteAccountId);
+            event.suggestSavedPageImport === true ||
+            wallRepeatSuggested ||
+            resumedHandoffSites.current.has(event.siteAccountId);
           setHandoff({
             siteAccountId: event.siteAccountId,
             instruction: event.instruction,
@@ -99,6 +101,11 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           setHandoff(undefined);
           resumedHandoffSites.current.delete(event.result.siteAccountId);
           setLastResult(event.result);
+          // Budget exhaustion may never emit a live hand-off; still open the guide.
+          if (event.result.suggestSavedPageImport) {
+            setGuideSiteId(event.result.siteAccountId);
+            setSavedPageSiteId(event.result.siteAccountId);
+          }
           void loadSites();
           onCollectedRef.current();
           break;

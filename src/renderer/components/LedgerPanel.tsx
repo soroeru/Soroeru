@@ -181,10 +181,13 @@ export function LedgerPanel({
             return { ...current, phase: "paused" };
           });
           {
-            const wallRepeatSuggested = event.suggestSavedPageImport === true;
-            // Engine flag (Issue #421) or a second hand-off after the user already resumed.
+            // Same-kind copy only when the engine counted a repeated wall kind.
+            const wallRepeatSuggested = event.sameKindWallRepeat === true;
+            // Engine alternate-path offer (Issue #421) or a second hand-off after resume.
             const fallbackSuggested =
-              wallRepeatSuggested || resumedHandoffSites.current.has(event.siteAccountId);
+              event.suggestSavedPageImport === true ||
+              wallRepeatSuggested ||
+              resumedHandoffSites.current.has(event.siteAccountId);
             setHandoff({
               siteAccountId: event.siteAccountId,
               instruction: event.instruction,
@@ -221,6 +224,11 @@ export function LedgerPanel({
           setRunningSiteId(undefined);
           setHandoff(undefined);
           resumedHandoffSites.current.delete(event.result.siteAccountId);
+          // Budget exhaustion may never emit a live hand-off; still open the guide.
+          if (event.result.suggestSavedPageImport) {
+            setGuideSiteId(event.result.siteAccountId);
+            setSavedPageSiteId(event.result.siteAccountId);
+          }
           break;
       }
     });

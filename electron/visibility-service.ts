@@ -181,6 +181,7 @@ export class VisibilityService {
     evidence: string;
     credential?: Credential;
     suggestSavedPageImport?: boolean;
+    sameKindWallRepeat?: boolean;
   }): Promise<"resolved" | "abort"> {
     const credential = input.credential ? toHandoffCredentialView(input.credential) : undefined;
     this.emit({
@@ -190,6 +191,7 @@ export class VisibilityService {
       evidence: input.evidence,
       ...(credential ? { credential } : {}),
       ...(input.suggestSavedPageImport ? { suggestSavedPageImport: true } : {}),
+      ...(input.sameKindWallRepeat ? { sameKindWallRepeat: true } : {}),
     });
     return new Promise<"resolved" | "abort">((resolve) => {
       this.pendingHandoff = {
