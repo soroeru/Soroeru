@@ -86,10 +86,10 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
             fallbackSuggested,
             wallRepeatSuggested,
           });
-          if (fallbackSuggested) {
-            setGuideSiteId(event.siteAccountId);
-            setSavedPageSiteId(event.siteAccountId);
-          }
+          // Do not expand the import strip while the run is still paused —
+          // controls stay disabled until the user picks “表示したページから読み取る”
+          // (showGuide aborts the run first). Terminal exhaust opens the guide
+          // on run-finished instead.
           break;
         }
         case "resumed":

@@ -86,6 +86,10 @@ export class VisibilityRunner {
   private suggestedSavedPageImport = false;
   /** Per site-run: avoid duplicate stop constraints within one `runSite` only. */
   private recordedStopThisRun = false;
+  /** Per site-run: soft suggest constraint is written once when same-kind first crosses threshold. */
+  private recordedSoftSuggestThisRun = false;
+  /** Latest wall Evidence id in this run (for abort-stop diagnostics). */
+  private lastWallEvidenceId: string | undefined;
 
   constructor(private readonly options: VisibilityRunnerOptions) {
     this.now = options.now ?? Date.now;
@@ -96,6 +100,8 @@ export class VisibilityRunner {
     this.wallKindCounts = new Map();
     this.suggestedSavedPageImport = false;
     this.recordedStopThisRun = false;
+    this.recordedSoftSuggestThisRun = false;
+    this.lastWallEvidenceId = undefined;
     let siteAccount = this.requireSite(siteAccountId);
     // Re-read after hand-offs that may mark the stored password stale (Issue #416).
     let credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
@@ -722,6 +728,7 @@ export class VisibilityRunner {
       observedAt: this.now(),
       maskedSnippet: input.wall.evidence,
     });
+    this.lastWallEvidenceId = evidence.id;
     this.options.domain.addConstraint({
       siteAccountId: input.siteAccount.id,
       kind: "wall",
@@ -730,8 +737,9 @@ export class VisibilityRunner {
       observedAt: this.now(),
     });
 
-    // Soft marker only for same-kind repeat while still offering a live hand-off.
-    if (sameKindRepeat && !input.handoffExhausted) {
+    // Soft marker only once when same-kind first crosses the threshold during a live hand-off.
+    if (sameKindRepeat && !input.handoffExhausted && !this.recordedSoftSuggestThisRun) {
+      this.recordedSoftSuggestThisRun = true;
       this.options.domain.addConstraint({
         siteAccountId: input.siteAccount.id,
         kind: "unknown-state",
@@ -809,7 +817,7 @@ export class VisibilityRunner {
       siteAccountId: siteAccount.id,
       kind: "unknown-state",
       detail: wallRepeatStoppedDetail(kind, count),
-      evidenceIds: [],
+      evidenceIds: this.lastWallEvidenceId ? [this.lastWallEvidenceId] : [],
       observedAt: this.now(),
     });
   }

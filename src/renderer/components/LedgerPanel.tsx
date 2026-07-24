@@ -195,11 +195,9 @@ export function LedgerPanel({
               wallRepeatSuggested,
               credential: event.credential,
             });
-            if (fallbackSuggested) {
-              // Expand the saved-page strip so the nested guide is actually visible.
-              setGuideSiteId(event.siteAccountId);
-              setSavedPageSiteId(event.siteAccountId);
-            }
+            // Keep the import strip collapsed while hand-off is live; HandoffPanel
+            // CTA (showGuide) aborts the run then expands usable import controls.
+            // Batch-terminal suggest opens the guide after runVisibilityBatch settles.
           }
           break;
         case "resumed":
