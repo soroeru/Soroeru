@@ -6,8 +6,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteLedgerSummary, VisibilityHandoffCredentialView } from "../../../electron/ipc/contract.js";
-import type { BatchResultEntry } from "../site-management-batch.js";
-import { DELETE_TARGET_LIST_PREVIEW_LIMIT, deleteTargetListVisibility } from "../site-management-batch.js";
+import {
+  DELETE_TARGET_LIST_PREVIEW_LIMIT,
+  deleteTargetListVisibility,
+  type BatchResultEntry,
+} from "../site-management-batch.js";
 import type { CollectionResultModalContent } from "../collection-result-summary.js";
 import { Modal } from "./Modal.js";
 

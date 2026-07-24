@@ -564,6 +564,7 @@ export function LedgerPanel({
       const failed = summary.results.filter((entry) => !entry.ok);
       const successCount = summary.results.length - failed.length;
 
+      let deleteOutcomeError: string | undefined;
       if (failed.length > 0) {
         const failedDetails = failed
           .map((entry) => {
@@ -571,11 +572,10 @@ export function LedgerPanel({
             return `${name}（${reasonMessage(entry.error)}）`;
           })
           .join("、");
-        setLoadError(
-          `${successCount} 件を削除しましたが ${failed.length} 件は失敗しました: ${failedDetails}`,
-        );
-      } else {
-        setLoadError(undefined);
+        deleteOutcomeError =
+          successCount === 0
+            ? `${failed.length} 件の削除に失敗しました: ${failedDetails}`
+            : `${successCount} 件を削除しましたが ${failed.length} 件は失敗しました: ${failedDetails}`;
       }
 
       setSelected((current) => {
@@ -592,15 +592,35 @@ export function LedgerPanel({
 
       setDeleteTargets(undefined);
       setDeleteAcknowledged(false);
-      await loadSites();
-      onCollectedRef.current();
+      // Reload inline so loadSites success cannot clear partial-delete messaging, and
+      // reload failure cannot misreport irreversible deletes as delete-failed.
+      try {
+        const nextSites = await window.soroeru.ledger.siteDetails();
+        setSites(nextSites);
+        setSelected((current) => {
+          const validIds = new Set(nextSites.map((site) => site.siteAccountId));
+          return new Set([...current].filter((siteAccountId) => validIds.has(siteAccountId)));
+        });
+        setDetail((current) => {
+          if (!current) return current;
+          return nextSites.find((site) => site.siteAccountId === current.siteAccountId);
+        });
+        setLoadError(deleteOutcomeError);
+        onCollectedRef.current();
+      } catch {
+        setLoadError(
+          deleteOutcomeError
+            ? `${deleteOutcomeError}（台帳の再読み込みにも失敗しました）`
+            : "削除は完了しましたが、台帳の再読み込みに失敗しました。",
+        );
+      }
     } catch {
       setLoadError(reasonMessage("delete-failed"));
     } finally {
       deleteInFlightRef.current = false;
       setDeletingSites(false);
     }
-  }, [batchBusy, deleteAcknowledged, deleteTargets, deletingSites, loadSites, sessionPersistenceBulkRunning]);
+  }, [batchBusy, deleteAcknowledged, deleteTargets, deletingSites, sessionPersistenceBulkRunning]);
 
   const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
     setSelected((current) => {
@@ -736,7 +756,7 @@ export function LedgerPanel({
         {!allSelected && (
           <button
             type="button"
-            disabled={batchBusy || visibleSites.length === 0}
+            disabled={bulkExclusiveBusy || visibleSites.length === 0}
             onClick={selectAllVisible}
             className="text-sm underline"
           >
@@ -744,7 +764,12 @@ export function LedgerPanel({
           </button>
         )}
         {selectedVisibleIds.length > 0 && (
-          <button type="button" disabled={batchBusy} onClick={clearVisible} className="text-sm underline">
+          <button
+            type="button"
+            disabled={bulkExclusiveBusy}
+            onClick={clearVisible}
+            className="text-sm underline"
+          >
             表示中のチェックを外す
           </button>
         )}
@@ -826,7 +851,7 @@ export function LedgerPanel({
                       <input
                         type="checkbox"
                         checked={selected.has(site.siteAccountId)}
-                        disabled={batchBusy}
+                        disabled={bulkExclusiveBusy}
                         onChange={(event) => selectSite(site.siteAccountId, event.target.checked)}
                         aria-label={site.displayName}
                         className="mt-1"
