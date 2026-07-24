@@ -11,6 +11,7 @@
 
 import { randomUUID } from "node:crypto";
 import { normalizedValueHash } from "./normalize.js";
+import { deriveLedgerAllowedOrigins, isUrlInLedgerScope } from "./site-account-scope.js";
 import {
   type AccountRelationship,
   type Constraint,
@@ -201,6 +202,14 @@ export class DomainService {
 
   listSiteAccounts(): SiteAccount[] {
     return this.vault.list("siteAccount");
+  }
+
+  listAllowedLedgerOrigins(): string[] {
+    return deriveLedgerAllowedOrigins(this.listSiteAccounts());
+  }
+
+  isUrlInLedgerScope(url: string): boolean {
+    return isUrlInLedgerScope(url, this.listSiteAccounts());
   }
 
   /** Assign canonical order to pre-#387 records without disturbing already ordered sites. */

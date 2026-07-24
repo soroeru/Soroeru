@@ -1,4 +1,3 @@
-const button = document.getElementById("allow");
 const status = document.getElementById("status");
 const reconnectButton = document.getElementById("reconnect");
 const statusBadge = document.getElementById("status-badge");
@@ -21,22 +20,6 @@ chrome.storage.local.get(["chromeBridgeConnected"], (res) => {
   updateStatusUI(connected);
 });
 
-// Allow origin button
-button.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.url?.startsWith("https://")) {
-    status.textContent = "HTTPSのサイトを開いてください。";
-    return;
-  }
-  const origin = new URL(tab.url).origin;
-  try {
-    const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
-    status.textContent = granted ? `${origin} を許可しました。` : "許可されませんでした。";
-  } catch (err) {
-    status.textContent = "エラーが発生しました: " + err.message;
-  }
-});
-
 // Reconnect button
 reconnectButton.addEventListener("click", () => {
   status.textContent = "再接続を試みています...";
@@ -47,7 +30,7 @@ reconnectButton.addEventListener("click", () => {
         const connected = !!res.chromeBridgeConnected;
         updateStatusUI(connected);
         if (connected) {
-          status.textContent = "アプリに接続しました。";
+          status.textContent = "アプリに接続しました。開示台帳のサイトを操作できます。";
         } else {
           status.textContent = "接続できませんでした。Soroeruアプリが起動しており、接続セットアップが完了していることを確認してください。";
         }

@@ -79,15 +79,8 @@ Never enter a real credential, cookie, card value, or personal value during this
 - [ ] Open the extension popup in Chrome when disconnected. Confirm that it displays a **CONNECTED/OFFLINE** badge
       and a **アプリに再接続** (Reconnect) button when offline. Click **アプリに再接続** and confirm it successfully reconnects.
 - [ ] Verify that all connection transitions (connecting, connected, disconnected, rejected, registration success, registration failure) are recorded in the sanitized diagnostic log file (`~/Library/Application Support/Soroeru/logs/soroeru.log`) under the `chrome-bridge` category without leaking raw secrets, tokens, or credentials.
-- [ ] Open one fake HTTPS site. In the app, confirm the instruction says to click the Chrome extension
-      icon. Click the icon and then the popup permission button; confirm Chrome's permission prompt is
-      caused by that popup gesture, not by an app/native-host message.
-- [ ] Confirm the approved origin appears in Soroeru settings. Choose **取り消す**, then confirm the
-      origin disappears and automation against it fails with permission required. Re-approve it from
-      the extension popup before continuing.
-- [ ] Select the fake site's row and start collection. Confirm **このタブで実行しますか？** shows only
-      the HTTPS origin and numeric tab ID (no title, path/query, field value, credential, or cookie).
-      Cancel once and confirm nothing starts; repeat and approve to start in that tab.
+- [ ] Open a fake HTTPS site registered in the disclosure ledger. Confirm that once Chrome Bridge is connected, site accounts in the disclosure ledger form the operable scope. Confirm starting collection on a ledger site begins directly without requiring per-site popup permission buttons or repeated "このタブで実行しますか？" confirmation dialogs.
+- [ ] Select a site row (or multiple ledger rows for batch collection) and start collection. Confirm collection proceeds without per-site permission or tab confirmation popups interrupting each site in the queue, while sites not in the ledger remain out-of-scope and fail closed.
 - [ ] During the run, confirm the extension badge and in-page Soroeru banner are visible. Choose
       **一括収集を中止** and confirm the app aborts immediately, the tab binding and badge/banner clear,
       and no later command silently resumes or binds a different tab.

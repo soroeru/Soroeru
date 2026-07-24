@@ -200,8 +200,7 @@ export function ChromeBridgePanel(): React.JSX.Element {
       {runtimeControlsEnabled && status.connected && (
         <>
           <p className="text-sm">
-            サイトを許可するには対象タブを開き、Chrome の Soroeru
-            拡張アイコンをクリックしてください。権限要求は拡張ポップアップ内のボタンからのみ行われます。
+            開示台帳のサイトを操作する準備ができています。台帳に登録されているサイトが自動操作スコープとして扱われます。
           </p>
           <div>
             <h3 className="text-sm font-medium">承認済みオリジン</h3>

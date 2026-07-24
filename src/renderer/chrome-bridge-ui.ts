@@ -52,18 +52,14 @@ export function tabConfirmationLabel(tab: ChromeBridgeTabView): string {
   return `${tab.origin}（タブ ${tab.tabId}）`;
 }
 
-export async function prepareChromeBridgeRun(
-  api: {
-    status(): Promise<ChromeBridgeStatusView>;
-    activeTab(): Promise<ChromeBridgeTabView | undefined>;
-    selectTab(tabId: number): Promise<{ ok: boolean }>;
-  },
-  confirm: (message: string) => boolean,
-): Promise<boolean> {
+export async function prepareChromeBridgeRun(api: {
+  status(): Promise<ChromeBridgeStatusView>;
+  activeTab(): Promise<ChromeBridgeTabView | undefined>;
+  selectTab(tabId: number): Promise<{ ok: boolean }>;
+}): Promise<boolean> {
   const status = await api.status();
   if (!status.enabled || !status.connected) return true; // Existing Playwright path.
   const tab = await api.activeTab();
   if (!tab) return false;
-  if (!confirm(`このタブで実行しますか？\n${tabConfirmationLabel(tab)}`)) return false;
   return (await api.selectTab(tab.tabId)).ok;
 }
