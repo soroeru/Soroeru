@@ -23,9 +23,6 @@ export const evaluationOrder = 1;
 
 const CLI_NAMES = ["claude"];
 
-/** Documented Claude Code aliases used only when the CLI exposes a model list. */
-const FALLBACK_CANDIDATES = ["sonnet", "opus", "fable", "haiku"];
-
 function parseAuth(stdout) {
   try {
     const json = JSON.parse(String(stdout ?? "").trim());
@@ -35,60 +32,90 @@ function parseAuth(stdout) {
   }
 }
 
-function parseModelLines(stdout) {
-  const text = String(stdout ?? "").trim();
-  if (!text) return null;
-  try {
-    const json = JSON.parse(text);
-    if (Array.isArray(json)) {
-      return json
-        .map((entry) => {
-          if (typeof entry === "string") return { model: entry.trim(), requestedModel: entry.trim() };
-          const id = entry?.id ?? entry?.model ?? entry?.slug;
-          if (typeof id !== "string" || !id.trim()) return null;
-          const label =
-            typeof entry?.display_name === "string" && entry.display_name.trim()
-              ? entry.display_name.trim()
-              : id.trim();
-          return { model: id.trim(), requestedModel: label };
-        })
-        .filter(Boolean);
-    }
-    if (Array.isArray(json?.models)) {
-      return parseModelLines(JSON.stringify(json.models));
-    }
-  } catch {
-    // line-oriented fallback
-  }
-  const models = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || /^available models/i.test(trimmed) || /^default model/i.test(trimmed)) continue;
-    // Strict bullet/ID lines only — never invent models from prose sentences.
-    const bullet = trimmed.match(/^(?:[*•-]\s+)?([a-z0-9][a-z0-9._+-]*)$/i);
-    if (!bullet) continue;
-    const id = bullet[1];
-    models.push({ model: id, requestedModel: id });
-  }
-  return models.length ? models : null;
-}
-
 async function readSettingsModel(homeDir) {
   try {
     const raw = await fs.readFile(path.join(homeDir, ".claude", "settings.json"), "utf8");
     const settings = JSON.parse(raw);
     if (typeof settings?.model !== "string" || !settings.model.trim()) return null;
     // Strip UI suffixes such as `[1m]`.
-    return settings.model.trim().replace(/\[[^\]]*\]\s*$/, "").trim();
+    return settings.model
+      .trim()
+      .replace(/\[[^\]]*\]\s*$/, "")
+      .trim();
+  } catch {
+    return null;
+  }
+}
+
+function modelEntry(model, requestedModel = model) {
+  if (typeof model !== "string" || !model.trim()) return null;
+  const normalized = model
+    .trim()
+    .replace(/\[[^\]]*\]\s*$/, "")
+    .trim();
+  if (!normalized) return null;
+  return {
+    model: normalized,
+    requestedModel:
+      typeof requestedModel === "string" && requestedModel.trim() ? requestedModel.trim() : normalized,
+  };
+}
+
+function projectPaths(cwd, explicitProjectPath) {
+  const start = explicitProjectPath || cwd;
+  if (typeof start !== "string" || !start.trim()) return [];
+  const paths = [];
+  let current = path.resolve(start);
+  while (true) {
+    paths.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return paths;
+}
+
+async function readClaudeJsonModels(homeDir, cwd, explicitProjectPath) {
+  try {
+    const raw = await fs.readFile(path.join(homeDir, ".claude.json"), "utf8");
+    const config = JSON.parse(raw);
+    const projects = config?.projects;
+    if (!projects || typeof projects !== "object") return null;
+
+    for (const projectPath of projectPaths(cwd, explicitProjectPath)) {
+      const project = projects[projectPath];
+      const usage = project?.lastModelUsage;
+      if (!usage || typeof usage !== "object") continue;
+      const models = Object.keys(usage)
+        .map((model) => modelEntry(model))
+        .filter(Boolean);
+      if (models.length) return models;
+    }
+  } catch {
+    // Missing or malformed local state is equivalent to no discovered model.
+  }
+  return null;
+}
+
+async function readAvailableModelOptions(homeDir) {
+  try {
+    const raw = await fs.readFile(path.join(homeDir, ".claude.json"), "utf8");
+    const config = JSON.parse(raw);
+    if (!Array.isArray(config?.additionalModelOptionsCache)) return null;
+    const models = config.additionalModelOptionsCache
+      .map((entry) => modelEntry(entry?.value, entry?.label))
+      .filter(Boolean);
+    return models.length ? models : null;
   } catch {
     return null;
   }
 }
 
 /**
- * Discover Claude routes. Prefer a machine-readable model list from the CLI.
- * When the CLI cannot list models, fall back only to the settings-selected
- * model (exact identifier on disk) after auth succeeds — never invent aliases.
+ * Discover Claude routes from interfaces exposed by the installed CLI and its
+ * local state. Claude Code has no `models` subcommand; exact model identifiers
+ * are recorded in ~/.claude.json after use and its available-model cache is a
+ * secondary source. Every candidate still needs the headless execution probe.
  */
 export async function discover(ctx = {}) {
   const timeoutMs = ctx.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -121,31 +148,21 @@ export async function discover(ctx = {}) {
   }
 
   let models = null;
-  const listed = await run(cliPath, ["models"], { timeoutMs, env, cwd: ctx.cwd });
-  if (listed.timedOut) {
-    diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.VERIFICATION_TIMEOUT }));
-    return { records, diagnostics };
-  }
-  if (listed.code === 0) {
-    models = parseModelLines(listed.stdout);
-  }
-
-  if (!models?.length) {
-    const settingsModel =
-      typeof ctx.settingsModel === "string"
-        ? ctx.settingsModel.trim()
-        : await readSettingsModel(homeDir);
-    if (settingsModel) {
-      models = [{ model: settingsModel, requestedModel: settingsModel }];
-    } else if (Array.isArray(ctx.candidateModels) && ctx.candidateModels.length) {
-      // Explicit test/override candidates only — not used as production guesses.
-      models = ctx.candidateModels.map((entry) =>
-        typeof entry === "string"
-          ? { model: entry, requestedModel: entry }
-          : { model: entry.model, requestedModel: entry.requestedModel ?? entry.model },
-      );
-    } else if (ctx.allowFallbackCandidates) {
-      models = FALLBACK_CANDIDATES.map((id) => ({ model: id, requestedModel: id }));
+  if (typeof ctx.settingsModel === "string" && ctx.settingsModel.trim()) {
+    models = [modelEntry(ctx.settingsModel)];
+  } else if (Array.isArray(ctx.candidateModels) && ctx.candidateModels.length) {
+    // Explicit test/override candidates only — never production guesses.
+    models = ctx.candidateModels
+      .map((entry) =>
+        typeof entry === "string" ? modelEntry(entry) : modelEntry(entry?.model, entry?.requestedModel),
+      )
+      .filter(Boolean);
+  } else {
+    models = await readClaudeJsonModels(homeDir, ctx.cwd, ctx.projectPath);
+    if (!models?.length) models = await readAvailableModelOptions(homeDir);
+    if (!models?.length) {
+      const legacySettingsModel = await readSettingsModel(homeDir);
+      if (legacySettingsModel) models = [modelEntry(legacySettingsModel)];
     }
   }
 
@@ -191,7 +208,11 @@ export async function discover(ctx = {}) {
   });
   if (!probeResult.ok) {
     diagnostics.push(
-      diagnostic({ agent, status: "failed", reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED }),
+      diagnostic({
+        agent,
+        status: "failed",
+        reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED,
+      }),
     );
     return { records, diagnostics };
   }
