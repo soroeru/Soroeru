@@ -82,3 +82,77 @@ export function buildSiteDetailDisclosureGroups(
 export function disclosureFor(site: SiteLedgerDetail, attributeKey: string): DisclosureView | undefined {
   return site.disclosures.find((disclosure) => disclosure.attributeKey === attributeKey);
 }
+
+/**
+ * Default width for dynamic attribute columns (Issue #382).
+ * Matches the previous implicit `min-w-[8rem]` baseline so fixed sticky columns
+ * and horizontal scroll behavior stay familiar.
+ */
+export const LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX = 128;
+
+/**
+ * Combined width of sticky non-attribute columns (select + reorder + site + actions),
+ * in CSS pixels assuming a 16px root (matches `styles.css` rem widths).
+ */
+export const LEDGER_FIXED_COLUMNS_WIDTH_PX = Math.round((2.5 + 2.75 + 14 + 16) * 16);
+
+/** Placeholder width when no comparison attributes exist (matches empty-cell min width). */
+export const LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX = Math.round(
+  LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX * 1.5,
+);
+
+/** Total table width so fixed layout does not redistribute free space into attribute cols. */
+export function ledgerTableWidthPx(
+  widths: Readonly<Record<string, number>>,
+  attributeKeys: readonly string[],
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  let attributeSum = 0;
+  if (attributeKeys.length === 0) {
+    attributeSum = LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX;
+  } else {
+    for (const key of attributeKeys) {
+      attributeSum += ledgerAttributeColumnWidthPx(widths, key, defaultWidthPx);
+    }
+  }
+  return LEDGER_FIXED_COLUMNS_WIDTH_PX + attributeSum;
+}
+
+/** Resize floor: one third of the default width (integer px). */
+export function ledgerAttributeColumnMinWidthPx(
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  return Math.round(defaultWidthPx / 3);
+}
+
+/** Resize ceiling: three times the default width (integer px). */
+export function ledgerAttributeColumnMaxWidthPx(
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  return Math.round(defaultWidthPx * 3);
+}
+
+/**
+ * Clamp a dragged attribute-column width to [default/3, default×3].
+ * Non-finite inputs fall back to the default width. Result is integer CSS px.
+ */
+export function clampLedgerAttributeColumnWidth(
+  widthPx: number,
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  if (!Number.isFinite(widthPx)) return defaultWidthPx;
+  const min = ledgerAttributeColumnMinWidthPx(defaultWidthPx);
+  const max = ledgerAttributeColumnMaxWidthPx(defaultWidthPx);
+  return Math.min(max, Math.max(min, Math.round(widthPx)));
+}
+
+/** Resolved width for one attribute column, applying clamp when a stored value exists. */
+export function ledgerAttributeColumnWidthPx(
+  widths: Readonly<Record<string, number>>,
+  attributeKey: string,
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  const stored = widths[attributeKey];
+  if (stored === undefined) return defaultWidthPx;
+  return clampLedgerAttributeColumnWidth(stored, defaultWidthPx);
+}
