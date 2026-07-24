@@ -45,6 +45,7 @@ export function BatchCollectionBar({
   sessionPersistenceBulkError,
   onDeleteSelected,
   deleteBulkRunning,
+  deleteConfirmOpen,
 }: {
   selectedCount: number;
   totalVisible: number;
@@ -58,10 +59,13 @@ export function BatchCollectionBar({
   sessionPersistenceBulkError: string | undefined;
   onDeleteSelected?: () => void;
   deleteBulkRunning?: boolean;
+  /** True while the fourth-boundary delete modal is open (exclusive with other bulk actions). */
+  deleteConfirmOpen?: boolean;
 }): React.JSX.Element {
   const successful = batch.results.filter((entry) => entry.status === "collected").length;
   const failed = batch.results.filter((entry) => entry.status !== "collected").length;
-  const bulkBusy = disabled || sessionPersistenceBulkRunning || Boolean(deleteBulkRunning);
+  const bulkBusy =
+    disabled || sessionPersistenceBulkRunning || Boolean(deleteBulkRunning) || Boolean(deleteConfirmOpen);
   return (
     <div className="flex flex-col gap-2 rounded border border-neutral-200 p-3">
       <div className="flex flex-wrap items-center gap-2">

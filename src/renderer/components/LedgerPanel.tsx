@@ -234,6 +234,9 @@ export function LedgerPanel({
   );
   const orderedSites = useMemo(() => orderLedgerSites(visibleSites, sortMode), [sortMode, visibleSites]);
   const batchBusy = batch.phase === "running" || batch.phase === "paused" || batch.phase === "canceling";
+  /** Open delete confirmation or in-flight delete excludes other bulk vault mutations. */
+  const deleteExclusiveBusy = deletingSites || (deleteTargets?.length ?? 0) > 0;
+  const bulkExclusiveBusy = batchBusy || sessionPersistenceBulkRunning || deleteExclusiveBusy;
   // Saved-page guide / import stay usable after showGuide even while the batch is canceling.
   const guideInteractiveDisabled = batch.phase === "running" || batch.phase === "paused";
   const currentSite = sites.find((site) => site.siteAccountId === batch.currentSiteId);
@@ -304,7 +307,15 @@ export function LedgerPanel({
   const startBatch = useCallback(
     async (overrideIds?: string[]) => {
       const queue = overrideIds ?? [...selectedVisibleIds];
-      if (queue.length === 0 || batchBusy || batchInFlightRef.current) return;
+      if (
+        queue.length === 0 ||
+        batchBusy ||
+        sessionPersistenceBulkRunning ||
+        deleteExclusiveBusy ||
+        batchInFlightRef.current
+      ) {
+        return;
+      }
       const ready = await prepareChromeBridgeRun(window.soroeru.chromeBridge, (message) =>
         window.confirm(message),
       );
@@ -358,7 +369,7 @@ export function LedgerPanel({
         batchInFlightRef.current = false;
       }
     },
-    [batchBusy, refreshAfterSite, selectedVisibleIds],
+    [batchBusy, deleteExclusiveBusy, refreshAfterSite, selectedVisibleIds, sessionPersistenceBulkRunning],
   );
 
   const cancelBatch = useCallback(() => {
@@ -472,7 +483,7 @@ export function LedgerPanel({
   }, []);
   const enableSessionPersistenceForSelected = useCallback(async () => {
     const ids = [...selectedVisibleIds];
-    if (ids.length === 0 || sessionPersistenceBulkRunning) return;
+    if (ids.length === 0 || bulkExclusiveBusy) return;
     setSessionPersistenceBulkRunning(true);
     setSessionPersistenceBulkError(undefined);
     try {
@@ -490,7 +501,7 @@ export function LedgerPanel({
     } finally {
       setSessionPersistenceBulkRunning(false);
     }
-  }, [detail, loadSites, openDetail, selectedVisibleIds, sessionPersistenceBulkRunning]);
+  }, [bulkExclusiveBusy, detail, loadSites, openDetail, selectedVisibleIds]);
   const retrySite = useCallback(
     (siteAccountId: string) => {
       setResultModal(undefined);
@@ -503,14 +514,17 @@ export function LedgerPanel({
     setSavedPageSiteId(siteAccountId);
   }, []);
   const requestDeleteSelected = useCallback(() => {
+    if (bulkExclusiveBusy) return;
     setLoadError(undefined);
     setDeleteAcknowledged(false);
-    const targets: SiteLedgerSummary[] = selectedVisibleIds
-      .map((id) => visibleSites.find((site) => site.siteAccountId === id))
-      .filter((site): site is SiteLedgerDetail => site !== undefined);
+    const targets: SiteLedgerSummary[] = [];
+    for (const id of selectedVisibleIds) {
+      const site = visibleSites.find((entry) => entry.siteAccountId === id);
+      if (site) targets.push(site);
+    }
     if (targets.length === 0) return;
     setDeleteTargets(targets);
-  }, [selectedVisibleIds, visibleSites]);
+  }, [bulkExclusiveBusy, selectedVisibleIds, visibleSites]);
   const closeDeleteModal = useCallback(() => {
     if (deletingSites) return;
     setDeleteTargets(undefined);
@@ -523,13 +537,16 @@ export function LedgerPanel({
         acknowledged: deleteAcknowledged,
         deleting: deletingSites,
       }) ||
-      !deleteTargets
+      !deleteTargets ||
+      batchBusy ||
+      sessionPersistenceBulkRunning
     ) {
       return;
     }
     setDeletingSites(true);
     try {
       const ids = deleteTargets.map((site) => site.siteAccountId);
+      const nameById = new Map(deleteTargets.map((site) => [site.siteAccountId, site.displayName]));
       const summary = await deleteSitesForBatch(ids, (siteAccountId) =>
         window.soroeru.ledger.deleteSite({
           siteAccountId,
@@ -540,10 +557,17 @@ export function LedgerPanel({
       const successfulIds = new Set(
         summary.results.filter((entry) => entry.ok).map((entry) => entry.siteAccountId),
       );
+      const failed = summary.results.filter((entry) => !entry.ok);
+      const successCount = summary.results.length - failed.length;
 
-      if (summary.failedCount > 0) {
-        const firstFailure = summary.results.find((entry) => !entry.ok);
-        setLoadError(reasonMessage(firstFailure?.error));
+      if (failed.length > 0) {
+        const failedNames = failed
+          .map((entry) => nameById.get(entry.siteAccountId) ?? entry.siteAccountId)
+          .join("、");
+        const firstError = reasonMessage(failed[0]?.error);
+        setLoadError(
+          `${successCount} 件を削除しましたが ${failed.length} 件は失敗しました（${failedNames}）: ${firstError}`,
+        );
       } else {
         setLoadError(undefined);
       }
@@ -569,7 +593,7 @@ export function LedgerPanel({
     } finally {
       setDeletingSites(false);
     }
-  }, [deleteAcknowledged, deleteTargets, deletingSites, loadSites]);
+  }, [batchBusy, deleteAcknowledged, deleteTargets, deletingSites, loadSites, sessionPersistenceBulkRunning]);
 
   const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
     setSelected((current) => {
@@ -654,6 +678,7 @@ export function LedgerPanel({
         sessionPersistenceBulkError={sessionPersistenceBulkError}
         onDeleteSelected={requestDeleteSelected}
         deleteBulkRunning={deletingSites}
+        deleteConfirmOpen={(deleteTargets?.length ?? 0) > 0}
       />
 
       {handoff && (
