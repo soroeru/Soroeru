@@ -30,6 +30,7 @@ interface HandoffState {
   siteAccountId: string;
   instruction: string;
   fallbackSuggested: boolean;
+  wallRepeatSuggested: boolean;
 }
 
 export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelProps): React.JSX.Element {
@@ -74,14 +75,19 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           resumedHandoffSites.current.delete(event.siteAccountId);
           break;
         case "handoff": {
+          const wallRepeatSuggested = event.suggestSavedPageImport === true;
           const fallbackSuggested =
-            event.suggestSavedPageImport === true || resumedHandoffSites.current.has(event.siteAccountId);
+            wallRepeatSuggested || resumedHandoffSites.current.has(event.siteAccountId);
           setHandoff({
             siteAccountId: event.siteAccountId,
             instruction: event.instruction,
             fallbackSuggested,
+            wallRepeatSuggested,
           });
-          if (fallbackSuggested) setGuideSiteId(event.siteAccountId);
+          if (fallbackSuggested) {
+            setGuideSiteId(event.siteAccountId);
+            setSavedPageSiteId(event.siteAccountId);
+          }
           break;
         }
         case "resumed":
@@ -173,10 +179,16 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
             {handoff.fallbackSuggested ? "別の方法で取り込めます" : "ウォールの解決が必要です"}
           </p>
           <p className="text-xs text-amber-800">{handoff.instruction}</p>
-          {handoff.fallbackSuggested ? (
+          {handoff.wallRepeatSuggested ? (
             <p className="text-xs text-amber-800">
               同じ種類のウォールが繰り返し出ているため、自動収集だけでは進みにくいサイトです。
               いつものブラウザでログインして登録情報ページを開き、「表示したページから読み取る」（保存ページの取り込み）を試してください。
+            </p>
+          ) : handoff.fallbackSuggested ? (
+            <p className="text-xs text-amber-800">
+              このサイトはセキュリティがとても厳重です。Soroeru
+              からの自動ログインを最後まで完了できないことがあります。
+              いつものブラウザでログインして登録情報ページを保存すれば、その内容をローカルで読み取れます。
             </p>
           ) : (
             <p className="text-xs text-amber-800">
@@ -200,7 +212,7 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
               onClick={() => void showGuide(handoff.siteAccountId)}
               className="text-sm underline"
             >
-              {handoff.fallbackSuggested
+              {handoff.wallRepeatSuggested || handoff.fallbackSuggested
                 ? "表示したページから読み取る"
                 : "別の方法でこのサイトの情報を取り込む"}
             </button>

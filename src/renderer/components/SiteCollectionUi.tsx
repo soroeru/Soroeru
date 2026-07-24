@@ -27,7 +27,13 @@ export interface BatchProgress {
 export interface HandoffState {
   siteAccountId: string;
   instruction: string;
+  /** Any alternate-path offer (engine flag and/or second hand-off after resume). */
   fallbackSuggested: boolean;
+  /**
+   * Engine said same-kind wall repeat / hand-off budget — only then use the
+   * “same kind of wall keeps appearing” wording (Issue #421).
+   */
+  wallRepeatSuggested: boolean;
   credential: VisibilityHandoffCredentialView | undefined;
 }
 
@@ -173,10 +179,17 @@ export function HandoffPanel({
       dismissible={false}
     >
       <p className="text-sm text-amber-800">{handoff.instruction}</p>
-      {handoff.fallbackSuggested ? (
+      {handoff.wallRepeatSuggested ? (
         <p className="text-sm text-neutral-700">
           同じ種類のウォールが繰り返し出ているため、自動収集だけでは進みにくいサイトです。
           いつものブラウザでログインして登録情報ページを開き、「表示したページから読み取る」（保存ページの取り込み）を試してください。
+          このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
+        </p>
+      ) : handoff.fallbackSuggested ? (
+        <p className="text-sm text-neutral-700">
+          このサイトはセキュリティがとても厳重で、Soroeru
+          からの自動ログインを最後まで完了できないことがあります。
+          いつものブラウザでログインして登録情報ページを保存すれば、その内容をローカルで読み取れます。
           このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
         </p>
       ) : (
@@ -201,7 +214,9 @@ export function HandoffPanel({
           一括収集を中止
         </button>
         <button type="button" onClick={onShowGuide} className="text-sm underline">
-          {handoff.fallbackSuggested ? "表示したページから読み取る" : "別の方法でこのサイトの情報を取り込む"}
+          {handoff.wallRepeatSuggested || handoff.fallbackSuggested
+            ? "表示したページから読み取る"
+            : "別の方法でこのサイトの情報を取り込む"}
         </button>
       </div>
     </Modal>

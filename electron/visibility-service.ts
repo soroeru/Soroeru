@@ -219,5 +219,6 @@ function toView(result: VisibilityRunResult): VisibilityRunResultView {
     disclosures: result.disclosures,
     relationships: result.relationships,
     constraints: result.constraints,
+    ...(result.suggestSavedPageImport ? { suggestSavedPageImport: true } : {}),
   };
 }

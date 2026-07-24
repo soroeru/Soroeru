@@ -181,14 +181,15 @@ export function LedgerPanel({
             return { ...current, phase: "paused" };
           });
           {
-            // Engine flag (Issue #421: same-kind wall repeat / hand-off exhausted)
-            // or a second hand-off after the user already resumed once.
+            const wallRepeatSuggested = event.suggestSavedPageImport === true;
+            // Engine flag (Issue #421) or a second hand-off after the user already resumed.
             const fallbackSuggested =
-              event.suggestSavedPageImport === true || resumedHandoffSites.current.has(event.siteAccountId);
+              wallRepeatSuggested || resumedHandoffSites.current.has(event.siteAccountId);
             setHandoff({
               siteAccountId: event.siteAccountId,
               instruction: event.instruction,
               fallbackSuggested,
+              wallRepeatSuggested,
               credential: event.credential,
             });
             if (fallbackSuggested) {

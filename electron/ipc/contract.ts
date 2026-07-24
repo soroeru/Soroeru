@@ -446,6 +446,8 @@ export interface VisibilityRunResultView {
   disclosures: number;
   relationships: number;
   constraints: number;
+  /** Issue #421: offer the saved-page / current-page read path after this result. */
+  suggestSavedPageImport?: boolean;
 }
 
 /** Whether a run is in progress and whether it is paused at a wall hand-off. */

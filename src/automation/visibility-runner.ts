@@ -22,6 +22,7 @@ import { siteDisplayNameCandidate } from "./site-display-name.js";
 import {
   noteWallOccurrence,
   shouldSuggestSavedPageImport,
+  WALL_REPEAT_SUGGEST_THRESHOLD,
   wallRepeatStoppedDetail,
   wallRepeatSuggestedDetail,
   type WallKind,
@@ -64,6 +65,12 @@ export interface VisibilityRunResult {
   disclosures: number;
   relationships: number;
   constraints: number;
+  /**
+   * Issue #421: true when this site run suggested (or stopped after) the
+   * saved-page / current-page read path — including hand-off budget exhaustion
+   * that never emits a live handoff event.
+   */
+  suggestSavedPageImport?: boolean;
 }
 
 export class VisibilityRunner {
@@ -72,6 +79,8 @@ export class VisibilityRunner {
   private readonly logger: Logger;
   /** Per site-run counts of each wall kind (Issue #421). Reset at the start of `runSite`. */
   private wallKindCounts = new Map<WallKind, number>();
+  /** Latched once any wall observation suggests the alternate import path. */
+  private suggestedSavedPageImport = false;
 
   constructor(private readonly options: VisibilityRunnerOptions) {
     this.now = options.now ?? Date.now;
@@ -80,6 +89,7 @@ export class VisibilityRunner {
 
   async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
     this.wallKindCounts = new Map();
+    this.suggestedSavedPageImport = false;
     let siteAccount = this.requireSite(siteAccountId);
     // Re-read after hand-offs that may mark the stored password stale (Issue #416).
     let credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
@@ -563,14 +573,18 @@ export class VisibilityRunner {
       if (!wall) return current;
 
       const handoffExhausted = !this.options.handoff || handoffs === maxHandoffs;
+      // On the last callable hand-off slot, also surface the alternate path so the
+      // user sees it before the budget is fully spent (exhaust itself has no live UI).
+      const lastCallableHandoff = handoffs === maxHandoffs - 1 && Boolean(this.options.handoff);
       const suggest = this.recordWallObservation({
         siteAccount,
         wall,
         pageUrl: current.url,
         step,
         handoffExhausted,
-        stopping: handoffExhausted,
       });
+      const offerAlternate = suggest || lastCallableHandoff;
+      if (offerAlternate) this.suggestedSavedPageImport = true;
 
       if (handoffExhausted) return undefined;
       const outcome = await this.options.handoff!({
@@ -578,7 +592,7 @@ export class VisibilityRunner {
         instruction: this.wallDetection.instructionFor(wall),
         evidence: wall.evidence,
         ...(credential && shouldOfferHandoffCredential(step, current, wall.kind) ? { credential } : {}),
-        ...(suggest ? { suggestSavedPageImport: true } : {}),
+        ...(offerAlternate ? { suggestSavedPageImport: true } : {}),
       });
       if (outcome !== "resolved") {
         this.recordWallRepeatStoppedIfNeeded(siteAccount, wall.kind, current.url, step);
@@ -624,14 +638,17 @@ export class VisibilityRunner {
     while (collected.wall) {
       const wall = collected.wall;
       const handoffExhausted = !this.options.handoff || handoffs >= maxHandoffs;
+      const lastCallableHandoff =
+        handoffs === maxHandoffs - 1 && Boolean(this.options.handoff) && !handoffExhausted;
       const suggest = this.recordWallObservation({
         siteAccount,
         wall: wall.wall,
         pageUrl: wall.url,
         step: "exploration",
         handoffExhausted,
-        stopping: handoffExhausted,
       });
+      const offerAlternate = suggest || lastCallableHandoff;
+      if (offerAlternate) this.suggestedSavedPageImport = true;
 
       if (handoffExhausted) {
         return {
@@ -645,7 +662,7 @@ export class VisibilityRunner {
         siteAccount,
         instruction: this.wallDetection.instructionFor(wall.wall),
         evidence: wall.wall.evidence,
-        ...(suggest ? { suggestSavedPageImport: true } : {}),
+        ...(offerAlternate ? { suggestSavedPageImport: true } : {}),
       });
       if (outcome !== "resolved") {
         this.recordWallRepeatStoppedIfNeeded(siteAccount, wall.wall.kind, wall.url, "exploration");
@@ -684,7 +701,7 @@ export class VisibilityRunner {
   /**
    * Evidence + wall Constraint for every detection; on same-kind repeat or hand-off
    * exhaustion (Issue #421), also mark the alternate "read the opened page" path
-   * and, when stopping, the interrupt reason for diagnostics.
+   * and, when the budget is exhausted, the interrupt reason for diagnostics.
    */
   private recordWallObservation(input: {
     siteAccount: SiteAccount;
@@ -692,13 +709,13 @@ export class VisibilityRunner {
     pageUrl: string;
     step: string;
     handoffExhausted: boolean;
-    stopping: boolean;
   }): boolean {
     const { count, sameKindRepeat } = noteWallOccurrence(this.wallKindCounts, input.wall.kind);
     const suggest = shouldSuggestSavedPageImport({
       sameKindRepeat,
       handoffExhausted: input.handoffExhausted,
     });
+    if (suggest) this.suggestedSavedPageImport = true;
 
     const evidence = this.options.domain.addEvidence({
       siteAccountId: input.siteAccount.id,
@@ -714,7 +731,7 @@ export class VisibilityRunner {
       observedAt: this.now(),
     });
 
-    if (suggest && !input.stopping) {
+    if (suggest && !input.handoffExhausted) {
       this.options.domain.addConstraint({
         siteAccountId: input.siteAccount.id,
         kind: "unknown-state",
@@ -723,7 +740,7 @@ export class VisibilityRunner {
         observedAt: this.now(),
       });
     }
-    if (suggest && input.stopping) {
+    if (suggest && input.handoffExhausted) {
       this.options.domain.addConstraint({
         siteAccountId: input.siteAccount.id,
         kind: "unknown-state",
@@ -744,7 +761,7 @@ export class VisibilityRunner {
         ...(suggest
           ? {
               suggestSavedPageImport: "true",
-              ...(input.stopping ? { wallRepeatStopped: "true" } : {}),
+              ...(input.handoffExhausted ? { wallRepeatStopped: "true" } : {}),
             }
           : {}),
       },
@@ -766,7 +783,7 @@ export class VisibilityRunner {
     step: string,
   ): void {
     const count = this.wallKindCounts.get(kind) ?? 0;
-    if (count < 2) return;
+    if (count < WALL_REPEAT_SUGGEST_THRESHOLD) return;
     const already = this.options.domain
       .listConstraints()
       .some(
@@ -1145,8 +1162,16 @@ export class VisibilityRunner {
     this.logger.info("visibility", "run paused for wall hand-off", {
       siteAccountId,
       ...(domain !== undefined ? { domain } : {}),
+      ...(this.suggestedSavedPageImport ? { suggestSavedPageImport: true } : {}),
     });
-    return { siteAccountId, status: "handoff", disclosures: 0, relationships: 0, constraints };
+    return {
+      siteAccountId,
+      status: "handoff",
+      disclosures: 0,
+      relationships: 0,
+      constraints,
+      ...(this.suggestedSavedPageImport ? { suggestSavedPageImport: true } : {}),
+    };
   }
 }
 
