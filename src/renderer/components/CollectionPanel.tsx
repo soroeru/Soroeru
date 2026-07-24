@@ -73,14 +73,17 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           setGuideSiteId(undefined);
           resumedHandoffSites.current.delete(event.siteAccountId);
           break;
-        case "handoff":
+        case "handoff": {
+          const fallbackSuggested =
+            event.suggestSavedPageImport === true || resumedHandoffSites.current.has(event.siteAccountId);
           setHandoff({
             siteAccountId: event.siteAccountId,
             instruction: event.instruction,
-            fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
+            fallbackSuggested,
           });
-          if (resumedHandoffSites.current.has(event.siteAccountId)) setGuideSiteId(event.siteAccountId);
+          if (fallbackSuggested) setGuideSiteId(event.siteAccountId);
           break;
+        }
         case "resumed":
           resumedHandoffSites.current.add(event.siteAccountId);
           setHandoff(undefined);
@@ -172,9 +175,8 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           <p className="text-xs text-amber-800">{handoff.instruction}</p>
           {handoff.fallbackSuggested ? (
             <p className="text-xs text-amber-800">
-              このサイトはセキュリティがとても厳重です。Soroeru
-              からの自動ログインを最後まで完了できないことがあります。
-              いつものブラウザでログインして登録情報ページを保存すれば、その内容をローカルで読み取れます。
+              同じ種類のウォールが繰り返し出ているため、自動収集だけでは進みにくいサイトです。
+              いつものブラウザでログインして登録情報ページを開き、「表示したページから読み取る」（保存ページの取り込み）を試してください。
             </p>
           ) : (
             <p className="text-xs text-amber-800">
@@ -198,7 +200,9 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
               onClick={() => void showGuide(handoff.siteAccountId)}
               className="text-sm underline"
             >
-              別の方法でこのサイトの情報を取り込む
+              {handoff.fallbackSuggested
+                ? "表示したページから読み取る"
+                : "別の方法でこのサイトの情報を取り込む"}
             </button>
           </div>
         </div>

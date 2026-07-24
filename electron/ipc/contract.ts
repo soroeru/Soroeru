@@ -490,6 +490,11 @@ export type VisibilityEvent =
       instruction: string;
       evidence: string;
       credential?: VisibilityHandoffCredentialView;
+      /**
+       * Issue #421: same-kind wall repeat or hand-off budget exhausted — offer
+       * the saved-page / "read the page you opened" path in the hand-off UI.
+       */
+      suggestSavedPageImport?: boolean;
     }
   | { type: "resumed"; siteAccountId: string }
   | { type: "run-finished"; result: VisibilityRunResultView };

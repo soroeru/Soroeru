@@ -180,16 +180,22 @@ export function LedgerPanel({
             if (current.phase === "canceling") return current;
             return { ...current, phase: "paused" };
           });
-          setHandoff({
-            siteAccountId: event.siteAccountId,
-            instruction: event.instruction,
-            fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
-            credential: event.credential,
-          });
-          if (resumedHandoffSites.current.has(event.siteAccountId)) {
-            // Expand the saved-page strip so the nested guide is actually visible.
-            setGuideSiteId(event.siteAccountId);
-            setSavedPageSiteId(event.siteAccountId);
+          {
+            // Engine flag (Issue #421: same-kind wall repeat / hand-off exhausted)
+            // or a second hand-off after the user already resumed once.
+            const fallbackSuggested =
+              event.suggestSavedPageImport === true || resumedHandoffSites.current.has(event.siteAccountId);
+            setHandoff({
+              siteAccountId: event.siteAccountId,
+              instruction: event.instruction,
+              fallbackSuggested,
+              credential: event.credential,
+            });
+            if (fallbackSuggested) {
+              // Expand the saved-page strip so the nested guide is actually visible.
+              setGuideSiteId(event.siteAccountId);
+              setSavedPageSiteId(event.siteAccountId);
+            }
           }
           break;
         case "resumed":

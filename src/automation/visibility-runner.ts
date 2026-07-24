@@ -19,12 +19,22 @@ import { RuleEngine } from "./rule-engine.js";
 import type { SiteSession } from "./page-driver.js";
 import { WallDetectionService } from "./wall-detection.js";
 import { siteDisplayNameCandidate } from "./site-display-name.js";
+import {
+  noteWallOccurrence,
+  shouldSuggestSavedPageImport,
+  wallRepeatStoppedDetail,
+  wallRepeatSuggestedDetail,
+  type WallKind,
+} from "./wall-repeat-suggestion.js";
+import type { WallDetection } from "../types.js";
 
 export type VisibilityHandoff = (input: {
   siteAccount: SiteAccount;
   instruction: string;
   evidence: string;
   credential?: Credential;
+  /** Issue #421: offer the saved-page / current-page read path for this pause. */
+  suggestSavedPageImport?: boolean;
 }) => Promise<"resolved" | "abort">;
 
 export interface VisibilityRunnerOptions {
@@ -60,6 +70,8 @@ export class VisibilityRunner {
   private readonly wallDetection = new WallDetectionService();
   private readonly now: () => number;
   private readonly logger: Logger;
+  /** Per site-run counts of each wall kind (Issue #421). Reset at the start of `runSite`. */
+  private wallKindCounts = new Map<WallKind, number>();
 
   constructor(private readonly options: VisibilityRunnerOptions) {
     this.now = options.now ?? Date.now;
@@ -67,6 +79,7 @@ export class VisibilityRunner {
   }
 
   async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
+    this.wallKindCounts = new Map();
     let siteAccount = this.requireSite(siteAccountId);
     // Re-read after hand-offs that may mark the stored password stale (Issue #416).
     let credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
@@ -549,40 +562,28 @@ export class VisibilityRunner {
       });
       if (!wall) return current;
 
-      const evidence = this.options.domain.addEvidence({
-        siteAccountId: siteAccount.id,
+      const handoffExhausted = !this.options.handoff || handoffs === maxHandoffs;
+      const suggest = this.recordWallObservation({
+        siteAccount,
+        wall,
         pageUrl: current.url,
-        observedAt: this.now(),
-        maskedSnippet: wall.evidence,
-      });
-      this.options.domain.addConstraint({
-        siteAccountId: siteAccount.id,
-        kind: "wall",
-        detail: `${wall.kind}: ${wall.evidence}`,
-        evidenceIds: [evidence.id],
-        observedAt: this.now(),
-      });
-      this.options.domain.saveCheckpoint({
-        workflow: "visibility",
-        siteAccountId: siteAccount.id,
         step,
-        status: "handoff",
-        resumeData: { wall: wall.kind, url: current.url },
-      });
-      this.logger.warn("visibility", "wall detected", {
-        domain: siteAccount.domain,
-        wall: wall.kind,
-        step,
+        handoffExhausted,
+        stopping: handoffExhausted,
       });
 
-      if (!this.options.handoff || handoffs === maxHandoffs) return undefined;
-      const outcome = await this.options.handoff({
+      if (handoffExhausted) return undefined;
+      const outcome = await this.options.handoff!({
         siteAccount,
         instruction: this.wallDetection.instructionFor(wall),
         evidence: wall.evidence,
         ...(credential && shouldOfferHandoffCredential(step, current, wall.kind) ? { credential } : {}),
+        ...(suggest ? { suggestSavedPageImport: true } : {}),
       });
-      if (outcome !== "resolved") return undefined;
+      if (outcome !== "resolved") {
+        this.recordWallRepeatStoppedIfNeeded(siteAccount, wall.kind, current.url, step);
+        return undefined;
+      }
       // Issue #416: a completed forced reset makes the vault password stale by
       // definition. Flag it and record a Constraint so the ledger can surface
       // the freshness gap even when the session continues authenticated.
@@ -622,33 +623,17 @@ export class VisibilityRunner {
 
     while (collected.wall) {
       const wall = collected.wall;
-      const evidence = this.options.domain.addEvidence({
-        siteAccountId: siteAccount.id,
+      const handoffExhausted = !this.options.handoff || handoffs >= maxHandoffs;
+      const suggest = this.recordWallObservation({
+        siteAccount,
+        wall: wall.wall,
         pageUrl: wall.url,
-        observedAt: this.now(),
-        maskedSnippet: wall.wall.evidence,
-      });
-      this.options.domain.addConstraint({
-        siteAccountId: siteAccount.id,
-        kind: "wall",
-        detail: `${wall.wall.kind}: ${wall.wall.evidence}`,
-        evidenceIds: [evidence.id],
-        observedAt: this.now(),
-      });
-      this.options.domain.saveCheckpoint({
-        workflow: "visibility",
-        siteAccountId: siteAccount.id,
         step: "exploration",
-        status: "handoff",
-        resumeData: { wall: wall.wall.kind, url: wall.url },
-      });
-      this.logger.warn("visibility", "wall detected", {
-        domain: siteAccount.domain,
-        wall: wall.wall.kind,
-        step: "exploration",
+        handoffExhausted,
+        stopping: handoffExhausted,
       });
 
-      if (!this.options.handoff || handoffs >= maxHandoffs) {
+      if (handoffExhausted) {
         return {
           disclosures: collected.disclosures,
           dynamicCandidates: collected.dynamicCandidates,
@@ -656,12 +641,14 @@ export class VisibilityRunner {
         };
       }
       handoffs++;
-      const outcome = await this.options.handoff({
+      const outcome = await this.options.handoff!({
         siteAccount,
         instruction: this.wallDetection.instructionFor(wall.wall),
         evidence: wall.wall.evidence,
+        ...(suggest ? { suggestSavedPageImport: true } : {}),
       });
       if (outcome !== "resolved") {
+        this.recordWallRepeatStoppedIfNeeded(siteAccount, wall.wall.kind, wall.url, "exploration");
         return {
           disclosures: collected.disclosures,
           dynamicCandidates: collected.dynamicCandidates,
@@ -692,6 +679,122 @@ export class VisibilityRunner {
       dynamicCandidates: collected.dynamicCandidates,
       interruptedByWall: false,
     };
+  }
+
+  /**
+   * Evidence + wall Constraint for every detection; on same-kind repeat or hand-off
+   * exhaustion (Issue #421), also mark the alternate "read the opened page" path
+   * and, when stopping, the interrupt reason for diagnostics.
+   */
+  private recordWallObservation(input: {
+    siteAccount: SiteAccount;
+    wall: WallDetection;
+    pageUrl: string;
+    step: string;
+    handoffExhausted: boolean;
+    stopping: boolean;
+  }): boolean {
+    const { count, sameKindRepeat } = noteWallOccurrence(this.wallKindCounts, input.wall.kind);
+    const suggest = shouldSuggestSavedPageImport({
+      sameKindRepeat,
+      handoffExhausted: input.handoffExhausted,
+    });
+
+    const evidence = this.options.domain.addEvidence({
+      siteAccountId: input.siteAccount.id,
+      pageUrl: input.pageUrl,
+      observedAt: this.now(),
+      maskedSnippet: input.wall.evidence,
+    });
+    this.options.domain.addConstraint({
+      siteAccountId: input.siteAccount.id,
+      kind: "wall",
+      detail: `${input.wall.kind}: ${input.wall.evidence}`,
+      evidenceIds: [evidence.id],
+      observedAt: this.now(),
+    });
+
+    if (suggest && !input.stopping) {
+      this.options.domain.addConstraint({
+        siteAccountId: input.siteAccount.id,
+        kind: "unknown-state",
+        detail: wallRepeatSuggestedDetail(input.wall.kind, count),
+        evidenceIds: [evidence.id],
+        observedAt: this.now(),
+      });
+    }
+    if (suggest && input.stopping) {
+      this.options.domain.addConstraint({
+        siteAccountId: input.siteAccount.id,
+        kind: "unknown-state",
+        detail: wallRepeatStoppedDetail(input.wall.kind, count),
+        evidenceIds: [evidence.id],
+        observedAt: this.now(),
+      });
+    }
+
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: input.siteAccount.id,
+      step: input.step,
+      status: "handoff",
+      resumeData: {
+        wall: input.wall.kind,
+        url: input.pageUrl,
+        ...(suggest
+          ? {
+              suggestSavedPageImport: "true",
+              ...(input.stopping ? { wallRepeatStopped: "true" } : {}),
+            }
+          : {}),
+      },
+    });
+    this.logger.warn("visibility", "wall detected", {
+      domain: input.siteAccount.domain,
+      wall: input.wall.kind,
+      step: input.step,
+      ...(suggest ? { suggestSavedPageImport: true } : {}),
+    });
+    return suggest;
+  }
+
+  /** User aborted a hand-off after a same-kind repeat had already been suggested. */
+  private recordWallRepeatStoppedIfNeeded(
+    siteAccount: SiteAccount,
+    kind: WallKind,
+    pageUrl: string,
+    step: string,
+  ): void {
+    const count = this.wallKindCounts.get(kind) ?? 0;
+    if (count < 2) return;
+    const already = this.options.domain
+      .listConstraints()
+      .some(
+        (c) =>
+          c.siteAccountId === siteAccount.id &&
+          typeof c.detail === "string" &&
+          c.detail.startsWith("wall-repeat-auto-collect-stopped:"),
+      );
+    if (already) return;
+    this.options.domain.addConstraint({
+      siteAccountId: siteAccount.id,
+      kind: "unknown-state",
+      detail: wallRepeatStoppedDetail(kind, count),
+      evidenceIds: [],
+      observedAt: this.now(),
+    });
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: siteAccount.id,
+      step,
+      status: "handoff",
+      resumeData: {
+        wall: kind,
+        url: pageUrl,
+        suggestSavedPageImport: "true",
+        wallRepeatStopped: "true",
+      },
+    });
   }
 
   private async login(session: SiteSession, credential: Credential, snapshot: PageSnapshot): Promise<void> {

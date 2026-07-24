@@ -173,10 +173,18 @@ export function HandoffPanel({
       dismissible={false}
     >
       <p className="text-sm text-amber-800">{handoff.instruction}</p>
-      <p className="text-sm text-neutral-700">
-        表示中のブラウザでウォール（CAPTCHA / 認証コード / 確認など）をご自身で解決してください。
-        このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
-      </p>
+      {handoff.fallbackSuggested ? (
+        <p className="text-sm text-neutral-700">
+          同じ種類のウォールが繰り返し出ているため、自動収集だけでは進みにくいサイトです。
+          いつものブラウザでログインして登録情報ページを開き、「表示したページから読み取る」（保存ページの取り込み）を試してください。
+          このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
+        </p>
+      ) : (
+        <p className="text-sm text-neutral-700">
+          表示中のブラウザでウォール（CAPTCHA / 認証コード / 確認など）をご自身で解決してください。
+          このサイトをスキップしても、一括収集は次のチェック済みサイトへ進みます。
+        </p>
+      )}
       <HandoffCredentialPanel credential={handoff.credential} />
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <button
@@ -193,7 +201,7 @@ export function HandoffPanel({
           一括収集を中止
         </button>
         <button type="button" onClick={onShowGuide} className="text-sm underline">
-          別の方法でこのサイトの情報を取り込む
+          {handoff.fallbackSuggested ? "表示したページから読み取る" : "別の方法でこのサイトの情報を取り込む"}
         </button>
       </div>
     </Modal>

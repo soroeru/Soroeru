@@ -180,6 +180,7 @@ export class VisibilityService {
     instruction: string;
     evidence: string;
     credential?: Credential;
+    suggestSavedPageImport?: boolean;
   }): Promise<"resolved" | "abort"> {
     const credential = input.credential ? toHandoffCredentialView(input.credential) : undefined;
     this.emit({
@@ -188,6 +189,7 @@ export class VisibilityService {
       instruction: input.instruction,
       evidence: input.evidence,
       ...(credential ? { credential } : {}),
+      ...(input.suggestSavedPageImport ? { suggestSavedPageImport: true } : {}),
     });
     return new Promise<"resolved" | "abort">((resolve) => {
       this.pendingHandoff = {
