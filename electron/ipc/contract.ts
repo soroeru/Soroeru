@@ -446,6 +446,8 @@ export interface VisibilityRunResultView {
   disclosures: number;
   relationships: number;
   constraints: number;
+  /** Issue #421: offer the saved-page / current-page read path after this result. */
+  suggestSavedPageImport?: boolean;
 }
 
 /** Whether a run is in progress and whether it is paused at a wall hand-off. */
@@ -490,6 +492,13 @@ export type VisibilityEvent =
       instruction: string;
       evidence: string;
       credential?: VisibilityHandoffCredentialView;
+      /**
+       * Issue #421: same-kind wall repeat or hand-off budget exhausted — offer
+       * the saved-page / "read the page you opened" path in the hand-off UI.
+       */
+      suggestSavedPageImport?: boolean;
+      /** True only when the same wall kind has repeated in this site run. */
+      sameKindWallRepeat?: boolean;
     }
   | { type: "resumed"; siteAccountId: string }
   | { type: "run-finished"; result: VisibilityRunResultView };

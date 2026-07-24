@@ -87,6 +87,21 @@ test("runVisibilityBatch stops before the next site when canceled", async () => 
   assert.equal(summary.canceled, true);
 });
 
+test("runVisibilityBatch preserves suggestSavedPageImport on batch results (Issue #421)", async () => {
+  const summary = await runVisibilityBatch(["amazon", "rakuten"], {
+    run: async (siteAccountId) => {
+      if (siteAccountId === "amazon") {
+        return { ...result(siteAccountId, "handoff"), suggestSavedPageImport: true };
+      }
+      return result(siteAccountId, "collected");
+    },
+    isCanceled: () => false,
+  });
+
+  assert.equal(summary.results[0]?.suggestSavedPageImport, true);
+  assert.equal(summary.results[1]?.suggestSavedPageImport, undefined);
+});
+
 test("enableSessionPersistenceForSites sets each selected site sequentially and tallies failures", async () => {
   const requested: string[] = [];
 

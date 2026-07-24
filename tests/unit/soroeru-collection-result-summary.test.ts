@@ -97,3 +97,15 @@ test("buildCollectionResultModalContent summarizes a batch with mixed outcomes",
   assert.match(content.title, /失敗 2 件/);
   assert.match(content.title, /成功 1 件/);
 });
+
+test("buildCollectionResultModalContent surfaces Issue #421 saved-page suggestion on handoff", () => {
+  const content = buildCollectionResultModalContent(
+    [{ siteAccountId: "niconico", status: "handoff", suggestSavedPageImport: true }],
+    nameOf,
+  );
+
+  assert.ok(content);
+  assert.equal(content.failures[0]?.suggestSavedPageImport, true);
+  assert.equal(content.failures[0]?.canImportSavedPage, true);
+  assert.match(content.failures[0]?.reason ?? "", /表示したページから読み取る/);
+});

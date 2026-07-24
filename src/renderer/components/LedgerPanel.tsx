@@ -180,16 +180,24 @@ export function LedgerPanel({
             if (current.phase === "canceling") return current;
             return { ...current, phase: "paused" };
           });
-          setHandoff({
-            siteAccountId: event.siteAccountId,
-            instruction: event.instruction,
-            fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
-            credential: event.credential,
-          });
-          if (resumedHandoffSites.current.has(event.siteAccountId)) {
-            // Expand the saved-page strip so the nested guide is actually visible.
-            setGuideSiteId(event.siteAccountId);
-            setSavedPageSiteId(event.siteAccountId);
+          {
+            // Same-kind copy only when the engine counted a repeated wall kind.
+            const wallRepeatSuggested = event.sameKindWallRepeat === true;
+            // Engine alternate-path offer (Issue #421) or a second hand-off after resume.
+            const fallbackSuggested =
+              event.suggestSavedPageImport === true ||
+              wallRepeatSuggested ||
+              resumedHandoffSites.current.has(event.siteAccountId);
+            setHandoff({
+              siteAccountId: event.siteAccountId,
+              instruction: event.instruction,
+              fallbackSuggested,
+              wallRepeatSuggested,
+              credential: event.credential,
+            });
+            // Keep the import strip collapsed while hand-off is live; HandoffPanel
+            // CTA (showGuide) aborts the run then expands usable import controls.
+            // Batch-terminal suggest opens the guide after runVisibilityBatch settles.
           }
           break;
         case "resumed":
@@ -211,6 +219,9 @@ export function LedgerPanel({
           // Batch progress owns ledger refresh (`refreshAfterSite`); this event
           // only clears transient run UI so we do not re-fetch full siteDetails
           // three extra times per site after folding collection into the ledger.
+          // Terminal suggestSavedPageImport is persisted on BatchResultEntry and
+          // surfaced when the batch summary modal opens (next run-started would
+          // clear mid-batch guide state).
           setRunningSiteId(undefined);
           setHandoff(undefined);
           resumedHandoffSites.current.delete(event.result.siteAccountId);
@@ -345,6 +356,13 @@ export function LedgerPanel({
               siteAccountId,
           );
           if (content) setResultModal(content);
+          // After the batch settles, open the guide for the first site that
+          // asked for the alternate path (Issue #421; survives multi-site runs).
+          const suggested = summary.results.find((entry) => entry.suggestSavedPageImport);
+          if (suggested) {
+            setGuideSiteId(suggested.siteAccountId);
+            setSavedPageSiteId(suggested.siteAccountId);
+          }
         }
       } catch {
         setLoadError(reasonMessage(undefined));

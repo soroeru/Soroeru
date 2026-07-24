@@ -3,6 +3,8 @@ import type { SiteLedgerSummary, VisibilityRunResultView } from "../../electron/
 export interface BatchResultEntry {
   siteAccountId: string;
   status: VisibilityRunResultView["status"];
+  /** Issue #421: terminal run asked for the saved-page / current-page read path. */
+  suggestSavedPageImport?: boolean;
 }
 
 export interface BatchSummary {
@@ -38,7 +40,11 @@ export async function runVisibilityBatch(
     let entry: BatchResultEntry;
     try {
       const result = await runner.run(siteAccountId);
-      entry = { siteAccountId, status: result.status };
+      entry = {
+        siteAccountId,
+        status: result.status,
+        ...(result.suggestSavedPageImport ? { suggestSavedPageImport: true } : {}),
+      };
     } catch {
       entry = { siteAccountId, status: "failed" };
     }

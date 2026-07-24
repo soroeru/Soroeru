@@ -30,6 +30,7 @@ interface HandoffState {
   siteAccountId: string;
   instruction: string;
   fallbackSuggested: boolean;
+  wallRepeatSuggested: boolean;
 }
 
 export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelProps): React.JSX.Element {
@@ -73,14 +74,24 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           setGuideSiteId(undefined);
           resumedHandoffSites.current.delete(event.siteAccountId);
           break;
-        case "handoff":
+        case "handoff": {
+          const wallRepeatSuggested = event.sameKindWallRepeat === true;
+          const fallbackSuggested =
+            event.suggestSavedPageImport === true ||
+            wallRepeatSuggested ||
+            resumedHandoffSites.current.has(event.siteAccountId);
           setHandoff({
             siteAccountId: event.siteAccountId,
             instruction: event.instruction,
-            fallbackSuggested: resumedHandoffSites.current.has(event.siteAccountId),
+            fallbackSuggested,
+            wallRepeatSuggested,
           });
-          if (resumedHandoffSites.current.has(event.siteAccountId)) setGuideSiteId(event.siteAccountId);
+          // Do not expand the import strip while the run is still paused —
+          // controls stay disabled until the user picks “表示したページから読み取る”
+          // (showGuide aborts the run first). Terminal exhaust opens the guide
+          // on run-finished instead.
           break;
+        }
         case "resumed":
           resumedHandoffSites.current.add(event.siteAccountId);
           setHandoff(undefined);
@@ -90,6 +101,11 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
           setHandoff(undefined);
           resumedHandoffSites.current.delete(event.result.siteAccountId);
           setLastResult(event.result);
+          // Budget exhaustion may never emit a live hand-off; still open the guide.
+          if (event.result.suggestSavedPageImport) {
+            setGuideSiteId(event.result.siteAccountId);
+            setSavedPageSiteId(event.result.siteAccountId);
+          }
           void loadSites();
           onCollectedRef.current();
           break;
@@ -170,7 +186,12 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
             {handoff.fallbackSuggested ? "別の方法で取り込めます" : "ウォールの解決が必要です"}
           </p>
           <p className="text-xs text-amber-800">{handoff.instruction}</p>
-          {handoff.fallbackSuggested ? (
+          {handoff.wallRepeatSuggested ? (
+            <p className="text-xs text-amber-800">
+              同じ種類のウォールが繰り返し出ているため、自動収集だけでは進みにくいサイトです。
+              いつものブラウザでログインして登録情報ページを開き、「表示したページから読み取る」（保存ページの取り込み）を試してください。
+            </p>
+          ) : handoff.fallbackSuggested ? (
             <p className="text-xs text-amber-800">
               このサイトはセキュリティがとても厳重です。Soroeru
               からの自動ログインを最後まで完了できないことがあります。
@@ -198,7 +219,9 @@ export function CollectionPanel({ reloadToken, onCollected }: CollectionPanelPro
               onClick={() => void showGuide(handoff.siteAccountId)}
               className="text-sm underline"
             >
-              別の方法でこのサイトの情報を取り込む
+              {handoff.wallRepeatSuggested || handoff.fallbackSuggested
+                ? "表示したページから読み取る"
+                : "別の方法でこのサイトの情報を取り込む"}
             </button>
           </div>
         </div>
