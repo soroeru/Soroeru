@@ -5,9 +5,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { discoverCapabilities, loadOrRefreshCapabilities } from "../../scripts/project-issue-capabilities.mjs";
+import {
+  discoverCapabilities,
+  loadOrRefreshCapabilities,
+} from "../../scripts/project-issue-capabilities.mjs";
 import { dispatchWorker } from "../../scripts/project-issue-dispatch.mjs";
-import { discoverAllCapabilities, RUNTIME_ADAPTERS } from "../../scripts/project-issue-runtime-adapters/index.mjs";
+import {
+  discoverAllCapabilities,
+  RUNTIME_ADAPTERS,
+} from "../../scripts/project-issue-runtime-adapters/index.mjs";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   REASON_CODES,
@@ -105,10 +111,10 @@ test("discovers only verified routes and keeps partial failures isolated", async
   });
 
   const workers = result.capabilities.filter((record) => record.role === "worker");
-  assert.deepEqual(
-    workers.map((record) => `${record.agent}:${record.model}`).sort(),
-    ["Codex:gpt-test", "Grok:grok-test"],
-  );
+  assert.deepEqual(workers.map((record) => `${record.agent}:${record.model}`).sort(), [
+    "Codex:gpt-test",
+    "Grok:grok-test",
+  ]);
   assert.ok(workers.every((record) => record.selectable && record.verifiable && record.selector));
   assert.ok(workers.every((record) => record.timeoutMs === 60_000));
 
@@ -121,7 +127,10 @@ test("discovers only verified routes and keeps partial failures isolated", async
   assert.equal(byAgent.Gemini, REASON_CODES.AUTH_UNAVAILABLE);
   // Diagnostics must not look like secrets / prompt dumps.
   for (const entry of result.diagnostics) {
-    assert.equal(Object.keys(entry).every((key) => ["agent", "status", "reason", "model"].includes(key)), true);
+    assert.equal(
+      Object.keys(entry).every((key) => ["agent", "status", "reason", "model"].includes(key)),
+      true,
+    );
   }
 });
 
@@ -145,7 +154,8 @@ test("records verification-timeout without aborting later adapters", async () =>
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-timeout-"));
   const bin = path.join(directory, "bin");
   await mkdir(bin);
-  // Injected runProcess: Codex always times out; Claude returns a model list.
+  // Injected runProcess: Codex always times out; Claude uses an explicit test
+  // candidate because the real CLI has no `models` subcommand.
   // Avoids real hung processes that slow subsequent probes under load.
   const runProcess = async (command, args) => {
     const base = path.basename(command);
@@ -161,17 +171,14 @@ test("records verification-timeout without aborting later adapters", async () =>
       };
     }
     if (base === "claude" && args[0] === "auth" && args[1] === "status") {
-      return { code: 0, signal: null, timedOut: false, error: null, stdout: JSON.stringify({ loggedIn: true }), stderr: "", pid: 1 };
-    }
-    if (base === "claude" && args[0] === "models") {
       return {
         code: 0,
         signal: null,
         timedOut: false,
         error: null,
-        stdout: JSON.stringify([{ id: "sonnet" }]),
+        stdout: JSON.stringify({ loggedIn: true }),
         stderr: "",
-        pid: 2,
+        pid: 1,
       };
     }
     return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
@@ -191,6 +198,7 @@ test("records verification-timeout without aborting later adapters", async () =>
     workerTimeoutMs: 30_000,
     runProcess,
     resolveExecutable,
+    adapters: { Claude: { candidateModels: ["sonnet"] } },
     headlessExecProbe: async () => ({ ok: true }),
   });
 
@@ -200,6 +208,104 @@ test("records verification-timeout without aborting later adapters", async () =>
     ),
   );
   assert.ok(result.capabilities.some((record) => record.agent === "Claude" && record.model === "sonnet"));
+});
+
+test("Claude discovers exact models from the project state in .claude.json", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-claude-project-state-"));
+  const bin = path.join(directory, "bin");
+  const home = path.join(directory, "home");
+  const project = path.join(directory, "project");
+  await mkdir(bin);
+  await mkdir(home);
+  await mkdir(project);
+  await makeFakeBin(bin, "claude", "process.exit(0);");
+  await writeFile(
+    path.join(home, ".claude.json"),
+    JSON.stringify({
+      projects: {
+        [project]: {
+          lastModelUsage: {
+            "claude-sonnet-4-5-20250929": { inputTokens: 1 },
+            "claude-opus-4-5-20251101": { inputTokens: 2 },
+          },
+        },
+      },
+    }),
+  );
+  const calls = [];
+  const result = await discoverAllCapabilities({
+    cwd: project,
+    homeDir: home,
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    resolveExecutable: async (name) => (name === "claude" ? path.join(bin, name) : null),
+    runProcess: async (command, args) => {
+      calls.push(args);
+      if (args[0] === "auth" && args[1] === "status") {
+        return {
+          code: 0,
+          signal: null,
+          timedOut: false,
+          error: null,
+          stdout: JSON.stringify({ loggedIn: true }),
+          stderr: "",
+          pid: 1,
+        };
+      }
+      return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
+    },
+    headlessExecProbe: async ({ args }) => {
+      assert.deepEqual(args.slice(0, 4), [
+        "--model",
+        "claude-sonnet-4-5-20250929",
+        "--permission-mode",
+        "bypassPermissions",
+      ]);
+      return { ok: true };
+    },
+  });
+
+  assert.deepEqual(
+    result.capabilities
+      .filter((record) => record.agent === "Claude" && record.role === "worker")
+      .map((record) => record.model),
+    ["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"],
+  );
+  assert.deepEqual(calls, [["auth", "status"]]);
+});
+
+test("Claude uses the available-model cache when project usage is absent", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-claude-model-cache-"));
+  const bin = path.join(directory, "bin");
+  const home = path.join(directory, "home");
+  await mkdir(bin);
+  await mkdir(home);
+  await makeFakeBin(bin, "claude", "process.exit(0);");
+  await writeFile(
+    path.join(home, ".claude.json"),
+    JSON.stringify({ additionalModelOptionsCache: [{ value: "claude-fable-5[1m]", label: "Fable" }] }),
+  );
+  const result = await discoverAllCapabilities({
+    cwd: path.join(directory, "unused-project"),
+    homeDir: home,
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    resolveExecutable: async (name) => (name === "claude" ? path.join(bin, name) : null),
+    runProcess: async () => ({
+      code: 0,
+      signal: null,
+      timedOut: false,
+      error: null,
+      stdout: JSON.stringify({ loggedIn: true }),
+      stderr: "",
+      pid: 1,
+    }),
+    headlessExecProbe: async () => ({ ok: true }),
+  });
+
+  const worker = result.capabilities.find((record) => record.agent === "Claude" && record.role === "worker");
+  assert.equal(worker.model, "claude-fable-5");
+  assert.equal(worker.requestedModel, "Fable");
 });
 
 test("rejects model catalog parse failures as model-not-selectable", async () => {
@@ -212,7 +318,15 @@ test("rejects model catalog parse failures as model-not-selectable", async () =>
       return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
     }
     if (args[0] === "login" && args[1] === "status") {
-      return { code: 0, signal: null, timedOut: false, error: null, stdout: "Logged in\n", stderr: "", pid: 1 };
+      return {
+        code: 0,
+        signal: null,
+        timedOut: false,
+        error: null,
+        stdout: "Logged in\n",
+        stderr: "",
+        pid: 1,
+      };
     }
     if (args[0] === "debug" && args[1] === "models") {
       return {
@@ -239,10 +353,7 @@ test("rejects model catalog parse failures as model-not-selectable", async () =>
       (entry) => entry.agent === "Codex" && entry.reason === REASON_CODES.MODEL_NOT_SELECTABLE,
     ),
   );
-  assert.equal(
-    result.capabilities.filter((record) => record.agent === "Codex").length,
-    0,
-  );
+  assert.equal(result.capabilities.filter((record) => record.agent === "Codex").length, 0);
 });
 
 test("writes capabilities atomically and never leaves a partial final file", async () => {
@@ -402,10 +513,10 @@ test("Gemini adapter records agy models with exact display names", async () => {
   const geminiWorkers = result.capabilities.filter(
     (record) => record.agent === "Gemini" && record.role === "worker",
   );
-  assert.deepEqual(
-    geminiWorkers.map((record) => record.model).sort(),
-    ["Gemini 3.1 Pro (High)", "Gemini 3.5 Flash (Medium)"],
-  );
+  assert.deepEqual(geminiWorkers.map((record) => record.model).sort(), [
+    "Gemini 3.1 Pro (High)",
+    "Gemini 3.5 Flash (Medium)",
+  ]);
   assert.ok(geminiWorkers[0].selector.includes("--model"));
   assert.ok(geminiWorkers[0].selector.includes("Gemini 3.1 Pro (High)"));
   // agy's `--print` is a Go string flag consuming the next argv token as the
@@ -455,8 +566,7 @@ test("rejects Not logged in Codex/Grok status as auth-unavailable", async () => 
     env: { ...process.env, PATH: isolatedPath(bin) },
     pathEnv: isolatedPath(bin),
     runProcess,
-    resolveExecutable: async (name) =>
-      name === "codex" || name === "grok" ? path.join(bin, name) : null,
+    resolveExecutable: async (name) => (name === "codex" || name === "grok" ? path.join(bin, name) : null),
   });
   assert.ok(
     result.diagnostics.some(
@@ -589,7 +699,10 @@ test("discoverAllCapabilities respects an only filter for targeted re-probes", a
     only: ["grok"],
   });
   // Only Grok was asked for; Codex/Claude/Gemini never ran (no diagnostics at all).
-  assert.deepEqual(result.diagnostics.map((entry) => entry.agent), ["Grok"]);
+  assert.deepEqual(
+    result.diagnostics.map((entry) => entry.agent),
+    ["Grok"],
+  );
 });
 
 test("discoverCapabilities records per-agent CLI path/version metadata and a probedAt timestamp", async () => {
@@ -654,7 +767,15 @@ test("loadOrRefreshCapabilities reuses a fresh cache without spawning any adapte
   // proving the freshness check (not just file presence) drives reuse.
   const runProcess = async (command, args) => {
     if (args[0] === "--version") {
-      return { code: 0, signal: null, timedOut: false, error: null, stdout: "cached-version-9.9.9\n", stderr: "", pid: 1 };
+      return {
+        code: 0,
+        signal: null,
+        timedOut: false,
+        error: null,
+        stdout: "cached-version-9.9.9\n",
+        stderr: "",
+        pid: 1,
+      };
     }
     return { code: 9, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: 2 };
   };
@@ -705,7 +826,8 @@ test("loadOrRefreshCapabilities re-probes only the agent invalidated by a runtim
   };
   await writeJsonAtomic(cachePath, cached);
   const runProcess = async (command, args) => {
-    if (args[0] === "--version") return { code: 0, signal: null, timedOut: false, error: null, stdout: "v1\n", stderr: "", pid: 1 };
+    if (args[0] === "--version")
+      return { code: 0, signal: null, timedOut: false, error: null, stdout: "v1\n", stderr: "", pid: 1 };
     return { code: 2, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: 2 };
   };
   const result = await loadOrRefreshCapabilities({
@@ -725,7 +847,10 @@ test("loadOrRefreshCapabilities re-probes only the agent invalidated by a runtim
     ["Codex"],
   );
   const onDisk = JSON.parse(await readFile(cachePath, "utf8"));
-  assert.deepEqual(onDisk.capabilities.map((record) => record.agent), ["Codex"]);
+  assert.deepEqual(
+    onDisk.capabilities.map((record) => record.agent),
+    ["Codex"],
+  );
 });
 
 test("loadOrRefreshCapabilities --refresh ignores the cache and re-probes everything", async () => {
@@ -824,7 +949,9 @@ test("loadOrRefreshCapabilities canonicalizes invalidateAgents casing before dif
   assert.equal(result.reprobedAgents.length, 1);
   // Exactly one Grok worker route survives — the fresh one, not a duplicate
   // of the stale cached one plus the fresh one.
-  const grokWorkers = result.capabilities.filter((record) => record.agent === "Grok" && record.role === "worker");
+  const grokWorkers = result.capabilities.filter(
+    (record) => record.agent === "Grok" && record.role === "worker",
+  );
   assert.equal(grokWorkers.length, 1);
   assert.equal(grokWorkers[0].model, "grok-fresh");
 });
@@ -882,7 +1009,9 @@ test("loadOrRefreshCapabilities always re-probes a cached agent whose last diagn
   });
   assert.equal(result.reused, false);
   assert.deepEqual(result.reprobedAgents, ["Grok"]);
-  assert.ok(result.capabilities.some((record) => record.agent === "Grok" && record.model === "grok-recovered"));
+  assert.ok(
+    result.capabilities.some((record) => record.agent === "Grok" && record.model === "grok-recovered"),
+  );
 });
 
 test("loadOrRefreshCapabilities's freshness check uses discovery's timeout budget, not readCliVersion's own shorter default", async () => {
