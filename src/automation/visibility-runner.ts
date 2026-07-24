@@ -68,7 +68,8 @@ export class VisibilityRunner {
 
   async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
     let siteAccount = this.requireSite(siteAccountId);
-    const credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
+    // Re-read after hand-offs that may mark the stored password stale (Issue #416).
+    let credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
 
     // Soroeru drives a web browser; a non-web credential (e.g. an Android app
     // imported as `android://...`) has nothing to collect and must not be
@@ -106,6 +107,8 @@ export class VisibilityRunner {
       );
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       if (!snapshot) return this.handoffResult(siteAccountId);
+      // password-reset resolve (any prior clearOrPause) may have flagged the vault password.
+      credential = this.options.domain.listCredentialsForSite(siteAccountId)[0] ?? credential;
 
       const reuseAuthenticatedSession =
         credential !== undefined &&
@@ -123,6 +126,8 @@ export class VisibilityRunner {
         snapshot = await this.clearOrPause(siteAccount, session, snapshot, "login-page", credential);
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (!snapshot) return this.handoffResult(siteAccountId);
+        // password-reset resolve may have flagged the vault password as stale.
+        credential = this.options.domain.listCredentialsForSite(siteAccountId)[0] ?? credential;
         // Issue #372: resolving a login-page wall (e.g. a site-forced password
         // reset) can end with the user already logged in inside the paused
         // browser. Re-run the Issue #373 authenticated-session skip before any
@@ -137,6 +142,19 @@ export class VisibilityRunner {
           "authenticated-after-login-page-handoff",
         );
         if (!resumedAuthenticatedSession) {
+          // Issue #416: do not re-submit a password known to be stale (post
+          // forced-reset). Fail closed to login-failed so the user can update
+          // the vault secret instead of risking a lockout attempt.
+          if (credential.passwordStale && findLoginField(snapshot.fields, "password")) {
+            const constraints = this.recordStalePasswordLoginSkipped(siteAccount, snapshot);
+            return {
+              siteAccountId,
+              status: "login-failed",
+              disclosures: 0,
+              relationships: 0,
+              constraints,
+            };
+          }
           // Issue #351: SSO hand-off is single-shot per site run (independent of wall maxHandoffs).
           let ssoHandoffOffered = false;
           const loginPageSnapshot = snapshot;
@@ -565,6 +583,12 @@ export class VisibilityRunner {
         ...(credential && shouldOfferHandoffCredential(step, current, wall.kind) ? { credential } : {}),
       });
       if (outcome !== "resolved") return undefined;
+      // Issue #416: a completed forced reset makes the vault password stale by
+      // definition. Flag it and record a Constraint so the ledger can surface
+      // the freshness gap even when the session continues authenticated.
+      if (wall.kind === "password-reset") {
+        this.recordPasswordStaleAfterReset(siteAccount, current.url, wall.evidence);
+      }
       this.options.domain.saveCheckpoint({
         workflow: "visibility",
         siteAccountId: siteAccount.id,
@@ -644,6 +668,9 @@ export class VisibilityRunner {
           interruptedByWall: true,
         };
       }
+      if (wall.wall.kind === "password-reset") {
+        this.recordPasswordStaleAfterReset(siteAccount, wall.url, wall.wall.evidence);
+      }
 
       this.options.domain.saveCheckpoint({
         workflow: "visibility",
@@ -671,6 +698,9 @@ export class VisibilityRunner {
     const username = findLoginField(snapshot.fields, "username");
     const password = findLoginField(snapshot.fields, "password");
     if (!username && !password) return;
+    // Issue #416 defense in depth: never fill a known-stale password even if a
+    // call site forgets the outer fail-closed guard.
+    if (credential.passwordStale && password) return;
     if (username) await session.page.fillField(username.fieldId, credential.username);
     if (password) await session.page.fillField(password.fieldId, credential.password);
     const submit = findLoginSubmitButton(snapshot.buttons);
@@ -852,6 +882,86 @@ export class VisibilityRunner {
       domain: siteAccount.domain,
     });
     return 1;
+  }
+
+  /**
+   * Issue #416: after a password-reset wall is resolved, the vault password is
+   * definitionally stale. Flag credentials and surface a Constraint so the
+   * ledger (and any later fail-closed login path) can treat it as freshness
+   * debt rather than a silent secret mismatch.
+   */
+  private recordPasswordStaleAfterReset(
+    siteAccount: SiteAccount,
+    pageUrl: string,
+    wallEvidence: string,
+  ): void {
+    const before = this.options.domain.listCredentialsForSite(siteAccount.id);
+    const alreadyAllStale =
+      before.length > 0 && before.every((credential) => credential.passwordStale === true);
+    const marked = this.options.domain.markSiteCredentialsPasswordStale(siteAccount.id, this.now());
+    // No vault password to flag (SSO-only / no credential rows).
+    if (marked.length === 0) {
+      this.logger.info("visibility", "password-reset resolved with no stored credentials to mark stale", {
+        domain: siteAccount.domain,
+      });
+      return;
+    }
+    // Avoid flooding the ledger when a sticky reset wall resolves more than once.
+    if (alreadyAllStale) {
+      this.logger.info("visibility", "stored password already marked stale after password-reset handoff", {
+        domain: siteAccount.domain,
+        credentials: marked.length,
+      });
+      return;
+    }
+    const evidence = this.options.domain.addEvidence({
+      siteAccountId: siteAccount.id,
+      pageUrl,
+      observedAt: this.now(),
+      // Structure / reason only — never the password or reset form values.
+      maskedSnippet: `password-reset resolved; stored password marked stale (${marked.length} credential(s))`,
+    });
+    this.options.domain.addConstraint({
+      siteAccountId: siteAccount.id,
+      kind: "unknown-state",
+      detail: `stored-password-stale: password-reset resolved; vault password may no longer match the site (${wallEvidence})`,
+      evidenceIds: [evidence.id],
+      observedAt: this.now(),
+    });
+    this.logger.info("visibility", "marked stored password stale after password-reset handoff", {
+      domain: siteAccount.domain,
+      credentials: marked.length,
+    });
+  }
+
+  /** Issue #416: refuse to submit a known-stale password (lockout risk). */
+  private recordStalePasswordLoginSkipped(siteAccount: SiteAccount, snapshot: PageSnapshot): number {
+    const evidence = this.options.domain.addEvidence({
+      siteAccountId: siteAccount.id,
+      pageUrl: snapshot.url,
+      observedAt: this.now(),
+      maskedSnippet: "login skipped: stored password is marked stale",
+    });
+    this.options.domain.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: siteAccount.id,
+      step: "login-skipped-stale-password",
+      status: "failed",
+      resumeData: { url: snapshot.url, reason: "stored-password-stale" },
+    });
+    this.options.domain.addConstraint({
+      siteAccountId: siteAccount.id,
+      kind: "unknown-state",
+      detail: "login-skipped-stale-password: stored password marked stale after password-reset; update credentials before retry",
+      evidenceIds: [evidence.id],
+      observedAt: this.now(),
+    });
+    this.logger.warn("visibility", "login skipped: stored password is stale", {
+      domain: siteAccount.domain,
+    });
+    return this.options.domain
+      .listConstraints()
+      .filter((constraint) => constraint.siteAccountId === siteAccount.id).length;
   }
 
   private recordNoData(siteAccount: SiteAccount, snapshot: PageSnapshot): number {

@@ -84,6 +84,13 @@ export interface Credential extends DomainRecord {
   /** Free-text note column from the CSV, if any. May be sensitive. */
   note?: string;
   source: "csv-import" | "user";
+  /**
+   * When true, the stored password is known (or strongly suspected) not to match
+   * the site anymore — e.g. after a forced password-reset handoff was resolved
+   * (Issue #416). Cleared when the user overwrites the password in Soroeru.
+   * Does not reveal the secret; only a freshness signal for the ledger / runner.
+   */
+  passwordStale?: boolean;
   updatedAt: number;
 }
 

@@ -761,6 +761,87 @@ test("visibility runner skips credential re-submission after a password-reset ha
       .listConstraints()
       .find((constraint) => constraint.siteAccountId === site.id && constraint.kind === "wall");
     assert.ok(wallConstraint?.detail.startsWith("password-reset:"));
+    // Issue #416: vault password is stale after a resolved forced reset, even
+    // when the session continues authenticated and collection succeeds.
+    const credential = service.listCredentialsForSite(site.id)[0];
+    assert.equal(credential?.passwordStale, true);
+    const staleConstraint = service
+      .listConstraints()
+      .find(
+        (constraint) =>
+          constraint.siteAccountId === site.id &&
+          constraint.kind === "unknown-state" &&
+          constraint.detail.startsWith("stored-password-stale:"),
+      );
+    assert.ok(staleConstraint);
+    assert.ok(
+      entries.some((entry) => entry.message === "marked stored password stale after password-reset handoff"),
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("visibility runner does not re-submit a password marked stale after password-reset (Issue #416)", async () => {
+  const { dir, service } = await openService();
+  try {
+    const site = service.upsertSiteAccount({
+      domain: "stale-login.example.test",
+      url: "https://stale-login.example.test/",
+      displayName: "StaleLogin",
+    });
+    service.addCredential({
+      siteAccountId: site.id,
+      username: "user@example.test",
+      password: "old-stale-pass",
+      source: "csv-import",
+    });
+    const home = {
+      ...snapshot("https://stale-login.example.test/", []),
+      links: [{ href: "https://stale-login.example.test/login", text: "ログイン" }],
+    };
+    const forcedReset = {
+      ...snapshot(
+        "https://stale-login.example.test/password-reset",
+        [],
+        "パスワード再設定が必要です。",
+      ),
+    };
+    // User finished the reset but the site dropped them on the login form again
+    // (not an authenticated session) — fail closed must not push the old secret.
+    const loginAfterReset = snapshot("https://stale-login.example.test/login", [
+      field("login-email", { type: "email", autocomplete: "username", labels: ["メールアドレス"] }),
+      field("login-password", {
+        type: "password",
+        autocomplete: "current-password",
+        labels: ["パスワード"],
+      }),
+    ]);
+    const page = new FakePageDriver([home, forcedReset, loginAfterReset]);
+    const { logger, entries } = recordingLogger();
+    const runner = new VisibilityRunner({
+      domain: service,
+      openSession: () => Promise.resolve(new FakeSession(page)),
+      handoff: async () => "resolved",
+      logger,
+    });
+
+    const result = await runner.runSite(site.id);
+
+    assert.equal(result.status, "login-failed");
+    assert.deepEqual(page.filled, {});
+    assert.deepEqual(page.clicked, []);
+    assert.equal(service.listCredentialsForSite(site.id)[0]?.passwordStale, true);
+    assert.ok(
+      service
+        .listConstraints()
+        .some(
+          (constraint) =>
+            constraint.siteAccountId === site.id &&
+            constraint.detail.startsWith("login-skipped-stale-password:"),
+        ),
+    );
+    assert.ok(entries.some((entry) => entry.message === "login skipped: stored password is stale"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
