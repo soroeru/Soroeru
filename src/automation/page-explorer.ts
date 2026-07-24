@@ -267,8 +267,8 @@ export class PageExplorer {
 
 /**
  * Whether a resume-time current URL is safe to collect from without navigation.
- * Same-site HTTPS is the production case; http://localhost / 127.0.0.1 are
- * allowed for local PoC fixtures. Other schemes/hosts are skipped.
+ * Same-site HTTPS is the production case; the plain-http scheme on localhost
+ * / 127.0.0.1 is allowed for local PoC fixtures. Other schemes/hosts are skipped.
  */
 function isCollectableResumeUrl(url: string, domain: string): boolean {
   if (!isSameSite(url, domain)) return false;
