@@ -31,7 +31,7 @@ function parseAgyModels(stdout) {
     if (Array.isArray(json)) {
       return json
         .map((entry) => {
-          const id = typeof entry === "string" ? entry : entry?.id ?? entry?.model ?? entry?.name;
+          const id = typeof entry === "string" ? entry : (entry?.id ?? entry?.model ?? entry?.name);
           if (typeof id !== "string" || !id.trim()) return null;
           return { model: id.trim(), requestedModel: id.trim() };
         })
@@ -115,12 +115,15 @@ export async function discover(ctx = {}) {
     // permissions flag itself as the prompt and ignore the real one.
     const selector =
       cliName === "agy" || /\/agy$/.test(cliPath)
-        ? `${cliPath} --model ${modelArg} --dangerously-skip-permissions --print`
+        ? `${cliPath} --model ${modelArg} --dangerously-skip-permissions --print-timeout ${workerTimeoutMs}ms --print`
         : `${cliPath} --model ${modelArg}`;
     candidates.push({ model, requestedModel, selector });
   }
   if (!candidates.length) return { records, diagnostics };
 
+  // A short probe verifies that the CLI can execute a headless tool call, but
+  // its success does not guarantee that a non-trivial worker task will finish
+  // within the probe's shorter budget.
   const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
   const probeTokens = splitSelector(candidates[0].selector);
   const probeResult = await probe({
@@ -132,7 +135,11 @@ export async function discover(ctx = {}) {
   });
   if (!probeResult.ok) {
     diagnostics.push(
-      diagnostic({ agent, status: "failed", reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED }),
+      diagnostic({
+        agent,
+        status: "failed",
+        reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED,
+      }),
     );
     return { records, diagnostics };
   }
