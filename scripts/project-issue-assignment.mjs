@@ -12,6 +12,7 @@ export const AGENT_NAMES = new Map([
   ["codex", "Codex"],
   ["gemini", "Gemini"],
   ["grok", "Grok"],
+  ["agy", "Gemini"],
 ]);
 
 /** English + Japanese labels → canonical field key. */

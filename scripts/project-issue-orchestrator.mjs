@@ -110,6 +110,7 @@ export async function runOrchestration(input) {
     releasePolicy: options.releasePolicy,
   });
   const workerRoutes = selectWorkerRoutes(options.capabilities ?? [], {
+    parentAgent: parent.agent,
     unavailableAgents: options.unavailableAgents,
     unavailableModels: options.unavailableModels,
   });
@@ -270,7 +271,7 @@ async function readInput(cli) {
 async function main() {
   const cli = parseCliArgs(process.argv.slice(2));
   const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  
+
   await verifyRepositoryFreshness(repositoryRoot);
   let yamlConfig = {};
   try {

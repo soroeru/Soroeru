@@ -33,12 +33,18 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
 
-import { Annotation, Command, END, START, Send, StateGraph, interrupt, isInterrupted } from "@langchain/langgraph";
-
 import {
-  DEFAULT_CAPABILITIES_OUTPUT,
-  loadOrRefreshCapabilities,
-} from "./project-issue-capabilities.mjs";
+  Annotation,
+  Command,
+  END,
+  START,
+  Send,
+  StateGraph,
+  interrupt,
+  isInterrupted,
+} from "@langchain/langgraph";
+
+import { DEFAULT_CAPABILITIES_OUTPUT, loadOrRefreshCapabilities } from "./project-issue-capabilities.mjs";
 import {
   DEFAULT_CONFIG_PATH,
   loadOrchestratorConfig,
@@ -107,16 +113,18 @@ const mergeMilestones = (left = [], right = []) => {
 };
 
 /** Keyed merge: entries in `right` replace same-issue entries in `left`. */
-const mergeByIssue = (key) => (left = [], right) => {
-  if (right === null) return [];
-  const merged = [...left];
-  for (const entry of right ?? []) {
-    const index = merged.findIndex((existing) => existing[key] === entry[key]);
-    if (index === -1) merged.push(entry);
-    else merged[index] = entry;
-  }
-  return merged;
-};
+const mergeByIssue =
+  (key) =>
+  (left = [], right) => {
+    if (right === null) return [];
+    const merged = [...left];
+    for (const entry of right ?? []) {
+      const index = merged.findIndex((existing) => existing[key] === entry[key]);
+      if (index === -1) merged.push(entry);
+      else merged[index] = entry;
+    }
+    return merged;
+  };
 
 export const OrchestrationState = Annotation.Root({
   /** Sanitized run config (owner/name labels, maxParallel, releasePolicy, parent route, selectors). */
@@ -144,15 +152,27 @@ export const OrchestrationState = Annotation.Root({
    * decides recovery — probes must match uuid/start metadata too.
    */
   workerExecutions: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
-  gateResults: Annotation({ reducer: (left = [], right = []) => [...left, ...(right ?? [])], default: () => [] }),
+  gateResults: Annotation({
+    reducer: (left = [], right = []) => [...left, ...(right ?? [])],
+    default: () => [],
+  }),
   /** Milestone event currently under integration-gate review, or null. */
   pendingGate: Annotation(),
   /** Issues needing handoff: {issue, reason, proposedRoute?}; null clears. */
   pendingInterrupted: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
-  retryCounts: Annotation({ reducer: (left = {}, right = {}) => ({ ...left, ...right }), default: () => ({}) }),
-  handoffCounts: Annotation({ reducer: (left = {}, right = {}) => ({ ...left, ...right }), default: () => ({}) }),
+  retryCounts: Annotation({
+    reducer: (left = {}, right = {}) => ({ ...left, ...right }),
+    default: () => ({}),
+  }),
+  handoffCounts: Annotation({
+    reducer: (left = {}, right = {}) => ({ ...left, ...right }),
+    default: () => ({}),
+  }),
   resumeFrom: Annotation({ reducer: (left, right) => right ?? left }),
-  recoveryEvents: Annotation({ reducer: (left = [], right = []) => [...left, ...(right ?? [])], default: () => [] }),
+  recoveryEvents: Annotation({
+    reducer: (left = [], right = []) => [...left, ...(right ?? [])],
+    default: () => [],
+  }),
   lastEventError: Annotation(),
   /** "verified" | "unavailable" — set by discover_capabilities. */
   parentRouting: Annotation(),
@@ -215,6 +235,7 @@ function expectedMilestone(state, issue) {
 
 function currentPool(state) {
   return selectWorkerRoutes(state.capabilities ?? [], {
+    parentAgent: state.config.parent.agent,
     unavailableAgents: state.unavailableAgents,
     unavailableModels: state.unavailableModels,
   });
@@ -299,6 +320,7 @@ async function discoverCapabilitiesNode(state, config) {
   }
   try {
     const workerRoutes = selectWorkerRoutes(capabilities, {
+      parentAgent: state.config.parent.agent,
       unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     });
@@ -394,8 +416,7 @@ function assignRoutesNode(state) {
     if (!Array.isArray(resume?.assignments)) return { lastEventError: "invalid-assignment:shape" };
     proposals = new Map(resume.assignments.map((proposal) => [Number(proposal.number), proposal]));
   }
-  const rejectProposal = (reason) =>
-    fromResume ? { lastEventError: reason } : { failureReason: reason };
+  const rejectProposal = (reason) => (fromResume ? { lastEventError: reason } : { failureReason: reason });
 
   const assignments = [];
   for (const [index, item] of candidates.entries()) {
@@ -542,9 +563,7 @@ async function waitForEventsNode(state, config) {
     if (!execution || execution.status !== "running")
       return { lastEventError: `invalid-event:no-running-worker:${event.issue}` };
     return {
-      workerExecutions: [
-        { ...execution, status: "interrupted", reason: event.reason ?? "interrupted" },
-      ],
+      workerExecutions: [{ ...execution, status: "interrupted", reason: event.reason ?? "interrupted" }],
       pendingInterrupted: [
         {
           issue,
@@ -694,8 +713,7 @@ function dispatchRouter(state) {
         }),
     );
   if (allComplete(state)) return "summarize_run";
-  if (activeExecutions(state).length || (state.pendingInterrupted ?? []).length)
-    return "wait_for_events";
+  if (activeExecutions(state).length || (state.pendingInterrupted ?? []).length) return "wait_for_events";
   return "summarize_run";
 }
 

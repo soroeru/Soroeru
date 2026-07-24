@@ -36,7 +36,12 @@ const workerRoute = (agent, model) => ({
   verifiable: true,
   timeoutMs: 60_000,
 });
-const defaultCapabilities = [parentRecord, workerRoute("Codex", "gpt-5"), workerRoute("Claude", "sonnet")];
+const defaultCapabilities = [
+  parentRecord,
+  workerRoute("Codex", "gpt-5"),
+  workerRoute("Claude", "sonnet"),
+  workerRoute("Grok", "grok-4"),
+];
 
 const item = (number, dependencies = [], overrides = {}) => ({
   number,
@@ -126,9 +131,7 @@ test("fails closed on an open blocked-by dependency", async () => {
 
 test("stops before any dispatch when zero verified worker routes exist", async () => {
   const run = makeRun();
-  const result = await run.invoke(
-    makeInput({ items: [item(1)], capabilities: [parentRecord] }),
-  );
+  const result = await run.invoke(makeInput({ items: [item(1)], capabilities: [parentRecord] }));
   assert.equal(result.runStatus, "failed");
   assert.equal(result.failureReason, "no-worker-route-available");
   assert.equal(run.deps.dispatched.length, 0);
@@ -149,9 +152,7 @@ test("fails closed when the parent route is unverifiable", async () => {
 
 test("an unavailable agent is excluded from assignment", async () => {
   const run = makeRun();
-  const result = await run.invoke(
-    makeInput({ items: [item(1)], config: { unavailableAgents: ["Codex"] } }),
-  );
+  const result = await run.invoke(makeInput({ items: [item(1)], config: { unavailableAgents: ["Codex"] } }));
   assert.equal(isInterrupted(result), true);
   assert.deepEqual(
     run.deps.dispatched.map(({ route }) => route.agent),
@@ -175,13 +176,10 @@ test("interactive assignment pauses with the verified pool and accepts only pool
   const paused = await run.invoke(makeInput({ items: [item(1)], config: { autoAssign: false } }));
   assert.equal(isInterrupted(paused), true);
   const payload = paused.__interrupt__[0].value;
-  assert.deepEqual(
-    payload.assign.workerRoutes,
-    [
-      { agent: "Codex", model: "gpt-5" },
-      { agent: "Claude", model: "sonnet" },
-    ],
-  );
+  assert.deepEqual(payload.assign.workerRoutes, [
+    { agent: "Claude", model: "sonnet" },
+    { agent: "Grok", model: "grok-4" },
+  ]);
   const result = await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
   assert.equal(isInterrupted(result), true);
   assert.deepEqual(
@@ -202,15 +200,21 @@ test("an invalid interactive assignment re-prompts instead of killing the run", 
   assert.ok(payload.assign, "re-presents the candidate set and verified pool");
   assert.equal(run.deps.dispatched.length, 0);
   // A corrected proposal then proceeds normally.
-  const accepted = await run.resume({ assignments: [{ number: 1, agent: "Codex", model: "gpt-5" }] });
+  const accepted = await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
   assert.equal(isInterrupted(accepted), true);
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1],
+  );
 });
 
 test("schedules dependent Issues only after the release milestone passes the gate", async () => {
   const run = makeRun();
   let result = await run.invoke(makeInput({ items: [item(1), item(2, [1])] }));
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1],
+  );
 
   result = await run.resume({ type: "milestone", issue: 1, milestone: "pr-created", usage: usageSample });
   assert.deepEqual(result.__interrupt__[0].value.gate, {
@@ -224,7 +228,10 @@ test("schedules dependent Issues only after the release milestone passes the gat
   });
 
   result = await run.resume({ accepted: true });
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1, 2]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1, 2],
+  );
 
   result = await run.resume({ type: "milestone", issue: 2, milestone: "pr-created" });
   result = await run.resume({ accepted: true });
@@ -241,7 +248,10 @@ test("gate rejection does not release dependents", async () => {
   const result = await run.resume({ accepted: false, reason: "conflicts with issue 2 contract" });
   assert.equal(isInterrupted(result), true);
   // Still waiting on Issue 1; Issue 2 was never dispatched or completed.
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1],
+  );
   const state = await run.state();
   assert.deepEqual(state.completed, []);
   assert.deepEqual(state.milestones, []);
@@ -253,7 +263,10 @@ test("gate rejection does not release dependents", async () => {
   await run.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
   const accepted = await run.resume({ accepted: true });
   assert.equal(isInterrupted(accepted), true);
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1, 2]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1, 2],
+  );
   assert.deepEqual((await run.state()).completed, [1]);
 });
 
@@ -263,14 +276,20 @@ test("merged release policy completes only on merged", async () => {
   await run.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
   let result = await run.resume({ accepted: true });
   // pr-created accepted but policy is merged: dependent not released.
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1],
+  );
   const midState = await run.state();
   assert.deepEqual(midState.completed, []);
   assert.equal(midState.workerExecutions[0].expectedMilestone, "merged");
 
   await run.resume({ type: "milestone", issue: 1, milestone: "merged" });
   result = await run.resume({ accepted: true });
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1, 2]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1, 2],
+  );
   await run.resume({ type: "milestone", issue: 2, milestone: "merged" });
   result = await run.resume({ accepted: true });
   assert.equal(result.runStatus, "complete");
@@ -301,15 +320,15 @@ test("worker interruption hands off to another verified route in the same worktr
   const run = makeRun();
   await run.invoke(makeInput({ items: [item(1)] }));
   const before = await run.state();
-  assert.equal(before.workerExecutions[0].agent, "Codex");
+  assert.equal(before.workerExecutions[0].agent, "Claude");
   assert.equal(before.workerExecutions[0].worktreeId, "issue-1");
 
   const result = await run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" });
   assert.equal(isInterrupted(result), true);
   const state = await run.state();
-  assert.deepEqual(state.unavailableAgents, ["Codex"]);
+  assert.deepEqual(state.unavailableAgents, ["Claude"]);
   const execution = state.workerExecutions[0];
-  assert.equal(execution.agent, "Claude");
+  assert.equal(execution.agent, "Grok");
   assert.equal(execution.mode, "handoff-issue");
   assert.equal(execution.attempt, 2);
   assert.equal(execution.worktreeId, "issue-1");
@@ -333,7 +352,7 @@ test("an interruption can carry a proposed handoff route, validated against the 
 test("fails closed when every handoff candidate is unavailable", async () => {
   const run = makeRun();
   const result = await run
-    .invoke(makeInput({ items: [item(1)], capabilities: [parentRecord, workerRoute("Codex", "gpt-5")] }))
+    .invoke(makeInput({ items: [item(1)], capabilities: [parentRecord, workerRoute("Claude", "sonnet")] }))
     .then(() => run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" }));
   assert.equal(result.runStatus, "failed");
   assert.equal(result.failureReason, "no-worker-route-available:handoff:1");
@@ -344,7 +363,7 @@ test("fails closed when every handoff candidate is unavailable", async () => {
 test("a route failing at dispatch time is excluded and the Issue handed off", async () => {
   const deps = makeDeps({
     dispatch: async (job) => {
-      if (job.route.agent === "Codex") throw new Error("model-mismatch");
+      if (job.route.agent === "Claude") throw new Error("model-mismatch");
       deps.dispatched.push(job);
       return { pid: 9100 };
     },
@@ -353,8 +372,8 @@ test("a route failing at dispatch time is excluded and the Issue handed off", as
   const result = await run.invoke(makeInput({ items: [item(1)] }));
   assert.equal(isInterrupted(result), true);
   const state = await run.state();
-  assert.deepEqual(state.unavailableAgents, ["Codex"]);
-  assert.equal(state.workerExecutions[0].agent, "Claude");
+  assert.deepEqual(state.unavailableAgents, ["Claude"]);
+  assert.equal(state.workerExecutions[0].agent, "Grok");
   // The failed dispatch never started a worker, so no worktree exists yet:
   // the retry keeps the mode that attempt was going to use.
   assert.equal(state.workerExecutions[0].mode, "issue-implementation");
@@ -379,7 +398,7 @@ test("lost-notification check probes executions and hands off dead workers", asy
   // the agent stays in the pool (and is picked again here), unlike an
   // explicit interruption or dispatch failure.
   assert.deepEqual(state.unavailableAgents, []);
-  assert.equal(state.workerExecutions[0].agent, "Codex");
+  assert.equal(state.workerExecutions[0].agent, "Claude");
   assert.equal(state.workerExecutions[0].mode, "handoff-issue");
   assert.equal(state.workerExecutions[0].attempt, 2);
 });
@@ -390,7 +409,7 @@ test("a check with live workers keeps waiting without changes", async () => {
   const result = await run.resume({ type: "check" });
   assert.equal(isInterrupted(result), true);
   const state = await run.state();
-  assert.equal(state.workerExecutions[0].agent, "Codex");
+  assert.equal(state.workerExecutions[0].agent, "Claude");
   assert.equal(state.workerExecutions[0].status, "running");
 });
 
@@ -426,18 +445,12 @@ test("the default probe accepts a live worker whose PID was reported after launc
     "alive",
   );
   // A PID recorded long ago but whose process started now is a reused PID.
-  assert.equal(
-    await probeProcess({ pid: child.pid, startedAt: dispatchRecordedAt }),
-    "mismatch",
-  );
+  assert.equal(await probeProcess({ pid: child.pid, startedAt: dispatchRecordedAt }), "mismatch");
   assert.equal(await probeProcess({ startedAt: dispatchRecordedAt }), "unknown");
 
   child.kill("SIGKILL");
   await new Promise((resolve) => child.once("exit", resolve));
-  assert.equal(
-    await probeProcess({ pid: child.pid, pidReportedAt: new Date().toISOString() }),
-    "dead",
-  );
+  assert.equal(await probeProcess({ pid: child.pid, pidReportedAt: new Date().toISOString() }), "dead");
 });
 
 test("dispatches independent Issues in parallel and tolerates reversed completion order", async () => {
@@ -456,10 +469,16 @@ test("dispatches independent Issues in parallel and tolerates reversed completio
 test("maxParallel counts active workers before dispatching more", async () => {
   const run = makeRun();
   await run.invoke(makeInput({ items: [item(1), item(2)], config: { maxParallel: 1 } }));
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1],
+  );
   await run.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
   await run.resume({ accepted: true });
-  assert.deepEqual(run.deps.dispatched.map(({ issueNumber }) => issueNumber), [1, 2]);
+  assert.deepEqual(
+    run.deps.dispatched.map(({ issueNumber }) => issueNumber),
+    [1, 2],
+  );
 });
 
 test("an invalid gate verdict re-prompts the gate", async () => {
@@ -482,9 +501,19 @@ test("summary keeps the established report fields", async () => {
   const result = await run.resume({ accepted: true });
   assert.deepEqual(
     Object.keys(result.summary).sort(),
-    ["assignments", "blocked", "completed", "milestones", "routing", "runnable", "skipped", "usage", "runStatus"].sort(),
+    [
+      "assignments",
+      "blocked",
+      "completed",
+      "milestones",
+      "routing",
+      "runnable",
+      "skipped",
+      "usage",
+      "runStatus",
+    ].sort(),
   );
-  assert.deepEqual(result.summary.assignments, [{ number: 1, agent: "Codex", model: "gpt-5" }]);
+  assert.deepEqual(result.summary.assignments, [{ number: 1, agent: "Claude", model: "sonnet" }]);
   assert.deepEqual(result.summary.usage.issues, [{ number: 1, usage: "unavailable" }]);
 });
 
@@ -502,7 +531,10 @@ test("resumes after a process restart from the file checkpointer with the same t
       threadId: "restart",
     });
     await first.invoke(makeInput({ items: [item(1), item(2, [1])] }));
-    assert.deepEqual(first.deps.dispatched.map(({ issueNumber }) => issueNumber), [1]);
+    assert.deepEqual(
+      first.deps.dispatched.map(({ issueNumber }) => issueNumber),
+      [1],
+    );
 
     // Simulate a restart: a fresh saver instance hydrated from disk.
     const second = makeRun({
@@ -512,7 +544,10 @@ test("resumes after a process restart from the file checkpointer with the same t
     await second.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
     const result = await second.resume({ accepted: true });
     assert.equal(isInterrupted(result), true);
-    assert.deepEqual(second.deps.dispatched.map(({ issueNumber }) => issueNumber), [2]);
+    assert.deepEqual(
+      second.deps.dispatched.map(({ issueNumber }) => issueNumber),
+      [2],
+    );
     const state = await second.state();
     assert.deepEqual(state.completed, [1]);
   } finally {
@@ -550,7 +585,7 @@ test("the graph CLI starts, pauses, and resumes across separate processes", asyn
     inputFile,
     JSON.stringify({
       items: [item(1)],
-      capabilities: [parentRecord, workerRoute("Codex", "gpt-5")],
+      capabilities: [parentRecord, workerRoute("Claude", "sonnet")],
     }),
   );
   const script = new URL("../../scripts/project-issue-graph.mjs", import.meta.url).pathname;
@@ -589,7 +624,10 @@ test("the graph CLI starts, pauses, and resumes across separate processes", asyn
       "--resume-json",
       JSON.stringify(event),
     ];
-    await execFileAsync(process.execPath, resumeArgs({ type: "milestone", issue: 1, milestone: "pr-created" }));
+    await execFileAsync(
+      process.execPath,
+      resumeArgs({ type: "milestone", issue: 1, milestone: "pr-created" }),
+    );
     const finished = await execFileAsync(process.execPath, resumeArgs({ accepted: true }));
     const result = JSON.parse(finished.stdout);
     assert.equal(result.status, "complete");
@@ -661,7 +699,8 @@ test("parseGraphCliArgs validates thread id and resume sources", () => {
 });
 
 test("classifies failure taxonomy into recoverable and unrecoverable reasons", async () => {
-  const { classifyFailure, FAILURE_TAXONOMY, FAILURE_TRANSITIONS, idempotencyKey } = await import("../../scripts/project-issue-graph.mjs");
+  const { classifyFailure, FAILURE_TAXONOMY, FAILURE_TRANSITIONS, idempotencyKey } =
+    await import("../../scripts/project-issue-graph.mjs");
   assert.equal(classifyFailure("timeout").recoverable, true);
   assert.equal(classifyFailure("session-limit").recoverable, true);
   assert.equal(classifyFailure("provider-unavailable").recoverable, true);
@@ -673,4 +712,3 @@ test("classifies failure taxonomy into recoverable and unrecoverable reasons", a
   assert.deepEqual(Array.from(FAILURE_TRANSITIONS.running), ["retrying", "handing_off", "failed"]);
   assert.equal(idempotencyKey(1, "dispatch", 1), "issue-1:dispatch:1");
 });
-

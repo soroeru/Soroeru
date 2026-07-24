@@ -36,7 +36,7 @@ GitHub deterministically.
 1. Discover worker runtimes automatically per [provider-routing.md](references/provider-routing.md). The normal path is `node scripts/project-issue-capabilities.mjs` (or omit `--capabilities-file` so the orchestrator discovers for you). Adapters run in fixed order Codex → Claude → Grok → Gemini; only verified routes become capability records `{agent, requestedModel, model, role, selector, selectable, verifiable, timeoutMs}`. Do not hand-limit the pool to Codex with a handmade capabilities file.
 2. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model>` (optional `--capabilities-file` only for tests / intentional overrides). The default YAML supplies the stable Project/run values. Issue bodies are never fetched by the planner — dependencies come from GitHub `blockedBy` relations and Priority/Size/Status from Project fields. A worker fetches its own Issue body and comments immediately before implementation.
 3. Stop before any worktree mutation on unknown/cyclic `Blocked by` dependencies, open or unavailable dependency state, or an unverifiable parent route. Confirm the requested parent model can actually be selected; if exact selection cannot be verified, block that route and never relabel another model.
-4. The dry-run returns `plan.runnable` (ordered by Priority then Issue number) and `workerRoutes` (the run-scoped pool of verified worker routes after `--unavailable-agent` / `--unavailable-model` exclusions). If Issues are runnable and the pool is empty, the run stops with `no-worker-route-available`.
+4. The dry-run returns `plan.runnable` (ordered by Priority then Issue number) and `workerRoutes` (the run-scoped pool of verified worker routes after excluding the Parent agent runtime and applying `--unavailable-agent` / `--unavailable-model` exclusions). Every model and selector belonging to the Parent agent is excluded: if Codex is the Parent, no Codex route may be a worker. If Issues are runnable and the remaining pool is empty, the run stops with `no-worker-route-available`; otherwise the run may proceed with fewer workers than `maxParallel`.
 
 ## Dynamic assignment
 
@@ -46,6 +46,9 @@ run-scoped hints. Rules:
 
 - Choose only from `workerRoutes`; never invent a selector, substitute a nearby model name, or
   relabel a canonical identifier as a different model.
+- The Parent agent runtime is never a worker route. This exclusion is by `agent`, not by model:
+  a different model or selector from the same agent is still excluded. Only a different verified
+  agent may receive an Issue.
 - Record the chosen route (agent + model labels only) in run state and in the dispatch message.
 - Exclusions are run-scoped: YAML `run.unavailableAgents` / `run.unavailableModels` and their
   `--unavailable-agent` / `--unavailable-model` CLI overrides affect only the current run, and
@@ -55,7 +58,8 @@ run-scoped hints. Rules:
 
 ## Scheduling
 
-- Dispatch only Issues returned in `plan.runnable`, in plan order, up to `maxParallel`.
+- Dispatch only Issues returned in `plan.runnable`, in plan order, up to `maxParallel` and the
+  number of remaining verified worker routes. A smaller worker pool is valid.
 - Release a dependency only on the configured milestone: `pr-created` or `merged`. Never invent a third release condition.
 - Use completion notifications and milestone events. Do not short-poll workers, logs, review files, or model availability. A single bounded fallback wakeup may detect lost notifications.
 - Supply run-scoped state explicitly with `--unavailable-agent`, `--unavailable-model`, `--state-path`, `--existing-worktree`, and `--milestone-json` or `--milestone-file`. Repeat the agent/model/worktree flags as needed.
@@ -67,7 +71,7 @@ Send only the Issue number, the assigned agent/model route, release policy, and 
 - Launch the selected route with the same exact `selector` / `model` from discovery — for external CLIs use `node scripts/project-issue-dispatch.mjs` (or `dispatchWorker`) so non-Codex routes start through their adapter, not a Codex-only path.
 - No worktree: worker uses `issue-implementation`.
 - Existing Issue worktree/metadata: worker uses `handoff-issue` before editing.
-- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
+- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which never includes the Parent agent; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 - A route that fails at actual dispatch (not just at discovery) is a signal the cached capability record no longer reflects reality. Pass `--invalidate-agent <name>` on the *next* orchestrator invocation (in addition to this run's `--unavailable-agent`) so that agent is dropped from the capability cache and re-probed instead of being trusted as "ok" indefinitely.
 
 Workers return only `started`, `blocked`, `commit`, `review-complete`, `pr-created`, `merged`, or `failed`, plus a concise reason and exact usage telemetry when exposed. Do not return implementation logs or Issue bodies.
