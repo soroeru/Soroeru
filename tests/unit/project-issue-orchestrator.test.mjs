@@ -19,6 +19,7 @@ import {
   selectProjectItems,
   selectProjectConfig,
   selectWorkerRoutes,
+  transitionBacklogToReady,
   validateCapabilities,
   validateProjectItems,
 } from "../../scripts/project-issue-orchestrator.mjs";
@@ -1210,4 +1211,291 @@ test("GitHub GraphQL transport accepts an injected fetch implementation", async 
   assert.deepEqual(result, { viewer: { login: "octo" } });
   assert.equal(calls[0].url, "https://api.github.com/graphql");
   assert.equal(calls[0].init.headers.Authorization, "bearer fake");
+});
+
+test("transitionBacklogToReady returns empty when no selected issues", async () => {
+  const graphql = async () => null;
+  const result = await transitionBacklogToReady({
+    projectNumber: 9,
+    projectOwner: "octo",
+    selectedIssueNumbers: [],
+    dryRun: false,
+    graphql,
+  });
+  assert.deepEqual(result, { transitioned: [] });
+});
+
+test("transitionBacklogToReady performs dry-run without mutations", async () => {
+  const calls = [];
+  const graphql = async (query) => {
+    calls.push(query);
+    return {
+      user: {
+        projectV2: {
+          id: "proj-1",
+          fields: {
+            nodes: [
+              {
+                id: "status-field",
+                name: "Status",
+                dataType: "SINGLE_SELECT",
+                options: [
+                  { id: "backlog-opt", name: "Backlog" },
+                  { id: "ready-opt", name: "Ready" },
+                ],
+              },
+            ],
+          },
+          items: {
+            nodes: [
+              {
+                id: "item-1",
+                content: { number: 101 },
+                fieldValues: {
+                  nodes: [
+                    { name: "Backlog", field: { name: "Status" } },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+  };
+  const result = await transitionBacklogToReady({
+    projectNumber: 9,
+    projectOwner: "octo",
+    selectedIssueNumbers: [101],
+    dryRun: true,
+    graphql,
+  });
+  assert.deepEqual(result, { transitioned: [101], dryRun: true });
+  // Only read query, no mutations
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].includes("GetProject"));
+});
+
+test("transitionBacklogToReady transitions Backlog to Ready and validates readback", async () => {
+  const calls = [];
+  const graphql = async (query, variables) => {
+    calls.push({ query, variables });
+    if (query.includes("GetProject")) {
+      return {
+        user: {
+          projectV2: {
+            id: "proj-1",
+            fields: {
+              nodes: [
+                {
+                  id: "status-field",
+                  name: "Status",
+                  dataType: "SINGLE_SELECT",
+                  options: [
+                    { id: "backlog-opt", name: "Backlog" },
+                    { id: "ready-opt", name: "Ready" },
+                  ],
+                },
+              ],
+            },
+            items: {
+              nodes: [
+                {
+                  id: "item-1",
+                  content: { number: 101 },
+                  fieldValues: {
+                    nodes: [{ name: "Backlog", field: { name: "Status" } }],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+    } else if (query.includes("UpdateStatus")) {
+      return { updateProjectV2ItemFieldValue: { projectV2Item: { id: "item-1" } } };
+    } else if (query.includes("ReadbackStatus")) {
+      return {
+        node: {
+          fieldValues: {
+            nodes: [{ name: "Ready", field: { name: "Status" } }],
+          },
+        },
+      };
+    }
+  };
+  const result = await transitionBacklogToReady({
+    projectNumber: 9,
+    projectOwner: "octo",
+    selectedIssueNumbers: [101],
+    dryRun: false,
+    graphql,
+  });
+  assert.deepEqual(result, { transitioned: [101] });
+  assert.equal(calls.length, 3); // GetProject, UpdateStatus, ReadbackStatus
+});
+
+test("transitionBacklogToReady skips Ready items (idempotent)", async () => {
+  const calls = [];
+  const graphql = async (query) => {
+    calls.push(query);
+    if (query.includes("GetProject")) {
+      return {
+        user: {
+          projectV2: {
+            id: "proj-1",
+            fields: {
+              nodes: [
+                {
+                  id: "status-field",
+                  name: "Status",
+                  dataType: "SINGLE_SELECT",
+                  options: [
+                    { id: "backlog-opt", name: "Backlog" },
+                    { id: "ready-opt", name: "Ready" },
+                  ],
+                },
+              ],
+            },
+            items: {
+              nodes: [
+                {
+                  id: "item-1",
+                  content: { number: 101 },
+                  fieldValues: {
+                    nodes: [{ name: "Ready", field: { name: "Status" } }],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+    }
+  };
+  const result = await transitionBacklogToReady({
+    projectNumber: 9,
+    projectOwner: "octo",
+    selectedIssueNumbers: [101],
+    dryRun: false,
+    graphql,
+  });
+  assert.deepEqual(result, { transitioned: [] });
+  // Only read query, no mutations for already-Ready items
+  assert.equal(calls.length, 1);
+});
+
+test("transitionBacklogToReady throws on missing Status field", async () => {
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        id: "proj-1",
+        fields: { nodes: [] },
+        items: { nodes: [] },
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      transitionBacklogToReady({
+        projectNumber: 9,
+        projectOwner: "octo",
+        selectedIssueNumbers: [101],
+        dryRun: false,
+        graphql,
+      }),
+    /project-field-not-found:Status/,
+  );
+});
+
+test("transitionBacklogToReady throws on missing Ready option", async () => {
+  const graphql = async () => ({
+    user: {
+      projectV2: {
+        id: "proj-1",
+        fields: {
+          nodes: [
+            {
+              id: "status-field",
+              name: "Status",
+              dataType: "SINGLE_SELECT",
+              options: [{ id: "backlog-opt", name: "Backlog" }],
+            },
+          ],
+        },
+        items: { nodes: [] },
+      },
+    },
+  });
+  await assert.rejects(
+    () =>
+      transitionBacklogToReady({
+        projectNumber: 9,
+        projectOwner: "octo",
+        selectedIssueNumbers: [101],
+        dryRun: false,
+        graphql,
+      }),
+    /status-ready-option-not-found/,
+  );
+});
+
+test("transitionBacklogToReady throws when readback fails to converge", async () => {
+  const graphql = async (query) => {
+    if (query.includes("GetProject")) {
+      return {
+        user: {
+          projectV2: {
+            id: "proj-1",
+            fields: {
+              nodes: [
+                {
+                  id: "status-field",
+                  name: "Status",
+                  dataType: "SINGLE_SELECT",
+                  options: [
+                    { id: "backlog-opt", name: "Backlog" },
+                    { id: "ready-opt", name: "Ready" },
+                  ],
+                },
+              ],
+            },
+            items: {
+              nodes: [
+                {
+                  id: "item-1",
+                  content: { number: 101 },
+                  fieldValues: {
+                    nodes: [{ name: "Backlog", field: { name: "Status" } }],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+    } else if (query.includes("UpdateStatus")) {
+      return { updateProjectV2ItemFieldValue: { projectV2Item: { id: "item-1" } } };
+    } else if (query.includes("ReadbackStatus")) {
+      // Readback still shows Backlog (mutation didn't stick)
+      return {
+        node: {
+          fieldValues: {
+            nodes: [{ name: "Backlog", field: { name: "Status" } }],
+          },
+        },
+      };
+    }
+  };
+  await assert.rejects(
+    () =>
+      transitionBacklogToReady({
+        projectNumber: 9,
+        projectOwner: "octo",
+        selectedIssueNumbers: [101],
+        dryRun: false,
+        graphql,
+      }),
+    /status-transition-unconverged:101/,
+  );
 });

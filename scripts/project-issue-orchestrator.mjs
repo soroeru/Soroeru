@@ -15,7 +15,7 @@ import {
   loadOrchestratorConfig,
   mergeOrchestratorConfig,
 } from "./project-issue-config.mjs";
-import { fetchProjectItems, githubGraphql } from "./project-issue-github.mjs";
+import { fetchProjectItems, githubGraphql, transitionBacklogToReady } from "./project-issue-github.mjs";
 import {
   applyMilestone,
   buildRunPlan,
@@ -42,7 +42,7 @@ export {
   validateCapabilities,
   validateProjectItems,
 } from "./project-issue-plan.mjs";
-export { buildProjectItemsQuery, fetchProjectItems, githubGraphql } from "./project-issue-github.mjs";
+export { buildProjectItemsQuery, fetchProjectItems, githubGraphql, transitionBacklogToReady } from "./project-issue-github.mjs";
 export {
   discoverCapabilities,
   loadOrRefreshCapabilities,
@@ -260,7 +260,15 @@ async function readInput(cli) {
         }),
     });
     const selection = selectProjectItems(fetched.items, selectors);
-    return applySelection(fetched, selection);
+    const result = applySelection(fetched, selection);
+    // Attach project info for status transition
+    result.projectInfo = {
+      number: project.number,
+      owner: cli.projectOwner,
+      ownerType: cli.ownerType ?? "user",
+      fields: project.fields,
+    };
+    return result;
   }
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
@@ -306,6 +314,41 @@ async function main() {
   const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
   if (cli.milestoneFile) input.milestone = JSON.parse(await fs.readFile(cli.milestoneFile, "utf8"));
+
+  // Transition Backlog items to Ready status before orchestration
+  let statusTransitions = [];
+  if (input.projectInfo && input.items && Array.isArray(input.items)) {
+    try {
+      const selectedNumbers = input.items.map((item) => item.number);
+      const transitionResult = await transitionBacklogToReady({
+        projectNumber: input.projectInfo.number,
+        projectOwner: input.projectInfo.owner,
+        selectedIssueNumbers: selectedNumbers,
+        dryRun: Boolean(cli.dryRun),
+        graphql: (query, variables) =>
+          githubGraphql(query, variables, {
+            token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
+          }),
+        fields: input.projectInfo.fields,
+      });
+      statusTransitions = transitionResult.transitioned ?? [];
+      // Update items with new status if transitioned
+      if (statusTransitions.length > 0 && !cli.dryRun) {
+        const transitionedSet = new Set(statusTransitions);
+        for (const item of input.items) {
+          if (transitionedSet.has(item.number)) {
+            item.status = "Ready";
+          }
+        }
+      }
+    } catch (error) {
+      if (!error.message.startsWith("project-")) {
+        throw error;
+      }
+      // Non-fatal: if project transition fails, continue with original status
+      console.error(JSON.stringify({ warning: "status-transition-failed", reason: error.message }));
+    }
+  }
 
   // Capability source of truth for the normal CLI path is automatic discovery,
   // which by default reuses state/project-issue-capabilities.json instead of
@@ -365,6 +408,7 @@ async function main() {
   const result = await runOrchestration(input);
   if (capabilityDiagnostics !== undefined) result.capabilityDiagnostics = capabilityDiagnostics;
   if (capabilityCacheStatus !== undefined) result.capabilityCacheStatus = capabilityCacheStatus;
+  if (statusTransitions.length > 0) result.statusTransitions = statusTransitions;
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 
