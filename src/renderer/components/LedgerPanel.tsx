@@ -109,6 +109,8 @@ export function LedgerPanel({
   const cancelBatchRef = useRef(false);
   /** True while `runVisibilityBatch` is in progress (including cancel unwind). */
   const batchInFlightRef = useRef(false);
+  /** Sync re-entrancy guard for irreversible multi-site delete (React state alone is too late). */
+  const deleteInFlightRef = useRef(false);
   const onCollectedRef = useRef(onCollected);
   const sitesRef = useRef(sites);
 
@@ -532,6 +534,7 @@ export function LedgerPanel({
   }, [deletingSites]);
   const confirmDelete = useCallback(async () => {
     if (
+      deleteInFlightRef.current ||
       !canConfirmSiteDeletion({
         targetCount: deleteTargets?.length ?? 0,
         acknowledged: deleteAcknowledged,
@@ -543,6 +546,7 @@ export function LedgerPanel({
     ) {
       return;
     }
+    deleteInFlightRef.current = true;
     setDeletingSites(true);
     try {
       const ids = deleteTargets.map((site) => site.siteAccountId);
@@ -561,12 +565,14 @@ export function LedgerPanel({
       const successCount = summary.results.length - failed.length;
 
       if (failed.length > 0) {
-        const failedNames = failed
-          .map((entry) => nameById.get(entry.siteAccountId) ?? entry.siteAccountId)
+        const failedDetails = failed
+          .map((entry) => {
+            const name = nameById.get(entry.siteAccountId) ?? entry.siteAccountId;
+            return `${name}（${reasonMessage(entry.error)}）`;
+          })
           .join("、");
-        const firstError = reasonMessage(failed[0]?.error);
         setLoadError(
-          `${successCount} 件を削除しましたが ${failed.length} 件は失敗しました（${failedNames}）: ${firstError}`,
+          `${successCount} 件を削除しましたが ${failed.length} 件は失敗しました: ${failedDetails}`,
         );
       } else {
         setLoadError(undefined);
@@ -591,6 +597,7 @@ export function LedgerPanel({
     } catch {
       setLoadError(reasonMessage("delete-failed"));
     } finally {
+      deleteInFlightRef.current = false;
       setDeletingSites(false);
     }
   }, [batchBusy, deleteAcknowledged, deleteTargets, deletingSites, loadSites, sessionPersistenceBulkRunning]);

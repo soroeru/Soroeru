@@ -375,7 +375,9 @@ export function DeleteSiteModal({
         </div>
 
         <p className="text-sm text-red-700">
-          これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。
+          {totalCount === 1
+            ? "これはサイトからの退会ではなく、Soroeru 内部に保存したこのサイト記録の削除です。"
+            : "これはサイトからの退会ではなく、Soroeru 内部に保存したこれらのサイト記録の削除です。"}
         </p>
         <label className="flex items-start gap-2 text-sm text-neutral-700">
           <input
