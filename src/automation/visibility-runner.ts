@@ -108,7 +108,7 @@ export class VisibilityRunner {
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       if (!snapshot) return this.handoffResult(siteAccountId);
       // password-reset resolve (any prior clearOrPause) may have flagged the vault password.
-      credential = this.options.domain.listCredentialsForSite(siteAccountId)[0];
+      credential = this.options.domain.listCredentialsForSite(siteAccountId)[0] ?? credential;
 
       const reuseAuthenticatedSession =
         credential !== undefined &&
@@ -899,6 +899,13 @@ export class VisibilityRunner {
     const alreadyAllStale =
       before.length > 0 && before.every((credential) => credential.passwordStale === true);
     const marked = this.options.domain.markSiteCredentialsPasswordStale(siteAccount.id, this.now());
+    // No vault password to flag (SSO-only / no credential rows).
+    if (marked.length === 0) {
+      this.logger.info("visibility", "password-reset resolved with no stored credentials to mark stale", {
+        domain: siteAccount.domain,
+      });
+      return;
+    }
     // Avoid flooding the ledger when a sticky reset wall resolves more than once.
     if (alreadyAllStale) {
       this.logger.info("visibility", "stored password already marked stale after password-reset handoff", {
