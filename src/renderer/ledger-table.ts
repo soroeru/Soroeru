@@ -90,6 +90,31 @@ export function disclosureFor(site: SiteLedgerDetail, attributeKey: string): Dis
  */
 export const LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX = 128;
 
+/**
+ * Combined width of sticky non-attribute columns (select + reorder + site + actions),
+ * in CSS pixels assuming a 16px root (matches `styles.css` rem widths).
+ */
+export const LEDGER_FIXED_COLUMNS_WIDTH_PX = Math.round((2.5 + 2.75 + 14 + 16) * 16);
+
+/** Total table width so fixed layout does not redistribute free space into attribute cols. */
+export function ledgerTableWidthPx(
+  attributeColumnCount: number,
+  widths: Readonly<Record<string, number>>,
+  attributeKeys: readonly string[],
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  let attributeSum = 0;
+  if (attributeColumnCount === 0) {
+    // Empty comparison set still needs room for the "未収集" placeholder cell.
+    attributeSum = defaultWidthPx * 1.5;
+  } else {
+    for (const key of attributeKeys) {
+      attributeSum += ledgerAttributeColumnWidthPx(widths, key, defaultWidthPx);
+    }
+  }
+  return LEDGER_FIXED_COLUMNS_WIDTH_PX + attributeSum;
+}
+
 /** Resize floor: one third of the default width. */
 export function ledgerAttributeColumnMinWidthPx(
   defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,

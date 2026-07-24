@@ -7,9 +7,11 @@ import {
   clampLedgerAttributeColumnWidth,
   disclosureFor,
   LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+  LEDGER_FIXED_COLUMNS_WIDTH_PX,
   ledgerAttributeColumnMaxWidthPx,
   ledgerAttributeColumnMinWidthPx,
   ledgerAttributeColumnWidthPx,
+  ledgerTableWidthPx,
 } from "../../src/renderer/ledger-table.js";
 import type { DisclosureView, SiteLedgerDetail } from "../../electron/ipc/contract.js";
 
@@ -143,4 +145,18 @@ test("ledgerAttributeColumnWidthPx uses default when unset and clamps stored val
   assert.equal(ledgerAttributeColumnWidthPx({ email: 200 }, "email"), 200);
   assert.equal(ledgerAttributeColumnWidthPx({ email: 1 }, "email"), ledgerAttributeColumnMinWidthPx());
   assert.equal(ledgerAttributeColumnWidthPx({ email: 9999 }, "email"), ledgerAttributeColumnMaxWidthPx());
+});
+
+test("ledgerTableWidthPx is sticky fixed columns plus each attribute width", () => {
+  const def = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX;
+  assert.equal(LEDGER_FIXED_COLUMNS_WIDTH_PX, Math.round((2.5 + 2.75 + 14 + 16) * 16));
+  assert.equal(ledgerTableWidthPx(0, {}, []), LEDGER_FIXED_COLUMNS_WIDTH_PX + def * 1.5);
+  assert.equal(
+    ledgerTableWidthPx(2, {}, ["email", "phone.full"]),
+    LEDGER_FIXED_COLUMNS_WIDTH_PX + def * 2,
+  );
+  assert.equal(
+    ledgerTableWidthPx(2, { email: 200 }, ["email", "phone.full"]),
+    LEDGER_FIXED_COLUMNS_WIDTH_PX + 200 + def,
+  );
 });

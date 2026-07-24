@@ -32,7 +32,8 @@ body {
 }
 
 .ledger-table-viewport > table {
-  width: max(100%, max-content);
+  /* Width is set inline from sticky + attribute column sums (Issue #382) so
+   * `table-layout: fixed` does not stretch attribute columns to fill the viewport. */
   table-layout: fixed;
 }
 
@@ -121,13 +122,14 @@ body {
 .ledger-attribute-header-inner {
   position: relative;
   display: block;
-  padding-right: 0.5rem;
+  padding-right: 0.625rem;
 }
 
 .ledger-col-resize-handle {
   position: absolute;
   top: 0;
-  right: -0.75rem;
+  /* Keep the hit target inside the column so the last attribute col stays grabable. */
+  right: 0;
   width: 0.5rem;
   height: 100%;
   min-height: 1.5rem;

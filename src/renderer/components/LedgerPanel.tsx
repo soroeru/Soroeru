@@ -32,6 +32,7 @@ import {
   clampLedgerAttributeColumnWidth,
   disclosureFor,
   ledgerAttributeColumnWidthPx,
+  ledgerTableWidthPx,
 } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
@@ -620,6 +621,10 @@ export function LedgerPanel({
     [endAttributeColumnResize],
   );
 
+  const onAttributeColumnResizeLostPointerCapture = useCallback(() => {
+    endAttributeColumnResize();
+  }, [endAttributeColumnResize]);
+
   const nudgeAttributeColumnWidth = useCallback((attributeKey: string, deltaPx: number) => {
     setAttributeColumnWidths((current) => {
       const nextWidth = clampLedgerAttributeColumnWidth(
@@ -657,6 +662,11 @@ export function LedgerPanel({
   }
 
   const columns = buildLedgerColumns(sites);
+  const tableWidthPx = ledgerTableWidthPx(
+    columns.length,
+    attributeColumnWidths,
+    columns.map((column) => column.attributeKey),
+  );
 
   return (
     <section className="flex w-full min-w-0 flex-1 flex-col self-stretch gap-4">
@@ -757,7 +767,10 @@ export function LedgerPanel({
       </p>
 
       <div className="ledger-table-viewport max-h-[60vh] overflow-x-auto rounded border border-neutral-200">
-        <table className="border-collapse text-left text-sm">
+        <table
+          className="border-collapse text-left text-sm"
+          style={{ width: `${tableWidthPx}px`, minWidth: `${tableWidthPx}px` }}
+        >
           <colgroup>
             <col className="ledger-col-select" />
             <col className="ledger-col-reorder" />
@@ -769,7 +782,11 @@ export function LedgerPanel({
                 <col
                   key={column.attributeKey}
                   className="ledger-col-attribute"
-                  style={{ width: `${widthPx}px`, minWidth: `${widthPx}px` }}
+                  style={{
+                    width: `${widthPx}px`,
+                    minWidth: `${widthPx}px`,
+                    maxWidth: `${widthPx}px`,
+                  }}
                 />
               );
             })}
@@ -822,6 +839,7 @@ export function LedgerPanel({
                         onPointerMove={onAttributeColumnResizePointerMove}
                         onPointerUp={onAttributeColumnResizePointerUp}
                         onPointerCancel={onAttributeColumnResizePointerUp}
+                        onLostPointerCapture={onAttributeColumnResizeLostPointerCapture}
                         onKeyDown={(event) => {
                           if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
                             event.preventDefault();
