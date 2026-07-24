@@ -7,6 +7,7 @@ import {
   clampLedgerAttributeColumnWidth,
   disclosureFor,
   LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+  LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX,
   LEDGER_FIXED_COLUMNS_WIDTH_PX,
   ledgerAttributeColumnMaxWidthPx,
   ledgerAttributeColumnMinWidthPx,
@@ -117,26 +118,30 @@ test("disclosureFor returns the matching disclosure or undefined when the site l
 
 test("attribute column default is 8rem (128px) and resize bounds are 1/3–3×", () => {
   assert.equal(LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX, 128);
-  assert.equal(ledgerAttributeColumnMinWidthPx(), 128 / 3);
-  assert.equal(ledgerAttributeColumnMaxWidthPx(), 128 * 3);
+  assert.equal(ledgerAttributeColumnMinWidthPx(), Math.round(128 / 3));
+  assert.equal(ledgerAttributeColumnMaxWidthPx(), Math.round(128 * 3));
+  assert.equal(LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX, Math.round(128 * 1.5));
 });
 
 test("clampLedgerAttributeColumnWidth clamps below min and above max", () => {
   const def = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX;
-  assert.equal(clampLedgerAttributeColumnWidth(def / 3 - 1), def / 3);
-  assert.equal(clampLedgerAttributeColumnWidth(0), def / 3);
-  assert.equal(clampLedgerAttributeColumnWidth(-50), def / 3);
-  assert.equal(clampLedgerAttributeColumnWidth(def * 3 + 1), def * 3);
-  assert.equal(clampLedgerAttributeColumnWidth(10_000), def * 3);
+  const min = ledgerAttributeColumnMinWidthPx();
+  const max = ledgerAttributeColumnMaxWidthPx();
+  assert.equal(clampLedgerAttributeColumnWidth(min - 1), min);
+  assert.equal(clampLedgerAttributeColumnWidth(0), min);
+  assert.equal(clampLedgerAttributeColumnWidth(-50), min);
+  assert.equal(clampLedgerAttributeColumnWidth(max + 1), max);
+  assert.equal(clampLedgerAttributeColumnWidth(10_000), max);
   assert.equal(clampLedgerAttributeColumnWidth(def), def);
   assert.equal(clampLedgerAttributeColumnWidth(def * 2), def * 2);
+  assert.equal(clampLedgerAttributeColumnWidth(100.4), 100);
   assert.equal(clampLedgerAttributeColumnWidth(Number.NaN), def);
   assert.equal(clampLedgerAttributeColumnWidth(Number.POSITIVE_INFINITY), def);
 });
 
 test("clampLedgerAttributeColumnWidth honors a custom default width", () => {
-  assert.equal(clampLedgerAttributeColumnWidth(10, 90), 30);
-  assert.equal(clampLedgerAttributeColumnWidth(300, 90), 270);
+  assert.equal(clampLedgerAttributeColumnWidth(10, 90), Math.round(90 / 3));
+  assert.equal(clampLedgerAttributeColumnWidth(300, 90), Math.round(90 * 3));
   assert.equal(clampLedgerAttributeColumnWidth(100, 90), 100);
 });
 
@@ -150,13 +155,10 @@ test("ledgerAttributeColumnWidthPx uses default when unset and clamps stored val
 test("ledgerTableWidthPx is sticky fixed columns plus each attribute width", () => {
   const def = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX;
   assert.equal(LEDGER_FIXED_COLUMNS_WIDTH_PX, Math.round((2.5 + 2.75 + 14 + 16) * 16));
-  assert.equal(ledgerTableWidthPx(0, {}, []), LEDGER_FIXED_COLUMNS_WIDTH_PX + def * 1.5);
+  assert.equal(ledgerTableWidthPx({}, []), LEDGER_FIXED_COLUMNS_WIDTH_PX + LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX);
+  assert.equal(ledgerTableWidthPx({}, ["email", "phone.full"]), LEDGER_FIXED_COLUMNS_WIDTH_PX + def * 2);
   assert.equal(
-    ledgerTableWidthPx(2, {}, ["email", "phone.full"]),
-    LEDGER_FIXED_COLUMNS_WIDTH_PX + def * 2,
-  );
-  assert.equal(
-    ledgerTableWidthPx(2, { email: 200 }, ["email", "phone.full"]),
+    ledgerTableWidthPx({ email: 200 }, ["email", "phone.full"]),
     LEDGER_FIXED_COLUMNS_WIDTH_PX + 200 + def,
   );
 });

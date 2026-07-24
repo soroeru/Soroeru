@@ -31,6 +31,7 @@ import {
   buildSiteDetailDisclosureGroups,
   clampLedgerAttributeColumnWidth,
   disclosureFor,
+  LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX,
   ledgerAttributeColumnWidthPx,
   ledgerTableWidthPx,
 } from "../ledger-table.js";
@@ -108,7 +109,11 @@ export function LedgerPanel({
   const [collectionFilter, setCollectionFilter] = useState<LedgerCollectionFilter>("all");
   const [draggedSiteId, setDraggedSiteId] = useState<string | undefined>();
   const [orderAnnouncement, setOrderAnnouncement] = useState("");
-  /** Per-attribute column widths in px (Issue #382). Unset keys use the default. */
+  /**
+   * Per-attribute column widths in px (Issue #382). Unset keys use the default.
+   * Session-only: remember widths while the panel is mounted, including if a
+   * column disappears and reappears later; not persisted across app restarts.
+   */
   const [attributeColumnWidths, setAttributeColumnWidths] = useState<Record<string, number>>({});
   const resumedHandoffSites = useRef<Set<string>>(new Set());
   const cancelBatchRef = useRef(false);
@@ -663,7 +668,6 @@ export function LedgerPanel({
 
   const columns = buildLedgerColumns(sites);
   const tableWidthPx = ledgerTableWidthPx(
-    columns.length,
     attributeColumnWidths,
     columns.map((column) => column.attributeKey),
   );
@@ -776,20 +780,31 @@ export function LedgerPanel({
             <col className="ledger-col-reorder" />
             <col className="ledger-col-site" />
             <col className="ledger-col-actions" />
-            {columns.map((column) => {
-              const widthPx = ledgerAttributeColumnWidthPx(attributeColumnWidths, column.attributeKey);
-              return (
-                <col
-                  key={column.attributeKey}
-                  className="ledger-col-attribute"
-                  style={{
-                    width: `${widthPx}px`,
-                    minWidth: `${widthPx}px`,
-                    maxWidth: `${widthPx}px`,
-                  }}
-                />
-              );
-            })}
+            {columns.length === 0 ? (
+              <col
+                className="ledger-col-attribute"
+                style={{
+                  width: `${LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX}px`,
+                  minWidth: `${LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX}px`,
+                  maxWidth: `${LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX}px`,
+                }}
+              />
+            ) : (
+              columns.map((column) => {
+                const widthPx = ledgerAttributeColumnWidthPx(attributeColumnWidths, column.attributeKey);
+                return (
+                  <col
+                    key={column.attributeKey}
+                    className="ledger-col-attribute"
+                    style={{
+                      width: `${widthPx}px`,
+                      minWidth: `${widthPx}px`,
+                      maxWidth: `${widthPx}px`,
+                    }}
+                  />
+                );
+              })
+            )}
           </colgroup>
           <thead>
             <tr className="border-b border-neutral-200 bg-neutral-50">
@@ -978,7 +993,13 @@ export function LedgerPanel({
                       </span>
                     </td>
                     {columns.length === 0 ? (
-                      <td className="min-w-[12rem] px-3 py-2 align-top text-neutral-500">
+                      <td
+                        className="px-3 py-2 align-top text-neutral-500"
+                        style={{
+                          width: `${LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX}px`,
+                          minWidth: `${LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX}px`,
+                        }}
+                      >
                         未収集 — 上の「選択したサイトを収集」で開示を集められます
                       </td>
                     ) : site.collected ? (

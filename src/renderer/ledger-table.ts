@@ -96,17 +96,20 @@ export const LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX = 128;
  */
 export const LEDGER_FIXED_COLUMNS_WIDTH_PX = Math.round((2.5 + 2.75 + 14 + 16) * 16);
 
+/** Placeholder width when no comparison attributes exist (matches empty-cell min width). */
+export const LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX = Math.round(
+  LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX * 1.5,
+);
+
 /** Total table width so fixed layout does not redistribute free space into attribute cols. */
 export function ledgerTableWidthPx(
-  attributeColumnCount: number,
   widths: Readonly<Record<string, number>>,
   attributeKeys: readonly string[],
   defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
 ): number {
   let attributeSum = 0;
-  if (attributeColumnCount === 0) {
-    // Empty comparison set still needs room for the "未収集" placeholder cell.
-    attributeSum = defaultWidthPx * 1.5;
+  if (attributeKeys.length === 0) {
+    attributeSum = LEDGER_EMPTY_ATTRIBUTE_AREA_WIDTH_PX;
   } else {
     for (const key of attributeKeys) {
       attributeSum += ledgerAttributeColumnWidthPx(widths, key, defaultWidthPx);
@@ -115,23 +118,23 @@ export function ledgerTableWidthPx(
   return LEDGER_FIXED_COLUMNS_WIDTH_PX + attributeSum;
 }
 
-/** Resize floor: one third of the default width. */
+/** Resize floor: one third of the default width (integer px). */
 export function ledgerAttributeColumnMinWidthPx(
   defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
 ): number {
-  return defaultWidthPx / 3;
+  return Math.round(defaultWidthPx / 3);
 }
 
-/** Resize ceiling: three times the default width. */
+/** Resize ceiling: three times the default width (integer px). */
 export function ledgerAttributeColumnMaxWidthPx(
   defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
 ): number {
-  return defaultWidthPx * 3;
+  return Math.round(defaultWidthPx * 3);
 }
 
 /**
  * Clamp a dragged attribute-column width to [default/3, default×3].
- * Non-finite inputs fall back to the default width.
+ * Non-finite inputs fall back to the default width. Result is integer CSS px.
  */
 export function clampLedgerAttributeColumnWidth(
   widthPx: number,
@@ -140,7 +143,7 @@ export function clampLedgerAttributeColumnWidth(
   if (!Number.isFinite(widthPx)) return defaultWidthPx;
   const min = ledgerAttributeColumnMinWidthPx(defaultWidthPx);
   const max = ledgerAttributeColumnMaxWidthPx(defaultWidthPx);
-  return Math.min(max, Math.max(min, widthPx));
+  return Math.min(max, Math.max(min, Math.round(widthPx)));
 }
 
 /** Resolved width for one attribute column, applying clamp when a stored value exists. */
