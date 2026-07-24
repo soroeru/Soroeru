@@ -8,8 +8,10 @@
 // row/cell unmounts, and is never persisted.
 //
 // Issue #341 also owns selection, batch Visibility collection, session
-// persistence bulk-enable, per-row detail / saved-page import / delete, and
-// status chips that used to live on the dedicated Site Management tab.
+// persistence bulk-enable, per-row detail / saved-page import, and status
+// chips that used to live on the dedicated Site Management tab. Issue #384
+// moves site deletion to a selected-sites bulk action with the same fourth
+// absolute boundary confirmation gate.
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Label } from "@radix-ui/react-label";
@@ -32,7 +34,9 @@ import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
 import { filterLedgerSitesByCollection, type LedgerCollectionFilter } from "../ledger-filter.js";
 import { moveLedgerSite, orderLedgerSites, type LedgerSortMode } from "../ledger-ordering.js";
 import {
+  canConfirmSiteDeletion,
   collectVisibleSelectedSiteIds,
+  deleteSitesForBatch,
   enableSessionPersistenceForSites,
   runVisibilityBatch,
   type BatchResultEntry,
@@ -93,9 +97,9 @@ export function LedgerPanel({
   const [sessionPersistenceBulkRunning, setSessionPersistenceBulkRunning] = useState(false);
   const [sessionPersistenceBulkError, setSessionPersistenceBulkError] = useState<string | undefined>();
   const [resultModal, setResultModal] = useState<CollectionResultModalContent | undefined>();
-  const [deleteTarget, setDeleteTarget] = useState<SiteLedgerSummary | undefined>();
+  const [deleteTargets, setDeleteTargets] = useState<SiteLedgerSummary[] | undefined>();
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
-  const [deletingSite, setDeletingSite] = useState(false);
+  const [deletingSites, setDeletingSites] = useState(false);
   const [sortMode, setSortMode] = useState<LedgerSortMode>("name-asc");
   /** Display-only; does not clear selection of hidden rows (Issue #388). */
   const [collectionFilter, setCollectionFilter] = useState<LedgerCollectionFilter>("all");
@@ -498,47 +502,74 @@ export function LedgerPanel({
     setResultModal(undefined);
     setSavedPageSiteId(siteAccountId);
   }, []);
-  const requestDelete = useCallback((site: SiteLedgerSummary) => {
+  const requestDeleteSelected = useCallback(() => {
     setLoadError(undefined);
     setDeleteAcknowledged(false);
-    setDeleteTarget(site);
-  }, []);
+    const targets: SiteLedgerSummary[] = selectedVisibleIds
+      .map((id) => visibleSites.find((site) => site.siteAccountId === id))
+      .filter((site): site is SiteLedgerDetail => site !== undefined);
+    if (targets.length === 0) return;
+    setDeleteTargets(targets);
+  }, [selectedVisibleIds, visibleSites]);
   const closeDeleteModal = useCallback(() => {
-    if (deletingSite) return;
-    setDeleteTarget(undefined);
+    if (deletingSites) return;
+    setDeleteTargets(undefined);
     setDeleteAcknowledged(false);
-  }, [deletingSite]);
+  }, [deletingSites]);
   const confirmDelete = useCallback(async () => {
-    if (!deleteTarget || !deleteAcknowledged || deletingSite) return;
-    setDeletingSite(true);
+    if (
+      !canConfirmSiteDeletion({
+        targetCount: deleteTargets?.length ?? 0,
+        acknowledged: deleteAcknowledged,
+        deleting: deletingSites,
+      }) ||
+      !deleteTargets
+    ) {
+      return;
+    }
+    setDeletingSites(true);
     try {
-      const siteAccountId = deleteTarget.siteAccountId;
-      const result = await window.soroeru.ledger.deleteSite({
-        siteAccountId,
-        confirmedFourthBoundary: true,
-      });
-      if (!result.ok) {
-        setLoadError(reasonMessage(result.error));
-        return;
+      const ids = deleteTargets.map((site) => site.siteAccountId);
+      const summary = await deleteSitesForBatch(ids, (siteAccountId) =>
+        window.soroeru.ledger.deleteSite({
+          siteAccountId,
+          confirmedFourthBoundary: true,
+        }),
+      );
+
+      const successfulIds = new Set(
+        summary.results.filter((entry) => entry.ok).map((entry) => entry.siteAccountId),
+      );
+
+      if (summary.failedCount > 0) {
+        const firstFailure = summary.results.find((entry) => !entry.ok);
+        setLoadError(reasonMessage(firstFailure?.error));
+      } else {
+        setLoadError(undefined);
       }
+
       setSelected((current) => {
         const next = new Set(current);
-        next.delete(siteAccountId);
+        for (const id of successfulIds) {
+          next.delete(id);
+        }
         return next;
       });
-      setDetail((current) => (current?.siteAccountId === siteAccountId ? undefined : current));
-      setSavedPageSiteId((current) => (current === siteAccountId ? undefined : current));
-      setGuideSiteId((current) => (current === siteAccountId ? undefined : current));
-      setDeleteTarget(undefined);
+
+      setDetail((current) => (current && successfulIds.has(current.siteAccountId) ? undefined : current));
+      setSavedPageSiteId((current) => (current && successfulIds.has(current) ? undefined : current));
+      setGuideSiteId((current) => (current && successfulIds.has(current) ? undefined : current));
+
+      setDeleteTargets(undefined);
       setDeleteAcknowledged(false);
       await loadSites();
       onCollectedRef.current();
     } catch {
       setLoadError(reasonMessage("delete-failed"));
     } finally {
-      setDeletingSite(false);
+      setDeletingSites(false);
     }
-  }, [deleteAcknowledged, deleteTarget, deletingSite, loadSites]);
+  }, [deleteAcknowledged, deleteTargets, deletingSites, loadSites]);
 
   const selectSite = useCallback((siteAccountId: string, checked: boolean) => {
     setSelected((current) => {
@@ -621,6 +652,8 @@ export function LedgerPanel({
         onEnableSessionPersistence={() => void enableSessionPersistenceForSelected()}
         sessionPersistenceBulkRunning={sessionPersistenceBulkRunning}
         sessionPersistenceBulkError={sessionPersistenceBulkError}
+        onDeleteSelected={requestDeleteSelected}
+        deleteBulkRunning={deletingSites}
       />
 
       {handoff && (
@@ -845,16 +878,6 @@ export function LedgerPanel({
                         >
                           保存ページを取り込む
                         </button>
-                        <button
-                          type="button"
-                          disabled={batchBusy}
-                          onClick={() => requestDelete(site)}
-                          title={`${site.displayName} の情報を削除`}
-                          aria-label={`${site.displayName} の情報を削除`}
-                          className="rounded border border-red-300 px-3 py-1.5 text-sm text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          削除
-                        </button>
                       </span>
                     </td>
                     {columns.length === 0 ? (
@@ -926,11 +949,11 @@ export function LedgerPanel({
           onImportSavedPage={importSavedPageFor}
         />
       )}
-      {deleteTarget && (
+      {deleteTargets && deleteTargets.length > 0 && (
         <DeleteSiteModal
-          site={deleteTarget}
+          sites={deleteTargets}
           acknowledged={deleteAcknowledged}
-          deleting={deletingSite}
+          deleting={deletingSites}
           onAcknowledgedChange={setDeleteAcknowledged}
           onCancel={closeDeleteModal}
           onConfirm={() => void confirmDelete()}
