@@ -111,16 +111,17 @@ export class PageExplorer {
 
     // Observe the user's current page instead of re-navigating.
     const currentUrl = pageDriver.currentUrl();
-    const currentSnapshot = await pageDriver.snapshot();
     const normalizedCurrentUrl = normalizeUrl(currentUrl);
 
     // Safety: only collect when the visible page is same-site, http(s)-safe,
     // and not already visited. Off-site / non-local http / already-visited
-    // pages are skipped — exploration falls through to remaining pending URLs.
+    // pages are skipped before snapshotting — exploration falls through to
+    // remaining pending URLs.
     if (
       isCollectableResumeUrl(currentUrl, state.siteAccount.domain) &&
       !state.visitedUrls.has(normalizedCurrentUrl)
     ) {
+      const currentSnapshot = await pageDriver.snapshot();
       const wall = this.wallDetector.detect(currentSnapshot);
       if (wall) {
         // The user's current page itself still has a wall (they may not have

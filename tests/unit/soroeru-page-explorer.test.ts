@@ -212,7 +212,7 @@ test("resume() collects the page the user opened after the wall, not the walled 
 
   // Must not re-goto the walled profile URL; must snapshot settings and may
   // continue remaining pending URLs (payment, address from settings).
-  assert.equal(driver.gotoLog.includes("https://example.com/profile") && driver.gotoLog.filter((u) => u === "https://example.com/profile").length === 1, true);
+  assert.equal(driver.gotoLog.filter((u) => u === "https://example.com/profile").length, 1);
   assert.equal(
     resumed.some((e) => e.kind === "page-snapshot" && e.url === "https://example.com/settings"),
     true,

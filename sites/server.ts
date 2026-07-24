@@ -768,7 +768,10 @@ setTimeout(function () {
   var wall = document.getElementById("ef_payment_wall");
   var form = document.getElementById("ef_payment_form");
   if (wall) wall.remove();
-  if (form) form.style.display = "block";
+  if (form) {
+    form.style.display = "block";
+    form.setAttribute("data-wall-cleared", "1");
+  }
   document.title = "探索テスト商店 - お支払い方法";
 }, 2000);
 </script>`,
