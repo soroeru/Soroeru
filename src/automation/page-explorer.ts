@@ -6,6 +6,13 @@
 // same session — never solving or bypassing it. Exploration state lives on the
 // instance so `resume()` continues after the hand-off; that single resume slot
 // is why sites are processed sequentially (design §known-constraints).
+//
+// Issue #420: after a wall hand-off is resolved, `resume()` observes the
+// user's current page rather than re-navigating to the walled URL. Machine
+// re-navigation to the same URL would re-trigger the site's risk gate (bot
+// detection), looping the hand-off. The user already navigated past the wall
+// in the headed session; the agent reads what is visible — the existing
+// detect-and-hand-off principle, now applied to the exploration resume path.
 
 import type { PageSnapshot, WallDetection } from "../types.js";
 import type { DecisionContext, DecisionEngine } from "./decision-engine.js";
@@ -40,8 +47,18 @@ interface ExplorationState {
   visitedUrls: Set<string>;
   /** Normalized URLs queued for exploration, in priority order. */
   pendingUrls: string[];
-  /** URLs skipped on a wall, re-queued by `resume()` after the human clears it. */
+  /**
+   * URLs where a wall was observed on the *current* page and exploration
+   * paused. Cleared on each `resume()` attempt; not used to re-navigate.
+   */
   deferredUrls: string[];
+  /**
+   * Issue #420: normalized URLs that machine `goto` must never re-attempt
+   * after a wall (including via later link rediscovery). Distinct from
+   * `visitedUrls` so a human-resolved current page at a formerly walled URL
+   * can still be collected without a machine re-navigation.
+   */
+  blockedUrls: Set<string>;
 }
 
 export class PageExplorer {
@@ -65,19 +82,99 @@ export class PageExplorer {
       visitedUrls: new Set(),
       pendingUrls: [normalizeUrl(startUrl)],
       deferredUrls: [],
+      blockedUrls: new Set(),
     };
     yield* this.continueExploration(startSnapshot);
   }
 
   /**
    * Continue after the human resolved a wall (CAPTCHA / MFA / verification)
-   * in the same browser session: deferred URLs are re-queued and re-visited.
+   * in the same browser session.
+   *
+   * Issue #420: instead of re-navigating to the walled URL (which would
+   * re-trigger the site's risk gate), observe the page the user is currently
+   * on. The deferred (walled) URLs are dropped — machine re-navigation to
+   * them is what caused the loop in the first place. If the user's current
+   * page is same-site and wall-free, it is collected and exploration
+   * continues from there; otherwise exploration falls through to the
+   * remaining pending URLs (if any) or completes.
    */
   async *resume(): AsyncGenerator<ExplorationEvent> {
     const state = this.currentState;
     if (!state) throw new Error("no exploration state to resume");
-    state.pendingUrls.push(...state.deferredUrls);
+    const { pageDriver } = state;
+
+    // Issue #420: drop deferred (walled) URLs — re-navigating to them would
+    // re-trigger the same bot detection that caused the wall. The user has
+    // already navigated past the wall in the headed session.
     state.deferredUrls = [];
+
+    // Observe the user's current page instead of re-navigating.
+    const currentUrl = pageDriver.currentUrl();
+    const normalizedCurrentUrl = normalizeUrl(currentUrl);
+
+    // Safety: only collect when the visible page is same-site, http(s)-safe,
+    // and not already visited. Off-site / non-local http / already-visited
+    // pages are skipped before snapshotting — exploration falls through to
+    // remaining pending URLs.
+    if (
+      isCollectableResumeUrl(currentUrl, state.siteAccount.domain) &&
+      !state.visitedUrls.has(normalizedCurrentUrl)
+    ) {
+      const currentSnapshot = await pageDriver.snapshot();
+      const wall = this.wallDetector.detect(currentSnapshot);
+      if (wall) {
+        // The user's current page itself still has a wall (they may not have
+        // fully cleared it). Re-defer and hand off again, without a goto().
+        state.deferredUrls.push(normalizedCurrentUrl);
+        state.blockedUrls.add(normalizedCurrentUrl);
+        yield {
+          kind: "wall-detected",
+          url: normalizedCurrentUrl,
+          wall,
+          handoff: { reason: wall.kind, evidence: wall.evidence, resumable: true },
+        };
+        return;
+      }
+
+      // Current page is collectable — yield it as a snapshot.
+      // (Allowed even if this URL is in blockedUrls: the human is already here.)
+      state.visitedUrls.add(normalizedCurrentUrl);
+      yield { kind: "page-snapshot", url: normalizedCurrentUrl, snapshot: currentSnapshot };
+
+      // Discover links from the current page for further exploration.
+      const linkDecision = await this.decisionEngine.decide({
+        kind: "find-profile-links",
+        snapshot: currentSnapshot,
+        context: this.buildContext(state, normalizedCurrentUrl),
+      });
+      for (const link of linkDecision.result.links) {
+        if (!isSameSite(link.href, state.siteAccount.domain)) continue;
+        const normalized = normalizeUrl(link.href);
+        if (
+          !state.visitedUrls.has(normalized) &&
+          !state.blockedUrls.has(normalized) &&
+          !state.pendingUrls.includes(normalized)
+        ) {
+          state.pendingUrls.push(normalized);
+        }
+      }
+
+      // Check whether exploration should continue.
+      const continueDecision = await this.decisionEngine.decide({
+        kind: "should-continue",
+        snapshot: currentSnapshot,
+        context: this.buildContext(state, normalizedCurrentUrl),
+      });
+      if (!continueDecision.result.continue) {
+        this.currentState = null;
+        yield { kind: "exploration-complete", reason: "decision-engine" };
+        return;
+      }
+    }
+
+    // Continue with any remaining pending URLs via the normal exploration loop.
+    // (Does not re-queue the previously walled URL.)
     yield* this.continueExploration();
   }
 
@@ -89,7 +186,8 @@ export class PageExplorer {
 
     while (state.pendingUrls.length > 0) {
       const url = normalizeUrl(state.pendingUrls.shift()!);
-      if (state.visitedUrls.has(url)) continue;
+      // Issue #420: never machine-navigate to a URL that already hit a wall.
+      if (state.visitedUrls.has(url) || state.blockedUrls.has(url)) continue;
       let snapshot: PageSnapshot;
 
       yield { kind: "navigating", url };
@@ -105,9 +203,10 @@ export class PageExplorer {
         snapshot = await pageDriver.snapshot();
         const wall = this.wallDetector.detect(snapshot);
         if (wall) {
-          // Not marked visited: resume() must re-visit this URL after the human
-          // clears the wall, so it goes to deferredUrls instead.
+          // Not marked visited (resume may still collect if the human is on
+          // this URL wall-free). Block machine re-navigation permanently.
           state.deferredUrls.push(url);
+          state.blockedUrls.add(url);
           yield {
             kind: "wall-detected",
             url,
@@ -132,7 +231,11 @@ export class PageExplorer {
         // here, at the point that feeds navigation, not trusted from upstream.
         if (!isSameSite(link.href, state.siteAccount.domain)) continue;
         const normalized = normalizeUrl(link.href);
-        if (!state.visitedUrls.has(normalized) && !state.pendingUrls.includes(normalized)) {
+        if (
+          !state.visitedUrls.has(normalized) &&
+          !state.blockedUrls.has(normalized) &&
+          !state.pendingUrls.includes(normalized)
+        ) {
           state.pendingUrls.push(normalized);
         }
       }
@@ -159,5 +262,27 @@ export class PageExplorer {
       visitedUrls: [...state.visitedUrls],
       siteAccount: { domain: state.siteAccount.domain, displayName: state.siteAccount.displayName },
     };
+  }
+}
+
+/**
+ * Whether a resume-time current URL is safe to collect from without navigation.
+ * Same-site HTTPS is the production case; the plain-http scheme on localhost
+ * / 127.0.0.1 is allowed for local PoC fixtures. Other schemes/hosts are skipped.
+ */
+function isCollectableResumeUrl(url: string, domain: string): boolean {
+  if (!isSameSite(url, domain)) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === "https:") return true;
+    if (
+      parsed.protocol === "http:" &&
+      (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }

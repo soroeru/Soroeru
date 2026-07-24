@@ -40,6 +40,10 @@ class FakePageDriver implements PageDriver {
     this.gotoLog.push(url);
     this.url = url;
   }
+  /** Simulate the human navigating in the headed session (no machine goto). */
+  simulateUserNavigation(url: string): void {
+    this.url = url;
+  }
   currentUrl(): string {
     return this.url;
   }
@@ -120,7 +124,7 @@ test("explores linked profile pages in priority order and completes when URLs ru
   );
 });
 
-test("defers a walled URL, hands off, and resume() re-visits it in the same session", async () => {
+test("defers a walled URL, hands off, and resume() observes the current page without re-goto (Issue #420)", async () => {
   const pages = new Map([
     [
       "https://example.com/mypage",
@@ -145,33 +149,146 @@ test("defers a walled URL, hands off, and resume() re-visits it in the same sess
   });
   // Exploration paused on the wall: no page-snapshot for the walled page, no completion.
   assert.equal(firstRun.some((e) => e.kind === "exploration-complete"), false);
+  assert.deepEqual(driver.gotoLog, ["https://example.com/mypage", "https://example.com/profile"]);
 
-  // Resuming while the wall is still up re-defers the URL and pauses again —
-  // the walled page is never silently marked visited, and the state stays
-  // resumable for another attempt.
+  // Resuming while the wall is still up re-handoffs from the *current* page
+  // without a machine re-navigation (Issue #420 — re-goto would re-trigger
+  // the site's risk gate).
   const stillWalled = await collect(explorer.resume());
   assert.deepEqual(
     stillWalled.map((e) => e.kind),
-    ["navigating", "wall-detected"],
+    ["wall-detected"],
   );
+  assert.equal(stillWalled[0]?.kind === "wall-detected" && stillWalled[0].url, "https://example.com/profile");
+  assert.deepEqual(driver.gotoLog, ["https://example.com/mypage", "https://example.com/profile"]);
 
-  // The human resolved the wall in the same session; the page now renders normally.
+  // The human resolved the wall on the same page; the page now renders normally.
   pages.set("https://example.com/profile", snapshot("https://example.com/profile"));
 
   const resumed = await collect(explorer.resume());
 
-  // The deferred URL was re-visited on each resume, collected once cleared, and
-  // exploration completed.
-  assert.deepEqual(driver.gotoLog, [
-    "https://example.com/mypage",
-    "https://example.com/profile",
-    "https://example.com/profile",
-    "https://example.com/profile",
-  ]);
+  // No additional goto: resume collected the visible page and completed.
+  assert.deepEqual(driver.gotoLog, ["https://example.com/mypage", "https://example.com/profile"]);
   assert.deepEqual(
     resumed.map((e) => e.kind),
-    ["navigating", "page-snapshot", "exploration-complete"],
+    ["page-snapshot", "exploration-complete"],
   );
+  assert.equal(resumed[0]?.kind === "page-snapshot" && resumed[0].url, "https://example.com/profile");
+});
+
+test("resume() collects the page the user opened after the wall, not the walled URL (Issue #420)", async () => {
+  const pages = new Map([
+    [
+      "https://example.com/mypage",
+      snapshot("https://example.com/mypage", {
+        links: links(["会員情報", "/profile"], ["お支払い", "/payment"]),
+      }),
+    ],
+    ["https://example.com/profile", snapshot("https://example.com/profile", { wallMarkers: ["g-recaptcha"] })],
+    [
+      "https://example.com/settings",
+      snapshot("https://example.com/settings", {
+        links: links(["配送先", "/address"]),
+      }),
+    ],
+    ["https://example.com/address", snapshot("https://example.com/address")],
+    ["https://example.com/payment", snapshot("https://example.com/payment")],
+  ]);
+  const driver = new FakePageDriver(pages);
+  const explorer = makeExplorer();
+
+  const firstRun = await collect(explorer.explore(driver, "https://example.com/mypage", SITE));
+  assert.equal(firstRun.at(-1)?.kind, "wall-detected");
+  // After mypage, RuleEngine prioritizes profile over payment; wall on profile
+  // paused before payment was visited. pending still has payment.
+  assert.ok(driver.gotoLog.includes("https://example.com/profile"));
+  assert.equal(driver.gotoLog.includes("https://example.com/payment"), false);
+
+  // Human cleared the wall by manually opening the account settings page
+  // (not re-entering the walled /profile URL).
+  driver.simulateUserNavigation("https://example.com/settings");
+
+  const resumed = await collect(explorer.resume());
+
+  // Must not re-goto the walled profile URL; must snapshot settings and may
+  // continue remaining pending URLs (payment, address from settings).
+  assert.equal(driver.gotoLog.filter((u) => u === "https://example.com/profile").length, 1);
+  assert.equal(
+    resumed.some((e) => e.kind === "page-snapshot" && e.url === "https://example.com/settings"),
+    true,
+  );
+  assert.equal(
+    resumed.some((e) => e.kind === "page-snapshot" && e.url === "https://example.com/profile"),
+    false,
+  );
+  assert.equal(resumed.at(-1)?.kind, "exploration-complete");
+});
+
+test("resume() never machine-goto's a walled URL even when later links rediscover it (Issue #420)", async () => {
+  const pages = new Map([
+    [
+      "https://example.com/mypage",
+      snapshot("https://example.com/mypage", { links: links(["会員情報", "/profile"]) }),
+    ],
+    ["https://example.com/profile", snapshot("https://example.com/profile", { wallMarkers: ["g-recaptcha"] })],
+    [
+      "https://example.com/settings",
+      snapshot("https://example.com/settings", {
+        // Rediscover the formerly walled profile URL — machine must not re-goto it.
+        links: links(["会員情報", "/profile"], ["配送先", "/address"]),
+      }),
+    ],
+    ["https://example.com/address", snapshot("https://example.com/address")],
+  ]);
+  const driver = new FakePageDriver(pages);
+  const explorer = makeExplorer();
+
+  await collect(explorer.explore(driver, "https://example.com/mypage", SITE));
+  driver.simulateUserNavigation("https://example.com/settings");
+
+  const resumed = await collect(explorer.resume());
+
+  assert.equal(driver.gotoLog.filter((u) => u === "https://example.com/profile").length, 1);
+  assert.equal(
+    resumed.some((e) => e.kind === "page-snapshot" && e.url === "https://example.com/settings"),
+    true,
+  );
+  assert.equal(
+    resumed.some((e) => e.kind === "page-snapshot" && e.url === "https://example.com/address"),
+    true,
+  );
+  assert.equal(
+    resumed.some((e) => e.kind === "navigating" && e.url === "https://example.com/profile"),
+    false,
+  );
+  assert.equal(resumed.at(-1)?.kind, "exploration-complete");
+});
+
+test("resume() skips an off-site current page and does not re-queue the walled URL (Issue #420)", async () => {
+  const pages = new Map([
+    [
+      "https://example.com/mypage",
+      snapshot("https://example.com/mypage", { links: links(["会員情報", "/profile"], ["配送先", "/address"]) }),
+    ],
+    ["https://example.com/profile", snapshot("https://example.com/profile", { wallMarkers: ["g-recaptcha"] })],
+    ["https://example.com/address", snapshot("https://example.com/address")],
+  ]);
+  const driver = new FakePageDriver(pages);
+  const explorer = makeExplorer();
+
+  await collect(explorer.explore(driver, "https://example.com/mypage", SITE));
+  driver.simulateUserNavigation("https://evil.example/elsewhere");
+
+  const resumed = await collect(explorer.resume());
+
+  // Off-site page is not collected; previously walled profile is not re-goto'd;
+  // remaining pending address (if still queued) may be visited.
+  assert.equal(
+    resumed.some((e) => e.kind === "page-snapshot" && e.url === "https://evil.example/elsewhere"),
+    false,
+  );
+  assert.equal(driver.gotoLog.filter((u) => u === "https://example.com/profile").length, 1);
+  assert.equal(resumed.at(-1)?.kind, "exploration-complete");
 });
 
 test("ends exploration when shouldContinue says stop (page cap reached)", async () => {

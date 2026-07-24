@@ -659,11 +659,11 @@ const EXPLORE_FLOW_CARD_CVV = "321";
  * CI-gated registration/bulk-update matrix.
  *
  * login → mypage → {profile, address, payment}. `payment` shows a
- * CAPTCHA-style wall on its first GET and clears on the next: PageExplorer's
- * resume() always re-`goto()`s the same deferred URL
- * (src/automation/page-explorer.ts), so a fresh visit returning different
- * content is exactly how a real site remembering a solved wall for the
- * session would behave.
+ * CAPTCHA-style wall, then client-side replaces it with the payment form
+ * after a short delay (simulating the human solving the wall on the same
+ * page). Issue #420: PageExplorer.resume() re-observes the current page
+ * without re-`goto()`ing the walled URL, so the fixture must clear the wall
+ * in-place rather than only on a second GET.
  */
 function exploreFlowFixture(
   path: string,
@@ -741,14 +741,40 @@ function exploreFlowFixture(
   }
 
   if (path === `${base}/payment` && method === "GET") {
+    // First visit: wall markers so WallDetectionService pauses exploration.
+    // After ~2s the wall is removed client-side and the form is shown — models
+    // a human solving CAPTCHA on the same page so Issue #420 resume (snapshot
+    // without re-goto) can collect. Later GETs (manual reload) return the form
+    // only once paymentWallCleared is set.
     if (!state.paymentWallCleared) {
       state.paymentWallCleared = true;
       return page(
         "認証",
-        `<h1>セキュリティ確認</h1>
+        `<div id="ef_payment_wall">
+<h1>セキュリティ確認</h1>
 <p>私はロボットではありません</p>
 <div class="g-recaptcha" data-sitekey="dummy"></div>
-<iframe src="/wall-fixture/recaptcha-frame" title="reCAPTCHA"></iframe>`,
+<iframe src="/wall-fixture/recaptcha-frame" title="reCAPTCHA"></iframe>
+</div>
+<div id="ef_payment_form" style="display:none">
+<h1>お支払い方法</h1>
+<form>
+<div class="row"><label for="ef_card">カード番号</label><input id="ef_card" name="card_number" autocomplete="cc-number" value="${esc(EXPLORE_FLOW_CARD_NUMBER)}" readonly></div>
+<div class="row"><label for="ef_cvv">セキュリティコード</label><input id="ef_cvv" name="card_cvv" autocomplete="cc-csc" value="${esc(EXPLORE_FLOW_CARD_CVV)}" readonly></div>
+</form>
+</div>
+<script>
+setTimeout(function () {
+  var wall = document.getElementById("ef_payment_wall");
+  var form = document.getElementById("ef_payment_form");
+  if (wall) wall.remove();
+  if (form) {
+    form.style.display = "block";
+    form.setAttribute("data-wall-cleared", "1");
+  }
+  document.title = "探索テスト商店 - お支払い方法";
+}, 2000);
+</script>`,
       );
     }
     return page(
