@@ -147,7 +147,8 @@ export function ChromeBridgePanel(): React.JSX.Element {
               className="rounded border border-neutral-300 px-3 py-2 font-mono text-sm disabled:bg-neutral-100"
             />
             <p id="chrome-extension-id-help" className="text-xs text-neutral-600">
-              chrome://extensions に表示される32文字のIDを入力します。
+              chrome://extensions に表示される32文字のIDを入力します。ID 変更後は「host
+              を登録して接続を始める」で再登録してください（アプリ再起動はリスナー有効化用）。
             </p>
             {idOverridden && (
               <p className="text-xs text-amber-800">
