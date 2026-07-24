@@ -4,7 +4,12 @@ import assert from "node:assert/strict";
 import {
   buildLedgerColumns,
   buildSiteDetailDisclosureGroups,
+  clampLedgerAttributeColumnWidth,
   disclosureFor,
+  LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+  ledgerAttributeColumnMaxWidthPx,
+  ledgerAttributeColumnMinWidthPx,
+  ledgerAttributeColumnWidthPx,
 } from "../../src/renderer/ledger-table.js";
 import type { DisclosureView, SiteLedgerDetail } from "../../electron/ipc/contract.js";
 
@@ -106,4 +111,36 @@ test("disclosureFor returns the matching disclosure or undefined when the site l
   const site = siteDetail("amazon", [disclosure("email", "メール")]);
   assert.equal(disclosureFor(site, "email")?.attributeKey, "email");
   assert.equal(disclosureFor(site, "phone.full"), undefined);
+});
+
+test("attribute column default is 8rem (128px) and resize bounds are 1/3–3×", () => {
+  assert.equal(LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX, 128);
+  assert.equal(ledgerAttributeColumnMinWidthPx(), 128 / 3);
+  assert.equal(ledgerAttributeColumnMaxWidthPx(), 128 * 3);
+});
+
+test("clampLedgerAttributeColumnWidth clamps below min and above max", () => {
+  const def = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX;
+  assert.equal(clampLedgerAttributeColumnWidth(def / 3 - 1), def / 3);
+  assert.equal(clampLedgerAttributeColumnWidth(0), def / 3);
+  assert.equal(clampLedgerAttributeColumnWidth(-50), def / 3);
+  assert.equal(clampLedgerAttributeColumnWidth(def * 3 + 1), def * 3);
+  assert.equal(clampLedgerAttributeColumnWidth(10_000), def * 3);
+  assert.equal(clampLedgerAttributeColumnWidth(def), def);
+  assert.equal(clampLedgerAttributeColumnWidth(def * 2), def * 2);
+  assert.equal(clampLedgerAttributeColumnWidth(Number.NaN), def);
+  assert.equal(clampLedgerAttributeColumnWidth(Number.POSITIVE_INFINITY), def);
+});
+
+test("clampLedgerAttributeColumnWidth honors a custom default width", () => {
+  assert.equal(clampLedgerAttributeColumnWidth(10, 90), 30);
+  assert.equal(clampLedgerAttributeColumnWidth(300, 90), 270);
+  assert.equal(clampLedgerAttributeColumnWidth(100, 90), 100);
+});
+
+test("ledgerAttributeColumnWidthPx uses default when unset and clamps stored values", () => {
+  assert.equal(ledgerAttributeColumnWidthPx({}, "email"), LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX);
+  assert.equal(ledgerAttributeColumnWidthPx({ email: 200 }, "email"), 200);
+  assert.equal(ledgerAttributeColumnWidthPx({ email: 1 }, "email"), ledgerAttributeColumnMinWidthPx());
+  assert.equal(ledgerAttributeColumnWidthPx({ email: 9999 }, "email"), ledgerAttributeColumnMaxWidthPx());
 });

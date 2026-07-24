@@ -26,7 +26,13 @@ import {
   buildCollectionResultModalContent,
   type CollectionResultModalContent,
 } from "../collection-result-summary.js";
-import { buildLedgerColumns, buildSiteDetailDisclosureGroups, disclosureFor } from "../ledger-table.js";
+import {
+  buildLedgerColumns,
+  buildSiteDetailDisclosureGroups,
+  clampLedgerAttributeColumnWidth,
+  disclosureFor,
+  ledgerAttributeColumnWidthPx,
+} from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
 import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
 import { filterLedgerSitesByCollection, type LedgerCollectionFilter } from "../ledger-filter.js";
@@ -101,12 +107,20 @@ export function LedgerPanel({
   const [collectionFilter, setCollectionFilter] = useState<LedgerCollectionFilter>("all");
   const [draggedSiteId, setDraggedSiteId] = useState<string | undefined>();
   const [orderAnnouncement, setOrderAnnouncement] = useState("");
+  /** Per-attribute column widths in px (Issue #382). Unset keys use the default. */
+  const [attributeColumnWidths, setAttributeColumnWidths] = useState<Record<string, number>>({});
   const resumedHandoffSites = useRef<Set<string>>(new Set());
   const cancelBatchRef = useRef(false);
   /** True while `runVisibilityBatch` is in progress (including cancel unwind). */
   const batchInFlightRef = useRef(false);
   const onCollectedRef = useRef(onCollected);
   const sitesRef = useRef(sites);
+  const columnResizeRef = useRef<{
+    attributeKey: string;
+    startX: number;
+    startWidth: number;
+    pointerId: number;
+  } | null>(null);
 
   useEffect(() => {
     onCollectedRef.current = onCollected;
@@ -563,6 +577,59 @@ export function LedgerPanel({
     });
   }, [visibleSites]);
 
+  const endAttributeColumnResize = useCallback(() => {
+    columnResizeRef.current = null;
+  }, []);
+
+  const onAttributeColumnResizePointerDown = useCallback(
+    (attributeKey: string, event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startWidth = ledgerAttributeColumnWidthPx(attributeColumnWidths, attributeKey);
+      columnResizeRef.current = {
+        attributeKey,
+        startX: event.clientX,
+        startWidth,
+        pointerId: event.pointerId,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [attributeColumnWidths],
+  );
+
+  const onAttributeColumnResizePointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const active = columnResizeRef.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    const nextWidth = clampLedgerAttributeColumnWidth(active.startWidth + (event.clientX - active.startX));
+    setAttributeColumnWidths((current) => {
+      if (current[active.attributeKey] === nextWidth) return current;
+      return { ...current, [active.attributeKey]: nextWidth };
+    });
+  }, []);
+
+  const onAttributeColumnResizePointerUp = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>) => {
+      const active = columnResizeRef.current;
+      if (!active || active.pointerId !== event.pointerId) return;
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      endAttributeColumnResize();
+    },
+    [endAttributeColumnResize],
+  );
+
+  const nudgeAttributeColumnWidth = useCallback((attributeKey: string, deltaPx: number) => {
+    setAttributeColumnWidths((current) => {
+      const nextWidth = clampLedgerAttributeColumnWidth(
+        ledgerAttributeColumnWidthPx(current, attributeKey) + deltaPx,
+      );
+      if (current[attributeKey] === nextWidth) return current;
+      return { ...current, [attributeKey]: nextWidth };
+    });
+  }, []);
+
   if (loading) return <p className="text-sm text-neutral-500">読み込み中…</p>;
 
   if (loadError && sites.length === 0) {
@@ -696,9 +763,16 @@ export function LedgerPanel({
             <col className="ledger-col-reorder" />
             <col className="ledger-col-site" />
             <col className="ledger-col-actions" />
-            {columns.map((column) => (
-              <col key={column.attributeKey} />
-            ))}
+            {columns.map((column) => {
+              const widthPx = ledgerAttributeColumnWidthPx(attributeColumnWidths, column.attributeKey);
+              return (
+                <col
+                  key={column.attributeKey}
+                  className="ledger-col-attribute"
+                  style={{ width: `${widthPx}px`, minWidth: `${widthPx}px` }}
+                />
+              );
+            })}
           </colgroup>
           <thead>
             <tr className="border-b border-neutral-200 bg-neutral-50">
@@ -726,15 +800,43 @@ export function LedgerPanel({
               >
                 操作
               </th>
-              {columns.map((column) => (
-                <th
-                  key={column.attributeKey}
-                  scope="col"
-                  className="sticky top-0 z-10 min-w-[8rem] whitespace-nowrap bg-neutral-50 px-3 py-2 font-medium"
-                >
-                  {column.label}
-                </th>
-              ))}
+              {columns.map((column) => {
+                const widthPx = ledgerAttributeColumnWidthPx(attributeColumnWidths, column.attributeKey);
+                return (
+                  <th
+                    key={column.attributeKey}
+                    scope="col"
+                    className="ledger-attribute-header"
+                    style={{ width: `${widthPx}px` }}
+                  >
+                    <span className="ledger-attribute-header-inner">
+                      {column.label}
+                      <button
+                        type="button"
+                        className="ledger-col-resize-handle"
+                        aria-label={`${column.label}列の幅を変更。左右矢印キーで調整`}
+                        title="ドラッグまたは左右矢印で列幅を変更"
+                        onPointerDown={(event) =>
+                          onAttributeColumnResizePointerDown(column.attributeKey, event)
+                        }
+                        onPointerMove={onAttributeColumnResizePointerMove}
+                        onPointerUp={onAttributeColumnResizePointerUp}
+                        onPointerCancel={onAttributeColumnResizePointerUp}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                            event.preventDefault();
+                            const step = event.shiftKey ? 24 : 8;
+                            nudgeAttributeColumnWidth(
+                              column.attributeKey,
+                              event.key === "ArrowRight" ? step : -step,
+                            );
+                          }
+                        }}
+                      />
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -982,13 +1084,13 @@ function LedgerCell({ disclosure }: { disclosure: DisclosureView | undefined }):
   const reveal = useDisclosureReveal(disclosure?.disclosureId ?? "");
 
   if (!disclosure) {
-    return <td className="min-w-[8rem] whitespace-nowrap px-3 py-2 align-top text-neutral-400">—</td>;
+    return <td className="ledger-attribute-cell text-neutral-400">—</td>;
   }
 
   return (
-    <td className="min-w-[8rem] whitespace-nowrap px-3 py-2 align-top">
+    <td className="ledger-attribute-cell">
       <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-start gap-2">
           <span className="font-mono">{reveal.value ?? (disclosure.preview || "—")}</span>
           {disclosure.revealable && reveal.value === undefined && !reveal.revealing && (
             <button type="button" onClick={() => reveal.setRevealing(true)} className="text-xs underline">

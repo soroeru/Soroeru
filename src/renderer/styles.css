@@ -104,3 +104,54 @@ body {
   z-index: 22;
   top: 0;
 }
+
+/* Attribute columns (Issue #382): equal default width via <col style>, wrap long values. */
+.ledger-attribute-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: rgb(250 250 250);
+  padding: 0.5rem 0.75rem;
+  font-weight: 500;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ledger-attribute-header-inner {
+  position: relative;
+  display: block;
+  padding-right: 0.5rem;
+}
+
+.ledger-col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -0.75rem;
+  width: 0.5rem;
+  height: 100%;
+  min-height: 1.5rem;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.ledger-col-resize-handle:focus-visible {
+  outline: 2px solid rgb(37 99 235);
+  outline-offset: -2px;
+  background: rgb(37 99 235 / 0.15);
+}
+
+.ledger-attribute-cell {
+  padding: 0.5rem 0.75rem;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ledger-attribute-cell .font-mono {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

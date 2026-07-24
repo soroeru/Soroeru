@@ -82,3 +82,49 @@ export function buildSiteDetailDisclosureGroups(
 export function disclosureFor(site: SiteLedgerDetail, attributeKey: string): DisclosureView | undefined {
   return site.disclosures.find((disclosure) => disclosure.attributeKey === attributeKey);
 }
+
+/**
+ * Default width for dynamic attribute columns (Issue #382).
+ * Matches the previous implicit `min-w-[8rem]` baseline so fixed sticky columns
+ * and horizontal scroll behavior stay familiar.
+ */
+export const LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX = 128;
+
+/** Resize floor: one third of the default width. */
+export function ledgerAttributeColumnMinWidthPx(
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  return defaultWidthPx / 3;
+}
+
+/** Resize ceiling: three times the default width. */
+export function ledgerAttributeColumnMaxWidthPx(
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  return defaultWidthPx * 3;
+}
+
+/**
+ * Clamp a dragged attribute-column width to [default/3, default×3].
+ * Non-finite inputs fall back to the default width.
+ */
+export function clampLedgerAttributeColumnWidth(
+  widthPx: number,
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  if (!Number.isFinite(widthPx)) return defaultWidthPx;
+  const min = ledgerAttributeColumnMinWidthPx(defaultWidthPx);
+  const max = ledgerAttributeColumnMaxWidthPx(defaultWidthPx);
+  return Math.min(max, Math.max(min, widthPx));
+}
+
+/** Resolved width for one attribute column, applying clamp when a stored value exists. */
+export function ledgerAttributeColumnWidthPx(
+  widths: Readonly<Record<string, number>>,
+  attributeKey: string,
+  defaultWidthPx: number = LEDGER_ATTRIBUTE_COLUMN_DEFAULT_WIDTH_PX,
+): number {
+  const stored = widths[attributeKey];
+  if (stored === undefined) return defaultWidthPx;
+  return clampLedgerAttributeColumnWidth(stored, defaultWidthPx);
+}
