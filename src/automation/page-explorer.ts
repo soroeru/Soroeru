@@ -48,12 +48,17 @@ interface ExplorationState {
   /** Normalized URLs queued for exploration, in priority order. */
   pendingUrls: string[];
   /**
-   * URLs where a wall was observed. Kept only so a still-walled *current*
-   * page can re-handoff without `goto()`. Issue #420: these are not
-   * re-queued for machine re-navigation after the human resolves the hand-off
-   * (that re-navigation re-triggered bot risk gates and looped hand-offs).
+   * URLs where a wall was observed on the *current* page and exploration
+   * paused. Cleared on each `resume()` attempt; not used to re-navigate.
    */
   deferredUrls: string[];
+  /**
+   * Issue #420: normalized URLs that machine `goto` must never re-attempt
+   * after a wall (including via later link rediscovery). Distinct from
+   * `visitedUrls` so a human-resolved current page at a formerly walled URL
+   * can still be collected without a machine re-navigation.
+   */
+  blockedUrls: Set<string>;
 }
 
 export class PageExplorer {
@@ -77,6 +82,7 @@ export class PageExplorer {
       visitedUrls: new Set(),
       pendingUrls: [normalizeUrl(startUrl)],
       deferredUrls: [],
+      blockedUrls: new Set(),
     };
     yield* this.continueExploration(startSnapshot);
   }
@@ -120,6 +126,7 @@ export class PageExplorer {
         // The user's current page itself still has a wall (they may not have
         // fully cleared it). Re-defer and hand off again, without a goto().
         state.deferredUrls.push(normalizedCurrentUrl);
+        state.blockedUrls.add(normalizedCurrentUrl);
         yield {
           kind: "wall-detected",
           url: normalizedCurrentUrl,
@@ -130,6 +137,7 @@ export class PageExplorer {
       }
 
       // Current page is collectable — yield it as a snapshot.
+      // (Allowed even if this URL is in blockedUrls: the human is already here.)
       state.visitedUrls.add(normalizedCurrentUrl);
       yield { kind: "page-snapshot", url: normalizedCurrentUrl, snapshot: currentSnapshot };
 
@@ -142,7 +150,11 @@ export class PageExplorer {
       for (const link of linkDecision.result.links) {
         if (!isSameSite(link.href, state.siteAccount.domain)) continue;
         const normalized = normalizeUrl(link.href);
-        if (!state.visitedUrls.has(normalized) && !state.pendingUrls.includes(normalized)) {
+        if (
+          !state.visitedUrls.has(normalized) &&
+          !state.blockedUrls.has(normalized) &&
+          !state.pendingUrls.includes(normalized)
+        ) {
           state.pendingUrls.push(normalized);
         }
       }
@@ -173,7 +185,8 @@ export class PageExplorer {
 
     while (state.pendingUrls.length > 0) {
       const url = normalizeUrl(state.pendingUrls.shift()!);
-      if (state.visitedUrls.has(url)) continue;
+      // Issue #420: never machine-navigate to a URL that already hit a wall.
+      if (state.visitedUrls.has(url) || state.blockedUrls.has(url)) continue;
       let snapshot: PageSnapshot;
 
       yield { kind: "navigating", url };
@@ -189,10 +202,10 @@ export class PageExplorer {
         snapshot = await pageDriver.snapshot();
         const wall = this.wallDetector.detect(snapshot);
         if (wall) {
-          // Not marked visited. Issue #420: resume() observes the user's
-          // current page rather than re-goto'ing this URL; deferredUrls only
-          // supports re-handoff if the current page is still walled.
+          // Not marked visited (resume may still collect if the human is on
+          // this URL wall-free). Block machine re-navigation permanently.
           state.deferredUrls.push(url);
+          state.blockedUrls.add(url);
           yield {
             kind: "wall-detected",
             url,
@@ -217,7 +230,11 @@ export class PageExplorer {
         // here, at the point that feeds navigation, not trusted from upstream.
         if (!isSameSite(link.href, state.siteAccount.domain)) continue;
         const normalized = normalizeUrl(link.href);
-        if (!state.visitedUrls.has(normalized) && !state.pendingUrls.includes(normalized)) {
+        if (
+          !state.visitedUrls.has(normalized) &&
+          !state.blockedUrls.has(normalized) &&
+          !state.pendingUrls.includes(normalized)
+        ) {
           state.pendingUrls.push(normalized);
         }
       }
