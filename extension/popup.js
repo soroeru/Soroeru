@@ -7,10 +7,12 @@ function updateStatusUI(connected) {
     statusBadge.textContent = "CONNECTED";
     statusBadge.className = "status-badge status-connected";
     reconnectButton.style.display = "none";
+    status.textContent = "アプリに接続しました。開示台帳のサイトを操作できます。";
   } else {
     statusBadge.textContent = "DISCONNECTED";
     statusBadge.className = "status-badge status-disconnected";
     reconnectButton.style.display = "block";
+    status.textContent = "接続されていません。Soroeruアプリが起動していることを確認してください。";
   }
 }
 

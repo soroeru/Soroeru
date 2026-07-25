@@ -10,7 +10,7 @@ import type { SiteAccount } from "./entities.js";
  * Returns undefined if invalid or contains path/query/port/spaces.
  */
 export function normalizeScopeDomain(domain: string): string | undefined {
-  const trimmed = domain.trim().toLowerCase().replace(/^www\./, "");
+  const trimmed = domain.trim().toLowerCase().replace(/^\.+/, "").replace(/^www\./, "");
   if (!trimmed || trimmed.includes("/") || trimmed.includes(":") || trimmed.includes(" ")) {
     return undefined;
   }
