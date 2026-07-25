@@ -46,15 +46,20 @@ that follows from it:
 
 | Execution mode | Selected when | Role program |
 | --- | --- | --- |
-| `direct-review` | low risk, size XS–M, shallow dependencies | implementer → reviewer |
-| `plan-implement-review` | medium/high risk, size L–XL, depth ≥ 2, or wide change scope | planner → implementer → reviewer |
+| `direct-review` | **low** risk, size XS–M, shallow dependencies | implementer → reviewer |
+| `plan-implement-review` | any risk above low, size L–XL, depth ≥ 2, or wide change scope | planner → implementer → reviewer |
+
+Risk above `low` always buys a planner: `direct-review` stays eligible for medium-risk Issues,
+so ranking is conditioned on risk rather than always taking the cheapest eligible mode.
 
 Each role runs as its own CLI process on its own verified route, so a reviewer structurally
 cannot see the implementer's conversation or reasoning — it reads the Issue, the worktree, and
 the diff itself. `implementer` and `reviewer` take distinct routes whenever the pool holds more
-than one; with a single verified route the run continues on the shared route and records
-`same-route-reviewer:single-verified-route`. The first role to enter an Issue creates the
-worktree via `issue-implementation`; every later role resumes it via `handoff-issue`.
+than one, in both directions and across handoffs; when no distinct route remains the run
+continues on a shared route and records `same-route-reviewer:*`. The first implementation role
+to enter an Issue creates the worktree via `issue-implementation`; later implementation roles
+resume it via `handoff-issue`. **A reviewer runs no skill at all** — both implementation skills
+commit, so it enters the existing worktree read-only.
 
 Review is bounded: a `NEEDS_REVISION` verdict buys one implementer fix pass, `REJECTED` blocks
 immediately, and at most two review passes ever run. An integration-gate rejection reopens the
@@ -100,9 +105,10 @@ Never pass Issue bodies, diffs, plans, or another role's output through the disp
 - Launch the selected route with the same exact `selector` / `model` from discovery — for external CLIs use `node scripts/project-issue-dispatch.mjs` (or `dispatchWorker`) so non-Codex routes start through their adapter, not a Codex-only path. Role-based launches add `--role`, `--skill`, `--execution-mode`, and (for a reviewer) `--review-pass`.
 - No worktree: worker uses `issue-implementation`.
 - Existing Issue worktree/metadata: worker uses `handoff-issue` before editing.
-- A reviewer never creates a worktree and never edits, commits, pushes, or merges. It consults
-  only the Issue's acceptance criteria, the changed file paths, the branch diff, and the test
-  summary, and returns a `PASS` / `NEEDS_REVISION` / `REJECTED` verdict.
+- A reviewer is dispatched without `--skill` and must not run `issue-implementation` or
+  `handoff-issue`; it works read-only inside the existing Issue worktree. It consults only the
+  Issue's acceptance criteria, the changed file paths, the branch diff, and the test summary,
+  and returns a `PASS` / `NEEDS_REVISION` / `REJECTED` verdict.
 - Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which never includes the Parent agent; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 - A route that fails at actual dispatch (not just at discovery) is a signal the cached capability record no longer reflects reality. Pass `--invalidate-agent <name>` on the *next* orchestrator invocation (in addition to this run's `--unavailable-agent`) so that agent is dropped from the capability cache and re-probed instead of being trusted as "ok" indefinitely.
 
@@ -113,6 +119,8 @@ and, for a reviewer, the verdict. Do not return implementation logs or Issue bod
 Under a role program the `pr-created` milestone is reached by finishing the program — the
 reviewer's `PASS` opens the gate. Reporting that milestone directly while roles are still
 running is rejected (`role-program-active`), so dependents never release on unreviewed work.
+Under `--release-policy merged` the program ends at `pr-created` and the run keeps waiting for
+the external `merged` milestone, which is reported as an ordinary milestone event.
 
 ## Integration quality gate
 

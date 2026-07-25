@@ -44,14 +44,21 @@ export const MODE_ROLE_PROGRAMS = Object.freeze({
 
 /**
  * Ranking preference over the deterministically eligible modes.
- * `determineEligibleModes` always includes `plan-implement-review`, so one of
- * these two always matches and the unimplemented parallel-analysis mode is
- * never selected by accident.
+ *
+ * `determineEligibleModes` leaves `direct-review` eligible alongside
+ * `plan-implement-review` for medium-risk Issues, so an unconditional
+ * preference would mean "always the cheapest eligible mode" and risk would
+ * never buy a planner. Only genuinely low-risk work skips planning.
+ *
+ * Either order always matches, because `determineEligibleModes` always
+ * includes `plan-implement-review`; the unimplemented parallel-analysis mode
+ * is therefore never selected by accident.
  */
-export const MODE_PREFERENCES = Object.freeze([
-  EXECUTION_MODES.DIRECT_REVIEW,
-  EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW,
-]);
+export function modePreferencesFor(riskCategory) {
+  return String(riskCategory ?? "low").toLowerCase() === "low"
+    ? [EXECUTION_MODES.DIRECT_REVIEW, EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW]
+    : [EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW, EXECUTION_MODES.DIRECT_REVIEW];
+}
 
 /** Reviewer verdicts, mirroring ReviewerOutput in src/shared/role-schemas.ts. */
 export const REVIEW_VERDICTS = Object.freeze(["PASS", "NEEDS_REVISION", "REJECTED"]);
@@ -96,13 +103,14 @@ const DISALLOWED_PAYLOAD_KEY_SET = new Set(DISALLOWED_PAYLOAD_KEYS);
  * Returns the mode plus the closed reason describing why it was chosen.
  */
 export function selectExecutionMode(item = {}) {
+  const riskCategory = item.riskCategory ?? "low";
   const eligibleModes = determineEligibleModes({
-    riskCategory: item.riskCategory ?? "low",
+    riskCategory,
     size: item.size ?? "M",
     dependencyDepth: Array.isArray(item.dependencies) ? item.dependencies.length : 0,
     ...(item.changeScopeCount === undefined ? {} : { changeScopeCount: item.changeScopeCount }),
   });
-  const mode = rankAndSelectMode(eligibleModes, MODE_PREFERENCES);
+  const mode = rankAndSelectMode(eligibleModes, modePreferencesFor(riskCategory));
   return { mode, eligibleModes, selectionReason: "deterministic-policy" };
 }
 
@@ -140,10 +148,24 @@ export function assignRoleRoutes(workerRoutes, program) {
 /**
  * Which skill the worker for `role` must use. The first role to enter the
  * Issue creates the worktree; every later role resumes the existing one.
+ *
+ * A reviewer gets **no** skill: both `issue-implementation` and
+ * `handoff-issue` drive implementation and commit, which contradicts a
+ * read-only review. It enters the existing worktree directly instead.
  */
 export function skillForRole(role, { hasWorktree }) {
-  if (role === ROLES.REVIEWER) return "handoff-issue";
+  if (role === ROLES.REVIEWER) return null;
   return hasWorktree ? "handoff-issue" : "issue-implementation";
+}
+
+/**
+ * The role whose route this role must differ from. Independent review means
+ * the implementer and the reviewer never share a runtime.
+ */
+export function counterpartRole(role) {
+  if (role === ROLES.REVIEWER) return ROLES.IMPLEMENTER;
+  if (role === ROLES.IMPLEMENTER) return ROLES.REVIEWER;
+  return null;
 }
 
 /** Advance a role program. Returns the next state, never mutating the input. */
@@ -231,7 +253,8 @@ export function buildRoleDispatchPayload({
     role,
     issueNumber,
     executionMode,
-    skill,
+    // A reviewer runs no skill, so the field is omitted rather than null.
+    ...(skill === null || skill === undefined ? {} : { skill }),
     releasePolicy,
     nextMilestone,
     ...(role === ROLES.REVIEWER ? { reviewPass: reviewPass ?? 1 } : {}),

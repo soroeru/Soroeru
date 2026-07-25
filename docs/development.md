@@ -235,7 +235,9 @@ node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json 
 # node scripts/project-issue-dispatch.mjs \
 #   --route-json '{"agent":"Grok","model":"grok-4.5","selector":"…","selectable":true,"verifiable":true,"timeoutMs":30000}' \
 #   --issue 413 --release-policy merged --next-milestone pr-created \
-#   --role reviewer --skill handoff-issue --execution-mode direct-review --review-pass 1
+#   --role reviewer --execution-mode direct-review --review-pass 1
+#   (implementation roles add --skill issue-implementation | handoff-issue;
+#    a reviewer never gets one)
 node --test tests/unit/project-issue-orchestrator.test.mjs \
   tests/unit/project-issue-capabilities.test.mjs \
   tests/unit/project-issue-defaults.test.mjs \
@@ -381,15 +383,18 @@ node --test tests/unit/project-issue-graph.test.mjs \
 
 Each runnable Issue gets a deterministic execution mode and role program
 (`scripts/project-issue-roles.mjs`): `direct-review` runs `implementer` →
-`reviewer`, and `plan-implement-review` runs `planner` → `implementer` →
-`reviewer`. Every role is a separate CLI process on its own verified route —
-`implementer` and `reviewer` differ whenever more than one route is verified —
-so a reviewer cannot see the implementer's reasoning. Review is bounded at two
-passes: `NEEDS_REVISION` buys one implementer fix cycle, `REJECTED` blocks, and
-an integration-gate rejection reopens the program under the same budget. With a
+`reviewer` for low-risk small work, and `plan-implement-review` runs `planner` →
+`implementer` → `reviewer` for anything above low risk or larger. Every role is
+a separate CLI process on its own verified route — `implementer` and `reviewer`
+differ whenever more than one route is verified — so a reviewer cannot see the
+implementer's reasoning. The reviewer is dispatched without `--skill` and works
+read-only in the existing worktree. Review is bounded at two passes:
+`NEEDS_REVISION` buys one implementer fix cycle, `REJECTED` blocks, and an
+integration-gate rejection reopens the program under the same budget. With a
 role program active, `pr-created` is reached by finishing the program (the
 reviewer's `PASS` opens the gate); reporting that milestone early is rejected
-with `role-program-active`.
+with `role-program-active`. Under `--release-policy merged` the run keeps
+waiting for the external `merged` milestone after the program ends.
 
 Checkpoints are stored per thread under `state/project-issue-graph/` by a
 file-backed saver (`project-issue-graph-checkpointer.mjs`) so a run survives a

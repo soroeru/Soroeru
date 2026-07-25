@@ -745,8 +745,9 @@ test("a role program dispatches the implementer, then the reviewer on a differen
   const reviewer = run.deps.dispatched.at(-1);
   assert.equal(reviewer.role, "reviewer");
   assert.equal(reviewer.reviewPass, 1);
-  // The reviewer enters the existing worktree rather than creating one.
-  assert.equal(reviewer.skill, "handoff-issue");
+  // A reviewer runs no implementation skill; it enters the existing worktree
+  // read-only.
+  assert.equal(Object.hasOwn(reviewer, "skill"), false);
   // Independent review means a different runtime.
   assert.notEqual(reviewer.route.agent, implementer.route.agent);
 
@@ -813,23 +814,30 @@ test("an interrupted reviewer resumes as the reviewer on another verified route"
   await run.resume({ type: "worker-interrupted", issue: 1, reason: "session-limit" });
   const handoff = run.deps.dispatched.at(-1);
   assert.equal(handoff.role, "reviewer");
-  assert.equal(handoff.skill, "handoff-issue");
+  // Still a reviewer after the handoff, so still no implementation skill.
+  assert.equal(Object.hasOwn(handoff, "skill"), false);
   assert.notEqual(handoff.route.agent, reviewer.route.agent);
   const state = await run.state();
   assert.equal(state.workerExecutions[0].worktreeId, "issue-1");
 });
 
-test("mode telemetry records labels and counters only", async () => {
+test("mode telemetry is emitted once, at release, with labels and counters only", async () => {
   const run = makeRun();
   await run.invoke(roleInput([item(1)]));
   await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
   await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "PASS" });
+  // The gate may still send the program back, so nothing terminal is recorded
+  // until the Issue is actually released.
+  assert.deepEqual((await run.state()).modeTelemetry, []);
+
+  await run.resume({ accepted: true });
   const state = await run.state();
   assert.equal(state.modeTelemetry.length, 1);
   const record = state.modeTelemetry[0];
   assert.equal(record.issueNumber, 1);
   assert.equal(record.mode, "direct-review");
-  assert.equal(record.outcome, "review-passed");
+  assert.equal(record.outcome, "released");
+  assert.equal(record.selectionReason, "deterministic-policy");
   assert.equal(record.reviewPasses, 1);
   assert.deepEqual(Object.keys(record.routes.implementer).sort(), ["agent", "model"]);
   const serialized = JSON.stringify(state.modeTelemetry);
@@ -905,4 +913,83 @@ test("route identity survives a checkpoint round-trip", async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("a role program completes under --release-policy merged instead of dead-ending", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)], { releasePolicy: "merged" }));
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "PASS" });
+
+  // pr-created passes the gate but does not release under this policy: the
+  // run must stay waitable for the external merge event, not summarize.
+  const afterPrCreated = await run.resume({ accepted: true });
+  assert.equal(isInterrupted(afterPrCreated), true);
+  const waiting = await run.state();
+  assert.deepEqual(waiting.milestones, [{ issue: 1, type: "pr-created" }]);
+  assert.deepEqual(waiting.completed, []);
+
+  await run.resume({ type: "milestone", issue: 1, milestone: "merged" });
+  const result = await run.resume({ accepted: true });
+  assert.equal(result.runStatus, "complete");
+  assert.deepEqual(result.summary.completed, [1]);
+});
+
+test("an implementer route proposal equal to the reviewer's is rejected on a fix cycle", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)], { autoAssign: false }));
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ assignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "NEEDS_REVISION" });
+
+  // The fix pass must not move the implementer onto the reviewer's runtime.
+  const rejected = await run.resume({ assignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
+  assert.equal(isInterrupted(rejected), true);
+  assert.equal(
+    rejected.__interrupt__[0].value.lastEventError,
+    "invalid-assignment:1:implementer-route-not-distinct",
+  );
+  const accepted = await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal(isInterrupted(accepted), true);
+  assert.equal(run.deps.dispatched.at(-1).role, "implementer");
+  assert.equal(run.deps.dispatched.at(-1).route.agent, "Claude");
+});
+
+test("a handoff keeps the reviewer off the implementer's route", async () => {
+  const run = makeRun();
+  await run.invoke({
+    ...roleInput([item(1)]),
+    // Three worker routes remain after the parent agent is excluded, so a
+    // distinct choice still exists once the reviewer's agent drops out.
+    capabilities: [...defaultCapabilities, workerRoute("Gemini", "gemini-3")],
+  });
+  const implementer = run.deps.dispatched.at(-1);
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  const reviewer = run.deps.dispatched.at(-1);
+
+  // Interrupting the reviewer excludes its agent; the replacement must still
+  // differ from the implementer's route, not just fall back to pool[0].
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" });
+  const handoff = run.deps.dispatched.at(-1);
+  assert.equal(handoff.role, "reviewer");
+  assert.notEqual(handoff.route.agent, reviewer.route.agent);
+  assert.notEqual(handoff.route.agent, implementer.route.agent);
+});
+
+test("a handoff with no distinct route left shares one and records the degradation", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  const implementer = run.deps.dispatched.at(-1);
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+
+  // Only two worker routes exist here, so excluding the reviewer's agent
+  // leaves the implementer's route as the single option: continue on it
+  // rather than failing the run, and say so.
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" });
+  const handoff = run.deps.dispatched.at(-1);
+  assert.equal(handoff.role, "reviewer");
+  assert.equal(handoff.route.agent, implementer.route.agent);
+  const state = await run.state();
+  assert.equal(state.roleStates[0].degraded, "same-route-reviewer:no-distinct-route-left");
 });

@@ -438,6 +438,7 @@ function roleInstructions({ role, issueNumber, skill, reviewPass }) {
   if (role === "reviewer")
     return [
       `Independently review the changes for this Issue (review pass ${reviewPass ?? 1}). Do not modify, commit, push, or merge anything.`,
+      `Read-only: work inside the existing Issue worktree (.worktrees/issue-${issueNumber}-*). Do not run issue-implementation, handoff-issue, or any other implementation skill — they commit.`,
       "Consult only the Issue's stated acceptance criteria, the changed file paths, the branch diff, and the test-run summary. You have no access to the implementer's reasoning and must not ask for it.",
       "Report role-complete with role=reviewer and verdict=PASS | NEEDS_REVISION | REJECTED, plus concise findings.",
     ];

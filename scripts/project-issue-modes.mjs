@@ -156,6 +156,9 @@ export function createModeTelemetryRecord(data) {
     issueNumber: Number(data.issueNumber),
     mode: data.mode,
     selectionReason: String(data.selectionReason ?? "deterministic-policy"),
+    // How the run had to degrade (e.g. a shared implementer/reviewer route),
+    // kept separate from why the mode itself was selected.
+    ...(data.degraded === undefined ? {} : { degraded: String(data.degraded) }),
     routes: Object.freeze({
       implementer: data.routes?.implementer ?? null,
       reviewer: data.routes?.reviewer ?? null,

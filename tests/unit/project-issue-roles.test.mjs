@@ -9,6 +9,8 @@ import {
   assignRoleRoutes,
   assertNoDisallowedKeys,
   buildRoleDispatchPayload,
+  counterpartRole,
+  modePreferencesFor,
   roleProgramForMode,
   selectExecutionMode,
   skillForRole,
@@ -90,9 +92,26 @@ test("the first role creates the worktree and later roles reuse it", () => {
   assert.equal(skillForRole(ROLES.IMPLEMENTER, { hasWorktree: false }), "issue-implementation");
   assert.equal(skillForRole(ROLES.IMPLEMENTER, { hasWorktree: true }), "handoff-issue");
   assert.equal(skillForRole(ROLES.PLANNER, { hasWorktree: false }), "issue-implementation");
-  assert.equal(skillForRole(ROLES.REVIEWER, { hasWorktree: true }), "handoff-issue");
-  // A reviewer never creates a worktree; it only ever enters an existing one.
-  assert.equal(skillForRole(ROLES.REVIEWER, { hasWorktree: false }), "handoff-issue");
+  // A reviewer runs no skill at all: both implementation skills commit, which
+  // a read-only review must not do.
+  assert.equal(skillForRole(ROLES.REVIEWER, { hasWorktree: true }), null);
+  assert.equal(skillForRole(ROLES.REVIEWER, { hasWorktree: false }), null);
+});
+
+test("medium risk buys a planner instead of ranking down to the cheapest mode", () => {
+  // determineEligibleModes keeps direct-review eligible here, so an
+  // unconditional preference would silently skip planning.
+  const eligible = determineEligibleModes({ size: "M", riskCategory: "medium", dependencyDepth: 0 });
+  assert.equal(eligible.includes("direct-review"), true);
+  assert.equal(selectExecutionMode({ size: "M", riskCategory: "medium", dependencies: [] }).mode, "plan-implement-review");
+  assert.deepEqual(modePreferencesFor("low"), ["direct-review", "plan-implement-review"]);
+  assert.deepEqual(modePreferencesFor("critical"), ["plan-implement-review", "direct-review"]);
+});
+
+test("counterpart roles pair the implementer with the reviewer", () => {
+  assert.equal(counterpartRole(ROLES.REVIEWER), ROLES.IMPLEMENTER);
+  assert.equal(counterpartRole(ROLES.IMPLEMENTER), ROLES.REVIEWER);
+  assert.equal(counterpartRole(ROLES.PLANNER), null);
 });
 
 function newRoleState(mode = "direct-review") {
@@ -169,6 +188,17 @@ test("dispatch payloads carry only closed, non-sensitive fields", () => {
     "skill",
   ]);
   assert.throws(() => buildRoleDispatchPayload({ role: "auditor", issueNumber: 1 }), /invalid-role/);
+
+  // A reviewer has no skill, so the key is omitted rather than sent as null.
+  const reviewerPayload = buildRoleDispatchPayload({
+    role: "reviewer",
+    issueNumber: 482,
+    executionMode: "direct-review",
+    skill: skillForRole("reviewer", { hasWorktree: true }),
+    releasePolicy: "pr-created",
+    nextMilestone: "pr-created",
+  });
+  assert.equal(Object.hasOwn(reviewerPayload, "skill"), false);
 });
 
 test("any disallowed key is rejected at any depth", () => {

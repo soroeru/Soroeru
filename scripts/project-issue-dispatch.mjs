@@ -11,7 +11,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { VALID_ROLES } from "./project-issue-roles.mjs";
+import { buildRoleDispatchPayload } from "./project-issue-roles.mjs";
 import { launchWithAdapter } from "./project-issue-runtime-adapters/index.mjs";
 import { splitSelector } from "./project-issue-runtime-adapters/shared.mjs";
 
@@ -39,27 +39,39 @@ export async function dispatchWorker(input, ctx = {}) {
     throw new Error("issue-number-required");
   if (!input.releasePolicy) throw new Error("release-policy-required");
   if (!input.nextMilestone) throw new Error("next-milestone-required");
-  if (input.role !== undefined && !VALID_ROLES.includes(input.role))
-    throw new Error(`invalid-role:${input.role}`);
 
   // Ensure the selector still parses and still targets the same model token.
   const tokens = splitSelector(route.selector);
   if (!tokens.includes(route.model)) throw new Error("model-mismatch");
 
+  // The role-scoped half of the job goes through the closed-payload builder,
+  // so the deny-list guard runs on the live dispatch path, not only in tests.
+  const rolePayload =
+    input.role === undefined
+      ? {
+          issueNumber: input.issueNumber,
+          releasePolicy: input.releasePolicy,
+          nextMilestone: input.nextMilestone,
+          ...(input.skill === undefined ? {} : { skill: input.skill }),
+        }
+      : buildRoleDispatchPayload({
+          role: input.role,
+          issueNumber: input.issueNumber,
+          executionMode: input.executionMode,
+          skill: input.skill,
+          releasePolicy: input.releasePolicy,
+          nextMilestone: input.nextMilestone,
+          ...(input.reviewPass === undefined ? {} : { reviewPass: input.reviewPass }),
+        });
+
   const job = {
-    issueNumber: input.issueNumber,
+    ...rolePayload,
     agent: route.agent,
     model: route.model,
     requestedModel: route.requestedModel,
     selector: route.selector,
     timeoutMs: route.timeoutMs,
-    releasePolicy: input.releasePolicy,
-    nextMilestone: input.nextMilestone,
     cwd: input.cwd,
-    ...(input.role === undefined ? {} : { role: input.role }),
-    ...(input.skill === undefined ? {} : { skill: input.skill }),
-    ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
-    ...(input.reviewPass === undefined ? {} : { reviewPass: input.reviewPass }),
   };
 
   const handle = await launchWithAdapter(route.agent, job, ctx);
