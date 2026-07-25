@@ -234,11 +234,13 @@ node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json 
 # Launch a selected external worker with the exact discovered selector:
 # node scripts/project-issue-dispatch.mjs \
 #   --route-json '{"agent":"Grok","model":"grok-4.5","selector":"…","selectable":true,"verifiable":true,"timeoutMs":30000}' \
-#   --issue 413 --release-policy merged --next-milestone pr-created
+#   --issue 413 --release-policy merged --next-milestone pr-created \
+#   --role reviewer --skill handoff-issue --execution-mode direct-review --review-pass 1
 node --test tests/unit/project-issue-orchestrator.test.mjs \
   tests/unit/project-issue-capabilities.test.mjs \
   tests/unit/project-issue-defaults.test.mjs \
-  tests/unit/project-issue-graph.test.mjs
+  tests/unit/project-issue-graph.test.mjs \
+  tests/unit/project-issue-roles.test.mjs
 ```
 
 Items carry no per-Issue agent/model assignment: the plan orders runnable
@@ -360,17 +362,34 @@ run closed before any worktree mutation.
 node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
   --issues 380,382 --max-parallel 2 --release-policy merged \
   --parent-agent Codex --parent-model gpt-5 --auto-assign
+# Add --single-worker to disable role programs (one worker owns the Issue).
 # Resume the same thread with a worker event or a gate verdict:
 # node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
-#   --resume-json '{"type":"milestone","issue":380,"milestone":"pr-created"}'
+#   --resume-json '{"type":"role-complete","issue":380,"role":"implementer"}'
+# node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
+#   --resume-json '{"type":"role-complete","issue":380,"role":"reviewer","verdict":"PASS"}'
 # node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
 #   --resume-json '{"accepted":true}'
 # Other events: {"type":"worker-started","issue":380,"pid":1234}
 #               {"type":"worker-interrupted","issue":380,"reason":"timeout",
 #                "proposedRoute":{"agent":"Claude","model":"sonnet"}}
+#               {"type":"milestone","issue":380,"milestone":"merged"}
 #               {"type":"check"}   # lost-notification fallback: probe workers
-node --test tests/unit/project-issue-graph.test.mjs
+node --test tests/unit/project-issue-graph.test.mjs \
+  tests/unit/project-issue-roles.test.mjs
 ```
+
+Each runnable Issue gets a deterministic execution mode and role program
+(`scripts/project-issue-roles.mjs`): `direct-review` runs `implementer` →
+`reviewer`, and `plan-implement-review` runs `planner` → `implementer` →
+`reviewer`. Every role is a separate CLI process on its own verified route —
+`implementer` and `reviewer` differ whenever more than one route is verified —
+so a reviewer cannot see the implementer's reasoning. Review is bounded at two
+passes: `NEEDS_REVISION` buys one implementer fix cycle, `REJECTED` blocks, and
+an integration-gate rejection reopens the program under the same budget. With a
+role program active, `pr-created` is reached by finishing the program (the
+reviewer's `PASS` opens the gate); reporting that milestone early is rejected
+with `role-program-active`.
 
 Checkpoints are stored per thread under `state/project-issue-graph/` by a
 file-backed saver (`project-issue-graph-checkpointer.mjs`) so a run survives a

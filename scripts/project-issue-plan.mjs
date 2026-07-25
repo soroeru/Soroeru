@@ -1,5 +1,5 @@
 import { canonicalizeAgent, isCanonicalDate, OWNER_TYPES } from "./project-issue-assignment.mjs";
-import { determineEligibleModes } from "./project-issue-modes.mjs";
+import { roleProgramForMode, selectExecutionMode } from "./project-issue-roles.mjs";
 
 const RUNNABLE_STATUSES = new Set(["Ready", "Todo", "In Progress"]);
 const RELEASE_POLICIES = new Set(["pr-created", "merged"]);
@@ -311,16 +311,13 @@ export function buildRunPlan(items, run = {}) {
       continue;
     }
     if (readiness.kind === "runnable") {
-      const eligibleModes = determineEligibleModes({
-        riskCategory: item.riskCategory ?? "low",
-        size: item.size ?? "M",
-        dependencyDepth: item.dependencies ? item.dependencies.length : 0,
-      });
+      const { mode, eligibleModes } = selectExecutionMode(item);
       runnable.push({
         ...item,
         eligibleModes,
-        mode: eligibleModes[0],
-        route: existingWorktrees.has(item.number) ? "handoff-issue" : "issue-implementation",
+        executionMode: mode,
+        roleProgram: roleProgramForMode(mode),
+        skill: existingWorktrees.has(item.number) ? "handoff-issue" : "issue-implementation",
       });
       continue;
     }

@@ -1,0 +1,241 @@
+/**
+ * Role programs for bounded multi-agent Issue execution (Issue #482).
+ *
+ * A single Issue is implemented by a *sequence* of workers, each running as
+ * its own CLI process on its own verified route. Process isolation is the
+ * context isolation: a reviewer started as a separate CLI cannot see the
+ * implementer's conversation, chain-of-thought, or raw responses, because it
+ * never shares an address space or a session with it.
+ *
+ * This module owns the deterministic part of that: which roles run, in which
+ * order, on which routes, and what non-sensitive payload each one receives.
+ * The bounded execution modes come from `project-issue-modes.mjs` (#440); the
+ * role context contract comes from `src/shared/role-schemas.ts` (#441).
+ */
+
+import {
+  EXECUTION_MODES,
+  assignRoutesForMode,
+  determineEligibleModes,
+  rankAndSelectMode,
+} from "./project-issue-modes.mjs";
+
+export const ROLES = Object.freeze({
+  PLANNER: "planner",
+  IMPLEMENTER: "implementer",
+  REVIEWER: "reviewer",
+});
+
+export const VALID_ROLES = Object.freeze(Object.values(ROLES));
+
+/**
+ * Role sequence per execution mode. `parallel-analysis-implement-review`
+ * (analysts + synthesizer) has no program yet and is therefore never ranked
+ * into a run — see MODE_PREFERENCES.
+ */
+export const MODE_ROLE_PROGRAMS = Object.freeze({
+  [EXECUTION_MODES.DIRECT_REVIEW]: Object.freeze([ROLES.IMPLEMENTER, ROLES.REVIEWER]),
+  [EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW]: Object.freeze([
+    ROLES.PLANNER,
+    ROLES.IMPLEMENTER,
+    ROLES.REVIEWER,
+  ]),
+});
+
+/**
+ * Ranking preference over the deterministically eligible modes.
+ * `determineEligibleModes` always includes `plan-implement-review`, so one of
+ * these two always matches and the unimplemented parallel-analysis mode is
+ * never selected by accident.
+ */
+export const MODE_PREFERENCES = Object.freeze([
+  EXECUTION_MODES.DIRECT_REVIEW,
+  EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW,
+]);
+
+/** Reviewer verdicts, mirroring ReviewerOutput in src/shared/role-schemas.ts. */
+export const REVIEW_VERDICTS = Object.freeze(["PASS", "NEEDS_REVISION", "REJECTED"]);
+
+/** A rejected implementation gets at most one fix pass, so at most 2 reviews. */
+export const MAX_REVIEW_PASSES = 2;
+
+/**
+ * Keys that must never appear in a dispatch payload. Kept identical to
+ * DISALLOWED_KEYS in `src/shared/role-schemas.ts`; a contract test asserts
+ * the two lists stay in sync.
+ */
+export const DISALLOWED_PAYLOAD_KEYS = Object.freeze([
+  "chainOfThought",
+  "chain_of_thought",
+  "cot",
+  "rawResponse",
+  "raw_response",
+  "rawModelResponse",
+  "raw_model_response",
+  "conversationHistory",
+  "conversation_history",
+  "fullConversation",
+  "full_conversation",
+  "toolHistory",
+  "tool_history",
+  "apiKey",
+  "api_key",
+  "credential",
+  "credentials",
+  "password",
+  "secret",
+  "prompt",
+  "systemPrompt",
+  "userPrompt",
+]);
+
+const DISALLOWED_PAYLOAD_KEY_SET = new Set(DISALLOWED_PAYLOAD_KEYS);
+
+/**
+ * Pick the execution mode for one Issue from the deterministic eligible set.
+ * Returns the mode plus the closed reason describing why it was chosen.
+ */
+export function selectExecutionMode(item = {}) {
+  const eligibleModes = determineEligibleModes({
+    riskCategory: item.riskCategory ?? "low",
+    size: item.size ?? "M",
+    dependencyDepth: Array.isArray(item.dependencies) ? item.dependencies.length : 0,
+    ...(item.changeScopeCount === undefined ? {} : { changeScopeCount: item.changeScopeCount }),
+  });
+  const mode = rankAndSelectMode(eligibleModes, MODE_PREFERENCES);
+  return { mode, eligibleModes, selectionReason: "deterministic-policy" };
+}
+
+export function roleProgramForMode(mode) {
+  const program = MODE_ROLE_PROGRAMS[mode];
+  if (!program) throw new Error(`unsupported-execution-mode:${mode}`);
+  return [...program];
+}
+
+/**
+ * Bind each role in the program to a verified route.
+ *
+ * `implementer` and `reviewer` get distinct routes whenever the pool holds
+ * more than one. With a single verified route the run continues on the same
+ * route rather than failing closed — a one-provider setup must stay usable —
+ * and the degradation is recorded as a closed reason.
+ *
+ * `planner` takes the reviewer's route when one is distinct, so the plan and
+ * the implementation come from different runtimes.
+ */
+export function assignRoleRoutes(workerRoutes, program) {
+  const allowSameRoute = (workerRoutes ?? []).length === 1;
+  const { implementer, reviewer } = assignRoutesForMode(workerRoutes, { allowSameRoute });
+  const routes = {};
+  for (const role of program) {
+    if (role === ROLES.IMPLEMENTER) routes[role] = implementer;
+    else routes[role] = reviewer;
+  }
+  return {
+    routes,
+    ...(allowSameRoute ? { degraded: "same-route-reviewer:single-verified-route" } : {}),
+  };
+}
+
+/**
+ * Which skill the worker for `role` must use. The first role to enter the
+ * Issue creates the worktree; every later role resumes the existing one.
+ */
+export function skillForRole(role, { hasWorktree }) {
+  if (role === ROLES.REVIEWER) return "handoff-issue";
+  return hasWorktree ? "handoff-issue" : "issue-implementation";
+}
+
+/** Advance a role program. Returns the next state, never mutating the input. */
+export function advanceRoleProgram(roleState, { role, verdict } = {}) {
+  const program = roleState.program;
+  const current = program[roleState.index];
+  if (current !== role) throw new Error(`role-mismatch:${roleState.issue}:${role}`);
+
+  if (role !== ROLES.REVIEWER) {
+    return { ...roleState, index: roleState.index + 1, status: "active" };
+  }
+
+  if (!REVIEW_VERDICTS.includes(verdict)) throw new Error(`invalid-review-verdict:${verdict}`);
+  const reviewPasses = roleState.reviewPasses + 1;
+  if (verdict === "PASS") {
+    return { ...roleState, reviewPasses, status: "awaiting-milestone" };
+  }
+  if (verdict === "REJECTED" || reviewPasses >= MAX_REVIEW_PASSES) {
+    return {
+      ...roleState,
+      reviewPasses,
+      status: "blocked",
+      blockedReason: verdict === "REJECTED" ? "review-rejected" : "review-passes-exhausted",
+    };
+  }
+  // NEEDS_REVISION with budget left: one fix pass by the implementer, then
+  // the reviewer looks again.
+  return {
+    ...roleState,
+    reviewPasses,
+    fixCycles: roleState.fixCycles + 1,
+    index: program.indexOf(ROLES.IMPLEMENTER),
+    status: "active",
+  };
+}
+
+/**
+ * Send a finished program back to the implementer for one more fix cycle —
+ * used when the integration gate rejects work the reviewer had passed. The
+ * review budget bounds this too, so a rejected Issue cannot cycle forever.
+ */
+export function reopenRoleProgramForFix(roleState, reason) {
+  if (roleState.reviewPasses >= MAX_REVIEW_PASSES) {
+    return { ...roleState, status: "blocked", blockedReason: reason };
+  }
+  return {
+    ...roleState,
+    index: roleState.program.indexOf(ROLES.IMPLEMENTER),
+    status: "active",
+    fixCycles: roleState.fixCycles + 1,
+  };
+}
+
+/** Reject any payload carrying a disallowed key, at any depth. */
+export function assertNoDisallowedKeys(value, path = "") {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoDisallowedKeys(item, `${path}[${index}]`));
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const key of Object.keys(value)) {
+    if (DISALLOWED_PAYLOAD_KEY_SET.has(key))
+      throw new Error(`disallowed-payload-key:${key}:${path || "root"}`);
+    assertNoDisallowedKeys(value[key], path ? `${path}.${key}` : key);
+  }
+}
+
+/**
+ * The complete set of facts the parent hands a worker. Deliberately tiny:
+ * the worker fetches the Issue body, the diff, and test results itself, so
+ * nothing sensitive has to travel through orchestrator state or the prompt.
+ */
+export function buildRoleDispatchPayload({
+  role,
+  issueNumber,
+  executionMode,
+  skill,
+  releasePolicy,
+  nextMilestone,
+  reviewPass,
+}) {
+  if (!VALID_ROLES.includes(role)) throw new Error(`invalid-role:${role}`);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) throw new Error("issue-number-required");
+  const payload = {
+    role,
+    issueNumber,
+    executionMode,
+    skill,
+    releasePolicy,
+    nextMilestone,
+    ...(role === ROLES.REVIEWER ? { reviewPass: reviewPass ?? 1 } : {}),
+  };
+  assertNoDisallowedKeys(payload);
+  return payload;
+}

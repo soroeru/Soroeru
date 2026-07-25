@@ -38,14 +38,41 @@ GitHub deterministically.
 3. Stop before any worktree mutation on unknown/cyclic `Blocked by` dependencies, open or unavailable dependency state, or an unverifiable parent route. Confirm the requested parent model can actually be selected; if exact selection cannot be verified, block that route and never relabel another model.
 4. The dry-run returns `plan.runnable` (ordered by Priority then Issue number) and `workerRoutes` (the run-scoped pool of verified worker routes after excluding the Parent agent runtime and applying `--unavailable-agent` / `--unavailable-model` exclusions). Every model and selector belonging to the Parent agent is excluded: if Codex is the Parent, no Codex route may be a worker. If Issues are runnable and the remaining pool is empty, the run stops with `no-worker-route-available`; otherwise the run may proceed with fewer workers than `maxParallel`.
 
+## Role programs
+
+One Issue is implemented by a *sequence* of workers, not one. The plan gives every runnable
+Issue a deterministic execution mode (`scripts/project-issue-modes.mjs`) and the role program
+that follows from it:
+
+| Execution mode | Selected when | Role program |
+| --- | --- | --- |
+| `direct-review` | low risk, size XS–M, shallow dependencies | implementer → reviewer |
+| `plan-implement-review` | medium/high risk, size L–XL, depth ≥ 2, or wide change scope | planner → implementer → reviewer |
+
+Each role runs as its own CLI process on its own verified route, so a reviewer structurally
+cannot see the implementer's conversation or reasoning — it reads the Issue, the worktree, and
+the diff itself. `implementer` and `reviewer` take distinct routes whenever the pool holds more
+than one; with a single verified route the run continues on the shared route and records
+`same-route-reviewer:single-verified-route`. The first role to enter an Issue creates the
+worktree via `issue-implementation`; every later role resumes it via `handoff-issue`.
+
+Review is bounded: a `NEEDS_REVISION` verdict buys one implementer fix pass, `REJECTED` blocks
+immediately, and at most two review passes ever run. An integration-gate rejection reopens the
+program at the implementer under the same budget. Pass `--single-worker` to fall back to one
+worker owning the whole Issue.
+
+`parallel-analysis-implement-review` has no role program yet and is never selected.
+
 ## Dynamic assignment
 
-The orchestrating agent assigns each runnable Issue to one route from `workerRoutes` at dispatch
-time, considering the Issue's Size and content against each agent's strengths and the user's
-run-scoped hints. Rules:
+The orchestrating agent assigns each runnable Issue's current role to one route from
+`workerRoutes` at dispatch time, considering the Issue's Size and content against each agent's
+strengths and the user's run-scoped hints. Rules:
 
 - Choose only from `workerRoutes`; never invent a selector, substitute a nearby model name, or
   relabel a canonical identifier as a different model.
+- A reviewer proposal equal to that Issue's implementer route is rejected while another route
+  exists; independent review means a different runtime.
 - The Parent agent runtime is never a worker route. This exclusion is by `agent`, not by model:
   a different model or selector from the same agent is still excluded. Only a different verified
   agent may receive an Issue.
@@ -66,15 +93,26 @@ run-scoped hints. Rules:
 
 ## Worker contract
 
-Send only the Issue number, the assigned agent/model route, release policy, and next milestone to a worker. The worker fetches its own body/comments.
+Send only the Issue number, the role, the assigned agent/model route, the skill, release policy,
+and next milestone to a worker. The worker fetches its own body/comments, diff, and test results.
+Never pass Issue bodies, diffs, plans, or another role's output through the dispatch payload.
 
-- Launch the selected route with the same exact `selector` / `model` from discovery — for external CLIs use `node scripts/project-issue-dispatch.mjs` (or `dispatchWorker`) so non-Codex routes start through their adapter, not a Codex-only path.
+- Launch the selected route with the same exact `selector` / `model` from discovery — for external CLIs use `node scripts/project-issue-dispatch.mjs` (or `dispatchWorker`) so non-Codex routes start through their adapter, not a Codex-only path. Role-based launches add `--role`, `--skill`, `--execution-mode`, and (for a reviewer) `--review-pass`.
 - No worktree: worker uses `issue-implementation`.
 - Existing Issue worktree/metadata: worker uses `handoff-issue` before editing.
+- A reviewer never creates a worktree and never edits, commits, pushes, or merges. It consults
+  only the Issue's acceptance criteria, the changed file paths, the branch diff, and the test
+  summary, and returns a `PASS` / `NEEDS_REVISION` / `REJECTED` verdict.
 - Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which never includes the Parent agent; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 - A route that fails at actual dispatch (not just at discovery) is a signal the cached capability record no longer reflects reality. Pass `--invalidate-agent <name>` on the *next* orchestrator invocation (in addition to this run's `--unavailable-agent`) so that agent is dropped from the capability cache and re-probed instead of being trusted as "ok" indefinitely.
 
-Workers return only `started`, `blocked`, `commit`, `review-complete`, `pr-created`, `merged`, or `failed`, plus a concise reason and exact usage telemetry when exposed. Do not return implementation logs or Issue bodies.
+Workers return only `started`, `blocked`, `role-complete`, `pr-created`, `merged`, or `failed`,
+plus a concise reason and exact usage telemetry when exposed. `role-complete` carries the role
+and, for a reviewer, the verdict. Do not return implementation logs or Issue bodies.
+
+Under a role program the `pr-created` milestone is reached by finishing the program — the
+reviewer's `PASS` opens the gate. Reporting that milestone directly while roles are still
+running is rejected (`role-program-active`), so dependents never release on unreviewed work.
 
 ## Integration quality gate
 
@@ -114,6 +152,7 @@ Use this concise summary shape:
   "routing": { "parent": "verified|unavailable" },
   "runnable": [101],
   "assignments": [{ "number": 101, "agent": "Codex", "model": "gpt-5" }],
+  "roles": [{ "issue": 101, "executionMode": "direct-review", "role": "reviewer", "status": "active", "reviewPasses": 0 }],
   "blocked": [{ "number": 102, "reason": "dependencies-incomplete:101" }],
   "skipped": [],
   "milestones": [{ "issue": 101, "type": "pr-created" }],

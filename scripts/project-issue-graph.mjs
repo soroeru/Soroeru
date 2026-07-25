@@ -61,6 +61,16 @@ import {
   selectWorkerRoutes,
   validateCapabilities,
 } from "./project-issue-plan.mjs";
+import { createModeTelemetryRecord, validateWorktreeConcurrency } from "./project-issue-modes.mjs";
+import {
+  ROLES,
+  advanceRoleProgram,
+  assignRoleRoutes,
+  reopenRoleProgramForFix,
+  roleProgramForMode,
+  selectExecutionMode,
+  skillForRole,
+} from "./project-issue-roles.mjs";
 import { FileCheckpointSaver } from "./project-issue-graph-checkpointer.mjs";
 import { verifyRepositoryFreshness } from "./project-issue-runtime-adapters/shared.mjs";
 
@@ -70,7 +80,13 @@ export const DEFAULT_CHECKPOINT_DIR = "state/project-issue-graph";
 
 const RELEASE_POLICIES = new Set(["pr-created", "merged"]);
 const MILESTONE_TYPES = new Set(["pr-created", "merged"]);
-const EVENT_TYPES = new Set(["milestone", "worker-interrupted", "worker-started", "check"]);
+const EVENT_TYPES = new Set([
+  "milestone",
+  "role-complete",
+  "worker-interrupted",
+  "worker-started",
+  "check",
+]);
 export const FAILURE_TAXONOMY = Object.freeze({
   recoverable: new Set(["timeout", "session-limit", "provider-unavailable", "worker-crashed"]),
   unrecoverable: new Set(["auth-failed", "policy-blocked", "invalid-input"]),
@@ -143,8 +159,19 @@ export const OrchestrationState = Annotation.Root({
   milestones: Annotation({ reducer: mergeMilestones, default: () => [] }),
   usage: Annotation({ reducer: (left = {}, right = {}) => ({ ...left, ...right }), default: () => ({}) }),
   plan: Annotation(),
-  /** Current route assignment per Issue: {number, agent, model, route, attempt, mode}. */
+  /** Current route assignment per Issue: {number, agent, model, route, attempt, skill, role}. */
   assignments: Annotation({ reducer: mergeByIssue("number"), default: () => [] }),
+  /**
+   * Role program per Issue: {issue, executionMode, program, index,
+   * reviewPasses, fixCycles, routes, status}. Absent in single-worker mode.
+   * Routes are capability records (agent/model/selector labels only).
+   */
+  roleStates: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
+  /** Append-only mode/role telemetry records (labels and counters only). */
+  modeTelemetry: Annotation({
+    reducer: (left = [], right = []) => [...left, ...(right ?? [])],
+    default: () => [],
+  }),
   /**
    * Worker execution metadata per Issue (latest attempt wins): issue,
    * attempt, uuid, pid/pgid when known, startedAt, worktreeId, agent,
@@ -259,6 +286,65 @@ function routeLabels(route) {
   return { agent: route.agent, model: route.requestedModel ?? route.model };
 }
 
+/**
+ * Compare two capability records by identity *labels*, never by object
+ * identity: checkpoint round-trips deserialize state into fresh objects, so
+ * `===` would silently stop matching after a resume.
+ */
+function sameRoute(left, right) {
+  if (!left || !right) return false;
+  return (
+    left.agent === right.agent && left.model === right.model && left.selector === right.selector
+  );
+}
+
+function roleStateFor(state, issue) {
+  return (state.roleStates ?? []).find((entry) => entry.issue === issue) ?? null;
+}
+
+function currentRole(roleState) {
+  return roleState.program[roleState.index] ?? null;
+}
+
+/**
+ * Start (or return) the role program for one runnable Issue. The execution
+ * mode and role sequence come from the deterministic plan; the routes come
+ * from the run's verified pool, with implementer and reviewer distinct
+ * whenever the pool holds more than one route.
+ */
+function ensureRoleState(state, item, pool) {
+  const existing = roleStateFor(state, item.number);
+  if (existing) return existing;
+  const executionMode = item.executionMode ?? selectExecutionMode(item).mode;
+  const program = item.roleProgram ?? roleProgramForMode(executionMode);
+  const { routes, degraded } = assignRoleRoutes(pool, program);
+  return {
+    issue: item.number,
+    executionMode,
+    program: [...program],
+    index: 0,
+    reviewPasses: 0,
+    fixCycles: 0,
+    routes,
+    status: "active",
+    ...(degraded ? { degraded } : {}),
+  };
+}
+
+function modeTelemetryFor(roleState) {
+  return createModeTelemetryRecord({
+    issueNumber: roleState.issue,
+    mode: roleState.executionMode,
+    selectionReason: roleState.degraded ?? "deterministic-policy",
+    routes: Object.fromEntries(
+      Object.entries(roleState.routes).map(([role, route]) => [role, routeLabels(route)]),
+    ),
+    outcome: roleState.status === "awaiting-milestone" ? "review-passed" : roleState.blockedReason,
+    reviewPasses: roleState.reviewPasses,
+    fixCycles: roleState.fixCycles,
+  });
+}
+
 export function buildSummary(state, runStatus) {
   const issueNumbers = (state.items ?? []).map(({ number }) => number);
   return {
@@ -269,6 +355,14 @@ export function buildSummary(state, runStatus) {
     skipped: state.plan?.skipped ?? [],
     milestones: state.milestones ?? [],
     completed: state.completed ?? [],
+    roles: (state.roleStates ?? []).map(({ issue, executionMode, program, index, status, reviewPasses }) => ({
+      issue,
+      executionMode,
+      // The role currently running; null once the program stopped advancing.
+      role: status === "active" ? (program[index] ?? null) : null,
+      status,
+      reviewPasses,
+    })),
     usage: buildUsageReport(state.usage ?? {}, issueNumbers),
     runStatus,
     ...(state.failureReason ? { failureReason: state.failureReason } : {}),
@@ -375,11 +469,17 @@ function dispatchCandidates(state) {
   const completed = new Set(state.completed ?? []);
   const interrupted = new Set((state.pendingInterrupted ?? []).map(({ issue }) => issue));
   const awaiting = new Set(pendingDispatches(state).map(({ number }) => number));
+  // An Issue whose role program finished (waiting on a milestone) or ran out
+  // of review budget has no further role to dispatch.
+  const roleProgramDone = new Set(
+    (state.roleStates ?? []).filter(({ status }) => status !== "active").map(({ issue }) => issue),
+  );
   return (state.plan?.runnable ?? []).filter(
     ({ number }) =>
       !completed.has(number) &&
       !interrupted.has(number) &&
       !awaiting.has(number) &&
+      !roleProgramDone.has(number) &&
       !executionsFor(state, number).some((execution) => execution.status === "running"),
   );
 }
@@ -401,13 +501,45 @@ function assignRoutesNode(state) {
   // matching the other interrupts); a rejected pre-supplied proposal fails
   // the run closed (there is no caller waiting to correct it).
   let fromResume = false;
+
+  // Role programs are started before the interrupt so the orchestrating agent
+  // sees which role it is choosing a route for.
+  const singleWorker = state.config.singleWorker === true;
+  const roleStates = new Map();
+  if (!singleWorker) {
+    try {
+      // Guard the single-owner rule for a worktree; each Issue owns one.
+      validateWorktreeConcurrency(
+        activeExecutions(state).map(({ worktreeId }) => ({ worktree: worktreeId })),
+      );
+      for (const item of candidates) roleStates.set(item.number, ensureRoleState(state, item, pool));
+    } catch (error) {
+      return { failureReason: error.message };
+    }
+  }
+
   if (!state.config.autoAssign && !candidates.every(({ number }) => proposedByNumber.has(number))) {
     // Dynamic assignment is the orchestrating agent's judgment: pause and
     // present the deterministic candidate set plus the verified pool. The
     // resume payload can only reference pool entries (validated below).
     const resume = interrupt({
       assign: {
-        issues: candidates.map(({ number, title, size, priority }) => ({ number, title, size, priority })),
+        issues: candidates.map(({ number, title, size, priority }) => {
+          const roleState = roleStates.get(number);
+          return {
+            number,
+            title,
+            size,
+            priority,
+            ...(roleState
+              ? {
+                  executionMode: roleState.executionMode,
+                  role: currentRole(roleState),
+                  program: roleState.program,
+                }
+              : {}),
+          };
+        }),
         workerRoutes: pool.map(routeLabels),
       },
       ...(state.lastEventError ? { lastEventError: state.lastEventError } : {}),
@@ -419,27 +551,75 @@ function assignRoutesNode(state) {
   const rejectProposal = (reason) => (fromResume ? { lastEventError: reason } : { failureReason: reason });
 
   const assignments = [];
+  const updatedRoleStates = [];
   for (const [index, item] of candidates.entries()) {
+    const roleState = roleStates.get(item.number);
+    const role = roleState ? currentRole(roleState) : null;
     const proposal = proposals.get(item.number);
     let route;
     if (proposal !== undefined) {
       route = resolveRoute(pool, proposal);
       if (!route)
         return rejectProposal(`invalid-assignment:${item.number}:${proposal.agent}:${proposal.model}`);
+      // Independent review means a different runtime whenever one exists.
+      if (
+        role === ROLES.REVIEWER &&
+        pool.length > 1 &&
+        sameRoute(route, roleState.routes[ROLES.IMPLEMENTER])
+      )
+        return rejectProposal(`invalid-assignment:${item.number}:reviewer-route-not-distinct`);
+    } else if (roleState) {
+      route = roleState.routes[role];
+      if (!pool.some((candidate) => sameRoute(candidate, route))) {
+        // The route recorded for this role left the pool (its agent was
+        // excluded after an interruption). Re-pick from what remains, still
+        // preferring a reviewer distinct from the implementer.
+        route =
+          pool.find(
+            (candidate) =>
+              role !== ROLES.REVIEWER || !sameRoute(candidate, roleState.routes[ROLES.IMPLEMENTER]),
+          ) ?? pool[0];
+      }
     } else if (state.config.autoAssign) {
       route = pool[index % pool.length];
     } else {
       return rejectProposal(`invalid-assignment:${item.number}:missing`);
     }
+
+    if (roleState) {
+      // Record the route actually used for this role, so a later role can be
+      // checked against it.
+      updatedRoleStates.push({ ...roleState, routes: { ...roleState.routes, [role]: route } });
+    }
+
     assignments.push({
       number: item.number,
       ...routeLabels(route),
       route,
       attempt: attemptFor(state, item.number),
-      mode: item.route,
+      // The plan is only rebuilt on milestones, so a later role in the same
+      // program must read "does a worktree exist" from execution state, not
+      // from the (now stale) planned skill.
+      skill: roleState
+        ? skillForRole(role, {
+            hasWorktree: item.skill === "handoff-issue" || executionsFor(state, item.number).length > 0,
+          })
+        : item.skill,
+      ...(roleState
+        ? {
+            role,
+            executionMode: roleState.executionMode,
+            ...(role === ROLES.REVIEWER ? { reviewPass: roleState.reviewPasses + 1 } : {}),
+          }
+        : {}),
     });
   }
-  return { assignments, workerRoutes: pool, lastEventError: null };
+  return {
+    assignments,
+    workerRoutes: pool,
+    lastEventError: null,
+    ...(updatedRoleStates.length ? { roleStates: updatedRoleStates } : {}),
+  };
 }
 
 async function dispatchWorkerNode(payload, config) {
@@ -451,7 +631,9 @@ async function dispatchWorkerNode(payload, config) {
     uuid: deps.uuid(),
     agent: assignment.agent,
     model: assignment.model,
-    mode: assignment.mode,
+    skill: assignment.skill,
+    ...(assignment.role === undefined ? {} : { role: assignment.role }),
+    ...(assignment.executionMode === undefined ? {} : { executionMode: assignment.executionMode }),
     worktreeId: `issue-${assignment.number}`,
     expectedMilestone: payload.nextMilestone,
     startedAt: deps.now(),
@@ -463,7 +645,10 @@ async function dispatchWorkerNode(payload, config) {
       issueNumber: assignment.number,
       releasePolicy: payload.releasePolicy,
       nextMilestone: payload.nextMilestone,
-      mode: assignment.mode,
+      skill: assignment.skill,
+      ...(assignment.role === undefined ? {} : { role: assignment.role }),
+      ...(assignment.executionMode === undefined ? {} : { executionMode: assignment.executionMode }),
+      ...(assignment.reviewPass === undefined ? {} : { reviewPass: assignment.reviewPass }),
       uuid: base.uuid,
       idempotencyKey: base.idempotencyKey,
     });
@@ -489,8 +674,8 @@ async function dispatchWorkerNode(payload, config) {
           issue: assignment.number,
           reason: `dispatch-failed:${error.message}`,
           // The worker never started, so no worktree was created by it;
-          // hand off in the mode this dispatch attempt was going to use.
-          mode: assignment.mode,
+          // hand off with the skill this dispatch attempt was going to use.
+          skill: assignment.skill,
         },
       ],
       unavailableAgents: [assignment.agent],
@@ -502,6 +687,13 @@ async function waitForEventsNode(state, config) {
   // Events already applied but not yet routed take precedence over waiting.
   if (state.pendingGate) return {};
   if ((state.pendingInterrupted ?? []).length) return {};
+  // Nothing to wait for either when the next role of a role program can be
+  // dispatched right now, or when nothing is running and nothing can advance
+  // — the router sends those to assign_routes and summarize_run instead of
+  // pausing for an event that would never come.
+  const active = activeExecutions(state).length;
+  if (state.config.maxParallel - active > 0 && dispatchCandidates(state).length) return {};
+  if (!active && !allComplete(state)) return {};
 
   const event = interrupt({
     waiting: {
@@ -527,6 +719,12 @@ async function waitForEventsNode(state, config) {
       return { lastEventError: `invalid-event:milestone-type:${event.milestone}` };
     if ((state.milestones ?? []).some((m) => m.issue === issue && m.type === event.milestone))
       return { lastEventError: `duplicate-milestone:${issue}:${event.milestone}` };
+    // With a role program running, the milestone is reached by finishing the
+    // program (the reviewer's PASS opens the gate), never by reporting it
+    // early — that would release dependents on unreviewed work.
+    const roleState = roleStateFor(state, issue);
+    if (roleState && roleState.status === "active")
+      return { lastEventError: `role-program-active:${issue}:${currentRole(roleState)}` };
     return {
       pendingGate: {
         issue,
@@ -535,6 +733,46 @@ async function waitForEventsNode(state, config) {
       },
       lastEventError: null,
     };
+  }
+
+  if (event.type === "role-complete") {
+    const issue = Number(event.issue);
+    const execution = executionsFor(state, issue).at(-1);
+    if (!execution || execution.status !== "running")
+      return { lastEventError: `invalid-event:no-running-worker:${event.issue}` };
+    const roleState = roleStateFor(state, issue);
+    if (!roleState || roleState.status !== "active")
+      return { lastEventError: `invalid-event:no-role-program:${event.issue}` };
+    if (event.role !== execution.role)
+      return { lastEventError: `invalid-event:role-mismatch:${issue}:${event.role}` };
+    let next;
+    try {
+      next = advanceRoleProgram(roleState, { role: event.role, verdict: event.verdict });
+    } catch (error) {
+      return { lastEventError: `invalid-event:${error.message}` };
+    }
+    const updates = {
+      workerExecutions: [{ ...execution, status: "complete" }],
+      roleStates: [next],
+      lastEventError: null,
+    };
+    if (next.status !== "active") updates.modeTelemetry = [modeTelemetryFor(next)];
+    if (next.status === "awaiting-milestone") {
+      // Every role has run and the reviewer passed: the Issue may now enter
+      // the integration gate for its milestone.
+      updates.pendingGate = { issue, type: expectedMilestone(state, issue) };
+    }
+    if (next.status === "blocked") {
+      updates.recoveryEvents = [
+        {
+          issue,
+          kind: "role-program-blocked",
+          reason: next.blockedReason,
+          at: getDeps(config).now(),
+        },
+      ];
+    }
+    return updates;
   }
 
   if (event.type === "worker-started") {
@@ -643,10 +881,19 @@ function releaseDependentsNode(state) {
   return updates;
 }
 
-function returnToWorkerNode() {
-  // Gate rejected: the Issue stays with its worker (reason recorded in
-  // gateResults); dependents are not released.
-  return { pendingGate: null };
+function returnToWorkerNode(state) {
+  // Gate rejected: the Issue goes back to its worker (reason recorded in
+  // gateResults); dependents are not released. Under a role program the
+  // worker already exited after its role, so the program reopens at the
+  // implementer for one more bounded fix cycle.
+  const roleState = state.pendingGate ? roleStateFor(state, state.pendingGate.issue) : null;
+  if (!roleState || roleState.status !== "awaiting-milestone") return { pendingGate: null };
+  const reopened = reopenRoleProgramForFix(roleState, "integration-gate-rejected");
+  return {
+    pendingGate: null,
+    roleStates: [reopened],
+    ...(reopened.status === "blocked" ? { modeTelemetry: [modeTelemetryFor(reopened)] } : {}),
+  };
 }
 
 function selectHandoffRouteNode(state) {
@@ -664,16 +911,26 @@ function selectHandoffRouteNode(state) {
     } else {
       route = pool[0];
     }
-    // Handoff continues in the same Issue worktree: mode handoff-issue,
-    // inherited WIP preserved (the worker was terminated, not the tree).
-    // Exception: a dispatch-time failure never started the worker, so the
-    // entry carries the mode that attempt was going to use.
+    // Handoff continues in the same Issue worktree with the handoff-issue
+    // skill, inherited WIP preserved (the worker was terminated, not the
+    // tree). Exception: a dispatch-time failure never started the worker, so
+    // the entry carries the skill that attempt was going to use.
+    // The interrupted role resumes as the same role on the new route.
+    const roleState = roleStateFor(state, entry.issue);
+    const role = roleState && roleState.status === "active" ? currentRole(roleState) : null;
     assignments.push({
       number: entry.issue,
       ...routeLabels(route),
       route,
       attempt: attemptFor(state, entry.issue),
-      mode: entry.mode ?? "handoff-issue",
+      skill: entry.skill ?? "handoff-issue",
+      ...(role
+        ? {
+            role,
+            executionMode: roleState.executionMode,
+            ...(role === ROLES.REVIEWER ? { reviewPass: roleState.reviewPasses + 1 } : {}),
+          }
+        : {}),
     });
   }
   return { assignments, workerRoutes: pool, pendingInterrupted: null };
@@ -721,7 +978,16 @@ function waitRouter(state) {
   if (state.failureReason) return "fail_run";
   if (state.pendingGate) return "integration_gate";
   if ((state.pendingInterrupted ?? []).length) return "select_handoff_route";
+  // A finished role leaves the next role of the same Issue undispatched.
+  // Only go back with free capacity, otherwise the run would ping-pong
+  // between assign_routes and wait_for_events without pausing.
+  const capacity = state.config.maxParallel - activeExecutions(state).length;
+  if (capacity > 0 && dispatchCandidates(state).length) return "assign_routes";
   if (allComplete(state)) return "summarize_run";
+  // Nothing is running and nothing can be dispatched (e.g. a role program
+  // ran out of review budget): report the run as blocked instead of waiting
+  // for an event that can never arrive.
+  if (!activeExecutions(state).length) return "summarize_run";
   return "wait_for_events";
 }
 
@@ -825,6 +1091,10 @@ export function createDefaultDeps({ cwd }) {
           job.releasePolicy,
           "--next-milestone",
           job.nextMilestone,
+          ...(job.role ? ["--role", job.role] : []),
+          ...(job.skill ? ["--skill", job.skill] : []),
+          ...(job.executionMode ? ["--execution-mode", job.executionMode] : []),
+          ...(job.reviewPass ? ["--review-pass", String(job.reviewPass)] : []),
         ],
       };
     },
@@ -904,6 +1174,10 @@ export function parseGraphCliArgs(argv) {
       options.autoAssign = true;
       continue;
     }
+    if (flag === "--single-worker") {
+      options.singleWorker = true;
+      continue;
+    }
     const key = valueFlags.get(flag);
     if (!key) throw new Error(`unknown-flag:${flag}`);
     const value = argv[++index];
@@ -973,6 +1247,8 @@ async function buildStartInput(cli, repositoryRoot) {
       },
       existingWorktrees: cli.existingWorktrees ?? [],
       autoAssign: Boolean(cli.autoAssign),
+      // Escape hatch: one worker owns the whole Issue, as before role programs.
+      singleWorker: Boolean(cli.singleWorker),
     },
   };
   if (cli.inputPath) {
@@ -1028,11 +1304,12 @@ async function main() {
         // launch (no pid reported yet via a "worker-started" event).
         dispatchInstructions: (snapshot.values.workerExecutions ?? [])
           .filter((execution) => execution.status === "running" && execution.pid === undefined)
-          .map(({ issue, agent, model, uuid, dispatchCommand }) => ({
+          .map(({ issue, agent, model, uuid, role, dispatchCommand }) => ({
             issue,
             agent,
             model,
             uuid,
+            ...(role === undefined ? {} : { role }),
             ...(dispatchCommand === undefined ? {} : { dispatchCommand }),
           })),
         summary: buildSummary(snapshot.values, "in-progress"),

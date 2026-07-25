@@ -134,15 +134,42 @@ test("requires no agent, model, or order assignment fields on items", async () =
   ]);
   assert.equal(items[0].number, 901);
   const plan = buildRunPlan(items, runOptions);
-  assert.equal(plan.runnable[0].route, "issue-implementation");
+  assert.equal(plan.runnable[0].skill, "issue-implementation");
   for (const field of ["primary", "sub", "model", "order"])
     assert.equal(Object.hasOwn(plan.runnable[0], field), false);
+});
+
+test("plans a deterministic execution mode and role program per runnable Issue", async () => {
+  const items = parseProjectItems([
+    {
+      number: 901,
+      title: "Small and low risk",
+      url: "https://example.invalid/issues/901",
+      status: "Ready",
+      size: "S",
+      dependencies: [],
+    },
+    {
+      number: 902,
+      title: "Large",
+      url: "https://example.invalid/issues/902",
+      status: "Ready",
+      size: "XL",
+      dependencies: [],
+    },
+  ]);
+  const plan = buildRunPlan(items, { ...runOptions, maxParallel: 2 });
+  const byNumber = new Map(plan.runnable.map((item) => [item.number, item]));
+  assert.equal(byNumber.get(901).executionMode, "direct-review");
+  assert.deepEqual(byNumber.get(901).roleProgram, ["implementer", "reviewer"]);
+  assert.equal(byNumber.get(902).executionMode, "plan-implement-review");
+  assert.deepEqual(byNumber.get(902).roleProgram, ["planner", "implementer", "reviewer"]);
 });
 
 test("routes an existing Issue worktree through handoff-issue", async () => {
   const items = parseProjectItems((await load("linear.json")).items);
   const plan = buildRunPlan(items, { ...runOptions, completed: [], existingWorktrees: [101] });
-  assert.equal(plan.runnable[0].route, "handoff-issue");
+  assert.equal(plan.runnable[0].skill, "handoff-issue");
 });
 
 test("milestones create resumable state without carrying implementation logs", () => {

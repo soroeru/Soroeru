@@ -715,19 +715,20 @@ when commands change.
 This section documents the target **multi-agent orchestration architecture** implemented across Issues `#440`–`#445`. The orchestration system coordinates Issue execution while enforcing local-first security, strict role isolation, deterministic dependency management, and privacy-preserving observability.
 
 ```text
-ProjectGraph (Parent Orchestrator)
+ProjectGraph (Parent Orchestrator, scripts/project-issue-graph.mjs)
 ├── 1. Capabilities Discovery (Codex / Claude / Grok / Gemini capability probing)
 ├── 2. Project Items & GitHub Dependency Closure Graph
 ├── 3. Deterministic Batch Selection (maxParallel, Priority rank, Issue #)
-└── 4. Integration Quality Gate (Cross-Issue conflict, contract, criteria checks)
+├── 4. Role Program per Issue (execution mode → role sequence → verified route per role)
+├── 5. Role-by-Role Dispatch & Event Loop (assign_routes → dispatch_worker → wait_for_events)
+├── 6. Bounded Recovery (same-route retry max 1, alternate-route handoff max 1, idempotency keys)
+└── 7. Integration Quality Gate (Cross-Issue conflict, contract, criteria checks)
       │
-      ▼ Dispatches
-IssueSubgraph (Worker Execution State Machine)
-├── Prepare Worktree (.worktrees/issue-<number>-<slug>)
-├── Select Bounded Execution Mode (direct-review | plan-implement-review | parallel-analysis-implement-review)
-├── Role-Isolated Context Execution (Zod-validated schemas: Planner, Analyst, Implementer, Reviewer, Verifier)
-├── Bounded Recovery State Machine (Same-route retry max 1, alternate-route handoff max 1, idempotency keys)
-└── Commit, Push & Pull Request Creation
+      ▼ Dispatches one CLI process per role
+Worker (external agent CLI, own process, own verified route)
+├── Enters .worktrees/issue-<number>-<slug> via issue-implementation or handoff-issue
+├── Fetches its own Issue body, diff, and test results (never received from the parent)
+└── Returns role-complete / milestone events only
       │
       ▼ Telemetry Events
 LLMOps Observability & Offline Evaluation
@@ -735,34 +736,54 @@ LLMOps Observability & Offline Evaluation
 └── Offline Evaluation Harness (Episode reconstruction, Quality-Token Frontier reporting)
 ```
 
-### 13.1 Two-Layer Graph Architecture (`ProjectGraph` & `IssueSubgraph`)
+### 13.1 Role Sequencing in the ProjectGraph (`#439`, `#482`)
 
-The orchestration framework is split into two explicit LangGraph state machines (`scripts/project-issue-graph.mjs`):
+Orchestration is one LangGraph state machine (`scripts/project-issue-graph.mjs`) whose nodes are
+`load_config` → `discover_capabilities` → `fetch_project_issues` → `validate_dependencies` →
+`build_runnable_plan` → `assign_routes` → `dispatch_worker` → `wait_for_events` →
+`integration_gate` → `release_dependents` / `return_to_worker` → `select_handoff_route` →
+`summarize_run`.
 
-1. **`ProjectGraph` (Parent Orchestrator)**:
-   - Evaluates verified runtime capabilities across Codex, Claude, Grok, and Gemini adapters.
-   - Fetches GitHub Project items and constructs the recursive `Blocked by` dependency graph.
-   - Dispatches runnable Issues in priority order up to `maxParallel`.
-   - Releases dependent Issues only upon reaching the configured milestone (`pr-created` or `merged`).
-   - Executes the **Integration Quality Gate** before dependency release to prevent cross-Issue contract breaks or file conflicts.
+The parent:
 
-2. **`IssueSubgraph` (Worker Execution Machine)**:
-   - Operates strictly inside a dedicated Git worktree (`.worktrees/issue-<number>-<short-slug>`).
-   - Manages state transitions: `prepare_worktree` → `select_execution_mode` → `plan_or_analyze_optional` → `implement` → `run_tests` → `independent_review` → `fix_if_needed` → `final_verify` → `commit_and_push` → `create_pr`.
+- Evaluates verified runtime capabilities across Codex, Claude, Grok, and Gemini adapters.
+- Fetches GitHub Project items and constructs the recursive `Blocked by` dependency graph.
+- Dispatches runnable Issues in priority order up to `maxParallel`.
+- Advances each Issue **role by role** through its role program, dispatching one worker process
+  per role and resuming on `role-complete` events.
+- Releases dependent Issues only upon reaching the configured milestone (`pr-created` or `merged`).
+- Executes the **Integration Quality Gate** before dependency release to prevent cross-Issue contract breaks or file conflicts.
 
-### 13.2 Bounded Execution Modes (`#440`)
+Steps *inside* one role — preparing the worktree, running tests, committing, pushing, opening the
+PR — stay inside the worker's own `issue-implementation` / `handoff-issue` skill run rather than
+becoming parent graph nodes. A separate synchronous `IssueSubgraph` was considered and rejected:
+the parent is interrupt-driven and asynchronous (workers run detached and report events), and
+wrapping a whole Issue lifecycle in one blocking node would have required re-designing waiting,
+handoff, and `maxParallel`.
 
-To prevent arbitrary workflow generation, execution modes are restricted to a deterministic finite set (`scripts/project-issue-modes.mjs`):
+Role isolation is therefore **process isolation**: each role runs as its own CLI process on its
+own verified route and cannot observe another role's conversation, chain-of-thought, or raw
+responses. The parent passes only Issue number, role, route, skill, release policy, and next
+milestone (`scripts/project-issue-roles.mjs`, `buildRoleDispatchPayload`); the worker fetches
+everything else itself.
 
-- **`direct-review`** (Small/Low-Risk Issues): `implementer` → `tests` → `independent reviewer`.
-- **`plan-implement-review`** (Medium/Standard Issues): `planner` → `implementer` → `tests` → `independent reviewer`.
-- **`parallel-analysis-implement-review`** (Large/High-Risk Issues): `parallel analysts` → `synthesizer` → `implementer` → `tests` → `independent reviewer`.
+### 13.2 Bounded Execution Modes and Role Programs (`#440`, `#482`)
 
-Mode eligibility is decided deterministically based on Issue Size (`S`, `M`, `L`), change scope, dependency depth, and risk category. A candidate mode ranking policy orders eligible modes without expanding the candidate set. `implementer` and `reviewer` roles must use distinct verified routes whenever available. Simultaneous parallel edits to the same worktree are strictly prohibited.
+To prevent arbitrary workflow generation, execution modes are restricted to a deterministic finite set (`scripts/project-issue-modes.mjs`), each mapping to a fixed role program (`scripts/project-issue-roles.mjs`):
+
+- **`direct-review`** (Small/Low-Risk Issues): `implementer` → `independent reviewer`.
+- **`plan-implement-review`** (Medium/Standard Issues): `planner` → `implementer` → `independent reviewer`.
+- **`parallel-analysis-implement-review`** (Large/High-Risk Issues): `parallel analysts` → `synthesizer` → `implementer` → `independent reviewer`. **Not implemented yet** — it has no role program, and the ranking policy never selects it because `plan-implement-review` is always eligible.
+
+Mode eligibility is decided deterministically based on Issue Size (`S`, `M`, `L`), change scope, dependency depth, and risk category. A candidate mode ranking policy orders eligible modes without expanding the candidate set. `implementer` and `reviewer` roles use distinct verified routes whenever the pool holds more than one; a single-route pool degrades to a shared route with the recorded reason `same-route-reviewer:single-verified-route`. Simultaneous parallel edits to the same worktree are strictly prohibited (`validateWorktreeConcurrency`, enforced at assignment).
+
+Review is bounded at two passes. A `NEEDS_REVISION` verdict returns the Issue to the implementer for one fix cycle; `REJECTED` blocks immediately; an integration-gate rejection reopens the program at the implementer under the same budget. Exhausting the budget blocks the Issue rather than looping. Running tests is part of the implementer's own skill run, and the reviewer receives the resulting test summary rather than re-running it. `--single-worker` restores the pre-`#482` behaviour of one worker per Issue.
+
+Under a role program, the `pr-created` milestone is reached by completing the program; reporting it while roles are still active is rejected (`role-program-active`) so dependents cannot be released on unreviewed work.
 
 ### 13.3 Role-Specific Context Schemas & Isolation (`#441`)
 
-To prevent reviewer bias, prompt bloat, and context contamination, information passed to worker roles is strictly constrained via Zod schemas (`src/shared/role-schemas.ts`):
+To prevent reviewer bias, prompt bloat, and context contamination, information passed to worker roles is strictly constrained by dependency-free validators (`src/shared/role-schemas.ts`):
 
 - **`PlannerInput` / `AnalystInput`**: Receives Issue title, body, repository rules, and codebase context.
 - **`ImplementerInput`**: Receives task plan/analysis findings, Issue details, and target file boundaries.
@@ -770,7 +791,7 @@ To prevent reviewer bias, prompt bloat, and context contamination, information p
 - **`VerifierInput`**: Validates test execution evidence, Git/PR state, and acceptance criteria without re-running subjective review passes.
 - **`HandoffInput`**: Carries Git state, completed steps, failure classification, and resume node payload.
 
-All schemas strictly sanitize and reject disallowed keys (`chainOfThought`, `rawModelResponse`, `toolHistory`, credentials, PII).
+All schemas strictly sanitize and reject disallowed keys (`chainOfThought`, `rawModelResponse`, `toolHistory`, credentials, PII). Because each role is a separate CLI process, these schemas describe the context a worker assembles **locally** for its own role; the orchestrator's dispatch payload is guarded by the same deny-list (`DISALLOWED_PAYLOAD_KEYS` in `scripts/project-issue-roles.mjs`), and a contract test asserts the two lists stay identical.
 
 ### 13.4 Bounded Recovery, Handoff, and Safe Resume (`#445`)
 

@@ -11,6 +11,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { VALID_ROLES } from "./project-issue-roles.mjs";
 import { launchWithAdapter } from "./project-issue-runtime-adapters/index.mjs";
 import { splitSelector } from "./project-issue-runtime-adapters/shared.mjs";
 
@@ -22,6 +23,10 @@ import { splitSelector } from "./project-issue-runtime-adapters/shared.mjs";
  * @param {number} input.issueNumber
  * @param {string} input.releasePolicy
  * @param {string} input.nextMilestone
+ * @param {string} [input.role] - planner | implementer | reviewer; omitted in single-worker mode
+ * @param {string} [input.skill] - issue-implementation | handoff-issue
+ * @param {string} [input.executionMode]
+ * @param {number} [input.reviewPass]
  * @param {string} [input.cwd]
  */
 export async function dispatchWorker(input, ctx = {}) {
@@ -34,6 +39,8 @@ export async function dispatchWorker(input, ctx = {}) {
     throw new Error("issue-number-required");
   if (!input.releasePolicy) throw new Error("release-policy-required");
   if (!input.nextMilestone) throw new Error("next-milestone-required");
+  if (input.role !== undefined && !VALID_ROLES.includes(input.role))
+    throw new Error(`invalid-role:${input.role}`);
 
   // Ensure the selector still parses and still targets the same model token.
   const tokens = splitSelector(route.selector);
@@ -49,6 +56,10 @@ export async function dispatchWorker(input, ctx = {}) {
     releasePolicy: input.releasePolicy,
     nextMilestone: input.nextMilestone,
     cwd: input.cwd,
+    ...(input.role === undefined ? {} : { role: input.role }),
+    ...(input.skill === undefined ? {} : { skill: input.skill }),
+    ...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
+    ...(input.reviewPass === undefined ? {} : { reviewPass: input.reviewPass }),
   };
 
   const handle = await launchWithAdapter(route.agent, job, ctx);
@@ -57,6 +68,7 @@ export async function dispatchWorker(input, ctx = {}) {
     model: route.model,
     selector: route.selector,
     issueNumber: input.issueNumber,
+    ...(input.role === undefined ? {} : { role: input.role }),
     pid: handle.pid,
     kill: handle.kill,
     wait: handle.wait,
@@ -75,6 +87,10 @@ export function parseDispatchCliArgs(argv) {
       ["--issue", "issue"],
       ["--release-policy", "releasePolicy"],
       ["--next-milestone", "nextMilestone"],
+      ["--role", "role"],
+      ["--skill", "skill"],
+      ["--execution-mode", "executionMode"],
+      ["--review-pass", "reviewPass"],
       ["--cwd", "cwd"],
     ]);
     const key = valueFlags.get(flag);
@@ -99,6 +115,10 @@ async function main() {
     releasePolicy: cli.releasePolicy,
     nextMilestone: cli.nextMilestone,
     cwd: cli.cwd,
+    ...(cli.role === undefined ? {} : { role: cli.role }),
+    ...(cli.skill === undefined ? {} : { skill: cli.skill }),
+    ...(cli.executionMode === undefined ? {} : { executionMode: cli.executionMode }),
+    ...(cli.reviewPass === undefined ? {} : { reviewPass: Number(cli.reviewPass) }),
   });
   process.stdout.write(
     `${JSON.stringify({
@@ -106,6 +126,7 @@ async function main() {
       agent: handle.agent,
       model: handle.model,
       issueNumber: handle.issueNumber,
+      ...(handle.role === undefined ? {} : { role: handle.role }),
       pid: handle.pid,
     })}\n`,
   );

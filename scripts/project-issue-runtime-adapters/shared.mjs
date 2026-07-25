@@ -420,14 +420,65 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
   };
 }
 
-/** Build the minimal worker prompt — Issue number and route labels only. */
-export function buildWorkerPrompt({ issueNumber, agent, model, releasePolicy, nextMilestone }) {
+const NO_STATE_LEAK_RULE =
+  "Do not store credentials, Issue bodies, prompts, diffs, or model response bodies in orchestrator run state.";
+
+/**
+ * Role-specific instructions. Each role runs as its own CLI process, so a
+ * later role cannot see an earlier role's conversation — it reads the Issue,
+ * the worktree, and the diff for itself.
+ */
+function roleInstructions({ role, issueNumber, skill, reviewPass }) {
+  if (role === "planner")
+    return [
+      `Plan the implementation of exactly one GitHub Issue. Do not implement it.`,
+      `Use the repository ${skill} skill to enter the Issue worktree, then write the plan to docs/design/<slug>.md with an "Issue: #${issueNumber}" reference near the top.`,
+      "Report role-complete with role=planner when the plan is committed. Do not push or open a pull request.",
+    ];
+  if (role === "reviewer")
+    return [
+      `Independently review the changes for this Issue (review pass ${reviewPass ?? 1}). Do not modify, commit, push, or merge anything.`,
+      "Consult only the Issue's stated acceptance criteria, the changed file paths, the branch diff, and the test-run summary. You have no access to the implementer's reasoning and must not ask for it.",
+      "Report role-complete with role=reviewer and verdict=PASS | NEEDS_REVISION | REJECTED, plus concise findings.",
+    ];
   return [
-    "Implement exactly one GitHub Issue using the repository issue-implementation (or handoff-issue) skill.",
+    `Implement exactly one GitHub Issue using the repository ${skill} skill.`,
+    "Report role-complete with role=implementer once the work is committed, pushed, and the pull request exists.",
+  ];
+}
+
+/**
+ * Build the minimal worker prompt — role, Issue number, and route labels
+ * only. No Issue body, diff, or personal data ever enters the prompt.
+ */
+export function buildWorkerPrompt({
+  issueNumber,
+  agent,
+  model,
+  releasePolicy,
+  nextMilestone,
+  role,
+  skill = "issue-implementation",
+  reviewPass,
+}) {
+  if (!role) {
+    // Single-worker mode: one worker owns the whole Issue, as before roles.
+    return [
+      "Implement exactly one GitHub Issue using the repository issue-implementation (or handoff-issue) skill.",
+      `Issue: #${issueNumber}`,
+      `Assigned route: agent=${agent} model=${model}`,
+      `Release policy: ${releasePolicy}`,
+      `Next milestone: ${nextMilestone}`,
+      NO_STATE_LEAK_RULE,
+    ].join("\n");
+  }
+  return [
+    ...roleInstructions({ role, issueNumber, skill, reviewPass }),
     `Issue: #${issueNumber}`,
+    `Role: ${role}`,
     `Assigned route: agent=${agent} model=${model}`,
     `Release policy: ${releasePolicy}`,
     `Next milestone: ${nextMilestone}`,
-    "Do not store credentials, Issue bodies, prompts, diffs, or model response bodies in orchestrator run state.",
+    NO_STATE_LEAK_RULE,
   ].join("\n");
 }
