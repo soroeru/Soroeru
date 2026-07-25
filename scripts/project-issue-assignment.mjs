@@ -43,7 +43,7 @@ export function isCanonicalDate(value) {
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
 
-export const OWNER_TYPES = new Set(["user", "organization"]);
+export const OWNER_TYPES = new Set(["organization"]);
 
 /**
  * Parse `<!-- name:start -->` … `<!-- name:end -->` key/value bullet lines into

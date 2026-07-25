@@ -60,7 +60,7 @@ function normalizeDocument(document) {
 
   const projectOwner = requiredString(project.owner, "project.owner");
   const ownerType = requiredString(project.ownerType, "project.ownerType");
-  if (!new Set(["user", "organization"]).has(ownerType)) fail("config-invalid-owner-type");
+  if (ownerType !== "organization") fail("config-invalid-owner-type");
   const projectName = requiredString(project.name, "project.name");
 
   if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) fail("config-invalid-max-parallel");

@@ -35,7 +35,7 @@ function resolveFieldNames(fields = {}) {
  * body extraction is needed. `fields` mirrors config/github-projects.json
  * `fields` (priority / size / …).
  */
-export async function fetchProjectItems({ owner, ownerType = "user", projectName, graphql, fields = {} }) {
+export async function fetchProjectItems({ owner, ownerType = "organization", projectName, graphql, fields = {} }) {
   requiredString(owner, "project-owner-required");
   requiredString(projectName, "project-name-required");
   if (typeof graphql !== "function") throw new Error("graphql-required");

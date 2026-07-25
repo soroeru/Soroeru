@@ -783,12 +783,12 @@ test("loads and normalizes the orchestrator YAML config", async () => {
   const configPath = path.join(directory, "settings.yaml");
   await writeFile(
     configPath,
-    "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n  unavailableAgents:\n    - Codex\n",
+    "project:\n  owner: soroeru\n  ownerType: organization\n  name: Visibility\nrun:\n  maxParallel: 4\n  releasePolicy: merged\n  unavailableModels: none\n  unavailableAgents:\n    - Codex\n",
   );
   assert.equal(DEFAULT_CONFIG_PATH, "state/project-issue-orchestrator.yaml");
   assert.deepEqual(await loadOrchestratorConfig(configPath, { cwd: directory }), {
-    projectOwner: "ShinHaya",
-    ownerType: "user",
+    projectOwner: "soroeru",
+    ownerType: "organization",
     projectName: "Visibility",
     maxParallel: 4,
     releasePolicy: "merged",
@@ -804,7 +804,7 @@ test("rejects malformed and unsafe orchestrator YAML configs", async () => {
     await writeFile(file, value);
     return file;
   };
-  const validProject = "project:\n  owner: ShinHaya\n  ownerType: user\n  name: Visibility\n";
+  const validProject = "project:\n  owner: soroeru\n  ownerType: organization\n  name: Visibility\n";
   await assert.rejects(
     loadOrchestratorConfig(
       await writeConfig(
@@ -824,6 +824,16 @@ test("rejects malformed and unsafe orchestrator YAML configs", async () => {
       { cwd: directory },
     ),
     /config-invalid-max-parallel/,
+  );
+  await assert.rejects(
+    loadOrchestratorConfig(
+      await writeConfig(
+        "invalid-owner-type.yaml",
+        "project:\n  owner: soroeru\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n",
+      ),
+      { cwd: directory },
+    ),
+    /config-invalid-owner-type/,
   );
 });
 
@@ -1141,7 +1151,7 @@ test("parses the documented operational Project CLI flags", () => {
     ]),
     {
       projectOwner: "octo",
-      ownerType: "user",
+      ownerType: "organization",
       projectName: "Visibility",
       dryRun: true,
       simulateMilestone: true,
@@ -1169,7 +1179,7 @@ test("parses the documented operational Project CLI flags", () => {
 
 test("selects exactly one owner/type/name/number Project configuration", () => {
   const projects = [
-    { owner: "octo", ownerType: "user", name: "Visibility", number: 9 },
+    { owner: "soroeru", ownerType: "organization", name: "Visibility", number: 1 },
     { owner: "acme", ownerType: "organization", name: "Visibility", number: 9 },
   ];
   assert.deepEqual(
@@ -1187,9 +1197,9 @@ test("selects exactly one owner/type/name/number Project configuration", () => {
   );
   assert.throws(
     () =>
-      selectProjectConfig([{ ownerType: "user", name: "Visibility", number: 9 }], {
+      selectProjectConfig([{ owner: "other", ownerType: "organization", name: "Visibility", number: 9 }], {
         owner: "octo",
-        ownerType: "user",
+        ownerType: "organization",
         name: "Visibility",
         number: 9,
       }),
