@@ -107,3 +107,148 @@ export async function githubGraphql(query, variables, { token, fetchImpl = fetch
   if (!response.ok || payload.errors?.length) throw new Error("github-graphql-failed");
   return payload.data;
 }
+
+const GET_PROJECT_QUERY = `query GetProject($owner: String!, $number: Int!) {
+  user(login: $owner) {
+    projectV2(number: $number) {
+      id
+      fields(first: 100) {
+        nodes {
+          ... on ProjectV2Field { id name dataType }
+          ... on ProjectV2SingleSelectField { id name dataType options { id name } }
+        }
+      }
+      items(first: 100) {
+        nodes {
+          id
+          content { ... on Issue { number } }
+          fieldValues(first: 100) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2FieldCommon { name } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+const UPDATE_STATUS_MUTATION = `mutation UpdateStatus($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
+  updateProjectV2ItemFieldValue(input: { projectId: $projectId itemId: $itemId fieldId: $fieldId value: $value }) {
+    projectV2Item { id }
+  }
+}`;
+
+const READBACK_STATUS_QUERY = `query ReadbackStatus($itemId: ID!) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValues(first: 100) {
+        nodes {
+          ... on ProjectV2ItemFieldSingleSelectValue {
+            name
+            field { ... on ProjectV2FieldCommon { name } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+/**
+ * Transition selected Backlog items to Ready status before orchestration.
+ * Follows fail-close pattern: validate all IDs before mutations, perform mutations,
+ * then readback and validate. Idempotent: Ready/InProgress/InReview/Done items unchanged.
+ */
+export async function transitionBacklogToReady({
+  projectNumber,
+  projectOwner = "user",
+  selectedIssueNumbers = [],
+  dryRun = false,
+  graphql,
+  fields = {},
+}) {
+  requiredString(projectOwner, "project-owner-required");
+  if (!Number.isSafeInteger(projectNumber) || projectNumber <= 0) throw new Error("invalid-project-number");
+  if (typeof graphql !== "function") throw new Error("graphql-required");
+  if (!Array.isArray(selectedIssueNumbers)) throw new Error("selected-issue-numbers-required");
+
+  const fieldNames = resolveFieldNames(fields);
+  const selectedSet = new Set(selectedIssueNumbers.map(Number));
+  if (selectedSet.size === 0) return { transitioned: [] };
+
+  // Phase 1: Fetch Project and validate all IDs before mutations
+  const projectData = await graphql(GET_PROJECT_QUERY, {
+    owner: projectOwner,
+    number: projectNumber,
+  });
+  const project = projectData?.user?.projectV2;
+  if (!project) throw new Error("project-not-found");
+
+  const statusField = project.fields.nodes.find((f) => f.name === fieldNames.status);
+  if (!statusField) throw new Error(`project-field-not-found:${fieldNames.status}`);
+  if (statusField.dataType !== "SINGLE_SELECT") throw new Error(`project-field-type-mismatch:${fieldNames.status}`);
+
+  const readyOption = statusField.options.find((opt) => opt.name === "Ready");
+  if (!readyOption) throw new Error("status-ready-option-not-found");
+
+  const backlogOption = statusField.options.find((opt) => opt.name === "Backlog");
+  if (!backlogOption) throw new Error("status-backlog-option-not-found");
+
+  // Map Issue numbers to Project item IDs; identify Backlog items to transition
+  const itemsByNumber = new Map(
+    project.items.nodes
+      .filter((item) => item.content?.number !== undefined)
+      .map((item) => [Number(item.content.number), item]),
+  );
+
+  const toTransition = [];
+  for (const issueNumber of selectedSet) {
+    const item = itemsByNumber.get(issueNumber);
+    if (!item) throw new Error(`project-item-not-found:${issueNumber}`);
+
+    const statusValue = item.fieldValues.nodes.find((fv) => fv.field?.name === fieldNames.status);
+    const currentStatus = statusValue?.name;
+
+    // Only transition if currently Backlog; all other statuses are idempotent (no-op)
+    if (currentStatus === "Backlog") {
+      toTransition.push({ issueNumber, itemId: item.id });
+    }
+  }
+
+  if (toTransition.length === 0) return { transitioned: [] };
+  if (dryRun) return { transitioned: toTransition.map((t) => t.issueNumber), dryRun: true };
+
+  // Phase 2: Perform mutations
+  for (const { itemId } of toTransition) {
+    await graphql(UPDATE_STATUS_MUTATION, {
+      projectId: project.id,
+      itemId,
+      fieldId: statusField.id,
+      value: { singleSelectOptionId: readyOption.id },
+    });
+  }
+
+  // Phase 3: Readback and validate all transitions converged
+  const failedTransitions = [];
+  for (const { issueNumber, itemId } of toTransition) {
+    const readback = await graphql(READBACK_STATUS_QUERY, { itemId });
+    if (!readback?.node || !Array.isArray(readback.node.fieldValues?.nodes))
+      throw new Error(`project-readback-unavailable:${issueNumber}`);
+
+    const statusValue = readback.node.fieldValues.nodes.find((fv) => fv.field?.name === fieldNames.status);
+    if (statusValue?.name !== "Ready") {
+      failedTransitions.push(issueNumber);
+    }
+  }
+
+  if (failedTransitions.length) {
+    const error = new Error(`status-transition-unconverged:${failedTransitions.join(",")}`);
+    error.issues = failedTransitions;
+    throw error;
+  }
+
+  return { transitioned: toTransition.map((t) => t.issueNumber) };
+}
