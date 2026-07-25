@@ -824,6 +824,16 @@ test("rejects malformed and unsafe orchestrator YAML configs", async () => {
     ),
     /config-invalid-max-parallel/,
   );
+  await assert.rejects(
+    loadOrchestratorConfig(
+      await writeConfig(
+        "invalid-owner-type.yaml",
+        "project:\n  owner: soroeru\n  ownerType: user\n  name: Visibility\nrun:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n",
+      ),
+      { cwd: directory },
+    ),
+    /config-invalid-owner-type/,
+  );
 });
 
 test("merges explicit CLI values over YAML values", () => {

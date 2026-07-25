@@ -571,8 +571,12 @@ test("buildProjectQuery uses projectV2(number) not the projectsV2 connection", (
   const orgQuery = buildProjectQuery("organization");
   assert.match(orgQuery, /organization\(login: \$owner\) \{ projectV2\(number: \$number\)/);
   assert.equal(orgQuery.includes("projectsV2(number:"), false);
-  const userQuery = buildProjectQuery("user");
-  assert.match(userQuery, /user\(login: \$owner\) \{ projectV2\(number: \$number\)/);
+});
+
+test("buildProjectQuery rejects non-organization owner types", () => {
+  assert.throws(() => buildProjectQuery("user"), /invalid-owner-type/);
+  assert.throws(() => buildProjectQuery("team"), /invalid-owner-type/);
+  assert.throws(() => buildProjectQuery("invalid"), /invalid-owner-type/);
 });
 
 test("nextAvailableIterationStartDate skips occupied dates", () => {
