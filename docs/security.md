@@ -296,9 +296,7 @@ timid.
 **A user-installed Soroeru browser extension operating an explicitly selected tab is a
 front-door use of the user's real browser and authenticated session, not a bypass.** The absence
 of an automation-framework fingerprint is a property of the genuine user browser; Soroeru does
-not falsify or conceal one. Front-door use requires visible badge/banner state, explicit tab
-binding and exact-origin permission, the user's own account/credentials, and the same wall
-detection, Evidence, Policy, and confirmation gates as every other browser surface. It never
+not falsify or conceal one. Front-door use operates strictly within the user's explicit disclosure ledger scope (Site Account集合＝操作可能スコープ, Issue #474), eliminating per-site prompt popups while keeping non-ledger sites fail-closed, with visible badge/banner state, the user's own account/credentials, and the same wall detection, Evidence, Policy, and confirmation gates as every other browser surface. It never
 includes fingerprint/UA spoofing, stealth patches, human-like input or timing disguise,
 automation-marker suppression, challenge-token reuse, or any attempt to continue after a site
 actively blocks the operation. If bot detection or another control fires, the extension pauses

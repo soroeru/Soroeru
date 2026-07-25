@@ -23,7 +23,7 @@ test("connection labels distinguish unavailable, setup, waiting, and connected s
   assert.equal(connectionLabel({ enabled: true, registered: true, connected: true }), "接続済み");
 });
 
-test("run preparation confirms and selects the current tab only when the bridge is connected", async () => {
+test("run preparation automatically selects the current tab when the bridge is connected", async () => {
   const selected: number[] = [];
   const api = {
     status: async () => ({ enabled: true, registered: true, connected: true }),
@@ -33,9 +33,7 @@ test("run preparation confirms and selects the current tab only when the bridge 
       return { ok: true };
     },
   };
-  assert.equal(await prepareChromeBridgeRun(api, () => true), true);
-  assert.deepEqual(selected, [42]);
-  assert.equal(await prepareChromeBridgeRun(api, () => false), false);
+  assert.equal(await prepareChromeBridgeRun(api), true);
   assert.deepEqual(selected, [42]);
 });
 

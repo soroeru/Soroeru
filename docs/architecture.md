@@ -154,13 +154,11 @@ known alternatives and concrete triggers for reconsideration:
   workflow metadata survives a restart, and resumption after invalidation requires explicit
   rebind and local revalidation. Reconsider only if a future browser exposes a least-authority,
   user-approved session capability that does not export profile material.
-- **Explicit binding and least permission**: the production UX replaces
-  `SOROERU_CHROME_BRIDGE_TAB_ID` with a two-party ceremony: the user offers the active tab in
-  the extension, grants that exact HTTPS origin, and accepts the matching Site Account in
-  Electron. A short-lived nonce/lease ID, browser instance, tab handle, site scope, permission,
-  and execution epoch are checked on every closed-schema command. Same-site subdomains require
-  their own visible permission grant; bindings remain memory-only and are visibly marked by
-  badge plus in-page banner. Either surface can stop immediately.
+- **Explicit binding and least permission (Ledger Site Account Scope, Issue #474)**:
+  Site Accounts registered in the disclosure ledger form the operable scope ("開示台帳の Site Account 集合＝操作可能スコープ").
+  The production UX connects through Chrome Bridge setup once; once connected, site accounts in the ledger are operated without per-site permission popup buttons or repetitive tab confirmation dialogs ("都度許可 UI の廃止").
+  A short-lived nonce/lease ID, browser instance, tab handle, site scope, permission, and execution epoch are checked on every command.
+  Origins outside the ledger remain strictly out-of-scope and fail-closed. Either surface can stop immediately.
   Cross-origin SSO is a human hand-off, not an automatic permission expansion: commands pause
   before leaving the Site Account scope, the user completes the IdP flow without Soroeru reading
   or filling the IdP, and the encrypted checkpoint retains no IdP URL, token, or page data. On

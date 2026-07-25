@@ -349,12 +349,10 @@ export function LedgerPanel({
       ) {
         return;
       }
-      const ready = await prepareChromeBridgeRun(window.soroeru.chromeBridge, (message) =>
-        window.confirm(message),
-      );
+      const ready = await prepareChromeBridgeRun(window.soroeru.chromeBridge);
       if (!ready) {
         setLoadError(
-          "Chrome の対象タブを確認できませんでした。対象サイトを開き、拡張アイコンからオリジンを許可してから再実行してください。",
+          "Chrome の対象タブを確認できませんでした。Chrome を開き、拡張ブリッジが接続されていることを確認してください。",
         );
         return;
       }
