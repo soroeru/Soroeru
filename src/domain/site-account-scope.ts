@@ -19,6 +19,7 @@ export function normalizeScopeDomain(domain: string): string | undefined {
 
 /**
  * Derive the HTTPS origin for a SiteAccount.
+ * // egress: target-site — HTTPS origin derivation for operable disclosure ledger scope
  * Prefers valid HTTPS URL origin if site.url is provided; otherwise uses `https://${normalizedDomain}`.
  * Returns undefined for non-HTTPS or non-web accounts (e.g. android://).
  */
@@ -35,6 +36,7 @@ export function deriveSiteAccountOrigin(site: Pick<SiteAccount, "domain" | "url"
   }
   const normDomain = normalizeScopeDomain(site.domain);
   if (!normDomain) return undefined;
+  // egress: target-site — HTTPS origin derivation for operable disclosure ledger scope
   return `https://${normDomain}`;
 }
 
