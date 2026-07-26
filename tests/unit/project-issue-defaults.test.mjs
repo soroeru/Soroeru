@@ -508,7 +508,24 @@ test("normalizeProjectIssueEvent accepts a scheduled Project reconciliation", ()
       { repositoryFullName: "soroeru/Soroeru" },
     ),
     {
-      source: "schedule",
+      source: "project.reconcile",
+      issueNumber: null,
+      issue: null,
+    },
+  );
+});
+
+test("normalizeProjectIssueEvent accepts a manually dispatched Project reconciliation", () => {
+  assert.deepEqual(
+    normalizeProjectIssueEvent(
+      {
+        inputs: { issue_number: "", reconcile_project: true },
+        repository: { full_name: "soroeru/Soroeru" },
+      },
+      { repositoryFullName: "soroeru/Soroeru" },
+    ),
+    {
+      source: "project.reconcile",
       issueNumber: null,
       issue: null,
     },

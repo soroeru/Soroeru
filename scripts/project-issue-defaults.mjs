@@ -432,7 +432,7 @@ export function normalizeProjectIssueEvent(event, { repositoryFullName } = {}) {
   const hasDispatchInput =
     event.inputs != null && Object.prototype.hasOwnProperty.call(event.inputs, "issue_number");
 
-  if (hasDispatchInput && !event.issue) {
+  if (hasDispatchInput && String(event.inputs.issue_number ?? "").trim() && !event.issue) {
     return {
       source: "workflow_dispatch",
       issueNumber: parseIssueNumberInput(event.inputs.issue_number),
@@ -440,9 +440,14 @@ export function normalizeProjectIssueEvent(event, { repositoryFullName } = {}) {
     };
   }
 
-  if (event.schedule && !event.issue) {
+  if (
+    (event.schedule ||
+      event.inputs?.reconcile_project === true ||
+      event.inputs?.reconcile_project === "true") &&
+    !event.issue
+  ) {
     return {
-      source: "schedule",
+      source: "project.reconcile",
       issueNumber: null,
       issue: null,
     };
@@ -533,7 +538,7 @@ async function main() {
     return { ...result, source };
   };
 
-  if (normalized.source === "schedule") {
+  if (normalized.source === "project.reconcile") {
     if (config.projects.length !== 1) throw new Error("project-config-ambiguous");
     const projectConfig = { ...config.projects[0], requireClassification: false };
     const issueNumbers = selectReconciliationIssueNumbers(

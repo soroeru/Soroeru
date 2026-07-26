@@ -9,8 +9,13 @@ on:
     inputs:
       issue_number:
         description: Repository issue number to (re)apply Project defaults
-        required: true
+        required: false
         type: string
+      reconcile_project:
+        description: Reconcile manually added Project items
+        required: false
+        default: false
+        type: boolean
 
 # Project writes use a short-lived GitHub App installation token, not GITHUB_TOKEN.
 permissions:

@@ -167,6 +167,10 @@ script rejects non-positive numbers, missing Issues, pull-request numbers, and
 repository mismatches before any Project mutation. Idempotent re-runs reuse the
 existing Project item and reconverge fields.
 
+To run the same reconciliation used by the schedule immediately, leave
+`issue_number` empty and enable `reconcile_project`. This scans all Project
+pages and updates only Issue items with a missing managed field.
+
 ```bash
 gh workflow run project-issue-defaults.yml --repo soroeru/Soroeru -f issue_number=413
 ```
