@@ -78,7 +78,7 @@ export function buildProjectQuery(ownerType) {
   // connection and does not accept `number` (that shape returns GraphQL errors).
   // Only organization projects are supported.
   if (ownerType !== "organization") throw new Error("invalid-owner-type");
-  return `query Project($owner: String!, $number: Int!) { organization(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100) { nodes { id content { ... on Issue { id number } } fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } } } }`;
+  return `query Project($owner: String!, $number: Int!, $cursor: String) { organization(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id content { ... on Issue { id number body } } fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } } } }`;
 }
 
 export const ADD_ITEM_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: { projectId: $projectId contentId: $contentId }) { item { id } } }`;
@@ -88,13 +88,16 @@ export const ITERATION_FIELD_QUERY = `query IterationField($fieldId: ID!) { node
 export const ITEM_FIELD_VALUES_QUERY = `query ItemFieldValues($itemId: ID!) { node(id: $itemId) { ... on ProjectV2Item { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } }`;
 
 export function selectReconciliationIssueNumbers(project, config = {}) {
-  const requiredFields = [
-    config.fields?.priority ?? "Priority",
-    config.fields?.size ?? "Size",
-    config.fields?.featureGroup ?? "Feature group",
-  ];
   return (project?.items?.nodes ?? []).flatMap((item) => {
     if (!item.content?.id || !Number.isSafeInteger(item.content.number)) return [];
+    const metadata = parseProjectMetadata(item.content.body ?? "");
+    const requiredFields = [
+      config.fields?.priority ?? "Priority",
+      config.fields?.size ?? "Size",
+      ...(metadata.featureGroup
+        ? [config.fields?.featureGroup ?? "Feature group"]
+        : []),
+    ];
     const observed = new Map(
       (item.fieldValues?.nodes ?? []).map((value) => [
         value.field?.name,
@@ -105,6 +108,34 @@ export function selectReconciliationIssueNumbers(project, config = {}) {
       ? [item.content.number]
       : [];
   });
+}
+
+export async function loadProjectPages({ owner, ownerType, number, graphql }) {
+  if (typeof graphql !== "function") throw new Error("graphql-required");
+  const query = buildProjectQuery(ownerType);
+  const nodes = [];
+  let cursor = null;
+  let project = null;
+  while (true) {
+    const data = await graphql(query, { owner, number, cursor });
+    const pageProject = data?.[ownerType]?.projectV2;
+    if (!pageProject) throw new Error("project-not-found");
+    if (!Array.isArray(pageProject.items?.nodes)) throw new Error("project-items-not-found");
+    project ??= pageProject;
+    nodes.push(...pageProject.items.nodes);
+    if (!pageProject.items.pageInfo?.hasNextPage) break;
+    if (!pageProject.items.pageInfo.endCursor)
+      throw new Error("project-pagination-cursor-missing");
+    cursor = pageProject.items.pageInfo.endCursor;
+  }
+  return {
+    ...project,
+    items: {
+      ...project.items,
+      nodes,
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
+  };
 }
 
 /**
@@ -472,12 +503,12 @@ async function main() {
       projectConfig?.owner || process.env.GITHUB_REPOSITORY_OWNER || repoOwner;
     if (!projectOwner || !projectConfig?.number) throw new Error("project-config-incomplete");
     const ownerType = projectConfig.ownerType ?? "organization";
-    const data = await githubGraphql(
-      buildProjectQuery(ownerType),
-      { owner: projectOwner, number: projectConfig.number },
-      token,
-    );
-    return data[ownerType]?.projectV2;
+    return loadProjectPages({
+      owner: projectOwner,
+      ownerType,
+      number: projectConfig.number,
+      graphql: (query, variables) => githubGraphql(query, variables, token),
+    });
   };
   const applyIssueNumber = async (issueNumber, source, issueRecord = null) => {
     const issue =

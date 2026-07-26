@@ -18,6 +18,7 @@ import {
   nextAvailableIterationStartDate,
   selectProjectConfig,
   selectReconciliationIssueNumbers,
+  loadProjectPages,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -519,7 +520,14 @@ test("scheduled reconciliation selects Issues with missing managed Project field
     items: {
       nodes: [
         {
-          content: { id: "I_484", number: 484 },
+          content: {
+            id: "I_484",
+            number: 484,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Feature group: Project orchestration\n" +
+              "<!-- project-metadata:end -->",
+          },
           fieldValues: {
             nodes: [
               { field: { name: "Priority" }, name: "P1" },
@@ -529,8 +537,32 @@ test("scheduled reconciliation selects Issues with missing managed Project field
           },
         },
         {
-          content: { id: "I_485", number: 485 },
+          content: {
+            id: "I_485",
+            number: 485,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Feature group: Project orchestration\n" +
+              "<!-- project-metadata:end -->",
+          },
           fieldValues: { nodes: [] },
+        },
+        {
+          content: {
+            id: "I_400",
+            number: 400,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Priority: P2\n" +
+              "- Size: M\n" +
+              "<!-- project-metadata:end -->",
+          },
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P2" },
+              { field: { name: "Size" }, name: "M" },
+            ],
+          },
         },
         {
           content: { id: "PR_486" },
@@ -550,6 +582,58 @@ test("scheduled reconciliation selects Issues with missing managed Project field
     }),
     [485],
   );
+});
+
+test("Project pagination includes missing-field Issues after the first page", async () => {
+  const calls = [];
+  const graphql = async (_query, variables) => {
+    calls.push(variables);
+    const secondPage = variables.cursor === "next";
+    return {
+      organization: {
+        projectV2: {
+          id: "project-1",
+          title: "Visibility",
+          fields: { nodes: [{ id: "priority", name: "Priority", dataType: "SINGLE_SELECT" }] },
+          items: {
+            pageInfo: {
+              hasNextPage: !secondPage,
+              endCursor: secondPage ? null : "next",
+            },
+            nodes: secondPage
+              ? [
+                  {
+                    id: "item-485",
+                    content: {
+                      id: "I_485",
+                      number: 485,
+                      body:
+                        "<!-- project-metadata:start -->\n" +
+                        "- Feature group: Project orchestration\n" +
+                        "<!-- project-metadata:end -->",
+                    },
+                    fieldValues: { nodes: [] },
+                  },
+                ]
+              : [],
+          },
+        },
+      },
+    };
+  };
+
+  const project = await loadProjectPages({
+    owner: "soroeru",
+    ownerType: "organization",
+    number: 1,
+    graphql,
+  });
+
+  assert.deepEqual(calls, [
+    { owner: "soroeru", number: 1, cursor: null },
+    { owner: "soroeru", number: 1, cursor: "next" },
+  ]);
+  assert.deepEqual(selectReconciliationIssueNumbers(project), [485]);
 });
 
 test("normalizeProjectIssueEvent rejects PRs, invalid numbers, and repository mismatch", () => {
