@@ -422,30 +422,6 @@ test("does not update a project when classification is required but absent", asy
   );
 });
 
-test("creates the iteration before adding the Issue item", async () => {
-  const calls = [];
-  const graphql = async (query) => {
-    calls.push(query);
-    if (query.includes("UpdateIteration")) {
-      throw new Error("iteration-api-failed");
-    }
-    throw new Error("item-mutation-must-not-run");
-  };
-  const issue = issueFixture();
-  issue.body =
-    "<!-- project-metadata:start -->\n- Priority: P2\n- Size: M\n- Feature group: New group\n<!-- project-metadata:end -->";
-  const project = projectFixture();
-  project.items.nodes = [];
-  await assert.rejects(
-    applyProjectDefaults({ issue, project, graphql, config: { projectName: "Visibility" } }),
-    /iteration-api-failed/,
-  );
-  assert.equal(
-    calls.some((query) => query.includes("AddItem")),
-    false,
-  );
-});
-
 test("parseIssueNumberInput accepts positive integers only", () => {
   assert.equal(parseIssueNumberInput("413"), 413);
   assert.equal(parseIssueNumberInput(" 7 "), 7);
@@ -876,7 +852,7 @@ test("buildIterationConfiguration uses startDate and avoids date collisions", ()
   assert.equal("id" in configuration.iterations[0], false);
 });
 
-test("creates a missing iteration with non-colliding startDate", async () => {
+test("applies other defaults without changing Project configuration when iteration is missing", async () => {
   const calls = [];
   const project = projectFixture();
   project.items.nodes = [];
@@ -890,20 +866,6 @@ test("creates a missing iteration with non-colliding startDate", async () => {
   issue.node_id = "issue-node-new";
   const graphql = async (query, variables) => {
     calls.push({ query, variables });
-    if (query.includes("UpdateIteration")) {
-      return {
-        updateProjectV2Field: {
-          projectV2Field: {
-            configuration: {
-              iterations: [
-                { id: "it-existing", title: "既存", startDate: "2026-07-16", duration: 1 },
-                { id: "it-new", title: "New group", startDate: "2026-07-17", duration: 1 },
-              ],
-            },
-          },
-        },
-      };
-    }
     if (query.includes("AddItem")) return { addProjectV2ItemById: { item: { id: "item-new" } } };
     if (query.includes("ItemFieldValues")) {
       return {
@@ -914,7 +876,6 @@ test("creates a missing iteration with non-colliding startDate", async () => {
               { field: { name: "Size" }, name: "M" },
               { field: { name: "Start date" }, date: "2026-07-16" },
               { field: { name: "Target date" }, date: "2026-07-16" },
-              { field: { name: "Iteration" }, title: "New group" },
               { field: { name: "Feature group" }, text: "New group" },
             ],
           },
@@ -929,10 +890,16 @@ test("creates a missing iteration with non-colliding startDate", async () => {
     graphql,
     config: { projectName: "Visibility" },
   });
-  assert.equal(result.iteration, "New group");
-  const update = calls.find(({ query }) => query.includes("UpdateIteration"));
-  assert.equal(update.variables.configuration.startDate, "2026-07-16");
-  assert.equal(update.variables.configuration.iterations[1].title, "New group");
-  // Preferred date 2026-07-16 is occupied by 既存, so the new iteration shifts forward.
-  assert.equal(update.variables.configuration.iterations[1].startDate, "2026-07-17");
+  assert.equal(result.iteration, null);
+  assert.equal(
+    calls.some(({ query }) => query.includes("UpdateIteration")),
+    false,
+  );
+  assert.equal(
+    calls.some(
+      ({ query, variables }) =>
+        query.includes("UpdateItem") && variables.fieldId === "iteration",
+    ),
+    false,
+  );
 });

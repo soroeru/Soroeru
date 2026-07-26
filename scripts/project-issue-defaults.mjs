@@ -88,6 +88,11 @@ export const ITERATION_FIELD_QUERY = `query IterationField($fieldId: ID!) { node
 export const ITEM_FIELD_VALUES_QUERY = `query ItemFieldValues($itemId: ID!) { node(id: $itemId) { ... on ProjectV2Item { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } }`;
 
 export function selectReconciliationIssueNumbers(project, config = {}) {
+  const availableIterations = new Set(
+    (project?.fields?.nodes ?? [])
+      .find((field) => field.dataType === "ITERATION")
+      ?.configuration?.iterations?.map((iteration) => iteration.title) ?? [],
+  );
   return (project?.items?.nodes ?? []).flatMap((item) => {
     if (!item.content?.id || !Number.isSafeInteger(item.content.number)) return [];
     const metadata = parseProjectMetadata(item.content.body ?? "");
@@ -96,7 +101,9 @@ export function selectReconciliationIssueNumbers(project, config = {}) {
       config.fields?.size ?? "Size",
       config.fields?.startDate ?? "Start date",
       config.fields?.targetDate ?? "Target date",
-      config.fields?.iteration ?? "Iteration",
+      ...(metadata.featureGroup && availableIterations.has(metadata.featureGroup)
+        ? [config.fields?.iteration ?? "Iteration"]
+        : []),
       ...(metadata.featureGroup
         ? [config.fields?.featureGroup ?? "Feature group"]
         : []),
@@ -247,30 +254,10 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   const iterationTitle = metadata.featureGroup || dates.name;
 
   // All reads and validations are complete; mutations start here.
-  let iteration = findIterationByTitle(iterationField.configuration?.iterations, iterationTitle);
-  if (!iteration) {
-    // ProjectV2IterationFieldConfigurationInput requires duration + startDay (not
-    // startDate at the field level). Preserve existing iteration ids so GitHub
-    // updates rather than replacing the series.
-    const configuration = buildIterationConfiguration(iterationField, {
-      title: iterationTitle,
-      startDate: dates.startDate,
-      duration: 1,
-    });
-    const updateResult = await graphql(UPDATE_ITERATION_MUTATION, {
-      fieldId: iterationField.id,
-      configuration,
-    });
-    iteration = findIterationByTitle(
-      updateResult?.updateProjectV2Field?.projectV2Field?.configuration?.iterations,
-      iterationTitle,
-    );
-    if (!iteration) {
-      const refreshed = await graphql(ITERATION_FIELD_QUERY, { fieldId: iterationField.id });
-      iteration = findIterationByTitle(refreshed?.node?.configuration?.iterations, iterationTitle);
-    }
-    if (!iteration) throw new Error("iteration-create-not-confirmed");
-  }
+  const iteration = findIterationByTitle(
+    iterationField.configuration?.iterations,
+    iterationTitle,
+  );
   const existing = project.items?.nodes?.find((item) => item.content?.id === issueNodeId);
   const itemId =
     existing?.id ??
@@ -301,12 +288,14 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
       value: { date: value },
     });
   }
-  await graphql(UPDATE_ITEM_MUTATION, {
-    projectId: project.id,
-    itemId,
-    fieldId: iterationField.id,
-    value: { iterationId: iteration.id },
-  });
+  if (iteration) {
+    await graphql(UPDATE_ITEM_MUTATION, {
+      projectId: project.id,
+      itemId,
+      fieldId: iterationField.id,
+      value: { iterationId: iteration.id },
+    });
+  }
   if (metadata.featureGroup) {
     await graphql(UPDATE_ITEM_MUTATION, {
       projectId: project.id,
@@ -332,7 +321,7 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     [sizeFieldName, resolved.size],
     [startDateFieldName, dates.startDate],
     [targetDateFieldName, dates.targetDate],
-    [iterationFieldName, iteration.title],
+    ...(iteration ? [[iterationFieldName, iteration.title]] : []),
     ...(metadata.featureGroup ? [[featureGroupFieldName, metadata.featureGroup]] : []),
   ];
   const unconverged = expected
@@ -343,7 +332,12 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     error.fields = unconverged;
     throw error;
   }
-  return { itemId, projectName: project.title, iteration: iteration.title, reasons: resolved.reasons };
+  return {
+    itemId,
+    projectName: project.title,
+    iteration: iteration?.title ?? null,
+    reasons: resolved.reasons,
+  };
 }
 
 /**

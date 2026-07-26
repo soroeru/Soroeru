@@ -95,7 +95,9 @@ is configured, every Issue is added to it; deterministic classification is used
 only to choose among multiple configured Projects. It resolves Project, field,
 option, item, and iteration IDs by name through GraphQL; IDs are intentionally
 not stored in the repository. The workflow sets Priority, Size, Feature group,
-Start/Target date, and Iteration. Feature group is copied from the bounded
+and Start/Target date. It also sets Iteration when an exact-name iteration
+already exists; it never changes Project field configuration using the
+short-lived App token. Feature group is copied from the bounded
 `project-metadata` block in the Issue body. Agent/model assignment is decided at
 orchestration run time and is **not** stored in the Project or the Issue body;
 the former `AI Assignees` / `AI Sub Assignees` fields are abolished (the
