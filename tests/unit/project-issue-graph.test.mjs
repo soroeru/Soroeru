@@ -1077,3 +1077,27 @@ test("an interrupted fix pass keeps its fix cycle across the handoff", async () 
   assert.equal(handoff.role, "implementer");
   assert.equal(handoff.fixCycle, 1, "the replacement worker must still know a PR exists");
 });
+
+test("a second integration-gate rejection blocks instead of reopening again", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "PASS" });
+
+  // First gate rejection spends the gate's own single reopen.
+  await run.resume({ accepted: false, reason: "conflicts-with-other-issues-in-run" });
+  let state = await run.state();
+  assert.equal(state.roleStates[0].gateReopens, 1);
+  assert.equal(state.roleStates[0].status, "active");
+
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "PASS" });
+  const result = await run.resume({ accepted: false, reason: "conflicts-with-other-issues-in-run" });
+
+  assert.equal(result.runStatus, "blocked");
+  state = await run.state();
+  assert.equal(state.roleStates[0].status, "blocked");
+  assert.equal(state.roleStates[0].blockedReason, "integration-gate-rejected-twice");
+  assert.deepEqual(state.milestones, []);
+  assert.deepEqual(state.completed, []);
+});

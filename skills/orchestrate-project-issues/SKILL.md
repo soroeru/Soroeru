@@ -63,8 +63,10 @@ commit, so it enters the existing worktree read-only.
 
 Review is bounded: a `NEEDS_REVISION` verdict buys one implementer fix pass, `REJECTED` blocks
 immediately, and at most two review passes ever run. An integration-gate rejection reopens the
-program at the implementer under the same budget. Pass `--single-worker` to fall back to one
-worker owning the whole Issue.
+program at the implementer on its **own** single allowance, separate from the review passes; a
+second gate rejection blocks the Issue (`integration-gate-rejected-twice`), and a reopen is
+refused outright when no review pass is left to check the fix. Pass `--single-worker` to fall
+back to one worker owning the whole Issue.
 
 `parallel-analysis-implement-review` has no role program yet and is never selected.
 

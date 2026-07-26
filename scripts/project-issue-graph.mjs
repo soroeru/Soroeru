@@ -328,6 +328,7 @@ function ensureRoleState(state, item, pool) {
     index: 0,
     reviewPasses: 0,
     fixCycles: 0,
+    gateReopens: 0,
     routes,
     status: "active",
     ...(degraded ? { degraded } : {}),

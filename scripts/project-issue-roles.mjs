@@ -72,6 +72,14 @@ export const REVIEW_VERDICTS = Object.freeze(["PASS", "NEEDS_REVISION", "REJECTE
 export const MAX_REVIEW_PASSES = 2;
 
 /**
+ * An integration-gate rejection may send the program back to the implementer
+ * once. This budget is separate from MAX_REVIEW_PASSES: a gate rejection is a
+ * cross-Issue problem, not a code-review round, so it gets its own single
+ * allowance and a second rejection stops the Issue instead of cycling.
+ */
+export const MAX_GATE_REOPENS = 1;
+
+/**
  * Keys that must never appear in a dispatch payload. Kept identical to
  * DISALLOWED_KEYS in `src/shared/role-schemas.ts`; a contract test asserts
  * the two lists stay in sync.
@@ -227,6 +235,14 @@ export function advanceRoleProgram(roleState, { role, verdict } = {}) {
  * review budget bounds this too, so a rejected Issue cannot cycle forever.
  */
 export function reopenRoleProgramForFix(roleState, reason) {
+  // The gate gets one reopen of its own. A second rejection means the fix did
+  // not resolve the cross-Issue problem, so stop rather than cycle.
+  const gateReopens = roleState.gateReopens ?? 0;
+  if (gateReopens >= MAX_GATE_REOPENS) {
+    return { ...roleState, status: "blocked", blockedReason: `${reason}-twice` };
+  }
+  // The review budget is still shared: a reopen has no value if no review pass
+  // is left to check the fix.
   if (roleState.reviewPasses >= MAX_REVIEW_PASSES) {
     return { ...roleState, status: "blocked", blockedReason: reason };
   }
@@ -235,6 +251,7 @@ export function reopenRoleProgramForFix(roleState, reason) {
     index: roleState.program.indexOf(ROLES.IMPLEMENTER),
     status: "active",
     fixCycles: roleState.fixCycles + 1,
+    gateReopens: gateReopens + 1,
   };
 }
 
