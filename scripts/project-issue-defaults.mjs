@@ -78,7 +78,7 @@ export function buildProjectQuery(ownerType) {
   // connection and does not accept `number` (that shape returns GraphQL errors).
   // Only organization projects are supported.
   if (ownerType !== "organization") throw new Error("invalid-owner-type");
-  return `query Project($owner: String!, $number: Int!, $cursor: String) { organization(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id content { ... on Issue { id number body } } fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } } } }`;
+  return `query Project($owner: String!, $number: Int!, $cursor: String) { organization(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id content { ... on Issue { id number body } } fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } } } } } }`;
 }
 
 export const ADD_ITEM_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: { projectId: $projectId contentId: $contentId }) { item { id } } }`;
@@ -94,6 +94,9 @@ export function selectReconciliationIssueNumbers(project, config = {}) {
     const requiredFields = [
       config.fields?.priority ?? "Priority",
       config.fields?.size ?? "Size",
+      config.fields?.startDate ?? "Start date",
+      config.fields?.targetDate ?? "Target date",
+      config.fields?.iteration ?? "Iteration",
       ...(metadata.featureGroup
         ? [config.fields?.featureGroup ?? "Feature group"]
         : []),
@@ -101,7 +104,7 @@ export function selectReconciliationIssueNumbers(project, config = {}) {
     const observed = new Map(
       (item.fieldValues?.nodes ?? []).map((value) => [
         value.field?.name,
-        value.name ?? value.text,
+        value.name ?? value.text ?? value.date ?? value.title,
       ]),
     );
     return requiredFields.some((fieldName) => !observed.get(fieldName))

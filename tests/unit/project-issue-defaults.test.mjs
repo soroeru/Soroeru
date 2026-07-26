@@ -533,6 +533,9 @@ test("scheduled reconciliation selects Issues with missing managed Project field
               { field: { name: "Priority" }, name: "P1" },
               { field: { name: "Size" }, name: "S" },
               { field: { name: "Feature group" }, text: "Project orchestration" },
+              { field: { name: "Start date" }, date: "2026-07-26" },
+              { field: { name: "Target date" }, date: "2026-07-26" },
+              { field: { name: "Iteration" }, title: "Project orchestration" },
             ],
           },
         },
@@ -561,6 +564,28 @@ test("scheduled reconciliation selects Issues with missing managed Project field
             nodes: [
               { field: { name: "Priority" }, name: "P2" },
               { field: { name: "Size" }, name: "M" },
+              { field: { name: "Start date" }, date: "2026-07-16" },
+              { field: { name: "Target date" }, date: "2026-07-16" },
+              { field: { name: "Iteration" }, title: "2026-07-16" },
+            ],
+          },
+        },
+        {
+          content: {
+            id: "I_486",
+            number: 486,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Feature group: Project automation\n" +
+              "<!-- project-metadata:end -->",
+          },
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P2" },
+              { field: { name: "Size" }, name: "M" },
+              { field: { name: "Feature group" }, text: "Project automation" },
+              { field: { name: "Start date" }, date: "2026-07-27" },
+              { field: { name: "Iteration" }, title: "Project automation" },
             ],
           },
         },
@@ -580,7 +605,7 @@ test("scheduled reconciliation selects Issues with missing managed Project field
         featureGroup: "Feature group",
       },
     }),
-    [485],
+    [485, 486],
   );
 });
 
