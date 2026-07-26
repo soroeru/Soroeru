@@ -108,8 +108,10 @@ export async function githubGraphql(query, variables, { token, fetchImpl = fetch
   return payload.data;
 }
 
-const GET_PROJECT_QUERY = `query GetProject($owner: String!, $number: Int!) {
-  user(login: $owner) {
+export function buildProjectByNumberQuery(ownerType) {
+  if (!OWNER_TYPES.has(ownerType)) throw new Error("invalid-owner-type");
+  return `query GetProject($owner: String!, $number: Int!) {
+  ${ownerType}(login: $owner) {
     projectV2(number: $number) {
       id
       fields(first: 100) {
@@ -135,6 +137,7 @@ const GET_PROJECT_QUERY = `query GetProject($owner: String!, $number: Int!) {
     }
   }
 }`;
+}
 
 const UPDATE_STATUS_MUTATION = `mutation UpdateStatus($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input: { projectId: $projectId itemId: $itemId fieldId: $fieldId value: $value }) {
@@ -164,7 +167,8 @@ const READBACK_STATUS_QUERY = `query ReadbackStatus($itemId: ID!) {
  */
 export async function transitionBacklogToReady({
   projectNumber,
-  projectOwner = "user",
+  projectOwner,
+  projectOwnerType = "organization",
   selectedIssueNumbers = [],
   dryRun = false,
   graphql,
@@ -180,11 +184,11 @@ export async function transitionBacklogToReady({
   if (selectedSet.size === 0) return { transitioned: [] };
 
   // Phase 1: Fetch Project and validate all IDs before mutations
-  const projectData = await graphql(GET_PROJECT_QUERY, {
+  const projectData = await graphql(buildProjectByNumberQuery(projectOwnerType), {
     owner: projectOwner,
     number: projectNumber,
   });
-  const project = projectData?.user?.projectV2;
+  const project = projectData?.[projectOwnerType]?.projectV2;
   if (!project) throw new Error("project-not-found");
 
   const statusField = project.fields.nodes.find((f) => f.name === fieldNames.status);

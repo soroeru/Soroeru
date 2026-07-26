@@ -94,6 +94,28 @@ test("selects the sole organization project for an unclassified Issue", () => {
   );
 });
 
+test("selects the sole organization project for every supported classification", () => {
+  const project = {
+    name: "Visibility",
+    number: 1,
+    owner: "soroeru",
+    ownerType: "organization",
+    requireClassification: true,
+    candidates: [
+      { name: "Visibility", keywords: ["visibility"] },
+      { name: "Bulk Update", keywords: ["bulk update"] },
+      { name: "Registration / Form Automation", keywords: ["registration"] },
+    ],
+  };
+
+  for (const title of ["visibility", "bulk update", "registration"]) {
+    assert.deepEqual(selectProjectConfig({ title, body: "", labels: [] }, [project]), {
+      ...project,
+      requireClassification: false,
+    });
+  }
+});
+
 test("does not select a project when an unclassified Issue has multiple candidates", () => {
   assert.equal(
     selectProjectConfig(

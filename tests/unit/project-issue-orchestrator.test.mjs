@@ -966,7 +966,7 @@ test("reads dependencies from Blocked by without requesting Issue bodies", async
   const graphql = async (query) => {
     queries.push(query);
     return {
-      user: {
+      organization: {
         projectV2: {
           items: {
             pageInfo: { hasNextPage: false, endCursor: null },
@@ -1000,7 +1000,7 @@ test("reads dependencies from Blocked by without requesting Issue bodies", async
 
 test("ignores legacy AI assignee Project fields instead of failing", async () => {
   const graphql = async () => ({
-    user: {
+    organization: {
       projectV2: {
         items: {
           pageInfo: { hasNextPage: false, endCursor: null },
@@ -1124,7 +1124,7 @@ test("skips draft, pull request, and non-Issue Project items", async () => {
     content,
   });
   const graphql = async () => ({
-    user: {
+    organization: {
       projectV2: {
         items: {
           pageInfo: { hasNextPage: false, endCursor: null },
@@ -1151,7 +1151,7 @@ test("parses the documented operational Project CLI flags", () => {
       "--project-owner",
       "octo",
       "--owner-type",
-      "user",
+      "organization",
       "--project-name",
       "Visibility",
       "--dry-run",
@@ -1235,7 +1235,7 @@ test("selects exactly one owner/type/name/number Project configuration", () => {
     projects[1],
   );
   assert.throws(
-    () => selectProjectConfig(projects, { name: "Visibility", number: 9 }),
+    () => selectProjectConfig(projects, { name: "Visibility" }),
     /project-config-ambiguous/,
   );
   assert.throws(
@@ -1283,7 +1283,7 @@ test("transitionBacklogToReady performs dry-run without mutations", async () => 
   const graphql = async (query) => {
     calls.push(query);
     return {
-      user: {
+      organization: {
         projectV2: {
           id: "proj-1",
           fields: {
@@ -1335,7 +1335,7 @@ test("transitionBacklogToReady transitions Backlog to Ready and validates readba
     calls.push({ query, variables });
     if (query.includes("GetProject")) {
       return {
-        user: {
+        organization: {
           projectV2: {
             id: "proj-1",
             fields: {
@@ -1394,7 +1394,7 @@ test("transitionBacklogToReady skips Ready items (idempotent)", async () => {
     calls.push(query);
     if (query.includes("GetProject")) {
       return {
-        user: {
+        organization: {
           projectV2: {
             id: "proj-1",
             fields: {
@@ -1440,7 +1440,7 @@ test("transitionBacklogToReady skips Ready items (idempotent)", async () => {
 
 test("transitionBacklogToReady throws on missing Status field", async () => {
   const graphql = async () => ({
-    user: {
+    organization: {
       projectV2: {
         id: "proj-1",
         fields: { nodes: [] },
@@ -1463,7 +1463,7 @@ test("transitionBacklogToReady throws on missing Status field", async () => {
 
 test("transitionBacklogToReady throws on missing Ready option", async () => {
   const graphql = async () => ({
-    user: {
+    organization: {
       projectV2: {
         id: "proj-1",
         fields: {
@@ -1497,7 +1497,7 @@ test("transitionBacklogToReady throws when readback fails to converge", async ()
   const graphql = async (query) => {
     if (query.includes("GetProject")) {
       return {
-        user: {
+        organization: {
           projectV2: {
             id: "proj-1",
             fields: {

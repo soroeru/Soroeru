@@ -327,6 +327,7 @@ async function main() {
       const transitionResult = await transitionBacklogToReady({
         projectNumber: input.projectInfo.number,
         projectOwner: input.projectInfo.owner,
+        projectOwnerType: input.projectInfo.ownerType,
         selectedIssueNumbers: selectedNumbers,
         dryRun: Boolean(cli.dryRun),
         graphql: (query, variables) =>

@@ -51,6 +51,9 @@ export function classifyProject(issue, candidates = PROJECT_RULES) {
 
 export function selectProjectConfig(issue, projects) {
   const configured = (projects ?? []).filter((candidate) => candidate?.number);
+  if (configured.length === 1) {
+    return { ...configured[0], requireClassification: false };
+  }
   const projectName = classifyProject(
     issue,
     configured.flatMap((candidate) => candidate.candidates ?? []),
@@ -58,8 +61,7 @@ export function selectProjectConfig(issue, projects) {
   if (projectName) {
     return configured.find((candidate) => candidate.name === projectName) ?? null;
   }
-  if (configured.length !== 1) return null;
-  return { ...configured[0], requireClassification: false };
+  return null;
 }
 
 export function calculateIterationDates(issueDate) {
