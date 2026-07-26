@@ -106,9 +106,17 @@ Never pass Issue bodies, diffs, plans, or another role's output through the disp
 - No worktree: worker uses `issue-implementation`.
 - Existing Issue worktree/metadata: worker uses `handoff-issue` before editing.
 - A reviewer is dispatched without `--skill` and must not run `issue-implementation` or
-  `handoff-issue`; it works read-only inside the existing Issue worktree. It consults only the
-  Issue's acceptance criteria, the changed file paths, the branch diff, and the test summary,
-  and returns a `PASS` / `NEEDS_REVISION` / `REJECTED` verdict.
+  `handoff-issue`; it works read-only inside the existing Issue worktree. It consults the
+  Issue's acceptance criteria, the pull request body, the changed file paths, the branch diff,
+  and the test summary, and returns a `PASS` / `NEEDS_REVISION` / `REJECTED` verdict.
+- **Findings live on the pull request, not in run state.** The reviewer posts one PR comment
+  (`gh pr comment`) whose first line is `role=reviewer pass=<N> verdict=<…>`, and the verdict
+  also comes back as the `role-complete` event. GitHub's review feature is unusable here: one
+  account owns both the PR and the review, so `gh pr review` is forbidden.
+- **A fix pass never opens a second PR.** An implementer re-dispatched after `NEEDS_REVISION`
+  receives `--fix-cycle <N>`, is told a PR already exists, reads the findings with
+  `gh pr view --comments`, pushes to the same branch, and posts its own PR comment headed
+  `role=implementer fix-cycle=<N>` stating what it changed per finding.
 - Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which never includes the Parent agent; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 - A route that fails at actual dispatch (not just at discovery) is a signal the cached capability record no longer reflects reality. Pass `--invalidate-agent <name>` on the *next* orchestrator invocation (in addition to this run's `--unavailable-agent`) so that agent is dropped from the capability cache and re-probed instead of being trusted as "ok" indefinitely.
 

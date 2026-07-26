@@ -265,6 +265,7 @@ export function buildRoleDispatchPayload({
   releasePolicy,
   nextMilestone,
   reviewPass,
+  fixCycle,
 }) {
   if (!VALID_ROLES.includes(role)) throw new Error(`invalid-role:${role}`);
   if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) throw new Error("issue-number-required");
@@ -277,6 +278,9 @@ export function buildRoleDispatchPayload({
     releasePolicy,
     nextMilestone,
     ...(role === ROLES.REVIEWER ? { reviewPass: reviewPass ?? 1 } : {}),
+    // A fix cycle tells the implementer that a pull request already exists and
+    // that the reviewer's findings are waiting on it.
+    ...(role === ROLES.IMPLEMENTER && Number(fixCycle) > 0 ? { fixCycle: Number(fixCycle) } : {}),
   };
   assertNoDisallowedKeys(payload);
   return payload;

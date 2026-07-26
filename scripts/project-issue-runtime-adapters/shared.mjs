@@ -428,19 +428,33 @@ const NO_STATE_LEAK_RULE =
  * later role cannot see an earlier role's conversation — it reads the Issue,
  * the worktree, and the diff for itself.
  */
-function roleInstructions({ role, issueNumber, skill, reviewPass }) {
+function roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }) {
   if (role === "planner")
     return [
       `Plan the implementation of exactly one GitHub Issue. Do not implement it.`,
       `Use the repository ${skill} skill to enter the Issue worktree, then write the plan to docs/design/<slug>.md with an "Issue: #${issueNumber}" reference near the top.`,
       "Report role-complete with role=planner when the plan is committed. Do not push or open a pull request.",
     ];
-  if (role === "reviewer")
+  if (role === "reviewer") {
+    const pass = reviewPass ?? 1;
     return [
-      `Independently review the changes for this Issue (review pass ${reviewPass ?? 1}). Do not modify, commit, push, or merge anything.`,
+      `Independently review the changes for this Issue (review pass ${pass}). Do not modify, commit, push, or merge anything.`,
       `Read-only: work inside the existing Issue worktree (.worktrees/issue-${issueNumber}-*). Do not run issue-implementation, handoff-issue, or any other implementation skill — they commit.`,
-      "Consult only the Issue's stated acceptance criteria, the changed file paths, the branch diff, and the test-run summary. You have no access to the implementer's reasoning and must not ask for it.",
-      "Report role-complete with role=reviewer and verdict=PASS | NEEDS_REVISION | REJECTED, plus concise findings.",
+      "Consult the Issue's stated acceptance criteria, the pull request body, the changed file paths, the branch diff, and the test-run summary. You have no access to the implementer's reasoning and must not ask for it.",
+      // The findings have to outlive this process: the next role runs as a
+      // separate CLI and can only read what is on GitHub or on disk.
+      `Post your findings as ONE pull request comment (\`gh pr comment\`), starting with the exact line \`role=reviewer pass=${pass} verdict=<PASS|NEEDS_REVISION|REJECTED>\` followed by the findings list. GitHub's review feature is unavailable because the PR author and the reviewer share one account, so do not use \`gh pr review\`.`,
+      "Then report role-complete with role=reviewer and that same verdict.",
+    ];
+  }
+  if (Number(fixCycle) > 0)
+    return [
+      `Address the reviewer's findings for this Issue (fix cycle ${fixCycle}). A pull request already exists.`,
+      `Use the repository ${skill} skill to resume the existing Issue worktree.`,
+      `Read the findings with \`gh pr view --comments\`: take the newest comment whose first line starts with \`role=reviewer\`.`,
+      "Do NOT create a pull request — push to the same branch so the existing one updates.",
+      `After pushing, post ONE pull request comment starting with the exact line \`role=implementer fix-cycle=${fixCycle}\`, stating per finding what you changed or why you did not.`,
+      "Then report role-complete with role=implementer.",
     ];
   return [
     `Implement exactly one GitHub Issue using the repository ${skill} skill.`,
@@ -461,6 +475,7 @@ export function buildWorkerPrompt({
   role,
   skill = "issue-implementation",
   reviewPass,
+  fixCycle,
 }) {
   if (!role) {
     // Single-worker mode: one worker owns the whole Issue, as before roles.
@@ -474,7 +489,7 @@ export function buildWorkerPrompt({
     ].join("\n");
   }
   return [
-    ...roleInstructions({ role, issueNumber, skill, reviewPass }),
+    ...roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }),
     `Issue: #${issueNumber}`,
     `Role: ${role}`,
     `Assigned route: agent=${agent} model=${model}`,

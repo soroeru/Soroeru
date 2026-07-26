@@ -660,6 +660,9 @@ function assignRoutesNode(state) {
             role,
             executionMode: roleState.executionMode,
             ...(role === ROLES.REVIEWER ? { reviewPass: roleState.reviewPasses + 1 } : {}),
+            ...(role === ROLES.IMPLEMENTER && roleState.fixCycles > 0
+              ? { fixCycle: roleState.fixCycles }
+              : {}),
           }
         : {}),
     });
@@ -711,6 +714,7 @@ async function dispatchWorkerNode(payload, config) {
           releasePolicy: payload.releasePolicy,
           nextMilestone: payload.nextMilestone,
           ...(assignment.reviewPass === undefined ? {} : { reviewPass: assignment.reviewPass }),
+          ...(assignment.fixCycle === undefined ? {} : { fixCycle: assignment.fixCycle }),
         });
   try {
     const started = await deps.dispatch({
@@ -1029,6 +1033,9 @@ function selectHandoffRouteNode(state) {
             ...(activeRole === ROLES.REVIEWER
               ? { reviewPass: handoffRoleState.reviewPasses + 1 }
               : {}),
+            ...(activeRole === ROLES.IMPLEMENTER && handoffRoleState.fixCycles > 0
+              ? { fixCycle: handoffRoleState.fixCycles }
+              : {}),
           }
         : {}),
     });
@@ -1207,6 +1214,7 @@ export function createDefaultDeps({ cwd }) {
           ...(job.skill ? ["--skill", job.skill] : []),
           ...(job.executionMode ? ["--execution-mode", job.executionMode] : []),
           ...(job.reviewPass ? ["--review-pass", String(job.reviewPass)] : []),
+          ...(job.fixCycle ? ["--fix-cycle", String(job.fixCycle)] : []),
         ],
       };
     },

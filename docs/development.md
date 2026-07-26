@@ -237,7 +237,7 @@ node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json 
 #   --issue 413 --release-policy merged --next-milestone pr-created \
 #   --role reviewer --execution-mode direct-review --review-pass 1
 #   (implementation roles add --skill issue-implementation | handoff-issue;
-#    a reviewer never gets one)
+#    a reviewer never gets one. A fix pass adds --fix-cycle <N>.)
 node --test tests/unit/project-issue-orchestrator.test.mjs \
   tests/unit/project-issue-capabilities.test.mjs \
   tests/unit/project-issue-defaults.test.mjs \
@@ -388,9 +388,15 @@ Each runnable Issue gets a deterministic execution mode and role program
 a separate CLI process on its own verified route — `implementer` and `reviewer`
 differ whenever more than one route is verified — so a reviewer cannot see the
 implementer's reasoning. The reviewer is dispatched without `--skill` and works
-read-only in the existing worktree. Review is bounded at two passes:
+read-only in the existing worktree. The reviewer posts its findings as one pull
+request comment headed `role=reviewer pass=<N> verdict=<…>` (`gh pr comment`);
+only the verdict enters graph state. Review is bounded at two passes:
 `NEEDS_REVISION` buys one implementer fix cycle, `REJECTED` blocks, and an
-integration-gate rejection reopens the program under the same budget. With a
+integration-gate rejection reopens the program under the same budget. A
+fix-cycle implementer is dispatched with `--fix-cycle <N>`, reads the findings
+with `gh pr view --comments`, pushes to the existing branch instead of opening a
+second PR, and records what it changed in a `role=implementer fix-cycle=<N>`
+comment. With a
 role program active, `pr-created` is reached by finishing the program (the
 reviewer's `PASS` opens the gate); reporting that milestone early is rejected
 with `role-program-active`. Under `--release-policy merged` the run keeps

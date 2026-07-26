@@ -27,6 +27,7 @@ import { splitSelector } from "./project-issue-runtime-adapters/shared.mjs";
  * @param {string} [input.skill] - issue-implementation | handoff-issue
  * @param {string} [input.executionMode]
  * @param {number} [input.reviewPass]
+ * @param {number} [input.fixCycle] - >0 means the implementer is fixing review findings
  * @param {string} [input.cwd]
  */
 export async function dispatchWorker(input, ctx = {}) {
@@ -62,6 +63,7 @@ export async function dispatchWorker(input, ctx = {}) {
           releasePolicy: input.releasePolicy,
           nextMilestone: input.nextMilestone,
           ...(input.reviewPass === undefined ? {} : { reviewPass: input.reviewPass }),
+          ...(input.fixCycle === undefined ? {} : { fixCycle: input.fixCycle }),
         });
 
   const job = {
@@ -103,6 +105,7 @@ export function parseDispatchCliArgs(argv) {
       ["--skill", "skill"],
       ["--execution-mode", "executionMode"],
       ["--review-pass", "reviewPass"],
+      ["--fix-cycle", "fixCycle"],
       ["--cwd", "cwd"],
     ]);
     const key = valueFlags.get(flag);
@@ -115,12 +118,16 @@ export function parseDispatchCliArgs(argv) {
   if (!options.issue) throw new Error("issue-required");
   if (!options.releasePolicy) throw new Error("release-policy-required");
   if (!options.nextMilestone) throw new Error("next-milestone-required");
-  if (options.reviewPass !== undefined) {
-    // These flags are machine-generated; a bad value must fail closed rather
-    // than reach the prompt as "review pass NaN".
-    const reviewPass = Number(options.reviewPass);
-    if (!Number.isSafeInteger(reviewPass) || reviewPass < 1)
-      throw new Error(`invalid-flag-value:--review-pass:${options.reviewPass}`);
+  // These flags are machine-generated; a bad value must fail closed rather
+  // than reach the prompt as "review pass NaN".
+  for (const [flag, key] of [
+    ["--review-pass", "reviewPass"],
+    ["--fix-cycle", "fixCycle"],
+  ]) {
+    if (options[key] === undefined) continue;
+    const value = Number(options[key]);
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error(`invalid-flag-value:${flag}:${options[key]}`);
   }
   return options;
 }
@@ -138,6 +145,7 @@ async function main() {
     ...(cli.skill === undefined ? {} : { skill: cli.skill }),
     ...(cli.executionMode === undefined ? {} : { executionMode: cli.executionMode }),
     ...(cli.reviewPass === undefined ? {} : { reviewPass: Number(cli.reviewPass) }),
+    ...(cli.fixCycle === undefined ? {} : { fixCycle: Number(cli.fixCycle) }),
   });
   process.stdout.write(
     `${JSON.stringify({

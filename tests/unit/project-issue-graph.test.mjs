@@ -1045,3 +1045,35 @@ test("an interrupted planner is handed off away from the implementer's route", a
   assert.notEqual(handoff.route.agent, implementerRoute.agent);
   assert.notEqual(handoff.route.agent, planner.route.agent);
 });
+
+test("a fix pass tells the implementer a PR already exists", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  const first = run.deps.dispatched.at(-1);
+  // The first pass creates the PR, so it carries no fix cycle.
+  assert.equal(first.role, "implementer");
+  assert.equal(Object.hasOwn(first, "fixCycle"), false);
+  assert.equal(first.skill, "issue-implementation");
+
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "NEEDS_REVISION" });
+
+  const fix = run.deps.dispatched.at(-1);
+  assert.equal(fix.role, "implementer");
+  assert.equal(fix.fixCycle, 1);
+  // handoff-issue resumes the worktree; it never opens a second PR.
+  assert.equal(fix.skill, "handoff-issue");
+  assert.ok(fix.dispatchCommand === undefined || fix.dispatchCommand.includes("--fix-cycle"));
+});
+
+test("an interrupted fix pass keeps its fix cycle across the handoff", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "NEEDS_REVISION" });
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "session-limit" });
+
+  const handoff = run.deps.dispatched.at(-1);
+  assert.equal(handoff.role, "implementer");
+  assert.equal(handoff.fixCycle, 1, "the replacement worker must still know a PR exists");
+});

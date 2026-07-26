@@ -222,7 +222,7 @@ test("the reviewer prompt withholds the implementer's reasoning and forbids edit
   assert.match(prompt, /Role: reviewer/);
   assert.match(prompt, /Do not modify, commit, push, or merge/);
   assert.match(prompt, /no access to the implementer's reasoning/);
-  assert.match(prompt, /verdict=PASS \| NEEDS_REVISION \| REJECTED/);
+  assert.match(prompt, /verdict=<PASS\|NEEDS_REVISION\|REJECTED>/);
   // Acceptance criteria, diffs, and test results are read by the worker
   // itself; the prompt never carries them.
   assert.equal(prompt.includes("acceptance criteria\n"), false);
@@ -281,4 +281,72 @@ test("the planner prefers a route distinct from the implementer's", () => {
   assert.equal(distinctPreferenceRole(ROLES.REVIEWER), ROLES.IMPLEMENTER);
   assert.equal(distinctPreferenceRole(ROLES.IMPLEMENTER), ROLES.REVIEWER);
   assert.equal(counterpartRole(ROLES.PLANNER), null);
+});
+
+test("the reviewer prompt names the pull request comment as the findings destination", () => {
+  const prompt = buildWorkerPrompt({
+    issueNumber: 482,
+    agent: "Grok",
+    model: "grok-4",
+    releasePolicy: "pr-created",
+    nextMilestone: "pr-created",
+    role: "reviewer",
+    skill: skillForRole("reviewer", { hasWorktree: true }),
+    reviewPass: 2,
+  });
+  assert.match(prompt, /gh pr comment/);
+  assert.match(prompt, /role=reviewer pass=2 verdict=<PASS\|NEEDS_REVISION\|REJECTED>/);
+  // GitHub's review feature cannot express the verdict: one account owns both
+  // the PR and the review.
+  assert.match(prompt, /do not use `gh pr review`/);
+});
+
+test("a fix-cycle implementer is told a PR exists and where the findings are", () => {
+  const prompt = buildWorkerPrompt({
+    issueNumber: 482,
+    agent: "Claude",
+    model: "sonnet",
+    releasePolicy: "pr-created",
+    nextMilestone: "pr-created",
+    role: "implementer",
+    skill: "handoff-issue",
+    fixCycle: 1,
+  });
+  assert.match(prompt, /Do NOT create a pull request/);
+  assert.match(prompt, /gh pr view --comments/);
+  assert.match(prompt, /role=implementer fix-cycle=1/);
+});
+
+test("the first implementer pass still creates the pull request", () => {
+  const prompt = buildWorkerPrompt({
+    issueNumber: 482,
+    agent: "Claude",
+    model: "sonnet",
+    releasePolicy: "pr-created",
+    nextMilestone: "pr-created",
+    role: "implementer",
+    skill: "issue-implementation",
+  });
+  assert.match(prompt, /the pull request exists/);
+  assert.equal(prompt.includes("Do NOT create a pull request"), false);
+  assert.equal(prompt.includes("fix-cycle"), false);
+});
+
+test("fixCycle reaches the dispatch payload only for a fixing implementer", () => {
+  const base = {
+    issueNumber: 482,
+    executionMode: "direct-review",
+    skill: "handoff-issue",
+    releasePolicy: "pr-created",
+    nextMilestone: "pr-created",
+  };
+  assert.equal(buildRoleDispatchPayload({ ...base, role: "implementer", fixCycle: 2 }).fixCycle, 2);
+  assert.equal(
+    Object.hasOwn(buildRoleDispatchPayload({ ...base, role: "implementer", fixCycle: 0 }), "fixCycle"),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(buildRoleDispatchPayload({ ...base, role: "reviewer", fixCycle: 2 }), "fixCycle"),
+    false,
+  );
 });
