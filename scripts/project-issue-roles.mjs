@@ -54,8 +54,13 @@ export const MODE_ROLE_PROGRAMS = Object.freeze({
  * includes `plan-implement-review`; the unimplemented parallel-analysis mode
  * is therefore never selected by accident.
  */
-export function modePreferencesFor(riskCategory) {
-  return String(riskCategory ?? "low").toLowerCase() === "low"
+export function modePreferencesFor(riskCategory, dependencyDepth = 0) {
+  const lowRisk = String(riskCategory ?? "low").toLowerCase() === "low";
+  // `determineEligibleModes` also keeps `direct-review` eligible at
+  // dependencyDepth exactly 2, so the depth has to be part of the preference
+  // too — otherwise a depth-2 Issue would skip planning, contradicting the
+  // documented "depth >= 2 selects plan-implement-review" rule.
+  return lowRisk && Number(dependencyDepth) <= 1
     ? [EXECUTION_MODES.DIRECT_REVIEW, EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW]
     : [EXECUTION_MODES.PLAN_IMPLEMENT_REVIEW, EXECUTION_MODES.DIRECT_REVIEW];
 }
@@ -104,13 +109,14 @@ const DISALLOWED_PAYLOAD_KEY_SET = new Set(DISALLOWED_PAYLOAD_KEYS);
  */
 export function selectExecutionMode(item = {}) {
   const riskCategory = item.riskCategory ?? "low";
+  const dependencyDepth = Array.isArray(item.dependencies) ? item.dependencies.length : 0;
   const eligibleModes = determineEligibleModes({
     riskCategory,
     size: item.size ?? "M",
-    dependencyDepth: Array.isArray(item.dependencies) ? item.dependencies.length : 0,
+    dependencyDepth,
     ...(item.changeScopeCount === undefined ? {} : { changeScopeCount: item.changeScopeCount }),
   });
-  const mode = rankAndSelectMode(eligibleModes, modePreferencesFor(riskCategory));
+  const mode = rankAndSelectMode(eligibleModes, modePreferencesFor(riskCategory, dependencyDepth));
   return { mode, eligibleModes, selectionReason: "deterministic-policy" };
 }
 
@@ -160,12 +166,25 @@ export function skillForRole(role, { hasWorktree }) {
 
 /**
  * The role whose route this role must differ from. Independent review means
- * the implementer and the reviewer never share a runtime.
+ * the implementer and the reviewer never share a runtime; this pair is the
+ * only *hard* rule, so a proposal violating it is rejected.
  */
 export function counterpartRole(role) {
   if (role === ROLES.REVIEWER) return ROLES.IMPLEMENTER;
   if (role === ROLES.IMPLEMENTER) return ROLES.REVIEWER;
   return null;
+}
+
+/**
+ * The role whose route this role should *prefer* to differ from when picking
+ * one. Adds the planner, which `assignRoleRoutes` already keeps off the
+ * implementer's route so plan and implementation come from different
+ * runtimes — without that preference a planner handoff would fall back to the
+ * implementer's route even with other verified routes left.
+ */
+export function distinctPreferenceRole(role) {
+  if (role === ROLES.PLANNER) return ROLES.IMPLEMENTER;
+  return counterpartRole(role);
 }
 
 /** Advance a role program. Returns the next state, never mutating the input. */

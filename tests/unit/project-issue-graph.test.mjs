@@ -993,3 +993,55 @@ test("a handoff with no distinct route left shares one and records the degradati
   const state = await run.state();
   assert.equal(state.roleStates[0].degraded, "same-route-reviewer:no-distinct-route-left");
 });
+
+test("malformed role-complete events are rejected without touching state", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  const before = await run.state();
+
+  // The event's role must match the running worker's role.
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "PASS" });
+  let state = await run.state();
+  assert.equal(state.lastEventError, "invalid-event:role-mismatch:1:reviewer");
+  assert.deepEqual(state.roleStates, before.roleStates);
+
+  // A reviewer completion needs a valid verdict.
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "LGTM" });
+  state = await run.state();
+  assert.equal(state.lastEventError, "invalid-event:invalid-review-verdict:LGTM");
+  assert.equal(state.roleStates[0].status, "active");
+  assert.equal(state.roleStates[0].reviewPasses, 0);
+});
+
+test("a role-complete event in single-worker mode is rejected", async () => {
+  const run = makeRun();
+  await run.invoke(makeInput({ items: [item(1)] }));
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  const state = await run.state();
+  assert.equal(state.lastEventError, "invalid-event:no-role-program:1");
+  assert.deepEqual(state.roleStates, []);
+  assert.deepEqual(state.milestones, []);
+});
+
+test("an interrupted planner is handed off away from the implementer's route", async () => {
+  const run = makeRun();
+  await run.invoke({
+    // A third worker route has to remain after the planner's agent is
+    // excluded, otherwise sharing is unavoidable.
+    ...roleInput([item(1, [], { size: "XL" })]),
+    capabilities: [...defaultCapabilities, workerRoute("Gemini", "gemini-3")],
+  });
+  const planner = run.deps.dispatched.at(-1);
+  assert.equal(planner.role, "planner");
+  const state = await run.state();
+  const implementerRoute = state.roleStates[0].routes.implementer;
+
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" });
+  const handoff = run.deps.dispatched.at(-1);
+  assert.equal(handoff.role, "planner");
+  // Without a planner preference this would fall back to pool[0], which is
+  // exactly the implementer's route.
+  assert.notEqual(handoff.route.agent, implementerRoute.agent);
+  assert.notEqual(handoff.route.agent, planner.route.agent);
+});

@@ -115,6 +115,13 @@ export function parseDispatchCliArgs(argv) {
   if (!options.issue) throw new Error("issue-required");
   if (!options.releasePolicy) throw new Error("release-policy-required");
   if (!options.nextMilestone) throw new Error("next-milestone-required");
+  if (options.reviewPass !== undefined) {
+    // These flags are machine-generated; a bad value must fail closed rather
+    // than reach the prompt as "review pass NaN".
+    const reviewPass = Number(options.reviewPass);
+    if (!Number.isSafeInteger(reviewPass) || reviewPass < 1)
+      throw new Error(`invalid-flag-value:--review-pass:${options.reviewPass}`);
+  }
   return options;
 }
 

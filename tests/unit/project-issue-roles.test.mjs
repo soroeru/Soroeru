@@ -10,6 +10,7 @@ import {
   assertNoDisallowedKeys,
   buildRoleDispatchPayload,
   counterpartRole,
+  distinctPreferenceRole,
   modePreferencesFor,
   roleProgramForMode,
   selectExecutionMode,
@@ -257,4 +258,27 @@ test("an integration-gate rejection reopens the program within the review budget
   const blocked = reopenRoleProgramForFix(exhausted, "integration-gate-rejected");
   assert.equal(blocked.status, "blocked");
   assert.equal(blocked.blockedReason, "integration-gate-rejected");
+});
+
+test("dependency depth 2 selects plan-implement-review even at low risk", () => {
+  // determineEligibleModes keeps direct-review eligible at depth exactly 2,
+  // so the preference has to consider depth or the documented
+  // "depth >= 2 -> plan-implement-review" rule would be contradicted.
+  const eligible = determineEligibleModes({ size: "M", riskCategory: "low", dependencyDepth: 2 });
+  assert.equal(eligible.includes("direct-review"), true);
+  const depth = (n) => ({ size: "M", riskCategory: "low", dependencies: Array.from({ length: n }, (_, i) => i) });
+  assert.equal(selectExecutionMode(depth(0)).mode, "direct-review");
+  assert.equal(selectExecutionMode(depth(1)).mode, "direct-review");
+  assert.equal(selectExecutionMode(depth(2)).mode, "plan-implement-review");
+  assert.equal(selectExecutionMode(depth(3)).mode, "plan-implement-review");
+  assert.deepEqual(modePreferencesFor("low", 2), ["plan-implement-review", "direct-review"]);
+});
+
+test("the planner prefers a route distinct from the implementer's", () => {
+  // counterpartRole stays the hard implementer/reviewer rule; the planner
+  // only carries a preference, used when picking a route.
+  assert.equal(distinctPreferenceRole(ROLES.PLANNER), ROLES.IMPLEMENTER);
+  assert.equal(distinctPreferenceRole(ROLES.REVIEWER), ROLES.IMPLEMENTER);
+  assert.equal(distinctPreferenceRole(ROLES.IMPLEMENTER), ROLES.REVIEWER);
+  assert.equal(counterpartRole(ROLES.PLANNER), null);
 });

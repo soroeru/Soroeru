@@ -68,6 +68,7 @@ import {
   assignRoleRoutes,
   buildRoleDispatchPayload,
   counterpartRole,
+  distinctPreferenceRole,
   reopenRoleProgramForFix,
   roleProgramForMode,
   selectExecutionMode,
@@ -359,7 +360,7 @@ function modeTelemetryFor(roleState, outcome) {
  * recorded route. Returns the fallback reason when no distinct route is left.
  */
 function pickRoleRoute(pool, roleState, role) {
-  const counterpart = roleState.routes[counterpartRole(role)];
+  const counterpart = roleState.routes[distinctPreferenceRole(role)];
   const distinct = pool.find((candidate) => !counterpart || !sameRoute(candidate, counterpart));
   return distinct
     ? { route: distinct }
@@ -548,10 +549,16 @@ function assignRoutesNode(state) {
   const roleStates = new Map();
   if (!singleWorker) {
     try {
-      // Guard the single-owner rule for a worktree; each Issue owns one.
-      validateWorktreeConcurrency(
-        activeExecutions(state).map(({ worktreeId }) => ({ worktree: worktreeId })),
-      );
+      // Guard the single-owner rule for a worktree: each Issue owns one, and
+      // a role program dispatches into it one role at a time. Checking the
+      // running executions alone can never collide (state keeps one execution
+      // per Issue), so the candidates about to be dispatched go in too — that
+      // is what would actually clash if the dispatchCandidates filter ever
+      // stopped excluding an Issue whose worker is still running.
+      validateWorktreeConcurrency([
+        ...activeExecutions(state).map(({ worktreeId }) => ({ worktree: worktreeId })),
+        ...candidates.map(({ number }) => ({ worktree: `issue-${number}` })),
+      ]);
       for (const item of candidates) roleStates.set(item.number, ensureRoleState(state, item, pool));
     } catch (error) {
       return { failureReason: error.message };
