@@ -17,6 +17,7 @@ import {
   buildIterationConfiguration,
   nextAvailableIterationStartDate,
   selectProjectConfig,
+  selectReconciliationIssueNumbers,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -186,8 +187,9 @@ const projectFixture = () => ({
         id: "iteration",
         name: "Iteration",
         dataType: "ITERATION",
-        configuration: { iterations: [{ id: "it-existing", title: "2026-07-16" }] },
+        configuration: { iterations: [{ id: "it-existing", title: "Visibility collection" }] },
       },
+      { id: "feature-group", name: "Feature group", dataType: "TEXT" },
     ],
   },
 });
@@ -196,7 +198,12 @@ const issueFixture = () => ({
   id: "issue-1",
   node_id: "issue-node-1",
   title: "Visibility collection",
-  body: "<!-- project-metadata:start -->\n- Priority: P2\n- Size: M\n<!-- project-metadata:end -->",
+  body:
+    "<!-- project-metadata:start -->\n" +
+    "- Priority: P2\n" +
+    "- Size: M\n" +
+    "- Feature group: Visibility collection\n" +
+    "<!-- project-metadata:end -->",
   labels: [],
   created_at: "2026-07-15T00:00:00Z",
 });
@@ -209,7 +216,8 @@ const convergedFieldValues = {
         { field: { name: "Size" }, name: "M" },
         { field: { name: "Start date" }, date: "2026-07-16" },
         { field: { name: "Target date" }, date: "2026-07-16" },
-        { field: { name: "Iteration" }, title: "2026-07-16" },
+        { field: { name: "Iteration" }, title: "Visibility collection" },
+        { field: { name: "Feature group" }, text: "Visibility collection" },
       ],
     },
   },
@@ -230,7 +238,7 @@ test("reuses an existing item and iteration and confirms convergence by readback
   });
 
   assert.equal(result.itemId, "item-existing");
-  assert.equal(result.iteration, "2026-07-16");
+  assert.equal(result.iteration, "Visibility collection");
   assert.deepEqual(result.reasons, []);
   assert.equal(
     calls.some(({ query }) => query.includes("AddItem")),
@@ -240,9 +248,17 @@ test("reuses an existing item and iteration and confirms convergence by readback
     calls.some(({ query }) => query.includes("UpdateIteration")),
     false,
   );
-  // Five field mutations (Priority, Size, Start date, Target date, Iteration)
+  // Six field mutations (Priority, Size, Start date, Target date, Iteration,
+  // Feature group)
   // plus the final readback query.
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 7);
+  assert.deepEqual(
+    calls.find(
+      ({ query, variables }) =>
+        query.includes("UpdateItem") && variables.fieldId === "feature-group",
+    )?.variables.value,
+    { text: "Visibility collection" },
+  );
   assert.equal(calls.at(-1).query.includes("ItemFieldValues"), true);
 });
 
@@ -257,7 +273,8 @@ test("does not report success when the readback shows an unconverged field", asy
               { field: { name: "Size" }, name: "M" },
               { field: { name: "Start date" }, date: "2026-07-16" },
               { field: { name: "Target date" }, date: "2026-07-16" },
-              { field: { name: "Iteration" }, title: "2026-07-16" },
+              { field: { name: "Iteration" }, title: "Visibility collection" },
+              { field: { name: "Feature group" }, text: "Visibility collection" },
             ],
           },
         },
@@ -478,6 +495,61 @@ test("normalizeProjectIssueEvent shapes issues.opened and workflow_dispatch the 
     issueNumber: 413,
     issue: null,
   });
+});
+
+test("normalizeProjectIssueEvent accepts a scheduled Project reconciliation", () => {
+  assert.deepEqual(
+    normalizeProjectIssueEvent(
+      {
+        schedule: "*/15 * * * *",
+        repository: { full_name: "soroeru/Soroeru" },
+      },
+      { repositoryFullName: "soroeru/Soroeru" },
+    ),
+    {
+      source: "schedule",
+      issueNumber: null,
+      issue: null,
+    },
+  );
+});
+
+test("scheduled reconciliation selects Issues with missing managed Project fields", () => {
+  const project = {
+    items: {
+      nodes: [
+        {
+          content: { id: "I_484", number: 484 },
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P1" },
+              { field: { name: "Size" }, name: "S" },
+              { field: { name: "Feature group" }, text: "Project orchestration" },
+            ],
+          },
+        },
+        {
+          content: { id: "I_485", number: 485 },
+          fieldValues: { nodes: [] },
+        },
+        {
+          content: { id: "PR_486" },
+          fieldValues: { nodes: [] },
+        },
+      ],
+    },
+  };
+
+  assert.deepEqual(
+    selectReconciliationIssueNumbers(project, {
+      fields: {
+        priority: "Priority",
+        size: "Size",
+        featureGroup: "Feature group",
+      },
+    }),
+    [485],
+  );
 });
 
 test("normalizeProjectIssueEvent rejects PRs, invalid numbers, and repository mismatch", () => {
@@ -717,6 +789,7 @@ test("creates a missing iteration with non-colliding startDate", async () => {
               { field: { name: "Start date" }, date: "2026-07-16" },
               { field: { name: "Target date" }, date: "2026-07-16" },
               { field: { name: "Iteration" }, title: "New group" },
+              { field: { name: "Feature group" }, text: "New group" },
             ],
           },
         },
