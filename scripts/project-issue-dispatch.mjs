@@ -11,6 +11,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { buildRoleDispatchPayload } from "./project-issue-roles.mjs";
 import { launchWithAdapter } from "./project-issue-runtime-adapters/index.mjs";
 import { splitSelector } from "./project-issue-runtime-adapters/shared.mjs";
 
@@ -22,6 +23,11 @@ import { splitSelector } from "./project-issue-runtime-adapters/shared.mjs";
  * @param {number} input.issueNumber
  * @param {string} input.releasePolicy
  * @param {string} input.nextMilestone
+ * @param {string} [input.role] - planner | implementer | reviewer; omitted in single-worker mode
+ * @param {string} [input.skill] - issue-implementation | handoff-issue
+ * @param {string} [input.executionMode]
+ * @param {number} [input.reviewPass]
+ * @param {number} [input.fixCycle] - >0 means the implementer is fixing review findings
  * @param {string} [input.cwd]
  */
 export async function dispatchWorker(input, ctx = {}) {
@@ -39,15 +45,34 @@ export async function dispatchWorker(input, ctx = {}) {
   const tokens = splitSelector(route.selector);
   if (!tokens.includes(route.model)) throw new Error("model-mismatch");
 
+  // The role-scoped half of the job goes through the closed-payload builder,
+  // so the deny-list guard runs on the live dispatch path, not only in tests.
+  const rolePayload =
+    input.role === undefined
+      ? {
+          issueNumber: input.issueNumber,
+          releasePolicy: input.releasePolicy,
+          nextMilestone: input.nextMilestone,
+          ...(input.skill === undefined ? {} : { skill: input.skill }),
+        }
+      : buildRoleDispatchPayload({
+          role: input.role,
+          issueNumber: input.issueNumber,
+          executionMode: input.executionMode,
+          skill: input.skill,
+          releasePolicy: input.releasePolicy,
+          nextMilestone: input.nextMilestone,
+          ...(input.reviewPass === undefined ? {} : { reviewPass: input.reviewPass }),
+          ...(input.fixCycle === undefined ? {} : { fixCycle: input.fixCycle }),
+        });
+
   const job = {
-    issueNumber: input.issueNumber,
+    ...rolePayload,
     agent: route.agent,
     model: route.model,
     requestedModel: route.requestedModel,
     selector: route.selector,
     timeoutMs: route.timeoutMs,
-    releasePolicy: input.releasePolicy,
-    nextMilestone: input.nextMilestone,
     cwd: input.cwd,
   };
 
@@ -57,6 +82,7 @@ export async function dispatchWorker(input, ctx = {}) {
     model: route.model,
     selector: route.selector,
     issueNumber: input.issueNumber,
+    ...(input.role === undefined ? {} : { role: input.role }),
     pid: handle.pid,
     kill: handle.kill,
     wait: handle.wait,
@@ -75,6 +101,11 @@ export function parseDispatchCliArgs(argv) {
       ["--issue", "issue"],
       ["--release-policy", "releasePolicy"],
       ["--next-milestone", "nextMilestone"],
+      ["--role", "role"],
+      ["--skill", "skill"],
+      ["--execution-mode", "executionMode"],
+      ["--review-pass", "reviewPass"],
+      ["--fix-cycle", "fixCycle"],
       ["--cwd", "cwd"],
     ]);
     const key = valueFlags.get(flag);
@@ -87,6 +118,17 @@ export function parseDispatchCliArgs(argv) {
   if (!options.issue) throw new Error("issue-required");
   if (!options.releasePolicy) throw new Error("release-policy-required");
   if (!options.nextMilestone) throw new Error("next-milestone-required");
+  // These flags are machine-generated; a bad value must fail closed rather
+  // than reach the prompt as "review pass NaN".
+  for (const [flag, key] of [
+    ["--review-pass", "reviewPass"],
+    ["--fix-cycle", "fixCycle"],
+  ]) {
+    if (options[key] === undefined) continue;
+    const value = Number(options[key]);
+    if (!Number.isSafeInteger(value) || value < 1)
+      throw new Error(`invalid-flag-value:${flag}:${options[key]}`);
+  }
   return options;
 }
 
@@ -99,6 +141,11 @@ async function main() {
     releasePolicy: cli.releasePolicy,
     nextMilestone: cli.nextMilestone,
     cwd: cli.cwd,
+    ...(cli.role === undefined ? {} : { role: cli.role }),
+    ...(cli.skill === undefined ? {} : { skill: cli.skill }),
+    ...(cli.executionMode === undefined ? {} : { executionMode: cli.executionMode }),
+    ...(cli.reviewPass === undefined ? {} : { reviewPass: Number(cli.reviewPass) }),
+    ...(cli.fixCycle === undefined ? {} : { fixCycle: Number(cli.fixCycle) }),
   });
   process.stdout.write(
     `${JSON.stringify({
@@ -106,6 +153,7 @@ async function main() {
       agent: handle.agent,
       model: handle.model,
       issueNumber: handle.issueNumber,
+      ...(handle.role === undefined ? {} : { role: handle.role }),
       pid: handle.pid,
     })}\n`,
   );

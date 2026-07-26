@@ -712,22 +712,25 @@ when commands change.
 
 ## 13. Multi-Agent Orchestration Architecture
 
-This section documents the target **multi-agent orchestration architecture** implemented across Issues `#440`–`#445`. The orchestration system coordinates Issue execution while enforcing local-first security, strict role isolation, deterministic dependency management, and privacy-preserving observability.
+This section documents the target **multi-agent orchestration architecture** implemented across Issues `#439`–`#446` and `#482`. The orchestration system coordinates Issue execution while enforcing local-first security, strict role isolation, deterministic dependency management, and privacy-preserving observability.
+
+**Trust boundary.** Everything in §13 is *development-time repository infrastructure*: it builds Soroeru, it is never part of the shipped Electron app, and it never touches the user's vault or personal data. Its egress is GitHub (Issues, Projects, pull requests) plus the operator's own agent CLIs; the JSONL/SQLite telemetry sink here is a local developer log on the operator's machine, not product telemetry. The product-level non-negotiables elsewhere in this document — no backend, no telemetry, no egress beyond the sites the user acts on and their own AI provider — constrain the app, and §13 sits outside their scope rather than being an exception to them.
 
 ```text
-ProjectGraph (Parent Orchestrator)
+ProjectGraph (Parent Orchestrator, scripts/project-issue-graph.mjs)
 ├── 1. Capabilities Discovery (Codex / Claude / Grok / Gemini capability probing)
 ├── 2. Project Items & GitHub Dependency Closure Graph
 ├── 3. Deterministic Batch Selection (maxParallel, Priority rank, Issue #)
-└── 4. Integration Quality Gate (Cross-Issue conflict, contract, criteria checks)
+├── 4. Role Program per Issue (execution mode → role sequence → verified route per role)
+├── 5. Role-by-Role Dispatch & Event Loop (assign_routes → dispatch_worker → wait_for_events)
+├── 6. Recovery (idempotency keys, worktree-preserving handoff; retry/handoff caps NOT yet enforced — §13.4)
+└── 7. Integration Quality Gate (Cross-Issue conflict, contract, criteria checks)
       │
-      ▼ Dispatches
-IssueSubgraph (Worker Execution State Machine)
-├── Prepare Worktree (.worktrees/issue-<number>-<slug>)
-├── Select Bounded Execution Mode (direct-review | plan-implement-review | parallel-analysis-implement-review)
-├── Role-Isolated Context Execution (Zod-validated schemas: Planner, Analyst, Implementer, Reviewer, Verifier)
-├── Bounded Recovery State Machine (Same-route retry max 1, alternate-route handoff max 1, idempotency keys)
-└── Commit, Push & Pull Request Creation
+      ▼ Dispatches one CLI process per role
+Worker (external agent CLI, own process, own verified route)
+├── Enters .worktrees/issue-<number>-<slug> via issue-implementation or handoff-issue
+├── Fetches its own Issue body, diff, and test results (never received from the parent)
+└── Returns role-complete / milestone events only
       │
       ▼ Telemetry Events
 LLMOps Observability & Offline Evaluation
@@ -735,34 +738,76 @@ LLMOps Observability & Offline Evaluation
 └── Offline Evaluation Harness (Episode reconstruction, Quality-Token Frontier reporting)
 ```
 
-### 13.1 Two-Layer Graph Architecture (`ProjectGraph` & `IssueSubgraph`)
+### 13.1 Role Sequencing in the ProjectGraph (`#439`, `#482`)
 
-The orchestration framework is split into two explicit LangGraph state machines (`scripts/project-issue-graph.mjs`):
+Orchestration is one LangGraph state machine (`scripts/project-issue-graph.mjs`) whose nodes are
+`load_config` → `discover_capabilities` → `fetch_project_issues` → `validate_dependencies` →
+`build_runnable_plan` → `assign_routes` → `dispatch_worker` → `wait_for_events` →
+`integration_gate` → `release_dependents` / `return_to_worker` → `select_handoff_route`, ending at
+one of two terminals: `summarize_run` (complete or blocked) or `fail_run` (a `failureReason` from
+any setup node, or `no-worker-route-available`).
 
-1. **`ProjectGraph` (Parent Orchestrator)**:
-   - Evaluates verified runtime capabilities across Codex, Claude, Grok, and Gemini adapters.
-   - Fetches GitHub Project items and constructs the recursive `Blocked by` dependency graph.
-   - Dispatches runnable Issues in priority order up to `maxParallel`.
-   - Releases dependent Issues only upon reaching the configured milestone (`pr-created` or `merged`).
-   - Executes the **Integration Quality Gate** before dependency release to prevent cross-Issue contract breaks or file conflicts.
+The parent:
 
-2. **`IssueSubgraph` (Worker Execution Machine)**:
-   - Operates strictly inside a dedicated Git worktree (`.worktrees/issue-<number>-<short-slug>`).
-   - Manages state transitions: `prepare_worktree` → `select_execution_mode` → `plan_or_analyze_optional` → `implement` → `run_tests` → `independent_review` → `fix_if_needed` → `final_verify` → `commit_and_push` → `create_pr`.
+- Evaluates verified runtime capabilities across Codex, Claude, Grok, and Gemini adapters.
+- Fetches GitHub Project items and constructs the recursive `Blocked by` dependency graph.
+- Dispatches runnable Issues in priority order up to `maxParallel`.
+- Advances each Issue **role by role** through its role program, dispatching one worker process
+  per role and resuming on `role-complete` events.
+- Releases dependent Issues only upon reaching the configured milestone (`pr-created` or `merged`).
+- Executes the **Integration Quality Gate** before dependency release to prevent cross-Issue contract breaks or file conflicts.
 
-### 13.2 Bounded Execution Modes (`#440`)
+Steps *inside* one role — preparing the worktree, running tests, committing, pushing, opening the
+PR — stay inside the worker's own `issue-implementation` / `handoff-issue` skill run rather than
+becoming parent graph nodes. A separate synchronous `IssueSubgraph` was considered and rejected:
+the parent is interrupt-driven and asynchronous (workers run detached and report events), and
+wrapping a whole Issue lifecycle in one blocking node would have required re-designing waiting,
+handoff, and `maxParallel`.
 
-To prevent arbitrary workflow generation, execution modes are restricted to a deterministic finite set (`scripts/project-issue-modes.mjs`):
+Role isolation is therefore **process isolation**, and it is worth being precise about how much
+that buys.
 
-- **`direct-review`** (Small/Low-Risk Issues): `implementer` → `tests` → `independent reviewer`.
-- **`plan-implement-review`** (Medium/Standard Issues): `planner` → `implementer` → `tests` → `independent reviewer`.
-- **`parallel-analysis-implement-review`** (Large/High-Risk Issues): `parallel analysts` → `synthesizer` → `implementer` → `tests` → `independent reviewer`.
+*Enforced by the architecture*: each role is a separate CLI process on its own verified route, so
+no role can observe another's conversation, chain-of-thought, raw responses, or session; and the
+parent's dispatch payload is a closed, deny-listed set of fields — Issue number, role, route,
+skill, release policy, next milestone (`buildRoleDispatchPayload` / `assertNoDisallowedKeys` in
+`scripts/project-issue-roles.mjs`, on the live dispatch path).
 
-Mode eligibility is decided deterministically based on Issue Size (`S`, `M`, `L`), change scope, dependency depth, and risk category. A candidate mode ranking policy orders eligible modes without expanding the candidate set. `implementer` and `reviewer` roles must use distinct verified routes whenever available. Simultaneous parallel edits to the same worktree are strictly prohibited.
+*Not enforced, deliberately*: the roles **share the Issue worktree**. A planner's output reaches
+the implementer as a committed design doc under `docs/design/`, and the implementer's work
+reaches the reviewer as the branch diff. That on-disk channel is the intended one — it is how
+work is handed along — but it means isolation bounds *conversation* context, not *all* context.
+What a worker reads for its role is governed by its prompt and skill (convention), not by a
+mechanism: the role schemas in §13.3 describe context a worker assembles locally for itself, and
+nothing on the parent side validates that assembly.
+
+### 13.2 Bounded Execution Modes and Role Programs (`#440`, `#482`)
+
+To prevent arbitrary workflow generation, execution modes are restricted to a deterministic finite set (`scripts/project-issue-modes.mjs`), each mapping to a fixed role program (`scripts/project-issue-roles.mjs`):
+
+- **`direct-review`** (Small/Low-Risk Issues): `implementer` → `independent reviewer`.
+- **`plan-implement-review`** (Medium/Standard Issues): `planner` → `implementer` → `independent reviewer`.
+- **`parallel-analysis-implement-review`** (originally intended for Large/High-Risk Issues): `parallel analysts` → `synthesizer` → `implementer` → `independent reviewer`. **Not implemented, and never selected** — it has no entry in `MODE_ROLE_PROGRAMS` and `modePreferencesFor` never ranks it. Large and high-risk Issues therefore run `plan-implement-review` today; they are not left without a plan, they simply get one planner instead of parallel analysts. Reconsider implementing it when telemetry shows `plan-implement-review` failing specifically on large/high-risk Issues — repeated `NEEDS_REVISION` or exhausted review budgets concentrated at size XL or `riskCategory` high/critical. Until that signal exists, the extra analyst fan-out would cost tokens without evidence of benefit.
+
+Mode eligibility is decided deterministically based on Issue Size (`S`, `M`, `L`), change scope, dependency depth, and risk category. A candidate mode ranking policy orders eligible modes without expanding the candidate set; because `direct-review` stays eligible for medium-risk Issues, the preference order is conditioned on risk (`modePreferencesFor`) so anything above low risk buys a planner instead of always taking the cheapest eligible mode. `implementer` and `reviewer` roles use distinct verified routes whenever the pool holds more than one — enforced in both directions, on re-picks, and across handoffs — and a pool with no distinct route left degrades to a shared route with a recorded `same-route-reviewer:*` reason. Simultaneous parallel edits to the same worktree are strictly prohibited (`validateWorktreeConcurrency`, enforced at assignment).
+
+The first implementation role to enter an Issue creates the worktree via `issue-implementation` and later ones resume it via `handoff-issue`; a **reviewer is dispatched with no skill at all**, because both implementation skills commit, and instead works read-only inside the existing worktree.
+
+Review is bounded at two passes (`MAX_REVIEW_PASSES`). A `NEEDS_REVISION` verdict returns the Issue to the implementer for one fix cycle; `REJECTED` blocks immediately. Exhausting the budget blocks the Issue rather than looping.
+
+An integration-gate rejection has its **own** single allowance (`MAX_GATE_REOPENS = 1`), tracked separately from the review passes: a gate rejection is a cross-Issue problem, not a code-review round, so it does not compete with the review budget for its first reopen. A second gate rejection blocks the Issue with `integration-gate-rejected-twice`. The reopen is still refused when no review pass remains to check the fix (`integration-gate-rejected`), because reopening without a following review would publish unreviewed work.
+
+**Where review findings go.** The verdict (`PASS` / `NEEDS_REVISION` / `REJECTED`) travels as a `role-complete` event and is the only review data in graph state; findings text must never enter state, because the checkpointer persists it. The findings themselves are posted by the reviewer as a single pull request comment headed `role=reviewer pass=<N> verdict=<…>`, which makes GitHub the durable channel between two roles that share no process. A fix-cycle implementer receives `--fix-cycle <N>`, reads those comments with `gh pr view --comments`, pushes to the existing branch — it must not open a second PR — and posts its own `role=implementer fix-cycle=<N>` comment recording what it changed per finding. GitHub's native review feature is deliberately unused: the agents act with one human's credentials, so the PR author and the reviewer are the same account and an approve/request-changes state cannot be expressed. Running tests is part of the implementer's own skill run, and the reviewer receives the resulting test summary rather than re-running it. `--single-worker` restores the pre-`#482` behaviour of one worker per Issue.
+
+Terminal mode/role telemetry is emitted exactly once, where the program truly stops: at release, or when the program blocks. Degradation (`degraded`) is recorded separately from why the mode was selected (`selectionReason`).
+
+Under a role program, the `pr-created` milestone is reached by completing the program; reporting it while roles are still active is rejected (`role-program-active`) so dependents cannot be released on unreviewed work. Under `--release-policy merged` the program ends before the release milestone, and the run stays waitable for the external `merged` event rather than summarizing as blocked.
 
 ### 13.3 Role-Specific Context Schemas & Isolation (`#441`)
 
-To prevent reviewer bias, prompt bloat, and context contamination, information passed to worker roles is strictly constrained via Zod schemas (`src/shared/role-schemas.ts`):
+`src/shared/role-schemas.ts` defines dependency-free validators describing what each role may receive. **They are an executable specification, not an enforced boundary: nothing in the repository calls them at runtime today** — the only importer is their own unit test, and the workers are external CLI processes that never load this TypeScript module. They exist to make the intended per-role context reviewable and to keep the deny-list honest.
+
+The shapes:
 
 - **`PlannerInput` / `AnalystInput`**: Receives Issue title, body, repository rules, and codebase context.
 - **`ImplementerInput`**: Receives task plan/analysis findings, Issue details, and target file boundaries.
@@ -770,17 +815,28 @@ To prevent reviewer bias, prompt bloat, and context contamination, information p
 - **`VerifierInput`**: Validates test execution evidence, Git/PR state, and acceptance criteria without re-running subjective review passes.
 - **`HandoffInput`**: Carries Git state, completed steps, failure classification, and resume node payload.
 
-All schemas strictly sanitize and reject disallowed keys (`chainOfThought`, `rawModelResponse`, `toolHistory`, credentials, PII).
+All of them reject disallowed keys (`chainOfThought`, `rawModelResponse`, `toolHistory`, credentials, PII) when called.
+
+**What is actually enforced** is the orchestration-side dispatch payload: `buildRoleDispatchPayload` runs `assertNoDisallowedKeys` over the same deny-list on the live path in both `dispatchWorkerNode` and `dispatchWorker`, and a contract test asserts the two lists stay identical. Giving the schemas a real runtime caller would require a worker-side preflight inside the skill — the workers assemble their own context, so only they are in a position to validate it. Until then, treat §13.3 as the specification and the payload deny-list as the guarantee.
 
 ### 13.4 Bounded Recovery, Handoff, and Safe Resume (`#445`)
 
-Recoverable failures (session limits, timeouts, quota exhaustion, provider crashes) trigger bounded recovery transitions:
+Recoverable failures (session limits, timeouts, quota exhaustion, provider crashes) are handled per **worker process**, which since `#482` means per *role attempt* rather than per Issue: a three-role program has three independently interruptible processes, and a fix cycle adds more.
 
-- **Failure Classification**: Classifies errors into recoverable vs unrecoverable closed reason codes.
-- **Same-Route Retry**: Allowed at most 1 time per execution node.
-- **Alternate-Route Handoff**: Allowed at most 1 time per Issue across remaining verified routes.
-- **State & Worktree Preservation**: Handoff preserves the existing Git worktree, branch, uncommitted changes, completed steps, and review counts.
+Enforced today:
+
+- **Failure Classification**: `classifyFailure` splits errors into recoverable vs unrecoverable closed reason codes.
+- **State & Worktree Preservation**: Handoff terminates only the worker process tree and preserves the Issue worktree, branch, uncommitted changes, role progress, and review counts; the interrupted role resumes as the same role on the new route.
+- **Route Exclusion — two of three paths**: an explicit `worker-interrupted` event and a dispatch-time failure both add the failing agent to the run's unavailable list, so a handoff cannot pick that runtime again. The third path, the `check` lost-notification probe, deliberately does **not**: a worker found dead by the probe says little about its agent CLI, so the agent stays in the pool.
 - **Idempotency Protection**: Action dispatches, git commits, pushes, and PR creations are protected by deterministic `idempotencyKey(issue, action, attempt)` logic to prevent duplicate PRs or commits upon crash recovery.
+- **Review Budget**: bounded independently in §13.2 (at most two review passes and one fix cycle per Issue, plus one integration-gate reopen). This budget is not consumed by a handoff — an interrupted reviewer resumes at the same `reviewPass`, so recovery cannot silently spend a review.
+- **Worktree Provenance**: `select_handoff_route` decides the replacement's skill from recorded state (`worktreeCreated`), not by inferring a worktree from the existence of an execution record. A dispatch-failed attempt never created one, so its replacement runs the creating skill.
+
+**Designed but not yet enforced**: the per-attempt "same-route retry at most once" and per-Issue "alternate-route handoff at most once" caps from `#445`. The `retryCounts` / `handoffCounts` state channels exist but no node reads or increments them, and `select_handoff_route` re-dispatches every interrupted Issue without consulting a budget, failing only when the pool is empty.
+
+The consequence differs by interruption path, and this is the gap the caps must close first. On the two paths that exclude the failing agent, the pool shrinks on each interruption, so the loop terminates. On the **probe path it does not**: a worker that dies silently is re-dispatched to the same route indefinitely, spending real tokens each cycle, with `attemptFor` minting a fresh idempotency key every time. Role-per-process dispatch multiplies the interruption points per Issue, making that path easier to reach than before `#482`. Restating the caps in role-attempt units and naming the node that decrements them is open work.
+
+**Run durability and resume**: the orchestration run's single source of truth is its checkpoint file (`FileCheckpointSaver` in `scripts/project-issue-graph-checkpointer.mjs`, over `@langchain/langgraph-checkpoint`), selected by `--thread-id` and `--checkpoint-file`. Every `interrupt()` pause is durable, so a parent that dies mid-run resumes from the last committed node rather than restarting the Issue. Corruption fails closed with the reason codes `checkpoint-file-required`, `checkpoint-file-corrupt`, and `checkpoint-format-unsupported`; a partial or unreadable file is never treated as an empty run. Because an Issue now spans three or more detached worker processes recorded by `pid` / `pgid`, a resumed parent reconciles them rather than assuming they died with it: `dispatchCandidates` refuses to dispatch into an Issue whose recorded execution is still `running`, and the `check` event re-verifies liveness with a PID-reuse-safe probe (start time must not postdate the recorded dispatch) before anything is treated as dead.
 
 ### 13.5 LLMOps Telemetry & Offline Evaluation (`#442`, `#443`, `#444`)
 
