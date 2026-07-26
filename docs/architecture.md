@@ -743,8 +743,9 @@ LLMOps Observability & Offline Evaluation
 Orchestration is one LangGraph state machine (`scripts/project-issue-graph.mjs`) whose nodes are
 `load_config` → `discover_capabilities` → `fetch_project_issues` → `validate_dependencies` →
 `build_runnable_plan` → `assign_routes` → `dispatch_worker` → `wait_for_events` →
-`integration_gate` → `release_dependents` / `return_to_worker` → `select_handoff_route` →
-`summarize_run`.
+`integration_gate` → `release_dependents` / `return_to_worker` → `select_handoff_route`, ending at
+one of two terminals: `summarize_run` (complete or blocked) or `fail_run` (a `failureReason` from
+any setup node, or `no-worker-route-available`).
 
 The parent:
 
@@ -804,7 +805,9 @@ Under a role program, the `pr-created` milestone is reached by completing the pr
 
 ### 13.3 Role-Specific Context Schemas & Isolation (`#441`)
 
-To prevent reviewer bias, prompt bloat, and context contamination, information passed to worker roles is strictly constrained by dependency-free validators (`src/shared/role-schemas.ts`):
+`src/shared/role-schemas.ts` defines dependency-free validators describing what each role may receive. **They are an executable specification, not an enforced boundary: nothing in the repository calls them at runtime today** — the only importer is their own unit test, and the workers are external CLI processes that never load this TypeScript module. They exist to make the intended per-role context reviewable and to keep the deny-list honest.
+
+The shapes:
 
 - **`PlannerInput` / `AnalystInput`**: Receives Issue title, body, repository rules, and codebase context.
 - **`ImplementerInput`**: Receives task plan/analysis findings, Issue details, and target file boundaries.
@@ -812,7 +815,9 @@ To prevent reviewer bias, prompt bloat, and context contamination, information p
 - **`VerifierInput`**: Validates test execution evidence, Git/PR state, and acceptance criteria without re-running subjective review passes.
 - **`HandoffInput`**: Carries Git state, completed steps, failure classification, and resume node payload.
 
-All schemas strictly sanitize and reject disallowed keys (`chainOfThought`, `rawModelResponse`, `toolHistory`, credentials, PII). Because each role is a separate CLI process, these schemas describe the context a worker assembles **locally** for its own role; the orchestrator's dispatch payload is guarded by the same deny-list (`DISALLOWED_PAYLOAD_KEYS` in `scripts/project-issue-roles.mjs`), and a contract test asserts the two lists stay identical.
+All of them reject disallowed keys (`chainOfThought`, `rawModelResponse`, `toolHistory`, credentials, PII) when called.
+
+**What is actually enforced** is the orchestration-side dispatch payload: `buildRoleDispatchPayload` runs `assertNoDisallowedKeys` over the same deny-list on the live path in both `dispatchWorkerNode` and `dispatchWorker`, and a contract test asserts the two lists stay identical. Giving the schemas a real runtime caller would require a worker-side preflight inside the skill — the workers assemble their own context, so only they are in a position to validate it. Until then, treat §13.3 as the specification and the payload deny-list as the guarantee.
 
 ### 13.4 Bounded Recovery, Handoff, and Safe Resume (`#445`)
 
@@ -822,11 +827,16 @@ Enforced today:
 
 - **Failure Classification**: `classifyFailure` splits errors into recoverable vs unrecoverable closed reason codes.
 - **State & Worktree Preservation**: Handoff terminates only the worker process tree and preserves the Issue worktree, branch, uncommitted changes, role progress, and review counts; the interrupted role resumes as the same role on the new route.
-- **Route Exclusion**: An interruption adds that agent to the run's unavailable list, so a handoff cannot pick the runtime that just failed.
+- **Route Exclusion — two of three paths**: an explicit `worker-interrupted` event and a dispatch-time failure both add the failing agent to the run's unavailable list, so a handoff cannot pick that runtime again. The third path, the `check` lost-notification probe, deliberately does **not**: a worker found dead by the probe says little about its agent CLI, so the agent stays in the pool.
 - **Idempotency Protection**: Action dispatches, git commits, pushes, and PR creations are protected by deterministic `idempotencyKey(issue, action, attempt)` logic to prevent duplicate PRs or commits upon crash recovery.
-- **Review Budget**: bounded independently in §13.2 (at most two review passes and one fix cycle per Issue). This budget is not consumed by a handoff — an interrupted reviewer resumes at the same `reviewPass`, so recovery cannot silently spend a review.
+- **Review Budget**: bounded independently in §13.2 (at most two review passes and one fix cycle per Issue, plus one integration-gate reopen). This budget is not consumed by a handoff — an interrupted reviewer resumes at the same `reviewPass`, so recovery cannot silently spend a review.
+- **Worktree Provenance**: `select_handoff_route` decides the replacement's skill from recorded state (`worktreeCreated`), not by inferring a worktree from the existence of an execution record. A dispatch-failed attempt never created one, so its replacement runs the creating skill.
 
-**Designed but not yet enforced**: the per-attempt "same-route retry at most once" and per-Issue "alternate-route handoff at most once" caps from `#445`. The `retryCounts` / `handoffCounts` state channels exist but no node reads or increments them, and `select_handoff_route` re-dispatches every interrupted Issue without consulting a budget. Role-per-process dispatch multiplies the interruption points per Issue, so an unbounded handoff loop is more reachable than before; the run is still bounded in practice only by the verified route pool shrinking on each interruption. Restating these caps in role-attempt units and naming the node that decrements them is open work.
+**Designed but not yet enforced**: the per-attempt "same-route retry at most once" and per-Issue "alternate-route handoff at most once" caps from `#445`. The `retryCounts` / `handoffCounts` state channels exist but no node reads or increments them, and `select_handoff_route` re-dispatches every interrupted Issue without consulting a budget, failing only when the pool is empty.
+
+The consequence differs by interruption path, and this is the gap the caps must close first. On the two paths that exclude the failing agent, the pool shrinks on each interruption, so the loop terminates. On the **probe path it does not**: a worker that dies silently is re-dispatched to the same route indefinitely, spending real tokens each cycle, with `attemptFor` minting a fresh idempotency key every time. Role-per-process dispatch multiplies the interruption points per Issue, making that path easier to reach than before `#482`. Restating the caps in role-attempt units and naming the node that decrements them is open work.
+
+**Run durability and resume**: the orchestration run's single source of truth is its checkpoint file (`FileCheckpointSaver` in `scripts/project-issue-graph-checkpointer.mjs`, over `@langchain/langgraph-checkpoint`), selected by `--thread-id` and `--checkpoint-file`. Every `interrupt()` pause is durable, so a parent that dies mid-run resumes from the last committed node rather than restarting the Issue. Corruption fails closed with the reason codes `checkpoint-file-required`, `checkpoint-file-corrupt`, and `checkpoint-format-unsupported`; a partial or unreadable file is never treated as an empty run. Because an Issue now spans three or more detached worker processes recorded by `pid` / `pgid`, a resumed parent reconciles them rather than assuming they died with it: `dispatchCandidates` refuses to dispatch into an Issue whose recorded execution is still `running`, and the `check` event re-verifies liveness with a PID-reuse-safe probe (start time must not postdate the recorded dispatch) before anything is treated as dead.
 
 ### 13.5 LLMOps Telemetry & Offline Evaluation (`#442`, `#443`, `#444`)
 

@@ -991,7 +991,7 @@ test("a handoff with no distinct route left shares one and records the degradati
   assert.equal(handoff.role, "reviewer");
   assert.equal(handoff.route.agent, implementer.route.agent);
   const state = await run.state();
-  assert.equal(state.roleStates[0].degraded, "same-route-reviewer:no-distinct-route-left");
+  assert.equal(state.roleStates[0].degraded, "same-route:reviewer:no-distinct-route-left");
 });
 
 test("malformed role-complete events are rejected without touching state", async () => {
@@ -1100,4 +1100,69 @@ test("a second integration-gate rejection blocks instead of reopening again", as
   assert.equal(state.roleStates[0].blockedReason, "integration-gate-rejected-twice");
   assert.deepEqual(state.milestones, []);
   assert.deepEqual(state.completed, []);
+});
+
+test("a role-program dispatch failure hands off with the worktree-creating skill", async () => {
+  let failNext = true;
+  const deps = makeDeps({
+    dispatch: async (job) => {
+      deps.dispatched.push(job);
+      if (failNext) {
+        failNext = false;
+        throw new Error("cli-not-found");
+      }
+      return { pid: 9100 + deps.dispatched.length };
+    },
+  });
+  const run = makeRun({ deps });
+  await run.invoke(roleInput([item(1)]));
+
+  const handoff = deps.dispatched.at(-1);
+  assert.equal(handoff.role, "implementer");
+  // The failed attempt never started a worker, so no worktree exists yet:
+  // the replacement must create one rather than resume a missing tree.
+  assert.equal(handoff.skill, "issue-implementation");
+  const state = await run.state();
+  assert.equal(state.unavailableAgents.length, 1);
+});
+
+test("two pool records for one runtime do not count as distinct routes", async () => {
+  // Same agent+model, different selector: the selector is an invocation
+  // detail, so these are one runtime and independent review is impossible.
+  const oneRuntime = [
+    parentRecord,
+    { ...workerRoute("Claude", "sonnet"), selector: "sel sonnet --a" },
+    { ...workerRoute("Claude", "sonnet"), selector: "sel sonnet --b" },
+  ];
+  const run = makeRun();
+  await run.invoke({ ...roleInput([item(1)]), capabilities: oneRuntime });
+  const state = await run.state();
+  // The collapse must be detected and recorded, not pass silently as two
+  // "distinct" routes just because the selectors differ.
+  assert.match(state.roleStates[0].degraded, /^same-route:\w+:no-distinct-route-left$/);
+
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  const implementer = run.deps.dispatched[0];
+  const reviewer = run.deps.dispatched.at(-1);
+  assert.equal(reviewer.role, "reviewer");
+  assert.equal(reviewer.route.agent, implementer.route.agent);
+  assert.equal(reviewer.route.model, implementer.route.model);
+});
+
+test("a blocked run reports why in the summary", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  const result = await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "REJECTED" });
+  assert.equal(result.runStatus, "blocked");
+  assert.deepEqual(result.summary.roles, [
+    {
+      issue: 1,
+      executionMode: "direct-review",
+      role: null,
+      status: "blocked",
+      reviewPasses: 1,
+      blockedReason: "review-rejected",
+    },
+  ]);
 });

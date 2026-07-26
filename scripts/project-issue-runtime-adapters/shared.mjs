@@ -432,8 +432,15 @@ function roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }) {
   if (role === "planner")
     return [
       `Plan the implementation of exactly one GitHub Issue. Do not implement it.`,
-      `Use the repository ${skill} skill to enter the Issue worktree, then write the plan to docs/design/<slug>.md with an "Issue: #${issueNumber}" reference near the top.`,
-      "Report role-complete with role=planner when the plan is committed. Do not push or open a pull request.",
+      // Deliberately NOT an implementation skill: issue-implementation and
+      // handoff-issue both drive implementation through to a pull request,
+      // which would contradict "do not implement it". The planner sets up the
+      // worktree directly instead.
+      `Set up the Issue worktree with \`bash scripts/issue-worktree.sh ${
+        skill === "handoff-issue" ? "handoff" : "create"
+      } ${issueNumber} ...\` (see docs/github-operations.md §2), then work only inside the path it prints. Do not run issue-implementation or handoff-issue.`,
+      `Write the plan to docs/design/<slug>.md with an "Issue: #${issueNumber}" reference near the top and commit it.`,
+      "Report role-complete with role=planner when the plan is committed. Do not implement, push, or open a pull request.",
     ];
   if (role === "reviewer") {
     const pass = reviewPass ?? 1;

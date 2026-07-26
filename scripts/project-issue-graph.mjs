@@ -229,6 +229,15 @@ function activeExecutions(state) {
   return (state.workerExecutions ?? []).filter((execution) => execution.status === "running");
 }
 
+/**
+ * True when some worker actually started for this Issue and therefore created
+ * (or entered) its worktree. A `dispatch-failed` execution never launched a
+ * worker, so it is not evidence of a worktree.
+ */
+function worktreeExists(state, issue) {
+  return executionsFor(state, issue).some((execution) => execution.status !== "dispatch-failed");
+}
+
 function attemptFor(state, issue) {
   return Math.max(0, ...executionsFor(state, issue).map(({ attempt }) => attempt)) + 1;
 }
@@ -290,14 +299,21 @@ function routeLabels(route) {
 }
 
 /**
- * Compare two capability records by identity *labels*, never by object
+ * Compare two capability records by *runtime identity*, never by object
  * identity: checkpoint round-trips deserialize state into fresh objects, so
  * `===` would silently stop matching after a resume.
+ *
+ * The selector is an invocation detail, not identity — two records sharing an
+ * agent and model are the same runtime even with different selectors. This
+ * matches `assignRoutesForMode`, which also decides distinctness on
+ * agent/model; comparing selectors here would let two records for one runtime
+ * pass as "distinct routes" and silently collapse independent review.
  */
 function sameRoute(left, right) {
   if (!left || !right) return false;
   return (
-    left.agent === right.agent && left.model === right.model && left.selector === right.selector
+    left.agent === right.agent &&
+    (left.requestedModel ?? left.model) === (right.requestedModel ?? right.model)
   );
 }
 
@@ -363,9 +379,11 @@ function modeTelemetryFor(roleState, outcome) {
 function pickRoleRoute(pool, roleState, role) {
   const counterpart = roleState.routes[distinctPreferenceRole(role)];
   const distinct = pool.find((candidate) => !counterpart || !sameRoute(candidate, counterpart));
+  // Name the role that had to share: pickRoleRoute also runs for the
+  // implementer and the planner, so a fixed "reviewer" label would misreport.
   return distinct
     ? { route: distinct }
-    : { route: pool[0], degraded: "same-route-reviewer:no-distinct-route-left" };
+    : { route: pool[0], degraded: `same-route:${role}:no-distinct-route-left` };
 }
 
 /** True when `route` would collapse independent review onto one runtime. */
@@ -397,14 +415,18 @@ export function buildSummary(state, runStatus) {
     skipped: state.plan?.skipped ?? [],
     milestones: state.milestones ?? [],
     completed: state.completed ?? [],
-    roles: (state.roleStates ?? []).map(({ issue, executionMode, program, index, status, reviewPasses }) => ({
-      issue,
-      executionMode,
-      // The role currently running; null once the program stopped advancing.
-      role: status === "active" ? (program[index] ?? null) : null,
-      status,
-      reviewPasses,
-    })),
+    roles: (state.roleStates ?? []).map(
+      ({ issue, executionMode, program, index, status, reviewPasses, blockedReason }) => ({
+        issue,
+        executionMode,
+        // The role currently running; null once the program stopped advancing.
+        role: status === "active" ? (program[index] ?? null) : null,
+        status,
+        reviewPasses,
+        // Why it stopped is exactly what an operator needs from a blocked run.
+        ...(blockedReason ? { blockedReason } : {}),
+      }),
+    ),
     usage: buildUsageReport(state.usage ?? {}, issueNumbers),
     runStatus,
     ...(state.failureReason ? { failureReason: state.failureReason } : {}),
@@ -650,10 +672,11 @@ function assignRoutesNode(state) {
       attempt: attemptFor(state, item.number),
       // The plan is only rebuilt on milestones, so a later role in the same
       // program must read "does a worktree exist" from execution state, not
-      // from the (now stale) planned skill.
+      // from the (now stale) planned skill. A dispatch-failed execution is not
+      // evidence of a worktree: that attempt never started a worker.
       skill: roleState
         ? skillForRole(role, {
-            hasWorktree: item.skill === "handoff-issue" || executionsFor(state, item.number).length > 0,
+            hasWorktree: item.skill === "handoff-issue" || worktreeExists(state, item.number),
           })
         : item.skill,
       ...(roleState
@@ -748,6 +771,9 @@ async function dispatchWorkerNode(payload, config) {
           // The worker never started, so no worktree was created by it;
           // hand off with the skill this dispatch attempt was going to use.
           skill: assignment.skill,
+          // Recorded rather than inferred: the handoff must not assume a
+          // worktree exists just because an execution record does.
+          worktreeCreated: false,
         },
       ],
       unavailableAgents: [assignment.agent],
@@ -1024,8 +1050,11 @@ function selectHandoffRouteNode(state) {
       ...routeLabels(route),
       route,
       attempt: attemptFor(state, entry.issue),
+      // A dispatch-time failure never started a worker, so the worktree the
+      // attempt was going to create does not exist: the replacement must run
+      // the creating skill, not handoff-issue.
       skill: activeRole
-        ? skillForRole(activeRole, { hasWorktree: true })
+        ? skillForRole(activeRole, { hasWorktree: entry.worktreeCreated !== false })
         : (entry.skill ?? "handoff-issue"),
       ...(activeRole
         ? {
