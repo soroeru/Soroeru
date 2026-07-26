@@ -49,6 +49,19 @@ export function classifyProject(issue, candidates = PROJECT_RULES) {
   return matches.length === 1 ? matches[0].name : null;
 }
 
+export function selectProjectConfig(issue, projects) {
+  const configured = (projects ?? []).filter((candidate) => candidate?.number);
+  const projectName = classifyProject(
+    issue,
+    configured.flatMap((candidate) => candidate.candidates ?? []),
+  );
+  if (projectName) {
+    return configured.find((candidate) => candidate.name === projectName) ?? null;
+  }
+  if (configured.length !== 1) return null;
+  return { ...configured[0], requireClassification: false };
+}
+
 export function calculateIterationDates(issueDate) {
   const date = new Date(`${issueDate}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate) || Number.isNaN(date.valueOf()))
@@ -417,17 +430,11 @@ async function main() {
       token,
     }));
 
-  const projectName = classifyProject(
-    issue,
-    config.projects
-      .filter((candidate) => candidate.number)
-      .flatMap((candidate) => candidate.candidates ?? []),
-  );
-  if (!projectName) {
+  const projectConfig = selectProjectConfig(issue, config.projects);
+  if (!projectConfig) {
     console.log(JSON.stringify({ status: "not-configured", reason: "project-unclassified" }));
     return;
   }
-  const projectConfig = config.projects.find((candidate) => candidate.name === projectName);
   const projectOwner = projectConfig?.owner || process.env.GITHUB_REPOSITORY_OWNER || repoOwner;
   if (!projectOwner || !projectConfig?.number) throw new Error("project-config-incomplete");
   const ownerType = projectConfig.ownerType ?? "organization";

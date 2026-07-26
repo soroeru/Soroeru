@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import {
+  buildProjectInfo,
   applyMilestone,
   buildRunPlan,
   buildUsageReport,
@@ -71,6 +72,21 @@ const usage = {
   wallClockMs: 600,
   fetchedBytes: 700,
 };
+
+test("builds organization-owned project info when ownerType is omitted", () => {
+  assert.deepEqual(
+    buildProjectInfo(
+      { projectOwner: "soroeru" },
+      { number: 1, fields: { status: "Status" } },
+    ),
+    {
+      number: 1,
+      owner: "soroeru",
+      ownerType: "organization",
+      fields: { status: "Status" },
+    },
+  );
+});
 const execFileAsync = promisify(execFile);
 
 test("schedules A then B then C as dependencies complete", async () => {

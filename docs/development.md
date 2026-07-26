@@ -86,11 +86,13 @@ Playwright path is unchanged; there is no silent fallback after the extension cu
 ### 3.0 GitHub Project issue defaults
 
 `.github/workflows/project-issue-defaults.yml` runs on `issues.opened` and on
-manual `workflow_dispatch` (with `issue_number`) and configures classified
-Issues listed in `config/github-projects.json`. It resolves Project, field,
-option, item, and iteration IDs by name through GraphQL; IDs are intentionally
-not stored in the repository. The workflow sets only Priority, Size,
-Start/Target date, and Iteration. Agent/model assignment is decided at
+manual `workflow_dispatch` (with `issue_number`) and configures Issues in the
+organization Project listed in `config/github-projects.json`. When exactly one
+Project is configured, every Issue is added to it; deterministic classification
+is used only to choose among multiple configured Projects. It resolves Project,
+field, option, item, and iteration IDs by name through GraphQL; IDs are
+intentionally not stored in the repository. The workflow sets only Priority,
+Size, Start/Target date, and Iteration. Agent/model assignment is decided at
 orchestration run time and is **not** stored in the Project or the Issue body;
 the former `AI Assignees` / `AI Sub Assignees` fields are abolished (the
 Product Owner deletes those two single-select fields from the Project settings

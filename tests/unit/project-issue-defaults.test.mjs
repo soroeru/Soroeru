@@ -16,6 +16,7 @@ import {
   buildProjectQuery,
   buildIterationConfiguration,
   nextAvailableIterationStartDate,
+  selectProjectConfig,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -70,6 +71,50 @@ test("does not guess when two candidate projects are equally plausible", () => {
       body: "",
       labels: ["Visibility", "Bulk Update"],
     }),
+    null,
+  );
+});
+
+test("selects the sole organization project for an unclassified Issue", () => {
+  const project = {
+    name: "Visibility",
+    number: 1,
+    owner: "soroeru",
+    ownerType: "organization",
+    requireClassification: true,
+    candidates: [{ name: "Visibility", keywords: ["visibility"] }],
+  };
+
+  assert.deepEqual(
+    selectProjectConfig(
+      { title: "Issue lifecycle metadata cleanup", body: "", labels: [] },
+      [project],
+    ),
+    { ...project, requireClassification: false },
+  );
+});
+
+test("does not select a project when an unclassified Issue has multiple candidates", () => {
+  assert.equal(
+    selectProjectConfig(
+      { title: "Unrelated maintenance", body: "", labels: [] },
+      [
+        {
+          name: "Visibility",
+          number: 1,
+          owner: "soroeru",
+          ownerType: "organization",
+          candidates: [{ name: "Visibility", keywords: ["visibility"] }],
+        },
+        {
+          name: "Bulk Update",
+          number: 2,
+          owner: "soroeru",
+          ownerType: "organization",
+          candidates: [{ name: "Bulk Update", keywords: ["bulk update"] }],
+        },
+      ],
+    ),
     null,
   );
 });
