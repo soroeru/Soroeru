@@ -16,6 +16,9 @@ import {
   buildProjectQuery,
   buildIterationConfiguration,
   nextAvailableIterationStartDate,
+  selectProjectConfig,
+  selectReconciliationIssueNumbers,
+  loadProjectPages,
 } from "../../scripts/project-issue-defaults.mjs";
 
 test("parses the bounded project metadata block", () => {
@@ -74,6 +77,72 @@ test("does not guess when two candidate projects are equally plausible", () => {
   );
 });
 
+test("selects the sole organization project for an unclassified Issue", () => {
+  const project = {
+    name: "Visibility",
+    number: 1,
+    owner: "soroeru",
+    ownerType: "organization",
+    requireClassification: true,
+    candidates: [{ name: "Visibility", keywords: ["visibility"] }],
+  };
+
+  assert.deepEqual(
+    selectProjectConfig(
+      { title: "Issue lifecycle metadata cleanup", body: "", labels: [] },
+      [project],
+    ),
+    { ...project, requireClassification: false },
+  );
+});
+
+test("selects the sole organization project for every supported classification", () => {
+  const project = {
+    name: "Visibility",
+    number: 1,
+    owner: "soroeru",
+    ownerType: "organization",
+    requireClassification: true,
+    candidates: [
+      { name: "Visibility", keywords: ["visibility"] },
+      { name: "Bulk Update", keywords: ["bulk update"] },
+      { name: "Registration / Form Automation", keywords: ["registration"] },
+    ],
+  };
+
+  for (const title of ["visibility", "bulk update", "registration"]) {
+    assert.deepEqual(selectProjectConfig({ title, body: "", labels: [] }, [project]), {
+      ...project,
+      requireClassification: false,
+    });
+  }
+});
+
+test("does not select a project when an unclassified Issue has multiple candidates", () => {
+  assert.equal(
+    selectProjectConfig(
+      { title: "Unrelated maintenance", body: "", labels: [] },
+      [
+        {
+          name: "Visibility",
+          number: 1,
+          owner: "soroeru",
+          ownerType: "organization",
+          candidates: [{ name: "Visibility", keywords: ["visibility"] }],
+        },
+        {
+          name: "Bulk Update",
+          number: 2,
+          owner: "soroeru",
+          ownerType: "organization",
+          candidates: [{ name: "Bulk Update", keywords: ["bulk update"] }],
+        },
+      ],
+    ),
+    null,
+  );
+});
+
 test("uses documented safe defaults for missing and invalid values", () => {
   assert.deepEqual(resolveDefaults({ priority: "P9", size: "XXL" }, {}), {
     priority: "P2",
@@ -119,8 +188,9 @@ const projectFixture = () => ({
         id: "iteration",
         name: "Iteration",
         dataType: "ITERATION",
-        configuration: { iterations: [{ id: "it-existing", title: "2026-07-16" }] },
+        configuration: { iterations: [{ id: "it-existing", title: "Visibility collection" }] },
       },
+      { id: "feature-group", name: "Feature group", dataType: "TEXT" },
     ],
   },
 });
@@ -129,7 +199,12 @@ const issueFixture = () => ({
   id: "issue-1",
   node_id: "issue-node-1",
   title: "Visibility collection",
-  body: "<!-- project-metadata:start -->\n- Priority: P2\n- Size: M\n<!-- project-metadata:end -->",
+  body:
+    "<!-- project-metadata:start -->\n" +
+    "- Priority: P2\n" +
+    "- Size: M\n" +
+    "- Feature group: Visibility collection\n" +
+    "<!-- project-metadata:end -->",
   labels: [],
   created_at: "2026-07-15T00:00:00Z",
 });
@@ -142,7 +217,8 @@ const convergedFieldValues = {
         { field: { name: "Size" }, name: "M" },
         { field: { name: "Start date" }, date: "2026-07-16" },
         { field: { name: "Target date" }, date: "2026-07-16" },
-        { field: { name: "Iteration" }, title: "2026-07-16" },
+        { field: { name: "Iteration" }, title: "Visibility collection" },
+        { field: { name: "Feature group" }, text: "Visibility collection" },
       ],
     },
   },
@@ -163,7 +239,7 @@ test("reuses an existing item and iteration and confirms convergence by readback
   });
 
   assert.equal(result.itemId, "item-existing");
-  assert.equal(result.iteration, "2026-07-16");
+  assert.equal(result.iteration, "Visibility collection");
   assert.deepEqual(result.reasons, []);
   assert.equal(
     calls.some(({ query }) => query.includes("AddItem")),
@@ -173,9 +249,17 @@ test("reuses an existing item and iteration and confirms convergence by readback
     calls.some(({ query }) => query.includes("UpdateIteration")),
     false,
   );
-  // Five field mutations (Priority, Size, Start date, Target date, Iteration)
+  // Six field mutations (Priority, Size, Start date, Target date, Iteration,
+  // Feature group)
   // plus the final readback query.
-  assert.equal(calls.length, 6);
+  assert.equal(calls.length, 7);
+  assert.deepEqual(
+    calls.find(
+      ({ query, variables }) =>
+        query.includes("UpdateItem") && variables.fieldId === "feature-group",
+    )?.variables.value,
+    { text: "Visibility collection" },
+  );
   assert.equal(calls.at(-1).query.includes("ItemFieldValues"), true);
 });
 
@@ -190,7 +274,8 @@ test("does not report success when the readback shows an unconverged field", asy
               { field: { name: "Size" }, name: "M" },
               { field: { name: "Start date" }, date: "2026-07-16" },
               { field: { name: "Target date" }, date: "2026-07-16" },
-              { field: { name: "Iteration" }, title: "2026-07-16" },
+              { field: { name: "Iteration" }, title: "Visibility collection" },
+              { field: { name: "Feature group" }, text: "Visibility collection" },
             ],
           },
         },
@@ -337,30 +422,6 @@ test("does not update a project when classification is required but absent", asy
   );
 });
 
-test("creates the iteration before adding the Issue item", async () => {
-  const calls = [];
-  const graphql = async (query) => {
-    calls.push(query);
-    if (query.includes("UpdateIteration")) {
-      throw new Error("iteration-api-failed");
-    }
-    throw new Error("item-mutation-must-not-run");
-  };
-  const issue = issueFixture();
-  issue.body =
-    "<!-- project-metadata:start -->\n- Priority: P2\n- Size: M\n- Feature group: New group\n<!-- project-metadata:end -->";
-  const project = projectFixture();
-  project.items.nodes = [];
-  await assert.rejects(
-    applyProjectDefaults({ issue, project, graphql, config: { projectName: "Visibility" } }),
-    /iteration-api-failed/,
-  );
-  assert.equal(
-    calls.some((query) => query.includes("AddItem")),
-    false,
-  );
-});
-
 test("parseIssueNumberInput accepts positive integers only", () => {
   assert.equal(parseIssueNumberInput("413"), 413);
   assert.equal(parseIssueNumberInput(" 7 "), 7);
@@ -411,6 +472,186 @@ test("normalizeProjectIssueEvent shapes issues.opened and workflow_dispatch the 
     issueNumber: 413,
     issue: null,
   });
+});
+
+test("normalizeProjectIssueEvent accepts a scheduled Project reconciliation", () => {
+  assert.deepEqual(
+    normalizeProjectIssueEvent(
+      {
+        schedule: "*/15 * * * *",
+        repository: { full_name: "soroeru/Soroeru" },
+      },
+      { repositoryFullName: "soroeru/Soroeru" },
+    ),
+    {
+      source: "project.reconcile",
+      issueNumber: null,
+      issue: null,
+    },
+  );
+});
+
+test("normalizeProjectIssueEvent accepts a manually dispatched Project reconciliation", () => {
+  assert.deepEqual(
+    normalizeProjectIssueEvent(
+      {
+        inputs: { issue_number: "", reconcile_project: true },
+        repository: { full_name: "soroeru/Soroeru" },
+      },
+      { repositoryFullName: "soroeru/Soroeru" },
+    ),
+    {
+      source: "project.reconcile",
+      issueNumber: null,
+      issue: null,
+    },
+  );
+});
+
+test("scheduled reconciliation selects Issues with missing managed Project fields", () => {
+  const project = {
+    items: {
+      nodes: [
+        {
+          content: {
+            id: "I_484",
+            number: 484,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Feature group: Project orchestration\n" +
+              "<!-- project-metadata:end -->",
+          },
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P1" },
+              { field: { name: "Size" }, name: "S" },
+              { field: { name: "Feature group" }, text: "Project orchestration" },
+              { field: { name: "Start date" }, date: "2026-07-26" },
+              { field: { name: "Target date" }, date: "2026-07-26" },
+              { field: { name: "Iteration" }, title: "Project orchestration" },
+            ],
+          },
+        },
+        {
+          content: {
+            id: "I_485",
+            number: 485,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Feature group: Project orchestration\n" +
+              "<!-- project-metadata:end -->",
+          },
+          fieldValues: { nodes: [] },
+        },
+        {
+          content: {
+            id: "I_400",
+            number: 400,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Priority: P2\n" +
+              "- Size: M\n" +
+              "<!-- project-metadata:end -->",
+          },
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P2" },
+              { field: { name: "Size" }, name: "M" },
+              { field: { name: "Start date" }, date: "2026-07-16" },
+              { field: { name: "Target date" }, date: "2026-07-16" },
+              { field: { name: "Iteration" }, title: "2026-07-16" },
+            ],
+          },
+        },
+        {
+          content: {
+            id: "I_486",
+            number: 486,
+            body:
+              "<!-- project-metadata:start -->\n" +
+              "- Feature group: Project automation\n" +
+              "<!-- project-metadata:end -->",
+          },
+          fieldValues: {
+            nodes: [
+              { field: { name: "Priority" }, name: "P2" },
+              { field: { name: "Size" }, name: "M" },
+              { field: { name: "Feature group" }, text: "Project automation" },
+              { field: { name: "Start date" }, date: "2026-07-27" },
+              { field: { name: "Iteration" }, title: "Project automation" },
+            ],
+          },
+        },
+        {
+          content: { id: "PR_486" },
+          fieldValues: { nodes: [] },
+        },
+      ],
+    },
+  };
+
+  assert.deepEqual(
+    selectReconciliationIssueNumbers(project, {
+      fields: {
+        priority: "Priority",
+        size: "Size",
+        featureGroup: "Feature group",
+      },
+    }),
+    [485, 486],
+  );
+});
+
+test("Project pagination includes missing-field Issues after the first page", async () => {
+  const calls = [];
+  const graphql = async (_query, variables) => {
+    calls.push(variables);
+    const secondPage = variables.cursor === "next";
+    return {
+      organization: {
+        projectV2: {
+          id: "project-1",
+          title: "Visibility",
+          fields: { nodes: [{ id: "priority", name: "Priority", dataType: "SINGLE_SELECT" }] },
+          items: {
+            pageInfo: {
+              hasNextPage: !secondPage,
+              endCursor: secondPage ? null : "next",
+            },
+            nodes: secondPage
+              ? [
+                  {
+                    id: "item-485",
+                    content: {
+                      id: "I_485",
+                      number: 485,
+                      body:
+                        "<!-- project-metadata:start -->\n" +
+                        "- Feature group: Project orchestration\n" +
+                        "<!-- project-metadata:end -->",
+                    },
+                    fieldValues: { nodes: [] },
+                  },
+                ]
+              : [],
+          },
+        },
+      },
+    };
+  };
+
+  const project = await loadProjectPages({
+    owner: "soroeru",
+    ownerType: "organization",
+    number: 1,
+    graphql,
+  });
+
+  assert.deepEqual(calls, [
+    { owner: "soroeru", number: 1, cursor: null },
+    { owner: "soroeru", number: 1, cursor: "next" },
+  ]);
+  assert.deepEqual(selectReconciliationIssueNumbers(project), [485]);
 });
 
 test("normalizeProjectIssueEvent rejects PRs, invalid numbers, and repository mismatch", () => {
@@ -611,7 +852,7 @@ test("buildIterationConfiguration uses startDate and avoids date collisions", ()
   assert.equal("id" in configuration.iterations[0], false);
 });
 
-test("creates a missing iteration with non-colliding startDate", async () => {
+test("applies other defaults without changing Project configuration when iteration is missing", async () => {
   const calls = [];
   const project = projectFixture();
   project.items.nodes = [];
@@ -625,20 +866,6 @@ test("creates a missing iteration with non-colliding startDate", async () => {
   issue.node_id = "issue-node-new";
   const graphql = async (query, variables) => {
     calls.push({ query, variables });
-    if (query.includes("UpdateIteration")) {
-      return {
-        updateProjectV2Field: {
-          projectV2Field: {
-            configuration: {
-              iterations: [
-                { id: "it-existing", title: "既存", startDate: "2026-07-16", duration: 1 },
-                { id: "it-new", title: "New group", startDate: "2026-07-17", duration: 1 },
-              ],
-            },
-          },
-        },
-      };
-    }
     if (query.includes("AddItem")) return { addProjectV2ItemById: { item: { id: "item-new" } } };
     if (query.includes("ItemFieldValues")) {
       return {
@@ -649,7 +876,7 @@ test("creates a missing iteration with non-colliding startDate", async () => {
               { field: { name: "Size" }, name: "M" },
               { field: { name: "Start date" }, date: "2026-07-16" },
               { field: { name: "Target date" }, date: "2026-07-16" },
-              { field: { name: "Iteration" }, title: "New group" },
+              { field: { name: "Feature group" }, text: "New group" },
             ],
           },
         },
@@ -663,10 +890,16 @@ test("creates a missing iteration with non-colliding startDate", async () => {
     graphql,
     config: { projectName: "Visibility" },
   });
-  assert.equal(result.iteration, "New group");
-  const update = calls.find(({ query }) => query.includes("UpdateIteration"));
-  assert.equal(update.variables.configuration.startDate, "2026-07-16");
-  assert.equal(update.variables.configuration.iterations[1].title, "New group");
-  // Preferred date 2026-07-16 is occupied by 既存, so the new iteration shifts forward.
-  assert.equal(update.variables.configuration.iterations[1].startDate, "2026-07-17");
+  assert.equal(result.iteration, null);
+  assert.equal(
+    calls.some(({ query }) => query.includes("UpdateIteration")),
+    false,
+  );
+  assert.equal(
+    calls.some(
+      ({ query, variables }) =>
+        query.includes("UpdateItem") && variables.fieldId === "iteration",
+    ),
+    false,
+  );
 });

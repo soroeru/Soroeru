@@ -10,7 +10,8 @@
         "size": "Size",
         "iteration": "Iteration",
         "startDate": "Start date",
-        "targetDate": "Target date"
+        "targetDate": "Target date",
+        "featureGroup": "Feature group"
       },
       "candidates": [
         { "name": "Visibility", "keywords": ["visibility", "開示", "台帳", "サイト情報"] },

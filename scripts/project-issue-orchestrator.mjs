@@ -128,6 +128,15 @@ export async function runOrchestration(input) {
   };
 }
 
+export function buildProjectInfo(cli, project) {
+  return {
+    number: project.number,
+    owner: cli.projectOwner,
+    ownerType: cli.ownerType ?? "organization",
+    fields: project.fields,
+  };
+}
+
 export function parseCliArgs(argv) {
   const options = {};
   const valueFlags = new Map([
@@ -262,12 +271,7 @@ async function readInput(cli) {
     const selection = selectProjectItems(fetched.items, selectors);
     const result = applySelection(fetched, selection);
     // Attach project info for status transition
-    result.projectInfo = {
-      number: project.number,
-      owner: cli.projectOwner,
-      ownerType: cli.ownerType ?? "user",
-      fields: project.fields,
-    };
+    result.projectInfo = buildProjectInfo(cli, project);
     return result;
   }
   const chunks = [];
@@ -323,6 +327,7 @@ async function main() {
       const transitionResult = await transitionBacklogToReady({
         projectNumber: input.projectInfo.number,
         projectOwner: input.projectInfo.owner,
+        projectOwnerType: input.projectInfo.ownerType,
         selectedIssueNumbers: selectedNumbers,
         dryRun: Boolean(cli.dryRun),
         graphql: (query, variables) =>

@@ -49,6 +49,21 @@ export function classifyProject(issue, candidates = PROJECT_RULES) {
   return matches.length === 1 ? matches[0].name : null;
 }
 
+export function selectProjectConfig(issue, projects) {
+  const configured = (projects ?? []).filter((candidate) => candidate?.number);
+  if (configured.length === 1) {
+    return { ...configured[0], requireClassification: false };
+  }
+  const projectName = classifyProject(
+    issue,
+    configured.flatMap((candidate) => candidate.candidates ?? []),
+  );
+  if (projectName) {
+    return configured.find((candidate) => candidate.name === projectName) ?? null;
+  }
+  return null;
+}
+
 export function calculateIterationDates(issueDate) {
   const date = new Date(`${issueDate}T00:00:00Z`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate) || Number.isNaN(date.valueOf()))
@@ -63,14 +78,75 @@ export function buildProjectQuery(ownerType) {
   // connection and does not accept `number` (that shape returns GraphQL errors).
   // Only organization projects are supported.
   if (ownerType !== "organization") throw new Error("invalid-owner-type");
-  return `query Project($owner: String!, $number: Int!) { organization(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100) { nodes { id content { ... on Issue { id number } } } } } } }`;
+  return `query Project($owner: String!, $number: Int!, $cursor: String) { organization(login: $owner) { projectV2(number: $number) { id title fields(first: 100) { nodes { ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name } } ... on ProjectV2IterationField { id name dataType configuration { duration startDay iterations { id title startDate duration } } } } } items(first: 100, after: $cursor) { pageInfo { hasNextPage endCursor } nodes { id content { ... on Issue { id number body } } fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } } } } } }`;
 }
 
 export const ADD_ITEM_MUTATION = `mutation AddItem($projectId: ID!, $contentId: ID!) { addProjectV2ItemById(input: { projectId: $projectId contentId: $contentId }) { item { id } } }`;
 export const UPDATE_ITEM_MUTATION = `mutation UpdateItem($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: ProjectV2FieldValue!) { updateProjectV2ItemFieldValue(input: { projectId: $projectId itemId: $itemId fieldId: $fieldId value: $value }) { projectV2Item { id } } }`;
 export const UPDATE_ITERATION_MUTATION = `mutation UpdateIteration($fieldId: ID!, $configuration: ProjectV2IterationFieldConfigurationInput!) { updateProjectV2Field(input: { fieldId: $fieldId iterationConfiguration: $configuration }) { projectV2Field { ... on ProjectV2IterationField { id configuration { duration startDay iterations { id title startDate duration } } } } } }`;
 export const ITERATION_FIELD_QUERY = `query IterationField($fieldId: ID!) { node(id: $fieldId) { ... on ProjectV2IterationField { id configuration { duration startDay iterations { id title startDate duration } } } } }`;
-export const ITEM_FIELD_VALUES_QUERY = `query ItemFieldValues($itemId: ID!) { node(id: $itemId) { ... on ProjectV2Item { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } } } } } }`;
+export const ITEM_FIELD_VALUES_QUERY = `query ItemFieldValues($itemId: ID!) { node(id: $itemId) { ... on ProjectV2Item { fieldValues(first: 100) { nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } } } } } }`;
+
+export function selectReconciliationIssueNumbers(project, config = {}) {
+  const availableIterations = new Set(
+    (project?.fields?.nodes ?? [])
+      .find((field) => field.dataType === "ITERATION")
+      ?.configuration?.iterations?.map((iteration) => iteration.title) ?? [],
+  );
+  return (project?.items?.nodes ?? []).flatMap((item) => {
+    if (!item.content?.id || !Number.isSafeInteger(item.content.number)) return [];
+    const metadata = parseProjectMetadata(item.content.body ?? "");
+    const requiredFields = [
+      config.fields?.priority ?? "Priority",
+      config.fields?.size ?? "Size",
+      config.fields?.startDate ?? "Start date",
+      config.fields?.targetDate ?? "Target date",
+      ...(metadata.featureGroup && availableIterations.has(metadata.featureGroup)
+        ? [config.fields?.iteration ?? "Iteration"]
+        : []),
+      ...(metadata.featureGroup
+        ? [config.fields?.featureGroup ?? "Feature group"]
+        : []),
+    ];
+    const observed = new Map(
+      (item.fieldValues?.nodes ?? []).map((value) => [
+        value.field?.name,
+        value.name ?? value.text ?? value.date ?? value.title,
+      ]),
+    );
+    return requiredFields.some((fieldName) => !observed.get(fieldName))
+      ? [item.content.number]
+      : [];
+  });
+}
+
+export async function loadProjectPages({ owner, ownerType, number, graphql }) {
+  if (typeof graphql !== "function") throw new Error("graphql-required");
+  const query = buildProjectQuery(ownerType);
+  const nodes = [];
+  let cursor = null;
+  let project = null;
+  while (true) {
+    const data = await graphql(query, { owner, number, cursor });
+    const pageProject = data?.[ownerType]?.projectV2;
+    if (!pageProject) throw new Error("project-not-found");
+    if (!Array.isArray(pageProject.items?.nodes)) throw new Error("project-items-not-found");
+    project ??= pageProject;
+    nodes.push(...pageProject.items.nodes);
+    if (!pageProject.items.pageInfo?.hasNextPage) break;
+    if (!pageProject.items.pageInfo.endCursor)
+      throw new Error("project-pagination-cursor-missing");
+    cursor = pageProject.items.pageInfo.endCursor;
+  }
+  return {
+    ...project,
+    items: {
+      ...project.items,
+      nodes,
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
+  };
+}
 
 /**
  * Pick a startDate that does not collide with existing iterations.
@@ -145,6 +221,7 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   const startDateFieldName = config.fields?.startDate ?? "Start date";
   const targetDateFieldName = config.fields?.targetDate ?? "Target date";
   const iterationFieldName = config.fields?.iteration ?? "Iteration";
+  const featureGroupFieldName = config.fields?.featureGroup ?? "Feature group";
   for (const [fieldName, value] of [
     [priorityFieldName, resolved.priority],
     [sizeFieldName, resolved.size],
@@ -165,36 +242,22 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     if (!field) throw new Error(`project-field-not-found:${fieldName}`);
     if (field.dataType !== dataType) throw new Error(`project-field-type-mismatch:${fieldName}`);
   }
+  if (metadata.featureGroup) {
+    const featureGroupField = fields.get(featureGroupFieldName);
+    if (!featureGroupField) throw new Error(`project-field-not-found:${featureGroupFieldName}`);
+    if (featureGroupField.dataType !== "TEXT")
+      throw new Error(`project-field-type-mismatch:${featureGroupFieldName}`);
+  }
   const issueNodeId = issue.node_id;
   if (!issueNodeId) throw new Error("issue-node-id-required");
   const iterationField = fields.get(iterationFieldName);
   const iterationTitle = metadata.featureGroup || dates.name;
 
   // All reads and validations are complete; mutations start here.
-  let iteration = findIterationByTitle(iterationField.configuration?.iterations, iterationTitle);
-  if (!iteration) {
-    // ProjectV2IterationFieldConfigurationInput requires duration + startDay (not
-    // startDate at the field level). Preserve existing iteration ids so GitHub
-    // updates rather than replacing the series.
-    const configuration = buildIterationConfiguration(iterationField, {
-      title: iterationTitle,
-      startDate: dates.startDate,
-      duration: 1,
-    });
-    const updateResult = await graphql(UPDATE_ITERATION_MUTATION, {
-      fieldId: iterationField.id,
-      configuration,
-    });
-    iteration = findIterationByTitle(
-      updateResult?.updateProjectV2Field?.projectV2Field?.configuration?.iterations,
-      iterationTitle,
-    );
-    if (!iteration) {
-      const refreshed = await graphql(ITERATION_FIELD_QUERY, { fieldId: iterationField.id });
-      iteration = findIterationByTitle(refreshed?.node?.configuration?.iterations, iterationTitle);
-    }
-    if (!iteration) throw new Error("iteration-create-not-confirmed");
-  }
+  const iteration = findIterationByTitle(
+    iterationField.configuration?.iterations,
+    iterationTitle,
+  );
   const existing = project.items?.nodes?.find((item) => item.content?.id === issueNodeId);
   const itemId =
     existing?.id ??
@@ -225,12 +288,22 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
       value: { date: value },
     });
   }
-  await graphql(UPDATE_ITEM_MUTATION, {
-    projectId: project.id,
-    itemId,
-    fieldId: iterationField.id,
-    value: { iterationId: iteration.id },
-  });
+  if (iteration) {
+    await graphql(UPDATE_ITEM_MUTATION, {
+      projectId: project.id,
+      itemId,
+      fieldId: iterationField.id,
+      value: { iterationId: iteration.id },
+    });
+  }
+  if (metadata.featureGroup) {
+    await graphql(UPDATE_ITEM_MUTATION, {
+      projectId: project.id,
+      itemId,
+      fieldId: fields.get(featureGroupFieldName).id,
+      value: { text: metadata.featureGroup },
+    });
+  }
 
   // Final readback: success only when every field converged. The error names
   // only Project field names — never Issue bodies, tokens, or diffs.
@@ -240,7 +313,7 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
   const observed = new Map(
     readback.node.fieldValues.nodes.map((value) => [
       value.field?.name,
-      value.name ?? value.date ?? value.title,
+      value.name ?? value.date ?? value.title ?? value.text,
     ]),
   );
   const expected = [
@@ -248,7 +321,8 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     [sizeFieldName, resolved.size],
     [startDateFieldName, dates.startDate],
     [targetDateFieldName, dates.targetDate],
-    [iterationFieldName, iteration.title],
+    ...(iteration ? [[iterationFieldName, iteration.title]] : []),
+    ...(metadata.featureGroup ? [[featureGroupFieldName, metadata.featureGroup]] : []),
   ];
   const unconverged = expected
     .filter(([fieldName, value]) => observed.get(fieldName) !== value)
@@ -258,7 +332,12 @@ export async function applyProjectDefaults({ issue, project, graphql, config = {
     error.fields = unconverged;
     throw error;
   }
-  return { itemId, projectName: project.title, iteration: iteration.title, reasons: resolved.reasons };
+  return {
+    itemId,
+    projectName: project.title,
+    iteration: iteration?.title ?? null,
+    reasons: resolved.reasons,
+  };
 }
 
 /**
@@ -347,10 +426,23 @@ export function normalizeProjectIssueEvent(event, { repositoryFullName } = {}) {
   const hasDispatchInput =
     event.inputs != null && Object.prototype.hasOwnProperty.call(event.inputs, "issue_number");
 
-  if (hasDispatchInput && !event.issue) {
+  if (hasDispatchInput && String(event.inputs.issue_number ?? "").trim() && !event.issue) {
     return {
       source: "workflow_dispatch",
       issueNumber: parseIssueNumberInput(event.inputs.issue_number),
+      issue: null,
+    };
+  }
+
+  if (
+    (event.schedule ||
+      event.inputs?.reconcile_project === true ||
+      event.inputs?.reconcile_project === "true") &&
+    !event.issue
+  ) {
+    return {
+      source: "project.reconcile",
+      issueNumber: null,
       issue: null,
     };
   }
@@ -408,41 +500,69 @@ async function main() {
   if (!repoOwner || !repoName) throw new Error("repository-env-required");
 
   const normalized = normalizeProjectIssueEvent(event, { repositoryFullName });
-  const issue =
-    normalized.issue ??
-    (await loadRepositoryIssue({
-      owner: repoOwner,
-      repo: repoName,
-      issueNumber: normalized.issueNumber,
-      token,
-    }));
+  const loadProject = async (projectConfig) => {
+    const projectOwner =
+      projectConfig?.owner || process.env.GITHUB_REPOSITORY_OWNER || repoOwner;
+    if (!projectOwner || !projectConfig?.number) throw new Error("project-config-incomplete");
+    const ownerType = projectConfig.ownerType ?? "organization";
+    return loadProjectPages({
+      owner: projectOwner,
+      ownerType,
+      number: projectConfig.number,
+      graphql: (query, variables) => githubGraphql(query, variables, token),
+    });
+  };
+  const applyIssueNumber = async (issueNumber, source, issueRecord = null) => {
+    const issue =
+      issueRecord ??
+      (await loadRepositoryIssue({
+        owner: repoOwner,
+        repo: repoName,
+        issueNumber,
+        token,
+      }));
+    const projectConfig = selectProjectConfig(issue, config.projects);
+    if (!projectConfig) return null;
+    const result = await applyProjectDefaults({
+      issue,
+      project: await loadProject(projectConfig),
+      config: projectConfig,
+      graphql: (query, variables) => githubGraphql(query, variables, token),
+    });
+    return { ...result, source };
+  };
 
-  const projectName = classifyProject(
-    issue,
-    config.projects
-      .filter((candidate) => candidate.number)
-      .flatMap((candidate) => candidate.candidates ?? []),
+  if (normalized.source === "project.reconcile") {
+    if (config.projects.length !== 1) throw new Error("project-config-ambiguous");
+    const projectConfig = { ...config.projects[0], requireClassification: false };
+    const issueNumbers = selectReconciliationIssueNumbers(
+      await loadProject(projectConfig),
+      projectConfig,
+    );
+    const results = [];
+    for (const issueNumber of issueNumbers) {
+      const result = await applyIssueNumber(issueNumber, normalized.source);
+      if (result) results.push(result);
+    }
+    console.log(
+      JSON.stringify({
+        status: "reconciled",
+        updated: results.length,
+        source: normalized.source,
+      }),
+    );
+    return;
+  }
+
+  const result = await applyIssueNumber(
+    normalized.issueNumber,
+    normalized.source,
+    normalized.issue,
   );
-  if (!projectName) {
+  if (!result) {
     console.log(JSON.stringify({ status: "not-configured", reason: "project-unclassified" }));
     return;
   }
-  const projectConfig = config.projects.find((candidate) => candidate.name === projectName);
-  const projectOwner = projectConfig?.owner || process.env.GITHUB_REPOSITORY_OWNER || repoOwner;
-  if (!projectOwner || !projectConfig?.number) throw new Error("project-config-incomplete");
-  const ownerType = projectConfig.ownerType ?? "organization";
-  const data = await githubGraphql(
-    buildProjectQuery(ownerType),
-    { owner: projectOwner, number: projectConfig.number },
-    token,
-  );
-  const project = data[ownerType]?.projectV2;
-  const result = await applyProjectDefaults({
-    issue,
-    project,
-    config: projectConfig,
-    graphql: (query, variables) => githubGraphql(query, variables, token),
-  });
   console.log(
     JSON.stringify({
       status: "updated",
@@ -450,7 +570,7 @@ async function main() {
       project: result.projectName,
       iteration: result.iteration,
       reasons: result.reasons,
-      source: normalized.source,
+      source: result.source,
     }),
   );
 }

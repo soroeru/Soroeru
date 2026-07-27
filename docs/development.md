@@ -86,11 +86,19 @@ Playwright path is unchanged; there is no silent fallback after the extension cu
 ### 3.0 GitHub Project issue defaults
 
 `.github/workflows/project-issue-defaults.yml` runs on `issues.opened` and on
-manual `workflow_dispatch` (with `issue_number`) and configures classified
-Issues listed in `config/github-projects.json`. It resolves Project, field,
+manual `workflow_dispatch` (with `issue_number`). Because GitHub Actions does
+not expose the organization-level `projects_v2_item` webhook as a repository
+workflow trigger, it also runs a 15-minute scheduled reconciliation to configure
+Issues that were added to the Project manually. The reconciliation selects only
+Project items missing Priority, Size, or Feature group. When exactly one Project
+is configured, every Issue is added to it; deterministic classification is used
+only to choose among multiple configured Projects. It resolves Project, field,
 option, item, and iteration IDs by name through GraphQL; IDs are intentionally
-not stored in the repository. The workflow sets only Priority, Size,
-Start/Target date, and Iteration. Agent/model assignment is decided at
+not stored in the repository. The workflow sets Priority, Size, Feature group,
+and Start/Target date. It also sets Iteration when an exact-name iteration
+already exists; it never changes Project field configuration using the
+short-lived App token. Feature group is copied from the bounded
+`project-metadata` block in the Issue body. Agent/model assignment is decided at
 orchestration run time and is **not** stored in the Project or the Issue body;
 the former `AI Assignees` / `AI Sub Assignees` fields are abolished (the
 Product Owner deletes those two single-select fields from the Project settings
@@ -160,6 +168,10 @@ Use Actions → **project-issue-defaults** → **Run workflow** and set
 script rejects non-positive numbers, missing Issues, pull-request numbers, and
 repository mismatches before any Project mutation. Idempotent re-runs reuse the
 existing Project item and reconverge fields.
+
+To run the same reconciliation used by the schedule immediately, leave
+`issue_number` empty and enable `reconcile_project`. This scans all Project
+pages and updates only Issue items with a missing managed field.
 
 ```bash
 gh workflow run project-issue-defaults.yml --repo soroeru/Soroeru -f issue_number=413

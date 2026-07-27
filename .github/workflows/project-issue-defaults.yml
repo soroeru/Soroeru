@@ -3,16 +3,27 @@ name: project-issue-defaults
 on:
   issues:
     types: [opened]
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       issue_number:
         description: Repository issue number to (re)apply Project defaults
-        required: true
+        required: false
         type: string
+      reconcile_project:
+        description: Reconcile manually added Project items
+        required: false
+        default: false
+        type: boolean
 
 # Project writes use a short-lived GitHub App installation token, not GITHUB_TOKEN.
 permissions:
   contents: read
+
+concurrency:
+  group: project-issue-defaults
+  cancel-in-progress: false
 
 jobs:
   configure-project:
