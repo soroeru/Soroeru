@@ -344,6 +344,14 @@ never writes the cache regardless of which of those three paths it took.
 this; `discoverCapabilities` remains the unconditional "probe now" primitive
 it wraps.
 
+The LangGraph runner automatically sends the affected agent through this
+targeted invalidation path when an actual worker dispatch fails. The failed
+model is excluded immediately for the current run, while the cache is rewritten
+from a fresh probe of that agent so a later run cannot reuse the pre-failure
+record. Sibling models remain available only when that probe verifies them
+again. If invalidation itself fails, orchestration fails closed instead of
+continuing with a cache it could not make safe.
+
 The requested label must still be explicitly present in the capability record;
 the canonical runtime identifier alone is not an alias or fallback. The legacy
 shape with only `model` remains supported when it already contains the exact

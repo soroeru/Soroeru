@@ -72,6 +72,7 @@ function makeDeps(overrides = {}) {
     loadCapabilities: async () => {
       throw new Error("unexpected-discovery");
     },
+    invalidateCapabilities: async () => {},
     fetchItems: async () => {
       throw new Error("unexpected-fetch");
     },
@@ -365,7 +366,9 @@ test("fails closed when every handoff candidate is unavailable", async () => {
 });
 
 test("a route failing at dispatch time is excluded and the Issue handed off", async () => {
+  const invalidated = [];
   const deps = makeDeps({
+    invalidateCapabilities: async (agent) => invalidated.push(agent),
     dispatch: async (job) => {
       if (job.route.agent === "Claude") throw new Error("model-mismatch");
       deps.dispatched.push(job);
@@ -378,6 +381,7 @@ test("a route failing at dispatch time is excluded and the Issue handed off", as
   const state = await run.state();
   assert.deepEqual(state.unavailableModels, ["sonnet"]);
   assert.deepEqual(state.unavailableAgents, []);
+  assert.deepEqual(invalidated, ["Claude"]);
   assert.equal(state.workerExecutions[0].agent, "Grok");
   // The failed dispatch never started a worker, so no worktree exists yet:
   // the retry keeps the mode that attempt was going to use.
@@ -1134,8 +1138,10 @@ test("a role-program dispatch failure hands off with the worktree-creating skill
 });
 
 test("a dispatch failure keeps another verified model from the same agent usable", async () => {
+  const invalidated = [];
   let failNext = true;
   const deps = makeDeps({
+    invalidateCapabilities: async (agent) => invalidated.push(agent),
     dispatch: async (job) => {
       deps.dispatched.push(job);
       if (failNext) {
@@ -1156,8 +1162,26 @@ test("a dispatch failure keeps another verified model from the same agent usable
   const state = await run.state();
   const failedModel = deps.dispatched[0].route.model;
   assert.deepEqual(state.unavailableModels, [failedModel]);
+  assert.deepEqual(invalidated, ["Claude"]);
   assert.equal(deps.dispatched.at(-1).route.agent, "Claude");
   assert.notEqual(deps.dispatched.at(-1).route.model, failedModel);
+});
+
+test("a dispatch failure fails closed when its capability cache cannot be invalidated", async () => {
+  const deps = makeDeps({
+    invalidateCapabilities: async () => {
+      throw new Error("cache-read-only");
+    },
+    dispatch: async () => {
+      throw new Error("model-mismatch");
+    },
+  });
+  const run = makeRun({ deps });
+  const result = await run.invoke(makeInput({ items: [item(1)] }));
+
+  assert.equal(result.runStatus, "failed");
+  assert.equal(result.failureReason, "capability-invalidation-failed:cache-read-only");
+  assert.deepEqual(result.unavailableModels, ["sonnet"]);
 });
 
 test("two pool records for one runtime do not count as distinct routes", async () => {

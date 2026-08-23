@@ -753,9 +753,19 @@ async function dispatchWorkerNode(payload, config) {
   } catch (error) {
     // A route that fails at actual dispatch no longer reflects reality:
     // exclude that exact model for this run and hand the Issue off. Other
-    // independently verified models from the same agent remain usable. The
-    // next orchestrator run should re-probe the affected agent so the failed
-    // model's cached record cannot stay trusted (--invalidate-agent).
+    // independently verified models from the same agent remain usable in
+    // this run. Refresh the affected agent's cache now so a later graph run
+    // cannot trust the pre-failure record; the targeted probe preserves any
+    // sibling models that still verify successfully.
+    try {
+      await deps.invalidateCapabilities(assignment.agent);
+    } catch (invalidationError) {
+      return {
+        workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
+        unavailableModels: [assignment.model],
+        failureReason: `capability-invalidation-failed:${invalidationError.message}`,
+      };
+    }
     return {
       workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
       pendingInterrupted: [
@@ -1190,6 +1200,13 @@ export function createDefaultDeps({ cwd }) {
         cwd,
       });
       return discovered.capabilities;
+    },
+    async invalidateCapabilities(agent) {
+      await loadOrRefreshCapabilities({
+        cachePath: path.resolve(cwd, DEFAULT_CAPABILITIES_OUTPUT),
+        cwd,
+        invalidateAgents: [agent],
+      });
     },
     async fetchItems(config) {
       const projects = JSON.parse(
