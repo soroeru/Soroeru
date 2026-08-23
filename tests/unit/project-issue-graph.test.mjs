@@ -376,7 +376,8 @@ test("a route failing at dispatch time is excluded and the Issue handed off", as
   const result = await run.invoke(makeInput({ items: [item(1)] }));
   assert.equal(isInterrupted(result), true);
   const state = await run.state();
-  assert.deepEqual(state.unavailableAgents, ["Claude"]);
+  assert.deepEqual(state.unavailableModels, ["sonnet"]);
+  assert.deepEqual(state.unavailableAgents, []);
   assert.equal(state.workerExecutions[0].agent, "Grok");
   // The failed dispatch never started a worker, so no worktree exists yet:
   // the retry keeps the mode that attempt was going to use.
@@ -798,7 +799,12 @@ test("NEEDS_REVISION buys one fix pass, and the second rejection blocks the Issu
   assert.equal(run.deps.dispatched.at(-1).reviewPass, 2);
 
   const dispatchesBefore = run.deps.dispatched.length;
-  const result = await run.resume({ type: "role-complete", issue: 1, role: "reviewer", verdict: "NEEDS_REVISION" });
+  const result = await run.resume({
+    type: "role-complete",
+    issue: 1,
+    role: "reviewer",
+    verdict: "NEEDS_REVISION",
+  });
   assert.equal(result.runStatus, "blocked");
   assert.equal(run.deps.dispatched.length, dispatchesBefore, "no third review pass");
   assert.deepEqual(result.summary.milestones, []);
@@ -1123,7 +1129,35 @@ test("a role-program dispatch failure hands off with the worktree-creating skill
   // the replacement must create one rather than resume a missing tree.
   assert.equal(handoff.skill, "issue-implementation");
   const state = await run.state();
-  assert.equal(state.unavailableAgents.length, 1);
+  assert.deepEqual(state.unavailableModels, [deps.dispatched[0].route.model]);
+  assert.deepEqual(state.unavailableAgents, []);
+});
+
+test("a dispatch failure keeps another verified model from the same agent usable", async () => {
+  let failNext = true;
+  const deps = makeDeps({
+    dispatch: async (job) => {
+      deps.dispatched.push(job);
+      if (failNext) {
+        failNext = false;
+        throw new Error("model-credit-unavailable");
+      }
+      return { pid: 9200 + deps.dispatched.length };
+    },
+  });
+  const capabilities = [
+    parentRecord,
+    workerRoute("Claude", "claude-sonnet"),
+    workerRoute("Claude", "claude-fable"),
+  ];
+  const run = makeRun({ deps });
+  await run.invoke({ ...roleInput([item(1)]), capabilities });
+
+  const state = await run.state();
+  const failedModel = deps.dispatched[0].route.model;
+  assert.deepEqual(state.unavailableModels, [failedModel]);
+  assert.equal(deps.dispatched.at(-1).route.agent, "Claude");
+  assert.notEqual(deps.dispatched.at(-1).route.model, failedModel);
 });
 
 test("two pool records for one runtime do not count as distinct routes", async () => {

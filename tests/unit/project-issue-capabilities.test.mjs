@@ -255,12 +255,9 @@ test("Claude discovers exact models from the project state in .claude.json", asy
       return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
     },
     headlessExecProbe: async ({ args }) => {
-      assert.deepEqual(args.slice(0, 4), [
-        "--model",
-        "claude-sonnet-4-5-20250929",
-        "--permission-mode",
-        "bypassPermissions",
-      ]);
+      assert.deepEqual(args.slice(0, 1), ["--model"]);
+      assert.ok(["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"].includes(args[1]));
+      assert.deepEqual(args.slice(2, 4), ["--permission-mode", "bypassPermissions"]);
       return { ok: true };
     },
   });
@@ -272,6 +269,60 @@ test("Claude discovers exact models from the project state in .claude.json", asy
     ["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"],
   );
   assert.deepEqual(calls, [["auth", "status"]]);
+});
+
+test("Claude verifies each candidate independently and excludes a later model that fails", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-claude-per-model-"));
+  const bin = path.join(directory, "bin");
+  await mkdir(bin);
+  const claudePath = await makeFakeBin(bin, "claude", "process.exit(0);");
+  const probedModels = [];
+  const result = await discoverAllCapabilities({
+    env: { ...process.env, PATH: isolatedPath(bin) },
+    pathEnv: isolatedPath(bin),
+    only: ["Claude"],
+    adapters: { Claude: { candidateModels: ["claude-sonnet", "claude-fable"] } },
+    resolveExecutable: async (name) => (name === "claude" ? claudePath : null),
+    runProcess: async () => ({
+      code: 0,
+      signal: null,
+      timedOut: false,
+      error: null,
+      stdout: JSON.stringify({ loggedIn: true }),
+      stderr: "",
+      pid: 1,
+    }),
+    headlessExecProbe: async ({ args }) => {
+      const model = args[args.indexOf("--model") + 1];
+      probedModels.push(model);
+      return model === "claude-sonnet"
+        ? { ok: true }
+        : { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED };
+    },
+  });
+
+  assert.deepEqual(probedModels, ["claude-sonnet", "claude-fable"]);
+  assert.deepEqual(
+    result.capabilities
+      .filter((record) => record.agent === "Claude")
+      .map((record) => [record.model, record.role]),
+    [
+      ["claude-sonnet", "worker"],
+      ["claude-sonnet", "parent"],
+    ],
+  );
+  assert.deepEqual(
+    result.diagnostics.filter((entry) => entry.agent === "Claude"),
+    [
+      { agent: "Claude", status: "ok", model: "claude-sonnet" },
+      {
+        agent: "Claude",
+        status: "failed",
+        reason: REASON_CODES.HEADLESS_EXEC_FAILED,
+        model: "claude-fable",
+      },
+    ],
+  );
 });
 
 test("Claude uses the available-model cache when project usage is absent", async () => {

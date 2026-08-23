@@ -83,13 +83,7 @@ export const DEFAULT_CHECKPOINT_DIR = "state/project-issue-graph";
 
 const RELEASE_POLICIES = new Set(["pr-created", "merged"]);
 const MILESTONE_TYPES = new Set(["pr-created", "merged"]);
-const EVENT_TYPES = new Set([
-  "milestone",
-  "role-complete",
-  "worker-interrupted",
-  "worker-started",
-  "check",
-]);
+const EVENT_TYPES = new Set(["milestone", "role-complete", "worker-interrupted", "worker-started", "check"]);
 export const FAILURE_TAXONOMY = Object.freeze({
   recoverable: new Set(["timeout", "session-limit", "provider-unavailable", "worker-crashed"]),
   unrecoverable: new Set(["auth-failed", "policy-blocked", "invalid-input"]),
@@ -708,9 +702,7 @@ async function dispatchWorkerNode(payload, config) {
     uuid: deps.uuid(),
     agent: assignment.agent,
     model: assignment.model,
-    ...(assignment.skill === null || assignment.skill === undefined
-      ? {}
-      : { skill: assignment.skill }),
+    ...(assignment.skill === null || assignment.skill === undefined ? {} : { skill: assignment.skill }),
     ...(assignment.role === undefined ? {} : { role: assignment.role }),
     ...(assignment.executionMode === undefined ? {} : { executionMode: assignment.executionMode }),
     worktreeId: `issue-${assignment.number}`,
@@ -760,8 +752,10 @@ async function dispatchWorkerNode(payload, config) {
     };
   } catch (error) {
     // A route that fails at actual dispatch no longer reflects reality:
-    // exclude the agent for this run and hand the Issue off. The next
-    // orchestrator run should re-probe it (--invalidate-agent).
+    // exclude that exact model for this run and hand the Issue off. Other
+    // independently verified models from the same agent remain usable. The
+    // next orchestrator run should re-probe the affected agent so the failed
+    // model's cached record cannot stay trusted (--invalidate-agent).
     return {
       workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
       pendingInterrupted: [
@@ -776,7 +770,7 @@ async function dispatchWorkerNode(payload, config) {
           worktreeCreated: false,
         },
       ],
-      unavailableAgents: [assignment.agent],
+      unavailableModels: [assignment.model],
     };
   }
 }
@@ -1060,9 +1054,7 @@ function selectHandoffRouteNode(state) {
         ? {
             role: activeRole,
             executionMode: handoffRoleState.executionMode,
-            ...(activeRole === ROLES.REVIEWER
-              ? { reviewPass: handoffRoleState.reviewPasses + 1 }
-              : {}),
+            ...(activeRole === ROLES.REVIEWER ? { reviewPass: handoffRoleState.reviewPasses + 1 } : {}),
             ...(activeRole === ROLES.IMPLEMENTER && handoffRoleState.fixCycles > 0
               ? { fixCycle: handoffRoleState.fixCycles }
               : {}),
@@ -1135,8 +1127,7 @@ function waitRouter(state) {
   // ran out of review budget): report the run as blocked instead of waiting
   // for an event that can never arrive. An Issue still owed its release
   // milestone is the exception — that event comes from outside.
-  if (!activeExecutions(state).length && !awaitingReleaseMilestone(state).length)
-    return "summarize_run";
+  if (!activeExecutions(state).length && !awaitingReleaseMilestone(state).length) return "summarize_run";
   return "wait_for_events";
 }
 
