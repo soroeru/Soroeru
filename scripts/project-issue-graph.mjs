@@ -182,7 +182,7 @@ export const OrchestrationState = Annotation.Root({
   }),
   /** Milestone event currently under integration-gate review, or null. */
   pendingGate: Annotation(),
-  /** Issues needing handoff: {issue, reason, proposedRoute?}; null clears. */
+  /** Issues needing handoff: {issue, reason, proposedRoute?, invalidateAgent?}; null clears. */
   pendingInterrupted: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
   retryCounts: Annotation({
     reducer: (left = {}, right = {}) => ({ ...left, ...right }),
@@ -752,20 +752,10 @@ async function dispatchWorkerNode(payload, config) {
     };
   } catch (error) {
     // A route that fails at actual dispatch no longer reflects reality:
-    // exclude that exact model for this run and hand the Issue off. Other
-    // independently verified models from the same agent remain usable in
-    // this run. Refresh the affected agent's cache now so a later graph run
-    // cannot trust the pre-failure record; the targeted probe preserves any
-    // sibling models that still verify successfully.
-    try {
-      await deps.invalidateCapabilities(assignment.agent);
-    } catch (invalidationError) {
-      return {
-        workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
-        unavailableModels: [assignment.model],
-        failureReason: `capability-invalidation-failed:${invalidationError.message}`,
-      };
-    }
+    // exclude that exact model for this run and hand the Issue off. The
+    // fan-in wait node serializes targeted refreshes and replaces the live
+    // capability pool before selecting any handoff route; doing that here
+    // would make parallel Send children write the same LastValue channel.
     return {
       workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
       pendingInterrupted: [
@@ -778,6 +768,9 @@ async function dispatchWorkerNode(payload, config) {
           // Recorded rather than inferred: the handoff must not assume a
           // worktree exists just because an execution record does.
           worktreeCreated: false,
+          // Sanitized agent label only. The wait node consumes this marker
+          // after it has replaced state.capabilities from the targeted probe.
+          invalidateAgent: assignment.agent,
         },
       ],
       unavailableModels: [assignment.model],
@@ -786,6 +779,30 @@ async function dispatchWorkerNode(payload, config) {
 }
 
 async function waitForEventsNode(state, config) {
+  const invalidationAgents = [
+    ...new Set(
+      (state.pendingInterrupted ?? [])
+        .map(({ invalidateAgent }) => invalidateAgent)
+        .filter((agent) => typeof agent === "string" && agent.length > 0),
+    ),
+  ];
+  if (invalidationAgents.length) {
+    try {
+      let capabilities = state.capabilities ?? [];
+      for (const agent of invalidationAgents) {
+        capabilities = await getDeps(config).invalidateCapabilities(agent);
+        if (!Array.isArray(capabilities)) throw new Error("invalid-capability-refresh-result");
+      }
+      return {
+        capabilities,
+        pendingInterrupted: (state.pendingInterrupted ?? []).map(
+          ({ invalidateAgent: _consumed, ...entry }) => entry,
+        ),
+      };
+    } catch (error) {
+      return { failureReason: `capability-invalidation-failed:${error.message}` };
+    }
+  }
   // Events already applied but not yet routed take precedence over waiting.
   if (state.pendingGate) return {};
   if ((state.pendingInterrupted ?? []).length) return {};
@@ -1202,11 +1219,12 @@ export function createDefaultDeps({ cwd }) {
       return discovered.capabilities;
     },
     async invalidateCapabilities(agent) {
-      await loadOrRefreshCapabilities({
+      const discovered = await loadOrRefreshCapabilities({
         cachePath: path.resolve(cwd, DEFAULT_CAPABILITIES_OUTPUT),
         cwd,
         invalidateAgents: [agent],
       });
+      return discovered.capabilities;
     },
     async fetchItems(config) {
       const projects = JSON.parse(

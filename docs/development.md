@@ -345,9 +345,11 @@ this; `discoverCapabilities` remains the unconditional "probe now" primitive
 it wraps.
 
 The LangGraph runner automatically sends the affected agent through this
-targeted invalidation path when an actual worker dispatch fails. The failed
-model is excluded immediately for the current run, while the cache is rewritten
-from a fresh probe of that agent so a later run cannot reuse the pre-failure
+targeted invalidation path when an actual worker dispatch fails. The graph
+fan-in serializes refreshes from parallel dispatch failures, replaces its
+checkpointed capability pool with the merged refresh result, and then selects
+handoff routes. The failed model is excluded immediately for the current run,
+while the cache is also rewritten so a later run cannot reuse the pre-failure
 record. Sibling models remain available only when that probe verifies them
 again. If invalidation itself fails, orchestration fails closed instead of
 continuing with a cache it could not make safe.

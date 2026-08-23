@@ -72,7 +72,7 @@ function makeDeps(overrides = {}) {
     loadCapabilities: async () => {
       throw new Error("unexpected-discovery");
     },
-    invalidateCapabilities: async () => {},
+    invalidateCapabilities: async () => defaultCapabilities,
     fetchItems: async () => {
       throw new Error("unexpected-fetch");
     },
@@ -368,7 +368,10 @@ test("fails closed when every handoff candidate is unavailable", async () => {
 test("a route failing at dispatch time is excluded and the Issue handed off", async () => {
   const invalidated = [];
   const deps = makeDeps({
-    invalidateCapabilities: async (agent) => invalidated.push(agent),
+    invalidateCapabilities: async (agent) => {
+      invalidated.push(agent);
+      return defaultCapabilities;
+    },
     dispatch: async (job) => {
       if (job.route.agent === "Claude") throw new Error("model-mismatch");
       deps.dispatched.push(job);
@@ -1140,8 +1143,16 @@ test("a role-program dispatch failure hands off with the worktree-creating skill
 test("a dispatch failure keeps another verified model from the same agent usable", async () => {
   const invalidated = [];
   let failNext = true;
+  const capabilities = [
+    parentRecord,
+    workerRoute("Claude", "claude-sonnet"),
+    workerRoute("Claude", "claude-fable"),
+  ];
   const deps = makeDeps({
-    invalidateCapabilities: async (agent) => invalidated.push(agent),
+    invalidateCapabilities: async (agent) => {
+      invalidated.push(agent);
+      return capabilities;
+    },
     dispatch: async (job) => {
       deps.dispatched.push(job);
       if (failNext) {
@@ -1151,11 +1162,6 @@ test("a dispatch failure keeps another verified model from the same agent usable
       return { pid: 9200 + deps.dispatched.length };
     },
   });
-  const capabilities = [
-    parentRecord,
-    workerRoute("Claude", "claude-sonnet"),
-    workerRoute("Claude", "claude-fable"),
-  ];
   const run = makeRun({ deps });
   await run.invoke({ ...roleInput([item(1)]), capabilities });
 
@@ -1165,6 +1171,110 @@ test("a dispatch failure keeps another verified model from the same agent usable
   assert.deepEqual(invalidated, ["Claude"]);
   assert.equal(deps.dispatched.at(-1).route.agent, "Claude");
   assert.notEqual(deps.dispatched.at(-1).route.model, failedModel);
+});
+
+test("a dispatch failure drops sibling models that the targeted refresh no longer verifies", async () => {
+  const invalidated = [];
+  let failNext = true;
+  const refreshedCapabilities = [parentRecord, workerRoute("Codex", "gpt-5"), workerRoute("Grok", "grok-4")];
+  const deps = makeDeps({
+    invalidateCapabilities: async (agent) => {
+      invalidated.push(agent);
+      return refreshedCapabilities;
+    },
+    dispatch: async (job) => {
+      deps.dispatched.push(job);
+      if (failNext) {
+        failNext = false;
+        throw new Error("model-credit-unavailable");
+      }
+      return { pid: 9300 + deps.dispatched.length };
+    },
+  });
+  const capabilities = [
+    parentRecord,
+    workerRoute("Codex", "gpt-5"),
+    workerRoute("Claude", "claude-sonnet"),
+    workerRoute("Claude", "claude-fable"),
+    workerRoute("Grok", "grok-4"),
+  ];
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], capabilities }));
+
+  const state = await run.state();
+  assert.deepEqual(invalidated, ["Claude"]);
+  assert.deepEqual(state.capabilities, refreshedCapabilities);
+  assert.deepEqual(state.unavailableModels, ["claude-sonnet"]);
+  assert.deepEqual(
+    deps.dispatched.map(({ route }) => `${route.agent}:${route.model}`),
+    ["Claude:claude-sonnet", "Grok:grok-4"],
+  );
+  assert.deepEqual(
+    state.workerRoutes.map(({ agent, model }) => ({ agent, model })),
+    [{ agent: "Grok", model: "grok-4" }],
+  );
+  assert.equal(state.workerExecutions[0].agent, "Grok");
+  assert.equal(state.workerExecutions[0].model, "grok-4");
+});
+
+test("parallel dispatch failures serialize targeted refreshes before handoff", async () => {
+  const invalidated = [];
+  let refreshedCapabilities = [
+    parentRecord,
+    workerRoute("Codex", "gpt-5"),
+    workerRoute("Claude", "claude-sonnet"),
+    workerRoute("Grok", "grok-4"),
+    workerRoute("Gemini", "gemini-3"),
+  ];
+  const deps = makeDeps({
+    invalidateCapabilities: async (agent) => {
+      invalidated.push(agent);
+      refreshedCapabilities = refreshedCapabilities.filter((record) => record.agent !== agent);
+      return refreshedCapabilities;
+    },
+    dispatch: async (job) => {
+      deps.dispatched.push(job);
+      if (job.route.agent === "Claude" || job.route.agent === "Grok") throw new Error("model-unavailable");
+      return { pid: 9400 + deps.dispatched.length };
+    },
+  });
+  const run = makeRun({ deps });
+  await run.invoke(
+    makeInput({
+      items: [item(1), item(2)],
+      capabilities: refreshedCapabilities,
+      config: { maxParallel: 2 },
+    }),
+  );
+
+  const state = await run.state();
+  assert.deepEqual(invalidated.toSorted(), ["Claude", "Grok"]);
+  assert.deepEqual(
+    state.capabilities.map(({ agent, model }) => `${agent}:${model}`),
+    ["Codex:gpt-5", "Codex:gpt-5", "Gemini:gemini-3"],
+  );
+  assert.deepEqual(
+    deps.dispatched
+      .slice(0, 2)
+      .map(({ route }) => route.agent)
+      .toSorted(),
+    ["Claude", "Grok"],
+  );
+  assert.deepEqual(
+    deps.dispatched.slice(2).map(({ route }) => route.agent),
+    ["Gemini", "Gemini"],
+  );
+  assert.deepEqual(
+    state.workerRoutes.map(({ agent, model }) => ({ agent, model })),
+    [{ agent: "Gemini", model: "gemini-3" }],
+  );
+  assert.deepEqual(
+    state.workerExecutions.map(({ agent, model, status }) => ({ agent, model, status })),
+    [
+      { agent: "Gemini", model: "gemini-3", status: "running" },
+      { agent: "Gemini", model: "gemini-3", status: "running" },
+    ],
+  );
 });
 
 test("a dispatch failure fails closed when its capability cache cannot be invalidated", async () => {
