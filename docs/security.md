@@ -461,13 +461,17 @@ New runtime dependencies now include Playwright and a vetted Argon2id implementa
 **Continuous detection (operation rules).** Dependency vulnerabilities are monitored
 continuously by two layers: **Dependabot** (`.github/dependabot.yml`) opens update PRs
 across all dependencies, and a **CI audit gate** (`SEC-003`, `npm run audit:check` =
-`npm audit --omit=dev --audit-level=high` in `.github/workflows/ci.yml`) fails builds on
-new high/critical advisories in the **production** surface (runtime + optional deps).
-The gate is intentionally scoped to production deps so the accepted build-time-only
-`devDependency` advisories below do not keep CI permanently red. The reusable setup,
-threshold/scope rationale, acceptance flow, and triage steps live in
-[`dependency-security.md`](dependency-security.md); the accepted advisories themselves
-are recorded in §12.0 below.
+`node scripts/audit-check.mjs`, a thin wrapper around
+`npm audit --omit=dev --audit-level=high --json`, in `.github/workflows/ci.yml`) fails
+builds on new high/critical advisories in the **production** surface (runtime + optional
+deps). The gate is intentionally scoped to production deps, and the wrapper further
+excludes only the specific advisory sources recorded in
+[`scripts/accepted-advisories.json`](../scripts/accepted-advisories.json), so the accepted
+build-time-only `devDependency` and unpatchable build-time-only `optionalDependency`
+advisories below do not keep CI permanently red while any *new* advisory still fails the
+gate. The reusable setup, threshold/scope rationale, acceptance flow, and triage steps
+live in [`dependency-security.md`](dependency-security.md); the accepted advisories
+themselves are recorded in §12.0 below.
 
 ### 12.0 Build-Time-Only Dependency Vulnerabilities (interim risk acceptance)
 
@@ -539,10 +543,43 @@ node, not per advisory, so the 19 high are `tar` plus every `@electron-forge/*` 
 `@electron` package that transitively depends on it (`@electron/rebuild`,
 `@electron/node-gyp`, `make-fetch-happen`, `cacache`, the `@electron-forge/*` packages)
 and `tmp`; the 3 low are `external-editor` / `@inquirer/editor` / `@inquirer/prompts`.
-`npm audit --omit=dev` (production scope — the runtime `dependencies` `hash-wasm` and
-`playwright`, plus `optionalDependencies`; note `appdmg`, the optional build-only DMG
-tool, is not installed on this platform) reports **0 vulnerabilities**. Counts shift with
-upstream updates; re-check at release time.
+`npm audit --omit=dev` (production scope — the runtime `dependencies` `hash-wasm`,
+`playwright`, `@anthropic-ai/sdk`, `yaml`, plus `optionalDependencies`) reported **0
+vulnerabilities** on that date. `npm audit` audits the resolved dependency tree recorded
+in `package-lock.json`, not only what the current OS actually installs, so this held
+regardless of the CI runner's OS; it changed only because no advisory existed yet for
+`image-size` (see below) — not because `appdmg` was out of audit scope on non-macOS
+runners. Counts shift with upstream updates; re-check at release time.
+
+**Optional dependency: `image-size` via `appdmg` (interim risk acceptance, added
+2026-08-26)**
+
+- **Advisories** — `image-size` (high, both apply to every published release):
+  - GHSA-w3rx-r6r6-pgpr: ICNS parser allows denial of service through an infinite loop.
+  - GHSA-5p2g-fcmc-qvqq: JXL and HEIF parsers allow denial of service through infinite
+    loops.
+- **Dependency path** — `appdmg` (`optionalDependencies`, `^0.6.6`, `os: darwin`) →
+  `image-size@0.7.5`. `appdmg` is the DMG-packaging backend invoked only by
+  `npm run package:dmg`; it is never imported by the shipped Electron app or its
+  runtime.
+- **No clean fix today.** Both advisories' vulnerable range is `<=2.0.2`, i.e. every
+  published `image-size` version through the current latest (`2.0.2`) is in range —
+  there is no patched release to move to. `npm audit`'s own `fixAvailable` suggests
+  downgrading to `appdmg@0.1.0`, a pre-2015, far older major that is not a real fix.
+- **Why bounded.** Same premises as the `devDependency` chains above: build-time-only
+  (`npm run package:dmg`), not present in the distributed runtime, and additionally
+  `os`-restricted to `darwin` so it never installs on non-macOS machines at all — the
+  advisory only has a chance to matter on a maintainer's own Mac while packaging a DMG
+  from this repository's own source, not from any attacker-controlled input.
+- **Enforcement.** Recorded by advisory `source` id in
+  [`scripts/accepted-advisories.json`](../scripts/accepted-advisories.json), which
+  `scripts/audit-check.mjs` (the `audit:check` implementation) reads to exclude exactly
+  these two advisory ids from the gate; any other new high/critical advisory still fails
+  it.
+- **Re-evaluate** when `image-size` ships a release outside the `<=2.0.2` vulnerable
+  range, or `appdmg`/its DMG-maker chain drops the dependency.
+- Upstream tracking: <https://github.com/image-size/image-size>,
+  <https://github.com/LinusU/node-appdmg>.
 
 ### 12.1 Mac Beta Artifact Safety
 

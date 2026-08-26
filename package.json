@@ -14,8 +14,8 @@
     "build:app": "npm run build && npm run build:preload && npm run build:renderer",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "lint": "eslint .",
-    "format": "prettier --check electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs",
-    "format:write": "prettier --write electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs",
+    "format": "prettier --check electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs scripts/audit-check.mjs scripts/accepted-advisories.json",
+    "format:write": "prettier --write electron src/renderer vite.config.ts eslint.config.js forge.config.cjs scripts/rename-dmg.mjs scripts/check-node-version.mjs scripts/audit-check.mjs scripts/accepted-advisories.json",
     "dev": "npm run build && npm run build:preload && npm run build:host && concurrently -k -s first \"vite\" \"wait-on tcp:127.0.0.1:5173 && VITE_DEV_SERVER_URL=http://localhost:5173 electron dist/compiled/electron/main.js\"",
     "test": "npm run build && node --test dist/compiled/tests/unit/*.test.js",
     "poc": "npm run build && node --env-file-if-exists=.env dist/compiled/run/cli.js",
@@ -29,7 +29,7 @@
     "diagnostics:analyze": "npm run build && node dist/compiled/run/analyze-collection-log.js",
     "package:dmg": "node scripts/check-node-version.mjs && rm -rf out release/Soroeru-*.dmg && npm run build:app && npm run build:host && PLAYWRIGHT_BROWSERS_PATH=0 npx playwright install chromium && electron-forge make --platform=darwin && node scripts/rename-dmg.mjs",
     "release:check": "npm run typecheck && npm test && npm run poc -- check-egress && npm run poc -- check-persistence && npm run poc -- check-bypass && npm run audit:check",
-    "audit:check": "npm audit --omit=dev --audit-level=high"
+    "audit:check": "node scripts/audit-check.mjs"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.2",
