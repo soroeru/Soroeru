@@ -571,11 +571,15 @@ runners. Counts shift with upstream updates; re-check at release time.
   `os`-restricted to `darwin` so it never installs on non-macOS machines at all — the
   advisory only has a chance to matter on a maintainer's own Mac while packaging a DMG
   from this repository's own source, not from any attacker-controlled input.
-- **Enforcement.** Recorded by advisory `source` id in
+- **Enforcement.** Recorded by advisory `source` id, package name, and the exact
+  `consumedBy` dependency path (`["appdmg"]`) in
   [`scripts/accepted-advisories.json`](../scripts/accepted-advisories.json), which
   `scripts/audit-check.mjs` (the `audit:check` implementation) reads to exclude exactly
-  these two advisory ids from the gate; any other new high/critical advisory still fails
-  it.
+  these two advisory ids **only when reached through that path** (`npm audit`'s
+  `effects` field). Any other new high/critical advisory still fails the gate, and so
+  does the same advisory id if it ever reaches a different, unaccepted dependency path
+  (e.g. `image-size` becoming a genuine runtime dependency instead of appdmg's
+  build-time-only one) — the acceptance is scoped, not blanket.
 - **Re-evaluate** when `image-size` ships a release outside the `<=2.0.2` vulnerable
   range, or `appdmg`/its DMG-maker chain drops the dependency.
 - Upstream tracking: <https://github.com/image-size/image-size>,

@@ -2,20 +2,22 @@
   {
     "source": 1138808,
     "package": "image-size",
+    "consumedBy": ["appdmg"],
     "ghsa": "GHSA-w3rx-r6r6-pgpr",
     "title": "image-size: ICNS parser allows denial of service through an infinite loop",
     "dependencyPath": "appdmg (optionalDependency, os: darwin) > image-size",
-    "reason": "No patched release exists (advisory range is \"<=2.0.2\", i.e. every published image-size version including the latest). appdmg is a build-time-only, darwin-only DMG packager invoked only by `npm run package:dmg`; it is never bundled into the shipped Electron app.",
+    "reason": "No patched release exists (advisory range is \"<=2.0.2\", i.e. every published image-size version including the latest). appdmg is a build-time-only, darwin-only DMG packager invoked only by `npm run package:dmg`; it is never bundled into the shipped Electron app. Acceptance is scoped to this exact path (package.consumedBy) so the same advisory reached through any other, unaccepted dependency path still fails the gate.",
     "recordedAt": "2026-08-26",
     "trackingDoc": "docs/security.md §12.0"
   },
   {
     "source": 1138809,
     "package": "image-size",
+    "consumedBy": ["appdmg"],
     "ghsa": "GHSA-5p2g-fcmc-qvqq",
     "title": "image-size: JXL and HEIF parsers allow denial of service through infinite loops",
     "dependencyPath": "appdmg (optionalDependency, os: darwin) > image-size",
-    "reason": "No patched release exists (advisory range is \"<=2.0.2\", i.e. every published image-size version including the latest). appdmg is a build-time-only, darwin-only DMG packager invoked only by `npm run package:dmg`; it is never bundled into the shipped Electron app.",
+    "reason": "No patched release exists (advisory range is \"<=2.0.2\", i.e. every published image-size version including the latest). appdmg is a build-time-only, darwin-only DMG packager invoked only by `npm run package:dmg`; it is never bundled into the shipped Electron app. Acceptance is scoped to this exact path (package.consumedBy) so the same advisory reached through any other, unaccepted dependency path still fails the gate.",
     "recordedAt": "2026-08-26",
     "trackingDoc": "docs/security.md §12.0"
   }
