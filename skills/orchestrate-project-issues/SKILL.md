@@ -104,6 +104,15 @@ Send only the Issue number, the role, the assigned agent/model route, the skill,
 and next milestone to a worker. The worker fetches its own body/comments, diff, and test results.
 Never pass Issue bodies, diffs, plans, or another role's output through the dispatch payload.
 
+Structure every non-trivial dispatch prompt with four short labeled sections:
+
+- **Goal:** the single role outcome.
+- **Context:** Issue number, role, verified route, skill, release policy, and next milestone only.
+- **Constraints:** state/privacy limits, worktree ownership, and role-specific boundaries.
+- **Done when:** the observable milestone and exact concise event shape to return.
+
+Do not embed hidden rationale or repeat repository-wide instructions that the worker loads itself.
+
 - Launch the selected route with the same exact `selector` / `model` from discovery — for external CLIs use `node scripts/project-issue-dispatch.mjs` (or `dispatchWorker`) so non-Codex routes start through their adapter, not a Codex-only path. Role-based launches add `--role`, `--skill`, `--execution-mode`, and (for a reviewer) `--review-pass`.
 - No worktree: worker uses `issue-implementation`.
 - Existing Issue worktree/metadata: worker uses `handoff-issue` before editing.

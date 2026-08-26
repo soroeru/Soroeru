@@ -94,6 +94,9 @@ Operational notes:
 - `core.hooksPath` is set with `git config --local` (stored in the shared common
   git dir, not per-worktree), so running `scripts/setup-hooks.sh` once enables
   the local AI review hook in every worktree.
+- Claude Code also has a repository `PreToolUse` guard that rejects `git commit`
+  when its working directory is outside `.worktrees/`. It is defense in depth for
+  Claude sessions only; every runtime remains responsible for the start gate.
 - `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
   tree, so worktrees do not contend for the same review lock. Wait for reviews
   only under the worktree where the commit was made.

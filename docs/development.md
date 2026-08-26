@@ -1,12 +1,10 @@
 # Development
 
-> **⚠️ IN FLUX.** Target architecture / technology selection is owned by
-> [`architecture.md`](architecture.md); the setup, layout, commands, and packaging below are
-> updated by future `architecture.md`-driven implementation work, so do not assume the
-> details below are final.
-
 This document owns **local development workflow, repository layout,
 implementation conventions, and the canonical quality gate list** for `Soroeru`.
+Commands in this document describe the current repository. Target architecture and staged
+migration decisions remain owned by [`architecture.md`](architecture.md); where current and target
+states differ, this document labels the transition explicitly.
 
 Out of scope here: application architecture (see [`architecture.md`](architecture.md)),
 product requirements (see [`requirements.md`](requirements.md)), test strategy
@@ -53,15 +51,34 @@ MVP development targets Apple Silicon Macs running macOS 14 Sonoma or macOS 15 S
 Other development hosts may be useful for code review or docs, but release and manual QA
 for the private beta must run on the supported Mac target.
 
-After cloning, install dependencies and the Playwright browsers used by the current runtime
+After cloning, install locked dependencies and the Playwright browsers used by the current runtime
 and development-only E2E suite. Issue #391 makes the Chrome extension the target production
 front door; a follow-up retirement Issue will remove production Playwright/browser packaging,
 but these commands remain current until that cutover lands:
 
 ```bash
-npm install
+npm ci
 npx playwright install chromium firefox webkit
 ```
+
+### Agent configuration
+
+`AGENTS.md` is the concise shared instruction source. `CLAUDE.md` imports it with `@AGENTS.md` and
+contains Claude-only session conventions; `.agents/rules/GEMINI.md` is a small Gemini/agy adapter,
+not a synchronized copy. Area-specific guidance lives in Claude path rules and nested `AGENTS.md`
+files so it loads only when relevant.
+
+Claude Code project hooks in `.claude/settings.json` block commits from the human-only primary
+clone and direct reads of the real-password CSV or local AI review artifacts. These agent-layer
+guards complement, rather than replace, the Git hooks installed by `scripts/setup-hooks.sh`.
+Quality gates remain in the Git pre-commit hook rather than being duplicated in Claude settings.
+
+High-side-effect skills are manually invocable, and Issue lifecycle skills advertise their Issue
+number argument. Repository skills intentionally do not grant broad `allowed-tools`: their GitHub,
+Git, browser, and filesystem operations need the runtime's normal permission policy. The two
+Claude subagents use role-limited tool lists and intentionally have no persistent memory; durable
+decisions belong in reviewed Issues or repository documents. Add skill eval fixtures only with a
+separate acceptance baseline and owner, so generated eval results do not become unreviewed policy.
 
 Install local hooks only if the local AI review workflow is in use:
 

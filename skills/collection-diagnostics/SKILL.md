@@ -1,6 +1,7 @@
 ---
 name: collection-diagnostics
 description: Run the packaged Soroeru app through a full unattended Visibility collection over the user's real password CSV, download/collect the diagnostics log, and rank collection-failure causes by frequency. Use when the user asks to measure or analyze why data collection fails across sites, to re-run the collection diagnostics, or to refresh the failure-cause ranking (Issue #317 workflow).
+disable-model-invocation: true
 ---
 
 # Collection Diagnostics

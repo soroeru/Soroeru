@@ -1,6 +1,7 @@
 ---
 name: handoff-issue
 description: Use when resuming an existing Soroeru GitHub Issue after a session limit, new agent session, CLI interruption, rate limit, or agent change, where the Issue worktree and branch should already exist.
+argument-hint: "[issue-number]"
 ---
 
 # Handoff Issue
@@ -11,7 +12,7 @@ Resume one existing Issue in its existing worktree without losing inherited WIP 
 
 ## Input
 
-Accept exactly one explicit GitHub Issue number, such as `#365` or `365`. If the request has no Issue number, multiple numbers, or could mean a PR number, ask for one Issue number before mutating local or GitHub state.
+Accept exactly one explicit GitHub Issue number from `$ARGUMENTS` or the user request, such as `#365` or `365`. If the request has no Issue number, multiple numbers, or could mean a PR number, ask for one Issue number before mutating local or GitHub state.
 
 Use `issue-implementation` instead when the Issue worktree and branch have not been created.
 
