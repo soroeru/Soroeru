@@ -194,30 +194,30 @@ export async function discover(ctx = {}) {
   }
   if (!candidates.length) return { records, diagnostics };
 
-  // Probe once per adapter (not per model): TTY/permission behavior is a CLI
-  // property, not a per-model one. Only a route that actually completes a
-  // headless tool-use task becomes verifiable.
+  // Probe every exact selector/model pair. Authentication and CLI behavior
+  // may be shared, but entitlement, quota, and credit availability can differ
+  // by model. One successful model must never verify another candidate.
   const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
-  const probeTokens = splitSelector(candidates[0].selector);
-  const probeResult = await probe({
-    cliPath: probeTokens[0],
-    args: [...probeTokens.slice(1), "-p"],
-    run,
-    timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
-    env,
-  });
-  if (!probeResult.ok) {
-    diagnostics.push(
-      diagnostic({
-        agent,
-        status: "failed",
-        reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED,
-      }),
-    );
-    return { records, diagnostics };
-  }
-
   for (const { model, requestedModel, selector } of candidates) {
+    const probeTokens = splitSelector(selector);
+    const probeResult = await probe({
+      cliPath: probeTokens[0],
+      args: [...probeTokens.slice(1), "-p"],
+      run,
+      timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+      env,
+    });
+    if (!probeResult.ok) {
+      diagnostics.push(
+        diagnostic({
+          agent,
+          status: "failed",
+          reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED,
+          model,
+        }),
+      );
+      continue;
+    }
     for (const role of ["worker", "parent"]) {
       records.push(
         capabilityRecord({

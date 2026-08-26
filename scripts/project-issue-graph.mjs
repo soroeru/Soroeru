@@ -83,13 +83,7 @@ export const DEFAULT_CHECKPOINT_DIR = "state/project-issue-graph";
 
 const RELEASE_POLICIES = new Set(["pr-created", "merged"]);
 const MILESTONE_TYPES = new Set(["pr-created", "merged"]);
-const EVENT_TYPES = new Set([
-  "milestone",
-  "role-complete",
-  "worker-interrupted",
-  "worker-started",
-  "check",
-]);
+const EVENT_TYPES = new Set(["milestone", "role-complete", "worker-interrupted", "worker-started", "check"]);
 export const FAILURE_TAXONOMY = Object.freeze({
   recoverable: new Set(["timeout", "session-limit", "provider-unavailable", "worker-crashed"]),
   unrecoverable: new Set(["auth-failed", "policy-blocked", "invalid-input"]),
@@ -188,7 +182,7 @@ export const OrchestrationState = Annotation.Root({
   }),
   /** Milestone event currently under integration-gate review, or null. */
   pendingGate: Annotation(),
-  /** Issues needing handoff: {issue, reason, proposedRoute?}; null clears. */
+  /** Issues needing handoff: {issue, reason, proposedRoute?, invalidateAgent?}; null clears. */
   pendingInterrupted: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
   retryCounts: Annotation({
     reducer: (left = {}, right = {}) => ({ ...left, ...right }),
@@ -708,9 +702,7 @@ async function dispatchWorkerNode(payload, config) {
     uuid: deps.uuid(),
     agent: assignment.agent,
     model: assignment.model,
-    ...(assignment.skill === null || assignment.skill === undefined
-      ? {}
-      : { skill: assignment.skill }),
+    ...(assignment.skill === null || assignment.skill === undefined ? {} : { skill: assignment.skill }),
     ...(assignment.role === undefined ? {} : { role: assignment.role }),
     ...(assignment.executionMode === undefined ? {} : { executionMode: assignment.executionMode }),
     worktreeId: `issue-${assignment.number}`,
@@ -760,8 +752,10 @@ async function dispatchWorkerNode(payload, config) {
     };
   } catch (error) {
     // A route that fails at actual dispatch no longer reflects reality:
-    // exclude the agent for this run and hand the Issue off. The next
-    // orchestrator run should re-probe it (--invalidate-agent).
+    // exclude that exact model for this run and hand the Issue off. The
+    // fan-in wait node serializes targeted refreshes and replaces the live
+    // capability pool before selecting any handoff route; doing that here
+    // would make parallel Send children write the same LastValue channel.
     return {
       workerExecutions: [{ ...base, status: "dispatch-failed", reason: error.message }],
       pendingInterrupted: [
@@ -774,14 +768,41 @@ async function dispatchWorkerNode(payload, config) {
           // Recorded rather than inferred: the handoff must not assume a
           // worktree exists just because an execution record does.
           worktreeCreated: false,
+          // Sanitized agent label only. The wait node consumes this marker
+          // after it has replaced state.capabilities from the targeted probe.
+          invalidateAgent: assignment.agent,
         },
       ],
-      unavailableAgents: [assignment.agent],
+      unavailableModels: [assignment.model],
     };
   }
 }
 
 async function waitForEventsNode(state, config) {
+  const invalidationAgents = [
+    ...new Set(
+      (state.pendingInterrupted ?? [])
+        .map(({ invalidateAgent }) => invalidateAgent)
+        .filter((agent) => typeof agent === "string" && agent.length > 0),
+    ),
+  ];
+  if (invalidationAgents.length) {
+    try {
+      let capabilities = state.capabilities ?? [];
+      for (const agent of invalidationAgents) {
+        capabilities = await getDeps(config).invalidateCapabilities(agent);
+        if (!Array.isArray(capabilities)) throw new Error("invalid-capability-refresh-result");
+      }
+      return {
+        capabilities,
+        pendingInterrupted: (state.pendingInterrupted ?? []).map(
+          ({ invalidateAgent: _consumed, ...entry }) => entry,
+        ),
+      };
+    } catch (error) {
+      return { failureReason: `capability-invalidation-failed:${error.message}` };
+    }
+  }
   // Events already applied but not yet routed take precedence over waiting.
   if (state.pendingGate) return {};
   if ((state.pendingInterrupted ?? []).length) return {};
@@ -1060,9 +1081,7 @@ function selectHandoffRouteNode(state) {
         ? {
             role: activeRole,
             executionMode: handoffRoleState.executionMode,
-            ...(activeRole === ROLES.REVIEWER
-              ? { reviewPass: handoffRoleState.reviewPasses + 1 }
-              : {}),
+            ...(activeRole === ROLES.REVIEWER ? { reviewPass: handoffRoleState.reviewPasses + 1 } : {}),
             ...(activeRole === ROLES.IMPLEMENTER && handoffRoleState.fixCycles > 0
               ? { fixCycle: handoffRoleState.fixCycles }
               : {}),
@@ -1135,8 +1154,7 @@ function waitRouter(state) {
   // ran out of review budget): report the run as blocked instead of waiting
   // for an event that can never arrive. An Issue still owed its release
   // milestone is the exception — that event comes from outside.
-  if (!activeExecutions(state).length && !awaitingReleaseMilestone(state).length)
-    return "summarize_run";
+  if (!activeExecutions(state).length && !awaitingReleaseMilestone(state).length) return "summarize_run";
   return "wait_for_events";
 }
 
@@ -1197,6 +1215,14 @@ export function createDefaultDeps({ cwd }) {
       const discovered = await loadOrRefreshCapabilities({
         cachePath: path.resolve(cwd, DEFAULT_CAPABILITIES_OUTPUT),
         cwd,
+      });
+      return discovered.capabilities;
+    },
+    async invalidateCapabilities(agent) {
+      const discovered = await loadOrRefreshCapabilities({
+        cachePath: path.resolve(cwd, DEFAULT_CAPABILITIES_OUTPUT),
+        cwd,
+        invalidateAgents: [agent],
       });
       return discovered.capabilities;
     },

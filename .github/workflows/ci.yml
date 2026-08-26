@@ -19,8 +19,10 @@ jobs:
       # SEC-003 dependency audit gate. Scoped to production dependencies
       # (runtime + optional) at --audit-level=high so it guards the shipped
       # attack surface and fails on NEW high/critical advisories there, while
-      # not turning red on accepted build-time-only devDependency advisories
-      # (tracked in docs/security.md §12.0). See docs/dependency-security.md.
+      # not turning red on accepted advisories (build-time-only devDependency
+      # chains, and unpatchable build-time-only optionalDependency chains)
+      # tracked in docs/security.md §12.0 and scripts/accepted-advisories.json.
+      # See docs/dependency-security.md and scripts/audit-check.mjs.
       - name: SEC-003 production dependency audit gate
         run: npm run audit:check
 

@@ -52,15 +52,18 @@ Design choices, and why:
   to. Build/test/packaging tools live in `devDependencies` and are handled by layer 1
   (Dependabot) + a written acceptance record, not by this gate.
   - **Caveat — `optionalDependencies` and platform-specific build tools.** `--omit=dev`
-    still audits `optionalDependencies`. If a build-only tool must stay optional for
-    install resilience (e.g. a native packager that only builds on one OS, kept optional
-    so `npm ci` does not fail elsewhere), it is in scope of this gate **only on platforms
-    where it installs** — so a future advisory in it would fail the gate locally but not
-    on a CI runner of a different OS. Prefer `devDependencies` for genuinely build-only
-    tools; where that is impractical, document the platform-dependence so the
-    "CI and local run the same command" expectation is qualified honestly. (In this repo,
-    `appdmg` is an `os: darwin` optional DMG packager: audited by `audit:check` on macOS,
-    not on the Linux CI runner; it is build-time-only and not shipped at runtime.)
+    still audits `optionalDependencies`, and it does so from the resolved dependency
+    tree in `package-lock.json`, **not** from what the current OS actually installs — an
+    `os`-restricted optional package (e.g. a native packager that only builds on one OS)
+    is audited on every CI runner regardless of platform, even where `npm ci` itself
+    silently skips installing it. Do not assume an OS-restricted optional advisory is
+    scoped out on other runners; it is not. Prefer `devDependencies` for genuinely
+    build-only tools; where that is impractical and no clean fix exists upstream, record
+    the acceptance explicitly (below) rather than relying on the (false) assumption that
+    other-OS runners are unaffected. (In this repo, `appdmg` is an `os: darwin` optional
+    DMG packager, build-time-only and never shipped at runtime, but its `image-size`
+    advisory is audited — and was accepted — on the Linux CI runner too; see
+    `docs/security.md` §12.0 and `scripts/accepted-advisories.json`.)
 - **Threshold = `--audit-level=high`.** Fail on `high` and `critical`; let `moderate`
   and below through to Dependabot. Raise to `critical` if even high is too noisy for
   your project, or lower if you want stricter enforcement.
@@ -72,7 +75,11 @@ Design choices, and why:
   "scripts": { "audit:check": "npm audit --omit=dev --audit-level=<AUDIT_LEVEL>" }
   ```
 
-  Then both CI and a local pre-push hook run `npm run audit:check`.
+  Then both CI and a local pre-push hook run `npm run audit:check`. Once any advisory
+  needs the allowlist described below, this script becomes the thin JSON-parsing wrapper
+  itself rather than a raw `npm audit` call — see `scripts/audit-check.mjs` in this repo
+  for a concrete implementation (reads accepted advisory ids from a JSON file, fails only
+  on advisories not in that list).
 
 ### When the gate legitimately must ignore a production advisory
 

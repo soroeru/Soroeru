@@ -179,16 +179,16 @@ gh workflow run project-issue-defaults.yml --repo soroeru/Soroeru -f issue_numbe
 
 #### Troubleshooting
 
-| Symptom | Likely cause |
-| --- | --- |
-| Token step fails / missing App credentials | `SOROERU_PROJECT_APP_ID` or `SOROERU_PROJECT_APP_PRIVATE_KEY` unset or PEM malformed |
-| Token step `Not Found` on `/repos/.../installation` | App is not installed on org `soroeru` with repository `Soroeru` selected (install must be on the org, not only a personal account) |
-| `{"status":"retryable-error","reason":"project-token-required"}` | `GH_PROJECT_TOKEN` not passed into the Node step |
-| `github-graphql-forbidden` after a successful token step | Organization **Projects** write missing, App install incomplete, or Projects V2 access denied for the installation |
-| `github-graphql-failed` / `github-graphql-not-found` | GraphQL rejected the request; confirm `config/github-projects.json` owner / number and App Projects permission. A bad field shape (e.g. `projectsV2(number:)` instead of `projectV2(number:)`) also surfaces here |
-| `project-not-found` / empty project | `config/github-projects.json` owner, `ownerType`, or `number` does not match the org Project |
-| `invalid-issue-number` / `issue-not-found` / `pull-request-not-supported` | Manual `issue_number` input is wrong; no Project mutation ran |
-| `project-fields-unconverged` | Partial write; re-run the workflow for the same Issue number |
+| Symptom                                                                   | Likely cause                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Token step fails / missing App credentials                                | `SOROERU_PROJECT_APP_ID` or `SOROERU_PROJECT_APP_PRIVATE_KEY` unset or PEM malformed                                                                                                                              |
+| Token step `Not Found` on `/repos/.../installation`                       | App is not installed on org `soroeru` with repository `Soroeru` selected (install must be on the org, not only a personal account)                                                                                |
+| `{"status":"retryable-error","reason":"project-token-required"}`          | `GH_PROJECT_TOKEN` not passed into the Node step                                                                                                                                                                  |
+| `github-graphql-forbidden` after a successful token step                  | Organization **Projects** write missing, App install incomplete, or Projects V2 access denied for the installation                                                                                                |
+| `github-graphql-failed` / `github-graphql-not-found`                      | GraphQL rejected the request; confirm `config/github-projects.json` owner / number and App Projects permission. A bad field shape (e.g. `projectsV2(number:)` instead of `projectV2(number:)`) also surfaces here |
+| `project-not-found` / empty project                                       | `config/github-projects.json` owner, `ownerType`, or `number` does not match the org Project                                                                                                                      |
+| `invalid-issue-number` / `issue-not-found` / `pull-request-not-supported` | Manual `issue_number` input is wrong; no Project mutation ran                                                                                                                                                     |
+| `project-fields-unconverged`                                              | Partial write; re-run the workflow for the same Issue number                                                                                                                                                      |
 
 Never expand logging to dump Issue bodies, GraphQL variables with secrets, or
 installation tokens when diagnosing failures.
@@ -272,14 +272,17 @@ with `no-worker-route-available` before any worktree mutation.
 Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
 `scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
 Gemini; Gemini via Antigravity `agy` when present). An adapter that passes
-auth/model-list checks is still not enough: each adapter also runs a
-**headless execution probe** once per adapter (`runHeadlessExecProbe` in
+auth/model-list checks is still not enough: every selectable route also runs a
+**headless execution probe** for its exact model selector (`runHeadlessExecProbe` in
 `project-issue-runtime-adapters/shared.mjs`) — spawn the CLI with no TTY and a
 minimal, locally-generated tool-use task ("create this exact file with this
 exact marker" in a throwaway sandbox directory), then check the artifact. Only
 a route that actually completed that task under `DEFAULT_HEADLESS_PROBE_TIMEOUT_MS`
 (120s) becomes verified; the probe never persists the generated prompt, the
-marker, or stdout/stderr. This is why `claude`, `grok`, and `agy` selectors now
+marker, or stdout/stderr. Claude candidates are probed independently because
+model entitlement, quota, or usage-credit availability can differ within the
+same authenticated CLI; one successful Claude model never verifies another.
+This is why `claude`, `grok`, and `agy` selectors now
 include a permission-bypass flag (`--permission-mode bypassPermissions` /
 `--dangerously-skip-permissions`) and, for `grok`, `-p`/`--single` instead of a
 bare positional prompt — without them the CLI either stops at an edit-approval
@@ -292,8 +295,10 @@ Only verified routes enter the pool; closed diagnostic reasons include
 `tty-required` (the CLI demanded a real terminal), `non-agentic-print-mode`
 (exited cleanly but never produced the artifact — observed for `agy --print`
 without the skip-permissions flag or with the flags mis-ordered), and
-`headless-exec-failed` (any other unexplained failure). Two launch quirks
-found by live verification: `agy`'s `--print` is a Go-style *string* flag
+`headless-exec-failed` (any other unexplained failure, including a model-specific
+credit or quota rejection). Failed diagnostics contain only the closed reason
+and model label, never CLI response bodies. Two launch quirks
+found by live verification: `agy`'s `--print` is a Go-style _string_ flag
 that consumes the next argv token as the prompt, so it must be the final
 selector token with the prompt appended directly after it; and `codex exec`
 refuses to run outside a trusted/git directory, so the Codex probe passes
@@ -325,7 +330,7 @@ with permission prompts fully bypassed, the same way `codex exec` already
 does. This is required for unattended dispatch to work at all (there is no
 human present to answer an approval prompt), not a change specific to this
 repository's risk posture; the review-and-confirm gate, the three guards, and
-the never-bypass-walls rule for the Soroeru *product* these workers implement
+the never-bypass-walls rule for the Soroeru _product_ these workers implement
 are unaffected.
 
 The written capabilities file also carries `cli` (per-agent `{path, version}`
@@ -338,6 +343,16 @@ never writes the cache regardless of which of those three paths it took.
 `loadOrRefreshCapabilities` in `project-issue-capabilities.mjs` implements
 this; `discoverCapabilities` remains the unconditional "probe now" primitive
 it wraps.
+
+The LangGraph runner automatically sends the affected agent through this
+targeted invalidation path when an actual worker dispatch fails. The graph
+fan-in serializes refreshes from parallel dispatch failures, replaces its
+checkpointed capability pool with the merged refresh result, and then selects
+handoff routes. The failed model is excluded immediately for the current run,
+while the cache is also rewritten so a later run cannot reuse the pre-failure
+record. Sibling models remain available only when that probe verifies them
+again. If invalidation itself fails, orchestration fails closed instead of
+continuing with a cache it could not make safe.
 
 The requested label must still be explicitly present in the capability record;
 the canonical runtime identifier alone is not an alias or fallback. The legacy
@@ -567,8 +582,8 @@ not the supported product installation or binding UX. To use it during local dev
    - Note the extension ID shown on the extension card (you will need it below).
    - An unpacked extension's ID is derived from the **absolute directory path**: loading
      `dist/extension/` from a different checkout or worktree produces a **different ID**.
-      After such a change, re-enter the new ID in settings and re-run step 4 (**host を登録して接続を始める**)
-      to update the native host manifest's `allowed_origins` with the latest stored ID (re-registration uses the latest stored ID without requiring an app restart).
+     After such a change, re-enter the new ID in settings and re-run step 4 (**host を登録して接続を始める**)
+     to update the native host manifest's `allowed_origins` with the latest stored ID (re-registration uses the latest stored ID without requiring an app restart).
 
 3. **Start the app and save the bridge settings:**
 
@@ -621,7 +636,7 @@ not the supported product installation or binding UX. To use it during local dev
 **Troubleshooting the connection:**
 
 - Extension console shows `Unchecked runtime.lastError: Access to the specified native
-  messaging host is forbidden.` — the extension's current ID is not in the registered
+messaging host is forbidden.` — the extension's current ID is not in the registered
   manifest's `allowed_origins` (stale registration, typically after the extension was
   loaded from a new path or the ID in settings changed). Verify the saved ID matches the
   card in `chrome://extensions`, re-run **host を登録して接続を始める**, then reload the
