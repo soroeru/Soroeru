@@ -23,7 +23,8 @@ report residual risk honestly.
   explicit and testable.
 - Never solve or bypass CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls.
   Detect them, hand off in the same headed browser session, and resume afterward.
-- Never perform checkout/payment except the explicitly approved free-trial-to-subscription case.
+- Apply the Three Guards: never perform checkout/payment except the explicitly approved
+  free-trial-to-subscription case, escalate high-risk clauses, and never auto-attest.
 - Never auto-attest eligibility or identity. Always confirm irreversible site withdrawal and
   deletion of Soroeru-held data.
 - Surface automation-prohibiting terms as a Constraint for the user to decide; never silently
