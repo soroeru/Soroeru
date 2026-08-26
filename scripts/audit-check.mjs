@@ -1,11 +1,11 @@
 // SEC-003 production dependency audit gate.
 //
-// Wraps `npm audit --omit=dev --audit-level=high` so the gate can fail closed on
-// any NEW high/critical advisory while not going permanently red on advisories
-// that are reviewed and accepted (no patched release exists upstream) and
-// recorded in accepted-advisories.json + docs/security.md §12.0. See
-// docs/dependency-security.md, "When the gate legitimately must ignore a
-// production advisory" for the acceptance process.
+// Wraps `npm audit --omit=dev`, filtered to high/critical severity, so the
+// gate fails closed on any NEW high/critical advisory while not going
+// permanently red on advisories that are reviewed and accepted (no patched
+// release exists upstream) and recorded in accepted-advisories.json +
+// docs/security.md §12.0. See docs/dependency-security.md, "When the gate
+// legitimately must ignore a production advisory" for the acceptance process.
 //
 // npm has no native audit allowlist, so this is the documented thin-wrapper
 // option: run the same audit npm audit runs, parse its JSON, and only fail on
@@ -16,11 +16,18 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+// `npm audit --json` always reports every severity regardless of
+// `--audit-level`; that flag only changes npm's own exit code, which this
+// wrapper ignores in favor of its own severity filter below. Keep the two in
+// sync with the gate's documented policy ("fail on high and critical; let
+// moderate and below through to Dependabot").
+const GATE_SEVERITIES = new Set(["high", "critical"]);
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const acceptedPath = path.join(scriptDir, "accepted-advisories.json");
 const acceptedSources = new Set(JSON.parse(readFileSync(acceptedPath, "utf8")).map((entry) => entry.source));
 
-const result = spawnSync("npm", ["audit", "--omit=dev", "--audit-level=high", "--json"], {
+const result = spawnSync("npm", ["audit", "--omit=dev", "--json"], {
   encoding: "utf8",
 });
 
@@ -46,7 +53,12 @@ if (report.error) {
 const advisories = new Map();
 for (const vuln of Object.values(report.vulnerabilities ?? {})) {
   for (const via of vuln.via ?? []) {
-    if (typeof via === "object" && via !== null && typeof via.source === "number") {
+    if (
+      typeof via === "object" &&
+      via !== null &&
+      typeof via.source === "number" &&
+      GATE_SEVERITIES.has(via.severity)
+    ) {
       advisories.set(via.source, via);
     }
   }
