@@ -494,13 +494,14 @@ local value-reading step. This lifts the earlier "never sees raw personal values
 specifically for Visibility collection; see `requirements.md` §8's Visibility collection exception
 for the non-negotiable-requirements wording, and `security.md` for the full threat-model update.
 
-**Implementation status:** this is the target policy, not yet fully implemented. In particular,
-`domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude
-`MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write, so no CVV Disclosure can
-be persisted today regardless of tier — this must change before AI-driven CVV collection can
-actually store a value (see §10's CVV row and `security.md`'s known-gap note). The
-`ai-assisted-discovery` capability, `siteCollectionMap` entity kind, and the AI-driven exploration
-loop itself are also not yet implemented; §5.2 describes where they land once built.
+**Implementation status (Issue #516):** the domain foundation is implemented:
+`Capability.operationType` and `Mandate.operation` include `ai-assisted-discovery`, and
+`siteCollectionMap` has a versioned record type with validation on vault write/read.
+`DomainService.addDisclosure` accepts an explicit `collectionTier: "ai-driven"` from a trusted
+collection caller to retain CVV/full PAN; the persisted tier also selects full-value stale-state
+comparison. An absent tier retains deterministic last-4/CVV-exclusion behavior. This marker is
+not authorization or page corroboration. The AI exploration loop, local corroboration, map
+generation/recollection, and UI capability gates remain follow-up work (#517–#519).
 
 Collection uses two tiers, chosen per REQ-013's AI-optionality rule (a third, later tier is
 unaffected):
@@ -565,8 +566,11 @@ hash, so unchanged rescans stay dismissed and changed observations can surface o
 
 Implementation extends both `Capability.operationType` and `Mandate.operation` with the literal
 `ai-assisted-discovery`; it does not overload `collection`. Maps use the encrypted
-`siteCollectionMap` entity kind — not yet in `ENTITY_KINDS` (`src/domain/entities.ts`); adding it
-is part of this implementation. Discovery wall pause/resume reuses the existing
+`siteCollectionMap` entity kind, included in `ENTITY_KINDS` (`src/domain/entities.ts`, Issue #516).
+Its v1 shape stores per-account revisions, generation status, provenance, page purposes and
+fingerprints, and typed CSS/field-id item coordinates. Map URLs omit query/fragment/credentials;
+producers must minimize coordinates and enforce site scope before storing structural facts.
+Discovery wall pause/resume reuses the existing
 `workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a
 second checkpoint mechanism.
 
@@ -747,7 +751,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Local encrypted vault | Vault v2 encrypted records (§3); no hosted service. |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
-| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. A site-collected CVV Disclosure is the new Issue #514 target policy, but is **not yet implemented**: `domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude `MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write — not just the last-4 reduction `card.number` gets — so no CVV Disclosure can be persisted today through either tier. See `security.md`'s known-gap note; do not assume CVV Disclosure storage works until that code path is changed. |
+| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. Issue #516 adds encrypted site-collected CVV Disclosure storage only for explicit `collectionTier: "ai-driven"`; omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. AI exploration, corroboration and UI gates remain pending (§5.2). |
 | Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |

@@ -93,6 +93,8 @@ export interface AddDisclosureInput {
   observedAt?: number;
   sourcePageUrl?: string;
   sourceKind: DisclosureSourceKind;
+  /** Trusted collection caller selects this; omission preserves deterministic policy. */
+  collectionTier?: Disclosure["collectionTier"];
   confidence?: number;
   evidenceIds?: string[];
 }
@@ -312,6 +314,9 @@ export class DomainService {
     this.deleteSiteWorkflowCheckpoints(siteAccountId);
     this.removeSiteFromDynamicAttributeCandidates(siteAccountId);
     this.vault.delete("sessionState", siteAccountId);
+    for (const map of this.vault.list("siteCollectionMap")) {
+      if (map.siteAccountId === siteAccountId) this.vault.delete("siteCollectionMap", map.id);
+    }
     const deletedSiteAccounts = this.vault.delete("siteAccount", siteAccountId) ? 1 : 0;
     return {
       ok: true,
@@ -502,7 +507,9 @@ export class DomainService {
    * changes.
    */
   addDisclosure(input: AddDisclosureInput): Disclosure {
-    const storedSiteHeldValue = disclosureStoredValue(input.attributeKey, input.siteHeldValue);
+    const storedSiteHeldValue = disclosureStoredValue(
+      input.attributeKey, input.siteHeldValue, input.collectionTier,
+    );
     const observedAt = input.observedAt ?? Date.now();
     const disclosure: Disclosure = {
       id: randomUUID(),
@@ -510,6 +517,7 @@ export class DomainService {
       attributeKey: input.attributeKey,
       observedAt,
       sourceKind: input.sourceKind,
+      collectionTier: input.collectionTier ?? "deterministic",
       confidence: input.confidence ?? 1,
       evidenceIds: input.evidenceIds ?? [],
       staleState: "unknown",
@@ -518,7 +526,7 @@ export class DomainService {
       disclosure.siteHeldValue = storedSiteHeldValue;
       disclosure.normalizedValueHash = normalizedValueHash(input.attributeKey, storedSiteHeldValue);
     } else if (
-      input.attributeKey !== MOST_SENSITIVE_ATTRIBUTE_KEY &&
+      (input.attributeKey !== MOST_SENSITIVE_ATTRIBUTE_KEY || input.collectionTier === "ai-driven") &&
       input.normalizedValueHash !== undefined
     ) {
       disclosure.normalizedValueHash = input.normalizedValueHash;
@@ -531,6 +539,7 @@ export class DomainService {
         (candidate) =>
           candidate.siteAccountId === disclosure.siteAccountId &&
           candidate.attributeKey === disclosure.attributeKey &&
+          (candidate.collectionTier ?? "deterministic") === disclosure.collectionTier &&
           candidate.normalizedValueHash === disclosure.normalizedValueHash,
       );
       if (existing) {
@@ -594,11 +603,15 @@ export class DomainService {
    * the underlying card did not change. Revisit once the vault has a schema
    * versioning / migration mechanism (there is none today, see `VaultV2`).
    */
-  deriveStaleState(disclosure: Pick<Disclosure, "attributeKey" | "normalizedValueHash">): StaleState {
+  deriveStaleState(
+    disclosure: Pick<Disclosure, "attributeKey" | "normalizedValueHash" | "collectionTier">,
+  ): StaleState {
     if (!disclosure.normalizedValueHash) return "unknown";
     const canonical = this.getPersonalAttribute(disclosure.attributeKey);
     if (!canonical) return "unknown";
-    const canonicalValue = comparisonValue(canonical.attributeKey, canonical.value);
+    const canonicalValue = comparisonValue(
+      canonical.attributeKey, canonical.value, disclosure.collectionTier,
+    );
     if (canonicalValue === undefined) return "unknown";
     const canonicalHash = normalizedValueHash(canonical.attributeKey, canonicalValue);
     return disclosure.normalizedValueHash === canonicalHash ? "current" : "stale";
@@ -891,13 +904,21 @@ function checkpointId(workflow: string, siteAccountId?: string): string {
   return siteAccountId ? `${workflow}:${siteAccountId}` : workflow;
 }
 
-function disclosureStoredValue(attributeKey: string, value: string | undefined): string | undefined {
-  if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return undefined;
+function disclosureStoredValue(
+  attributeKey: string,
+  value: string | undefined,
+  tier?: Disclosure["collectionTier"],
+): string | undefined {
   if (value === undefined) return undefined;
-  return comparisonValue(attributeKey, value);
+  return comparisonValue(attributeKey, value, tier);
 }
 
-function comparisonValue(attributeKey: string, value: string): string | undefined {
+function comparisonValue(
+  attributeKey: string,
+  value: string,
+  tier?: Disclosure["collectionTier"],
+): string | undefined {
+  if (tier === "ai-driven") return value;
   if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return undefined;
   if (attributeKey === "card.number") {
     const digits = value.replace(/\D/g, "");

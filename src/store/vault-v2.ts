@@ -11,6 +11,7 @@
 // unlock (the file header: version, KDF params, metadata, optional recovery
 // wrapper) is non-sensitive by design.
 
+import { isSiteCollectionMap } from "../domain/site-collection-map.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { ENTITY_KINDS, type DomainRecord, type EntityKind, type EntityPayloadMap } from "../domain/entities.js";
@@ -233,6 +234,9 @@ export class VaultV2 {
       }
       const plaintext = await decryptRecord(key, { iv: env.iv, ct: env.ciphertext });
       const payload = JSON.parse(plaintext) as DomainRecord;
+      if (env.entityKind === "siteCollectionMap" && !isSiteCollectionMap(payload)) {
+        throw new VaultCorruptError("invalid site collection map");
+      }
       if (env.recordId !== payload.id) {
         throw new VaultCorruptError(
           `vault record envelope id "${env.recordId}" does not match payload id "${payload.id}"`,
@@ -278,6 +282,9 @@ export class VaultV2 {
   put<K extends EntityKind>(kind: K, payload: EntityPayloadMap[K]): EntityPayloadMap[K] {
     this.requireKey();
     const now = Date.now();
+    if (kind === "siteCollectionMap" && !isSiteCollectionMap(payload)) {
+      throw new VaultCorruptError("invalid site collection map");
+    }
     const existing = this.bucket(kind).get(payload.id);
     this.bucket(kind).set(payload.id, {
       payload,

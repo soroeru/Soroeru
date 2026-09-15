@@ -26,6 +26,7 @@ export const ENTITY_KINDS = [
   "workflowCheckpoint",
   "providerSettings",
   "localDefinition",
+  "siteCollectionMap",
   "diagnostic",
   "sessionState",
 ] as const;
@@ -124,6 +125,8 @@ export interface Disclosure extends DomainRecord {
   observedAt: number;
   sourcePageUrl?: string;
   sourceKind: DisclosureSourceKind;
+  /** Absent on legacy records: deterministic card/CVV policy. */
+  collectionTier?: "deterministic" | "ai-driven";
   /** 0..1 collection confidence. */
   confidence: number;
   evidenceIds: string[];
@@ -145,7 +148,7 @@ export interface AccountRelationship extends DomainRecord {
 /** What the user authorized (RFC-002 §4.1). */
 export interface Mandate extends DomainRecord {
   siteAccountId?: string;
-  operation: "collection" | "update" | "withdrawal" | "registration" | "policy-expansion";
+  operation: "ai-assisted-discovery" | "collection" | "update" | "withdrawal" | "registration" | "policy-expansion";
   scope?: string;
   authorizedAt: number;
 }
@@ -188,7 +191,7 @@ export interface Preference extends DomainRecord {
  * scope, so `level` is only L0 or L1. Reductions are unconditional/immediate.
  */
 export interface Capability extends DomainRecord {
-  operationType: "collection" | "update" | "withdrawal" | "registration";
+  operationType: "ai-assisted-discovery" | "collection" | "update" | "withdrawal" | "registration";
   level: "L0" | "L1";
   understandingCheckPassedAt?: number;
   reducedAt?: number;
@@ -304,6 +307,7 @@ export interface EntityPayloadMap {
   workflowCheckpoint: WorkflowCheckpoint;
   providerSettings: ProviderSettings;
   localDefinition: LocalDefinition;
+  siteCollectionMap: SiteCollectionMap;
   diagnostic: Diagnostic;
   sessionState: SessionState;
 }
@@ -315,3 +319,23 @@ export function isSensitiveAttributeKey(attributeKey: string): boolean {
 
 /** CVV is the most sensitive field (RFC-002 §6): reveal requires a dedicated accessor. */
 export const MOST_SENSITIVE_ATTRIBUTE_KEY = "card.cvv";
+
+/** Structure-only coordinates, never extracted values or page/request bodies. */
+export type CollectionItemLocator =
+  | { kind: "css"; selector: string }
+  | { kind: "field-id"; fieldId: string };
+
+/** Versioned per-account collection facts; separate from B–D LocalDefinition. */
+export interface SiteCollectionMap extends DomainRecord {
+  schemaVersion: 1;
+  siteAccountId: string;
+  revision: number;
+  generationStatus: "candidate" | "ready" | "failed";
+  provenance: { kind: "ai-driven" | "user-confirmed"; observedAt: number };
+  pages: Array<{
+    url: string;
+    purpose: "profile" | "billing" | "security" | "notifications" | "other";
+    fingerprint: string;
+    items: Array<{ attributeKey: string; locator: CollectionItemLocator; fingerprint: string }>;
+  }>;
+}

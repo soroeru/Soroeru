@@ -37,7 +37,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
 | Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
-| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | **Accepted target policy for the AI-driven collection tier (Issue #514), not yet implemented:** the AI-driven path is meant to collect and store it, encrypted, as part of the deliberate Visibility collection exception; reveal is still refused outright in the UI (§3, §4). Today, `domain-service.ts` hard-excludes `card.cvv` from every Disclosure write regardless of tier — see the §3 known gap — so no CVV Disclosure is actually persisted yet. The deterministic-only fallback tier keeps excluding CVV entirely by design: never collect, store, display, or reveal it there. A user-entered canonical CVV (fill use) remains most-sensitive and is decrypted only at fill time either way. |
+| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Issue #516 implements encrypted Disclosure storage for explicitly marked AI-driven collection writes. The production AI loop and its corroboration/gates remain pending (§3); reveal remains refused (§4). The deterministic fallback excludes both CVV value and hash. Canonical CVV remains most-sensitive and is decrypted only at fill time. |
 | Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | **Structure-only for every AI use except Visibility collection (Issue #514, §5):** that path sends raw values by design, to the user's own configured provider only, disclosed at the gate every run, with stateful provider features disabled and zero-retention/no-training options preferred. Every other AI use still sends structure only and fills values locally. |
 | AI-driven collection returns a hallucinated or manipulated-page-injected value | An untrusted page (or the model itself) causes a wrong value — e.g. a fabricated card number or CVV — to be written as if it were genuinely observed, silently poisoning the Disclosure ledger. | Local corroboration before write ([`architecture.md`](architecture.md) §5.2, Issue #514): the returned value must appear in the page content captured for that step before `DomainService.addDisclosure` accepts it; a non-corroborating value becomes `unknown`/a review task, never a stored Disclosure. |
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
@@ -71,8 +71,8 @@ Stored locally, **encrypted** (see [`architecture.md`](architecture.md) §3):
   read and classified these values from the page, they are stored as encrypted Disclosure
   values like any other collected attribute. This supersedes the prior last-4/CVV-excluded
   reduction for this path only; see the "Never stored" list below for the deterministic-only
-  fallback, which keeps the old reduction. **CVV storage specifically is target policy, not yet
-  implemented** — see the known gap below;
+  fallback, which keeps the old reduction. **Domain storage is implemented in Issue #516; the
+  AI collection loop remains pending** — see the implementation status below;
 - **opt-in persisted browser session state** (`SessionState.storageState`, Issue #294): an
   exported Playwright `storageState` (cookies + localStorage), only when the user has
   enabled persistence for that specific Site Account (default off). It is at least as
@@ -100,22 +100,15 @@ Never stored:
 - decrypted values in logs, error messages, or crash reports;
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
 
-**Known gap (Issue #514 follow-up, not yet implemented) — CVV Disclosures are currently
-hard-blocked, not just reduced:** `domain-service.ts`'s `disclosureStoredValue` returns
-`undefined` for `MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`), and `addDisclosure` additionally
-skips even the hash fallback for that key. This is a full exclusion, not the last-4-style
-reduction `card.number` gets, so **no CVV Disclosure can be persisted today through either
-tier** — the "Stored locally, encrypted" bullet above describing a site-collected CVV Disclosure
-is the Issue #514 target policy, not current behavior. This code path must change before
-AI-driven CVV collection can actually store a value.
-
-**Known gap (Issue #514 follow-up, not yet implemented):** the `card.number` stale-state
-comparison below was written for last-4-only storage. Once an AI-driven collection stores a
-full card PAN, `domain-service.ts`'s `comparisonValue` needs a second code path that compares
-the full value (or its normalized hash) for Disclosures recorded via the AI-driven tier, while
-deterministic-tier Disclosures keep the existing last-4 comparison. Track this in an
-implementation Issue under #514 before AI-driven card collection ships; do not assume the
-current last-4-only comparison is correct for a full-PAN Disclosure.
+**Implementation status (Issue #516):** `AddDisclosureInput.collectionTier` explicitly selects
+`"ai-driven"` for the trusted AI collection caller. Only that tier retains CVV values/hashes
+and full PAN; omitted or `"deterministic"` retains last-4 storage and fully excludes CVV.
+The tier persists with the Disclosure and selects normalized full-value comparison for AI
+records, including after canonical edits and vault reload. Deduplication keeps tiers separate.
+Legacy records without a tier retain deterministic comparison semantics.
+This domain marker does not prove authorization or corroborate a value against a page. The
+AI exploration loop, captured-page corroboration, and collection gate integration are pending
+in #517–#519. No existing deterministic caller opts into the AI tier.
 
 **Known gap — `card.number` stale-state hash scheme (issue #229, documented tech debt,
 no code change yet)**: `card.number` Disclosures are now compared for staleness against
