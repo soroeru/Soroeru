@@ -320,20 +320,27 @@ registration (last).**
   encrypted bytes only. No other external destination, and no telemetry / analytics / crash
   reporting.
 - Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
-  derived key must never persist outside memory. Treat CVV as the most sensitive field,
-  requiring the strictest handling. Algorithm / KDF selection: see
-  [`architecture.md`](architecture.md) §2 and §10.
-- Never send raw personal values to the AI model — structure only. Only the user's
-  configured provider; no provider stateful features (PII prompt-caching, stored threads,
-  memory).
-- AI browser analysis MUST pass through an allow-list structural sanitizer. Raw DOM, field or
-  display values, prefilled/selected values, cookies, tokens, and value-reading results must not
-  enter an AI request. AI output is limited to a validated mapping/navigation schema referencing
-  elements present in the sanitized snapshot; it cannot issue free-form browser actions or invent
-  URLs/selectors. Form filling, terms acceptance, final submission, card entry, and irreversible
-  actions remain deterministic with their applicable review-and-confirm gates and guards.
-- AI-assisted discovery is optional and bounded. Provider failure, invalid output, cancellation,
-  wall detection, or exhaustion of the per-site limits owned by
+  derived key must never persist outside memory. A user-entered canonical CVV (used for fill)
+  remains the most sensitive field, requiring the strictest handling. Algorithm / KDF selection:
+  see [`architecture.md`](architecture.md) §2 and §10.
+- **Visibility collection exception (Issue #514):** AI-driven Visibility collection is the one AI
+  use allowed to receive and act on raw personal values — including full card numbers, CVV, and
+  site passwords read from a site — in order to explore pages and extract disclosure values into
+  the ledger; see [`architecture.md`](architecture.md) §5.2. Every other AI use (terms analysis,
+  registration field mapping, non-collection discovery, etc.) stays structure-only: never send
+  raw personal values to those AI calls. Only the user's configured provider; no provider
+  stateful features (PII prompt-caching, stored threads, memory) for any AI use.
+- AI browser analysis outside Visibility collection MUST pass through an allow-list structural
+  sanitizer. Raw DOM, field or display values, prefilled/selected values, cookies, tokens, and
+  value-reading results must not enter those AI requests, and AI output there is limited to a
+  validated mapping/navigation schema referencing elements present in the sanitized snapshot; it
+  cannot issue free-form browser actions or invent URLs/selectors. Form filling, terms acceptance,
+  final submission, card entry, and irreversible actions remain deterministic with their
+  applicable review-and-confirm gates and guards. Visibility collection's AI-driven exploration
+  loop still enforces same-registrable-site navigation, per-site page/depth/time budgets, and
+  immediate wall hand-off (never bypassed) — only the raw-value restriction is lifted for it.
+- AI-assisted discovery/collection is optional and bounded. Provider failure, invalid output,
+  cancellation, wall detection, or exhaustion of the per-site limits owned by
   [`architecture.md`](architecture.md) §5.2 yields deterministic fallback or an explicit partial/
   unknown result, never a guessed value or automatic expansion of authority. A stored sanitized
   Site Collection Map may execute locally without an AI provider; regeneration requires user action.
@@ -424,10 +431,10 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 
 | ID | Requirement | Slice | Priority |
 | --- | --- | --- | --- |
-| REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; CVV treated as most sensitive. Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
+| REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; a user-entered canonical CVV (fill use) is treated as most sensitive. Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. If login fails because credentials are rejected, the login flow is unrecognized, or the site returns an error, stop after at most two login attempts for that site/credential set, do not enter same-site retry loops, and record the Site Account as `login failed / not collected` until the user explicitly updates credentials or retries later. | A | Must |
-| REQ-004 | Collect registered personal information per site and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers are reduced to last 4 digits before storage, and CVV is never collected or stored. | A | Must |
+| REQ-004 | Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic scan/classify as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers and CVV are stored in full (Issue #514 supersedes the earlier last-4/CVV-exclusion rule for Visibility collection). | A | Must |
 | REQ-005 | Present the per-site view by composing Site Account + its Disclosures, showing normal-sensitivity values (name, address, phone, account id, etc.) plainly and immediately, masking only sensitive/most-sensitive values (card data, the site password) with reveal gated behind passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall, credential failure, site error, or unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
@@ -436,7 +443,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-010 | Bulk-update selected sites by diffing Disclosures against canonical Personal Attributes (cross-site by attribute). | B | Must |
 | REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; the withdrawal flow may execute within the delegated range but its final, irreversible confirmation step is always gated (absolute boundary, §5), regardless of ToS-automation stance; deletion of Soroeru's own data is always confirmed. | C | Should |
 | REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
-| REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only, structure-only disclosure. | A–D | Must |
+| REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only. Visibility collection (A) discloses raw personal values to the provider when AI-driven (Issue #514); every other AI use (B–D) stays structure-only disclosure. | A–D | Must |
 | REQ-014 | Treat a detected automation-prohibiting ToS clause as a surfaced Constraint for the user to decide; never silently block, never bypass active controls. | A | Must |
 | REQ-015 | Require My Number Card verification at first launch — via the Digital Agency デジタル認証アプリ (認証 API; smartphone card read, QR cross-device from desktop) — before any use; take basic-4 attributes (name, residence address, DOB, sex) from the authentication result only, non-editable; update address only by re-reading an updated card. | A | Must |
 | REQ-016 | Never store the 12-digit My Number or the card PIN (the PIN is entered in the Digital Agency app, never seen by Soroeru); store only basic-4 attributes, the PPID, and verification Evidence (Digital Agency reference + timestamp). | A | Must |

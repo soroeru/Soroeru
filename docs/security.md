@@ -12,14 +12,17 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 - Keep all personal data local and **encrypted at rest**; the user owns it.
 - Network egress is limited to **(a) the target sites the user asks the agent to act on**
   (the agent navigates, fills, and submits there), **(b) the user's configured AI
-  provider** (form structure / terms text only, never raw personal values), and **(c) the
+  provider** (form structure / terms text only for every AI use except Visibility collection,
+  which sends raw personal values by design — Issue #514, §5), and **(c) the
   Digital Agency's デジタル認証アプリ service via Soroeru's identity-auth BFF**, for My Number
   (JPKI) verification only (see §14). Future user-owned cloud-storage sync may write only
   encrypted vault bytes to a user-selected location. No telemetry, analytics, crash reporting,
   or any other destination.
 - **Minimize disclosure to the AI model**: send form structure / terms text, not raw
-  personal values. Do not use provider stateful features (prompt caching of PII, stored
-  threads, memory).
+  personal values — except Visibility collection (Issue #514, §5), which is the one AI use
+  allowed to send raw personal values, including full card numbers, CVV, and site passwords, in
+  order to explore pages and extract disclosure values. Do not use provider stateful features
+  (prompt caching of PII, stored threads, memory) for any AI use, including this one.
 - **Never bypass** CAPTCHA, MFA, bot detection, access controls, rate limits, or
   paywalls. Detect and hand off to the user.
 - Submit a registration only after the user approves the review-and-confirm gate; apply
@@ -34,8 +37,8 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
 | Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
-| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Visibility collection excludes CVV entirely: never collect, store, display, or reveal it. User-entered canonical CVV remains most-sensitive and is decrypted only at fill time. |
-| Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | Send structure only; fill values locally. Disable stateful features; prefer zero-retention / no-training provider options. |
+| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | **Accepted for the AI-driven collection tier (Issue #514):** the AI-driven path may collect and store it, encrypted, as part of the deliberate Visibility collection exception; reveal is still refused outright in the UI (§3, §4). The deterministic-only fallback tier still excludes CVV entirely: never collect, store, display, or reveal it there. A user-entered canonical CVV (fill use) remains most-sensitive and is decrypted only at fill time either way. |
+| Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | **Structure-only for every AI use except Visibility collection (Issue #514, §5):** that path sends raw values by design, to the user's own configured provider only, disclosed at the gate every run, with stateful provider features disabled and zero-retention/no-training options preferred. Every other AI use still sends structure only and fills values locally. |
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
 | Unintended payment obligation | Free trial silently becomes a paid subscription. | Payment-field stop; free-trial→subscription surfaced as high-risk; card filled only on approval. |
 | CAPTCHA / MFA bypass behavior | Circumvents site protections; violates ToS and project policy. | Detect and hand off; never solve, bypass, hide, or outsource. |
@@ -62,6 +65,12 @@ Stored locally, **encrypted** (see [`architecture.md`](architecture.md) §3):
   references, and mandates;
 - local candidate definitions, because they reveal user activity and account-management
   intent even when they do not contain raw personal values;
+- **site-collected full card PAN and CVV, when collected via the AI-driven Visibility
+  collection path** (Issue #514, [`architecture.md`](architecture.md) §5.2): once the model has
+  read and classified these values from the page, they are stored as encrypted Disclosure
+  values like any other collected attribute. This supersedes the prior last-4/CVV-excluded
+  reduction for this path only; see the "Never stored" list below for the deterministic-only
+  fallback, which keeps the old reduction;
 - **opt-in persisted browser session state** (`SessionState.storageState`, Issue #294): an
   exported Playwright `storageState` (cookies + localStorage), only when the user has
   enabled persistence for that specific Site Account (default off). It is at least as
@@ -75,12 +84,27 @@ Stored locally, **encrypted** (see [`architecture.md`](architecture.md) §3):
 
 Never stored:
 
-- site-collected full card PAN or CVV in Disclosure records; card numbers collected from
-  sites are reduced to the last 4 digits before storage, and CVV is excluded entirely;
-- raw personal values in local candidate definitions, official definitions, shared
-  registry submissions, or AI prompts;
+- via the **deterministic-only fallback** collection path (AI not configured, or an AI-driven
+  pass failed/exhausted budget mid-run — REQ-013): site-collected full card PAN or CVV in
+  Disclosure records; card numbers collected this way are reduced to the last 4 digits before
+  storage, and CVV is excluded entirely. (The AI-driven path stores the full value instead — see
+  the "Stored locally, encrypted" list above.)
+- raw personal values in local candidate definitions, official definitions, or shared registry
+  submissions — those artifacts stay structure-only and are outside the Issue #514 exception;
+- a persisted duplicate of an AI request/response body: the live call to the user's configured
+  provider during Visibility collection is not itself "storage" — Soroeru keeps only what the
+  model's response resolves into as an encrypted Disclosure/Evidence record, never a raw copy of
+  the prompt or response text;
 - decrypted values in logs, error messages, or crash reports;
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
+
+**Known gap (Issue #514 follow-up, not yet implemented):** the `card.number` stale-state
+comparison below was written for last-4-only storage. Once an AI-driven collection stores a
+full card PAN, `domain-service.ts`'s `comparisonValue` needs a second code path that compares
+the full value (or its normalized hash) for Disclosures recorded via the AI-driven tier, while
+deterministic-tier Disclosures keep the existing last-4 comparison. Track this in an
+implementation Issue under #514 before AI-driven card collection ships; do not assume the
+current last-4-only comparison is correct for a full-PAN Disclosure.
 
 **Known gap — `card.number` stale-state hash scheme (issue #229, documented tech debt,
 no code change yet)**: `card.number` Disclosures are now compared for staleness against
@@ -185,9 +209,14 @@ hold a session key to avoid re-entry, trading convenience for relying on the OS 
 session — make the tradeoff explicit in settings.
 
 **CVV**: storing it is generally discouraged (it is the last factor protecting a stolen
-card number). It is stored at the user's request but handled as the most sensitive field:
-encrypted, never sent to the model, decrypted only at fill time and immediately discarded,
-with an optional master-passphrase re-prompt (default on) for card operations.
+card number). This paragraph covers the **canonical** CVV (a Personal Attribute the user enters
+for later fill use): it is stored at the user's request but handled as the most sensitive field:
+encrypted, never sent to the model, decrypted only at fill time and immediately discarded, with
+an optional master-passphrase re-prompt (default on) for card operations. A **separate**,
+site-collected CVV Disclosure value may exist when AI-driven Visibility collection reads one off
+a site's billing page (Issue #514, §5) — that value is sent to the model as part of collecting
+it, encrypted at rest like the canonical value, and reveal is refused outright in the UI either
+way (§3).
 
 **Recovery (SEC-003 / #44)**: a zero-knowledge design means a forgotten passphrase loses
 all data unless the user set up a recovery key beforehand.
@@ -225,25 +254,59 @@ all data unless the user set up a recovery key beforehand.
 
 ## 5. AI Provider Disclosure Policy
 
-- Send the model **form structure and terms text**, not raw personal values. The model
-  returns a mapping plan / high-risk findings; the automation layer fills values locally.
+**Default rule, every AI use except Visibility collection:** send the model **form structure
+and terms text**, not raw personal values. The model returns a mapping plan / high-risk
+findings; the automation layer fills values locally.
+
+**Visibility collection exception (Issue #514):** once the user has configured an AI provider,
+AI-driven Visibility collection is the primary Collection strategy (see
+[`architecture.md`](architecture.md) §5.2), and it is exempt from the structure-only rule above.
+During that collection pass, the model receives full page content — including raw personal
+values such as full card numbers, CVV, and site passwords displayed on the page — and returns
+the values it identifies, classified by attribute key, for the automation/domain layer to write
+as Disclosure records. This is a deliberate, scoped exception; it does not weaken any other
+control in this document:
+- it does not change wall safety (§7): CAPTCHA/MFA/bot-detection/rate-limit signals are still
+  detected locally and handed off, never solved or bypassed by the model;
+- it does not change navigation scope: same-registrable-site HTTPS only, per-site
+  page/depth/call/token/time budgets, and rejection of action-like destinations (logout, delete,
+  withdraw, cancel, unsubscribe, confirm, submit, purchase, preference mutation) still apply,
+  enforced locally;
+- it does not grant the model a general browser-control or filesystem/vault tool — it can only
+  propose the next same-site read-only navigation and report values found on the current page;
+  every write still executes through the normal typed `DomainService`/`VaultService` API;
+- it does not apply to any other AI use (registration field mapping, terms analysis, Constraint
+  findings) — those stay structure-only per the default rule above;
+- the Delegation Boundary gate names this exception explicitly, every run, at L0, and L1
+  expansion for `ai-assisted-discovery` requires its own understanding check naming the
+  raw-value categories sent (architecture.md §5.2).
+
 - Use only the user's configured provider: Anthropic (Opus / Sonnet / Haiku) or OpenAI
   (GPT-5.4 / 5.4-mini / 5.3-Codex), via a provider-abstraction layer.
-- AI mode is optional and should be invoked only when the user enables `mode=ai` and
-  deterministic confidence is too low, a site/flow is unsupported, or the user explicitly
-  asks for AI assistance.
-- Browser-derived requests pass through an allow-list structural sanitizer. Provider adapters
-  accept its branded output, not raw DOM, raw snapshots, field/display values, prefilled or
-  selected values, cookies, tokens, or local value-read results. Static text is pattern-redacted
-  and omitted when ambiguity remains.
+- Outside Visibility collection, AI mode is optional and should be invoked only when the user
+  enables `mode=ai` and deterministic confidence is too low, a site/flow is unsupported, or the
+  user explicitly asks for AI assistance. Visibility collection itself is AI-driven by default
+  once a provider is configured (§5.2); deterministic collection remains the fallback (REQ-013).
+- Browser-derived requests outside Visibility collection pass through an allow-list structural
+  sanitizer. Provider adapters accept its branded output, not raw DOM, raw snapshots,
+  field/display values, prefilled or selected values, cookies, tokens, or local value-read
+  results. Static text is pattern-redacted and omitted when ambiguity remains. Visibility
+  collection's requests are not routed through this sanitizer — see the exception above.
 - Responses use strict closed schemas. Navigation references only an opaque element ID from the
-  supplied snapshot; unknown keys, invented URLs/selectors, scripts, free-form actions, and value
-  requests are rejected locally before execution.
-- Use stateless requests; do not enable prompt caching of PII, stored threads, or memory.
-  Prefer zero-retention / no-training options where the provider offers them.
-- The model itself does not learn from inference and the context window is per-request;
-  the residual risk is provider-side request logging and any stateful feature you enable
-  — this policy avoids the latter and minimizes the former.
+  supplied snapshot; unknown keys, invented URLs/selectors, scripts, and free-form actions are
+  rejected locally before execution. Outside Visibility collection, a value request is also
+  rejected; within Visibility collection, a returned value is accepted only when classified under
+  a known attribute key and only as content for a Disclosure/Account-Relationship write, never as
+  an instruction that authorizes a browser action.
+- Use stateless requests; do not enable prompt caching of PII, stored threads, or memory, for any
+  AI use including Visibility collection. Prefer zero-retention / no-training options where the
+  provider offers them — this matters more, not less, once raw values are sent.
+- The model itself does not learn from inference and the context window is per-request; the
+  residual risk is provider-side request logging and any stateful feature you enable — this
+  policy avoids the latter and minimizes the former. For Visibility collection specifically, the
+  residual risk also includes provider-side exposure of the raw values themselves (full card
+  numbers, CVV, site passwords) in the request; this is the accepted trade-off of Issue #514 and
+  must be disclosed to the user at the collection gate, every run.
 - App-embedded terminals and CLI Provider integrations are not supported AI integration
   paths. They make output stability, cost control, permissions, and structured validation
   harder than API Provider integration.
@@ -252,12 +315,15 @@ all data unless the user set up a recovery key beforehand.
 
 Allowed external destinations are limited to: (a) the **target sites** the user asks the
 agent to register, update, or withdraw from (normal browser navigation and form
-submission), (b) the user's **configured AI provider** (form structure / terms text only),
-and (c) future user-owned storage locations that receive only encrypted vault bytes after
-an explicit design/implementation issue. No telemetry, analytics, crash reporting, hosted
-vault, or remote classification to any other service. The user's decrypted data store is
-never uploaded anywhere. Adding any other destination requires an explicit issue updating
-requirements, this document, and the user-facing docs.
+submission), (b) the user's **configured AI provider** (form structure / terms text only for
+every AI use except Visibility collection, which sends raw personal values by design — Issue
+#514, §5), and (c) future user-owned storage locations that receive only encrypted vault bytes
+after an explicit design/implementation issue. No telemetry, analytics, crash reporting, hosted
+vault, or remote classification to any other service. Outside the Visibility collection
+exception, the user's decrypted data store is never uploaded anywhere; within it, only what the
+AI-driven collection pass reads live from a page in order to build the Disclosure ledger is
+sent, never a bulk export of the vault itself. Adding any other destination requires an explicit
+issue updating requirements, this document, and the user-facing docs.
 
 User-owned cloud storage is allowed only as encrypted-vault storage/sync. The storage
 provider must never receive the master passphrase, derived key, decrypted records, raw
@@ -702,7 +768,9 @@ security section with an explicit reviewed exception before sharing the build.
 - [ ] Personal data, card data (incl. CVV), credentials, and the API key are encrypted at rest
 - [ ] Local candidate definitions and per-site activity metadata are encrypted at rest
 - [ ] The derived key lives in memory only; decrypted values are never logged
-- [ ] Raw personal values are not sent to the AI model; no provider stateful features used
+- [ ] Raw personal values are not sent to the AI model for any use except Visibility collection
+  (Issue #514, §5), which discloses this plainly at the collection gate every run; no provider
+  stateful features used for any AI use
 - [ ] No network egress except to the target sites the user acts on, the configured AI provider, and explicitly designed user-owned encrypted vault storage; no telemetry; decrypted data store never uploaded (`npm run poc -- check-egress`)
 - [ ] Google Passwords.csv imports read only the user-selected upload body, never remember a local folder/path, and never persist or re-display the raw CSV or plaintext passwords
 - [ ] Display/log/measurement-output masking follows the unified `maskValue` / `maskForArtifact` policy; local writes stay inside the encrypted store / encrypted export / masked measurement output (`npm run poc -- check-persistence`)
@@ -725,8 +793,9 @@ For each beta release PR or release note, record only high-level evidence:
 - GitHub `ci / unit`, `ci / e2e-deterministic`, and `shellcheck` status
 - whether any dependency, network egress, local write, diagnostic, support bundle, log, or
   packaging path changed since the previous beta
-- whether AI Provider prompt shape changed, and confirmation that raw personal values are
-  still excluded
+- whether AI Provider prompt shape changed, and confirmation that raw personal values are still
+  excluded from every AI use except Visibility collection (Issue #514, §5), which is the one
+  documented exception
 - whether wall detection / hand-off changed, and confirmation that no bypass behavior or
   bypass-oriented dependency was added
 - whether Mac beta artifacts were inspected for excluded files: vaults, `.env`, API keys,
