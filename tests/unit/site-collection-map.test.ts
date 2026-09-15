@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type SiteCollectionMap } from "../../src/domain/entities.js";
-import { isSiteCollectionMap } from "../../src/domain/site-collection-map.js";
+import { isSiteCollectionMap, SITE_COLLECTION_MAP_LIMITS } from "../../src/domain/site-collection-map.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 
@@ -20,17 +20,17 @@ function fixture(): SiteCollectionMap {
       {
         url: "https://example.test/profile",
         purpose: "profile",
-        fingerprint: "fake-page-hash",
+        fingerprint: "a".repeat(64),
         items: [
           {
             attributeKey: "email",
             locator: { kind: "css", selector: ":root > *:nth-child(2) > *:nth-child(1)" },
-            fingerprint: "fake-field-hash",
+            fingerprint: "b".repeat(64),
           },
           {
             attributeKey: "phone.full",
             locator: { kind: "field-id", fieldId: "f-2" },
-            fingerprint: "fake-phone-hash",
+            fingerprint: "c".repeat(64),
           },
         ],
       },
@@ -101,7 +101,7 @@ test("maps and distinct AI authorization records roundtrip encrypted and maps fo
     vault.put("capability", { id: "collection", operationType: "collection", level: "L1", updatedAt: 1 });
     await vault.save();
     vault.lock();
-    assert.equal((await readFile(path, "utf8")).includes("fake-page-hash"), false);
+    assert.equal((await readFile(path, "utf8")).includes("a".repeat(64)), false);
     const reopened = await VaultV2.open(path, "fake-passphrase");
     assert.deepEqual(reopened.get("siteCollectionMap", "map-1"), fixture());
     assert.equal(reopened.get("mandate", "ai-mandate")?.operation, "ai-assisted-discovery");
@@ -149,6 +149,84 @@ test("map locators reject value-bearing selectors and page-provided IDs at the v
     map.pages[0]!.items[0]!.locator = { kind: "field-id", fieldId: "d-12" };
     assert.equal(isSiteCollectionMap(map), true);
     vault.lock();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("map bounds accept the ceiling and reject larger arrays and strings", () => {
+  const limits = SITE_COLLECTION_MAP_LIMITS;
+  const map = fixture();
+  map.id = "a".repeat(limits.identifierLength);
+  map.siteAccountId = "b".repeat(limits.identifierLength);
+  const page = map.pages[0]!;
+  const base = "https://example.test/";
+  page.url = base + "a".repeat(limits.urlLength - base.length);
+  const item = page.items[0]!;
+  item.attributeKey = "c".repeat(limits.identifierLength);
+  item.locator = { kind: "css", selector: ":root" + " > *:nth-child(999999)".repeat(64) };
+  page.items = Array.from({ length: limits.itemsPerPage }, () => item);
+  map.pages = Array.from({ length: limits.pages }, () => page);
+  assert.equal(isSiteCollectionMap(map), true);
+  assert.equal(isSiteCollectionMap({ ...map, id: map.id + "x" }), false);
+  assert.equal(isSiteCollectionMap({ ...map, siteAccountId: map.siteAccountId + "x" }), false);
+  assert.equal(isSiteCollectionMap({ ...map, pages: [...map.pages, page] }), false);
+  for (const patch of [
+    { url: page.url + "x" },
+    { items: [...page.items, item] },
+    { items: [{ ...item, attributeKey: item.attributeKey + "x" }] },
+    { items: [{ ...item, locator: { kind: "css", selector: ":root" + " > *:nth-child(1)".repeat(65) } }] },
+    { items: [{ ...item, locator: { kind: "field-id", fieldId: "f-1000000" } }] },
+  ]) {
+    assert.equal(isSiteCollectionMap({ ...map, pages: [{ ...page, ...patch }] }), false);
+  }
+});
+
+test("map fingerprints require fixed-length lowercase SHA-256 encoding", () => {
+  for (const fingerprint of [
+    "4111111111111234",
+    "user@example.test",
+    "<body>fake</body>",
+    "a".repeat(63),
+    "a".repeat(65),
+    "A".repeat(64),
+    "g".repeat(64),
+    "a".repeat(10000),
+  ]) {
+    const map = fixture();
+    map.pages[0]!.fingerprint = fingerprint;
+    assert.equal(isSiteCollectionMap(map), false);
+    const itemMap = fixture();
+    itemMap.pages[0]!.items[0]!.fingerprint = fingerprint;
+    assert.equal(isSiteCollectionMap(itemMap), false);
+  }
+});
+
+test("save and export reject map mutations through put/get/list and preserve the last valid file", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-map-mutation-"));
+  try {
+    const path = join(dir, "vault.json");
+    const vault = await VaultV2.open(path, "fake-passphrase");
+    vault.put("siteCollectionMap", fixture());
+    await vault.save();
+    const original = await readFile(path, "utf8");
+    for (const access of [
+      () => vault.put("siteCollectionMap", fixture()),
+      () => vault.get("siteCollectionMap", "map-1")!,
+      () => vault.list("siteCollectionMap")[0]!,
+    ]) {
+      vault.put("siteCollectionMap", fixture());
+      access().pages[0]!.items[0]!.locator = { kind: "css", selector: '[value="4111111111111234"]' };
+      await assert.rejects(() => vault.save(), /invalid site collection map/);
+      await assert.rejects(() => vault.exportEncrypted(), /invalid site collection map/);
+      assert.equal(await readFile(path, "utf8"), original);
+    }
+    vault.put("siteCollectionMap", fixture()).id = "changed-id";
+    await assert.rejects(() => vault.save(), /invalid site collection map/);
+    vault.lock();
+    const reopened = await VaultV2.open(path, "fake-passphrase");
+    assert.deepEqual(reopened.get("siteCollectionMap", "map-1"), fixture());
+    reopened.lock();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -48,7 +48,8 @@ export interface PersonalAttribute extends DomainRecord {
   label: string;
   /** Canonical value. PII; encrypted at rest, never logged. */
   value: string;
-  valueType: "text" | "email" | "phone" | "postal" | "address" | "name" | "card" | "date" | "secret" | "custom";
+  valueType:
+    "text" | "email" | "phone" | "postal" | "address" | "name" | "card" | "date" | "secret" | "custom";
   sensitivity: Sensitivity;
   updatedAt: number;
 }
@@ -96,12 +97,7 @@ export interface Credential extends DomainRecord {
 }
 
 export type DisclosureSourceKind =
-  | "form-field"
-  | "profile-text"
-  | "billing-page"
-  | "newsletter-setting"
-  | "user-confirmed"
-  | "manual-import";
+  "form-field" | "profile-text" | "billing-page" | "newsletter-setting" | "user-confirmed" | "manual-import";
 
 /** Derived by comparing the site-held value hash with the canonical attribute hash. */
 export type StaleState = "current" | "stale" | "unknown";
@@ -148,7 +144,8 @@ export interface AccountRelationship extends DomainRecord {
 /** What the user authorized (RFC-002 §4.1). */
 export interface Mandate extends DomainRecord {
   siteAccountId?: string;
-  operation: "ai-assisted-discovery" | "collection" | "update" | "withdrawal" | "registration" | "policy-expansion";
+  operation:
+    "ai-assisted-discovery" | "collection" | "update" | "withdrawal" | "registration" | "policy-expansion";
   scope?: string;
   authorizedAt: number;
 }
@@ -325,11 +322,14 @@ export const MOST_SENSITIVE_ATTRIBUTE_KEY = "card.cvv";
  * CSS is a :root-anchored chain of positional *:nth-child(N) steps only.
  * fieldId is a bounded scanner-generated f-N / d-N coordinate, never a DOM id.
  */
-export type CollectionItemLocator =
-  | { kind: "css"; selector: string }
-  | { kind: "field-id"; fieldId: string };
+export type CollectionItemLocator = { kind: "css"; selector: string } | { kind: "field-id"; fieldId: string };
 
-/** Versioned per-account collection facts; separate from B–D LocalDefinition. */
+/**
+ * Versioned per-account collection facts; separate from B–D LocalDefinition.
+ * Fingerprints are lowercase SHA-256 hex over locally derived structure only
+ * (architecture §5.2), never hashes of values/text. Storage ceilings and runtime
+ * validation live in site-collection-map.ts.
+ */
 export interface SiteCollectionMap extends DomainRecord {
   schemaVersion: 1;
   siteAccountId: string;

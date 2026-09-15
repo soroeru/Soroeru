@@ -496,7 +496,7 @@ for the non-negotiable-requirements wording, and `security.md` for the full thre
 
 **Implementation status (Issue #516):** the domain foundation is implemented:
 `Capability.operationType` and `Mandate.operation` include `ai-assisted-discovery`, and
-`siteCollectionMap` has a versioned record type with validation on vault write/read.
+`siteCollectionMap` has a versioned record type with validation on vault write/read and immediately before serialization.
 `DomainService.addDisclosure` accepts an explicit `collectionTier: "ai-driven"` from a trusted
 collection caller to retain CVV/full PAN; the persisted tier also selects full-value stale-state
 comparison. An absent tier retains deterministic last-4/CVV-exclusion behavior. This marker is
@@ -573,6 +573,36 @@ fingerprints, and typed item coordinates: CSS is restricted to `:root` plus posi
 Value-bearing attribute selectors, DOM IDs/classes, and text selectors are rejected.
 Map URLs omit query/fragment/credentials;
 producers must minimize coordinates and enforce site scope before storing structural facts.
+The v1 storage ceilings are 32 pages per map, 128 items per page, 128 characters for
+record/account IDs and attribute keys, and 2048 characters for URLs/selectors. A positional
+selector has at most 64 steps, with child indices and scanner indices in 1–999999. These
+are storage ceilings, not grants to exceed the collection run's smaller exploration budgets.
+During `put`/`save`/`exportEncrypted`, invalid maps are rejected without writing a replacement
+vault; serialization revalidates maps because the general vault API exposes mutable record
+references.
+
+**Fingerprint producer contract (generation remains #518):** derive fingerprints locally from
+structure, never from model-supplied fingerprint claims or raw HTML/text/value hashes. Encode
+an ordered JSON array of `[childIndexPath, tag, controlType]` tuples in DOM preorder as UTF-8,
+then SHA-256 it into exactly 64 lowercase hexadecimal characters. `childIndexPath` is an array
+of one-based child-element positions relative to the fingerprinted root (empty for the root);
+`tag` is the lowercase standard HTML element name (`other` for custom/unknown elements);
+`controlType` is the browser-normalized standard input type for input elements, or the empty
+string for other elements. Page fingerprints cover the page element tree; item fingerprints
+cover the located element subtree. Exclude text, values, labels, IDs, classes, URLs, and all
+other attributes. Schema validation enforces the output format, while the future local producer
+must enforce this input contract; a valid hash encoding alone does not prove its provenance.
+
+**Coordinate trade-off (Issue #516):** positional paths and bounded scanner IDs avoid retaining
+page-controlled values that can be embedded in selectors. Arbitrary CSS, DOM IDs/classes, and
+text/value selectors were rejected because a syntax-only validator cannot establish that those
+strings contain no personal values. This deliberately sacrifices resilience to inserted or
+reordered elements: require fingerprint agreement and fall back on mismatch, never silently
+read another element. Revisit the coordinate representation during #518 if an unchanged-page
+rerun fixture fails fingerprint/locator reuse solely because scanner numbering is unstable,
+or if an inserted non-data sibling makes an otherwise unchanged-item fixture fall back. Any
+replacement needs the same value-free guarantee before widening the schema.
+
 Discovery wall pause/resume reuses the existing
 `workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a
 second checkpoint mechanism.
