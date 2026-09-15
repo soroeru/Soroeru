@@ -35,13 +35,17 @@ Soroeru.app (Electron)
 │   │   └── Reflection
 │   ├── AutomationService (browser-neutral PageDriver)
 │   │   ├── browser-extension tab lease (production front door)
-│   │   ├── Visibility login / collection today; update / withdraw / register later
+│   │   ├── Visibility login / collection today (AI-driven full-page reads when AI is
+│   │   │   configured, Issue #514 — §5.2; deterministic fallback otherwise); update /
+│   │   │   withdraw / register later
 │   │   └── wall detection -> hand-off -> resume
 │   ├── BrowserTransport (versioned, authenticated local protocol)
 │   │   └── native helper -> thin browser extension -> one user-selected tab
 │   ├── DefinitionService (Agent layer, §7 below — Slices B-D only, not yet ported)
 │   ├── AiAnalysisService (optional)
-│   │   └── structure-only provider calls
+│   │   └── structure-only provider calls for every non-collection AI use (terms,
+│   │       registration field mapping); Visibility collection's AI calls are §5.2's
+│   │       separate full-page-read path, not this service
 │   └── IpcApi (typed, narrow, allowlisted commands)
 │
 ├── preload
@@ -115,7 +119,7 @@ bypass); and local-first (no hosted vault, telemetry, analytics, or crash report
 | Browser session policy | **Explicit, in-memory lease of one user-selected tab**; the browser owns authentication/session state | A lease is bound to a browser instance, tab, site scope, permission, and execution epoch. Release never closes the user's tab. Soroeru never exports cookies, local storage, history, a profile, or `storageState`; encrypted workflow checkpoints contain only safe workflow/map/Evidence references. Restart, disconnect, tab close, permission revocation, vault lock, or out-of-scope navigation invalidates the lease and requires explicit rebind plus local revalidation. |
 | Browser adapters | Chrome first; **`PageDriver` + browser-neutral session/transport contracts** are the multi-browser seam | Chrome/Edge can share a WebExtension family; Firefox needs a capability-verified adapter; Safari needs a separate Safari Web Extension/App Extension feasibility RFC. Portable semantics are commands, lifecycle, capability negotiation, and errors—not Chrome tab IDs or Native Messaging framing. |
 | Local encrypted storage | **Vault v2**: a versioned encrypted record vault (§3), not a plaintext SQLite database or a single encrypted JSON blob | Matches the AES-256-GCM + Argon2id requirement, avoids native DB dependencies, and supports entity-by-entity migration and audit records. SQLCipher SQLite may be revisited later if ledger scale, query performance, or concurrent access becomes a real constraint. |
-| AI provider abstraction | **Deterministic-first**; optional Anthropic/OpenAI adapters are stateless, structure-only, and user-configured | Matches the requirement that raw values never leave the local process; AI proposes (structure classification, terms summarization, Constraint findings), Policy/Delegation decides. |
+| AI provider abstraction | **AI-driven-first once configured**; optional Anthropic/OpenAI adapters are stateless and user-configured. Visibility collection sends full page content (Issue #514, §5.2); every other AI use stays structure-only | Matches the deterministic-default requirement (REQ-013) for users without AI configured. For Visibility collection, raw values leave the local process to the user's own configured provider by design, so the model can read and classify them; every other AI use (terms summarization, registration field mapping, Constraint findings) keeps raw values local — AI proposes from structure, Policy/Delegation decides. |
 | Packaging | **Unsigned macOS DMG** during invited development beta, via **Electron Forge `maker-dmg`**; Chrome extension through the Chrome Web Store before product cutover | The app bundles a self-contained native helper and registers it only after explicit user action. A stable store extension ID is allowlisted. Signing/notarization is required before distribution beyond invited beta; unpacked loading is development-only. |
 | Package manager | **npm** | The repo already has a lockfile; the dependency graph is not large enough to justify pnpm/Yarn. |
 | Renderer build | **Vite** | Most direct match for React + TypeScript in Electron; keeps the UI iteration loop fast. |
@@ -167,7 +171,9 @@ known alternatives and concrete triggers for reconsideration:
   binding. A future adapter may automate an IdP only through a separately approved exact-origin
   grant and dedicated security design, never through the Site Account grant.
 - **Thin adapters, browser-neutral semantics**: `PageDriver` retains the #381 split between
-  structure snapshots and local value reads. A browser-neutral session/factory/transport
+  structure snapshots and local value reads for every use except Visibility collection, whose
+  AI-driven exploration pass reads values directly as part of the loop (Issue #514, §5.2). A
+  browser-neutral session/factory/transport
   contract owns lifecycle, capability negotiation, cancellation, and typed errors. Chrome
   details—numeric tab IDs, extension IDs, Native Messaging framing—must not cross that seam.
   Edge is the nearest future adapter; Firefox requires a capability spike; Safari requires a
@@ -184,6 +190,31 @@ known alternatives and concrete triggers for reconsideration:
   release infrastructure that is not yet required. Reconsider when distribution moves beyond
   invited beta users, when manual upgrade friction blocks validation, or when Developer ID
   signing/notarization credentials become available for a release issue.
+- **AI-driven Visibility collection may read raw personal values (Issue #514)**: this reverses
+  the prior "agent layer never sees raw values" invariant, but only for Visibility collection.
+  Alternatives considered: (a) keep collection structure-only and improve deterministic
+  discovery's page/field coverage instead (rejected — Issue #381's own field trial showed
+  regex-based link/label matching misses whole pages, e.g. "ログインとセキュリティ", "プライバシー",
+  that a purely structural signal cannot name in advance); (b) keep the #381 structure-only
+  AI-navigation design and add a second, still-local value-reading step keyed by the model's
+  page-purpose/field-location proposal rather than by the model itself reading values (rejected
+  as the default — this is strictly safer and remains available as the deterministic/mapped
+  fallback tier, but was explicitly not what the Product Owner asked for: Issue #514 is a
+  deliberate choice to let the model read and classify values directly, not only propose where
+  to look); (c) send only redacted/tokenized values (rejected — token-for-value substitution
+  breaks the model's ability to classify or return the value itself, defeating the purpose).
+  This is a Product Owner decision, not a technical constraint — see Issue #514 for the full
+  deliberation. Because the model's raw-value read has no local corroboration source of its own
+  the way a mapped/deterministic read does, §5.2 item 1 requires the returned value to actually
+  appear in the page content captured for that step before it is stored — an integrity safeguard
+  against hallucination or a manipulated page, not a disclosure restriction; a value that fails
+  this check becomes `unknown`, never a guess. **Reconsider this decision** if: provider-side
+  logging/retention cannot be
+  verified as disabled for the configured provider; a real credential-leak or account-takeover
+  incident is traced to this path; or the Product Owner decides to re-narrow the exception (e.g.
+  back to card/CVV/password excluded, general PII only) after seeing real collection runs. Every
+  other invariant this reverses only for this one path is listed in §5.2, §10, and
+  `security.md` §5.
 
 ### 2.2 Extension-primary migration and implementation split
 
@@ -394,8 +425,10 @@ script and helper may transiently hold page structure or a value only for the lo
 needs it; vault records, provider keys, canonical profiles, durable collection maps, AI calls,
 Policy, Evidence, and gates remain in Electron. Browser target-site traffic is the only network
 egress from this chain; native
-messaging is local transport, and AI-provider egress remains a separate sanitized Electron-owned
-path. DOM content and every bridge message are treated as untrusted input.
+messaging is local transport, and AI-provider egress remains a separate Electron-owned path —
+sanitized structure only, except Visibility collection's AI-driven exploration pass, which may
+send raw personal values read from the page (Issue #514; see §5.2). DOM content and every bridge
+message are treated as untrusted input.
 
 **Reveal flow**: a stored site-held Disclosure value is masked by default. Revealing it
 (`revealValue`) requires re-verifying the master passphrase for that single reveal and is
@@ -424,9 +457,12 @@ uses a feature-flagged numeric-tab extension bridge until §2.2's cutover gates 
    - detect walls; hand off in the same leased tab; the run pauses and the renderer
      receives a `handoff` event with instruction text; the user resolves the wall and the
      run resumes (§6);
-   - find profile/account/billing/newsletter pages using deterministic discovery first,
-     then (later) optional structure-only AI proposal;
-   - collect field/text values locally (`disclosure-collector.ts`);
+   - find profile/account/billing/newsletter pages and their personal-information values via
+     AI-driven exploration when AI is configured (primary path, Issue #514, §5.2), or via
+     deterministic discovery otherwise (fallback, REQ-013);
+   - for the AI-driven path, the model's returned values become Disclosure/Account
+     Relationship candidates directly; for the deterministic path, collect field/text values
+     locally first (`disclosure-collector.ts`);
    - classify values into Disclosures and Account Relationships;
    - store encrypted records plus Evidence/Audit.
      (`CollectionPanel.tsx` is residual/unmounted; the live shell drives collection from
@@ -443,54 +479,94 @@ uses a feature-flagged numeric-tab extension bridge until §2.2's cutover gates 
 
 ### 5.2 Collection strategy
 
-Collection uses (currently, for Slice A) two tiers, with a third planned:
+**Policy (Issue #514, supersedes the earlier "deterministic-first, AI optional/structure-only"
+design):** once the user has an AI provider configured, **AI-driven page exploration and value
+extraction is the primary Collection strategy for Slice A.** The model receives full page content
+during the logged-in session — not only a sanitized structure snapshot — and both (a) proposes
+which reachable page to visit next, and (b) identifies and returns the personal-information values
+present on the page, classified by attribute key (name, address, phone, email, card number, CVV,
+site password, account id, notification/security setting state, etc.). The automation/domain layer
+writes what the model returns as Disclosure records, Account Relationship facts, and minimized
+Evidence, through the normal typed `DomainService`/`VaultService` API — the model has no direct
+filesystem or vault access, but the *content* of the write, including a full card number, CVV, or
+site password read from the page, now comes from the model itself rather than from a separate
+local value-reading step. This lifts the earlier "never sees raw personal values" restriction
+specifically for Visibility collection; see `requirements.md` §8's Visibility collection exception
+for the non-negotiable-requirements wording, and `security.md` for the full threat-model update.
 
-1. **Deterministic discovery**:
+**Implementation status:** this is the target policy, not yet fully implemented. In particular,
+`domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude
+`MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write, so no CVV Disclosure can
+be persisted today regardless of tier — this must change before AI-driven CVV collection can
+actually store a value (see §10's CVV row and `security.md`'s known-gap note). The
+`ai-assisted-discovery` capability, `siteCollectionMap` entity kind, and the AI-driven exploration
+loop itself are also not yet implemented; §5.2 describes where they land once built.
+
+Collection uses two tiers, chosen per REQ-013's AI-optionality rule (a third, later tier is
+unaffected):
+
+1. **AI-driven exploration and extraction** (primary once AI is configured; Issue #514): as
+   described above. Every safeguard *unrelated* to raw-value exposure is unchanged and still
+   enforced locally, never by the model: same-registrable-site HTTPS navigation only; per-site
+   page/depth/call/token/time budgets; immediate hand-off on CAPTCHA/MFA/bot-detection/wall
+   signals (never solved, bypassed, outsourced, or obscured); GET alone is never accepted as proof
+   of read-only — the destination must match a locally approved account-information page class and
+   must not carry an action-like path/query/element signal (logout, delete, withdraw, cancel,
+   unsubscribe, confirm, submit, purchase, or preference mutation), and such destinations are
+   rejected from discovery rather than confirmable; unknown destinations still require user
+   confirmation before navigation. The model has no general browser-control tool — it can only
+   propose the next same-site read-only navigation and report values found on the current page;
+   navigation, wall detection, and every write still execute locally.
+   **Local corroboration before write (integrity, not disclosure, safeguard):** the
+   automation/domain layer captures the page content given to the model for that navigation step
+   and requires a returned value (or its normalized form) to actually appear in that captured
+   content before `DomainService.addDisclosure` accepts it. A returned value that does not
+   corroborate against the page it was claimed to come from — whether from model hallucination or
+   from untrusted/manipulated page content trying to inject a fabricated value — is treated as
+   `unknown` / a review-task candidate, never stored as a confident Disclosure (same "prefer
+   unknown over a confident wrong answer" rule as the rest of this document,
+   `requirements.md` §8). This check is local and does not send anything back to the model; it
+   only gates what the write path accepts.
+2. **Deterministic discovery** (fallback when AI is not configured, or when an AI-driven pass
+   fails, is cancelled, or exhausts its per-site budget mid-run — REQ-013):
    - login form traits;
    - account/profile/billing/newsletter link text;
    - field labels, `autocomplete`, `name`, `id`, placeholder, nearby text
      (`src/agent/scan.ts`, `src/agent/classifier.ts`);
    - Japanese-only matching for MVP.
-2. **Optional AI proposal / Site Collection Map discovery** (planned; detailed below): receives page structure, labels, terms text, and
-   redacted snippets only; returns candidate page purpose, field mapping, and
-   risk/Constraint findings; never sees raw personal values and never decides execution.
+   This tier never sends any value to an AI provider, so it keeps the pre-#514 conservative
+   storage behavior for card data: site-collected card numbers are reduced to last 4 digits before
+   storage, and CVV is never collected or stored through this tier.
 3. **Official/local site definitions** (§7) are a later tier for Slice A and are the
    primary tier already implemented for the not-yet-ported registration/withdrawal PoC.
 
 Unclear values become `unknown` Disclosures or review tasks (surfaced to the user as
-pending dynamic-attribute candidates), not guessed data.
+pending dynamic-attribute candidates), not guessed data — for both tiers.
 
-Visibility may add a low-frequency AI discovery pass that produces a versioned
-`SiteCollectionMap` (Issue #381). A mandatory structural sanitizer further redacts `PageDriver`
-structure snapshots—already separate from local value reads—before they reach the model. The model receives only sanitized
-structure and returns a closed-schema proposal referencing opaque IDs in that snapshot; a local
-validator enforces existence, same-registrable-site HTTPS navigation, per-site limits
-(page/depth/call/token/time), and wall state. GET alone is never accepted as proof of read-only:
-the destination must match a locally approved account-information page class and must not have an
-action-like path/query/element signal (logout, delete, withdraw, cancel, unsubscribe, confirm,
-submit, purchase, or preference mutation). Unknown destinations require user confirmation before
-navigation; action-like destinations are rejected from discovery rather than confirmable. It has no
-general browser or value-reading tool.
+AI-driven collection also produces a versioned `SiteCollectionMap` as a byproduct (Issue #381's
+schema): the page-purpose/field-location facts the model used for this run are recorded so a
+later rerun on an unchanged page can be served from the map's local coordinates first and fall
+back to a fresh AI pass only on mismatch (selector miss, page gone, structural change). This
+keeps repeat collection inspectable and reduces provider calls, but does **not** reintroduce a
+structure-only restriction: a rerun still reads the actual value locally at the mapped location,
+which is the same local-read step the deterministic tier already performs. Maps are encrypted
+local candidate definitions, mismatch is isolated per entry with fallback to the tier that
+applies (AI retry or deterministic), and regeneration requires user action.
 
-Regular mapped collection is deterministic and stores encrypted Disclosures plus minimized
-Evidence. Mismatch is isolated per entry, falls back to current deterministic exploration, and
-offers user-initiated regeneration. Maps are encrypted local candidate definitions and remain
-usable with AI disabled. Every browser adapter must preserve the same invariants: sanitized
-structure only to AI; field/display values, HTML, screenshots, cookies, and profile data never
-to AI; schema-limited proposals only; local validation of site scope, navigation, budgets,
-locators, and walls; deterministic execution; card last4 reduction and CVV exclusion; and the
-existing action gates. Adapter capabilities may narrow behavior but never weaken these rules.
-
-AI discovery has a separate `ai-assisted-discovery` capability. At L0 the collection gate names
-each discovery run. Existing collection L1 does not grant it; L1 expansion requires its own light
-understanding check covering provider egress, bounded navigation, and local-only value reads.
-Reduction remains immediate. Unconfigured-security Review tasks are computed from the latest
-Disclosure/Evidence; dismissal is an encrypted Preference keyed by task plus observation hash, so
-unchanged rescans stay dismissed and changed observations can surface once.
+AI-driven collection has a separate `ai-assisted-discovery` capability. At L0 the collection gate
+names each discovery run **and states plainly, every time, that the model will see raw personal
+values — including full card numbers, CVV, and site passwords — sent to the user's configured AI
+provider.** Existing collection L1 does not grant `ai-assisted-discovery`; L1 expansion requires
+its own explicit understanding check covering provider egress of those raw-value categories and
+bounded navigation. Reduction (L1 → L0, or disabling AI collection back to the deterministic tier)
+remains immediate and unconditional. Unconfigured-security Review tasks are computed from the
+latest Disclosure/Evidence; dismissal is an encrypted Preference keyed by task plus observation
+hash, so unchanged rescans stay dismissed and changed observations can surface once.
 
 Implementation extends both `Capability.operationType` and `Mandate.operation` with the literal
-`ai-assisted-discovery`; it does not overload `collection`. Maps use the new encrypted
-`siteCollectionMap` entity kind. Discovery wall pause/resume reuses the existing
+`ai-assisted-discovery`; it does not overload `collection`. Maps use the encrypted
+`siteCollectionMap` entity kind — not yet in `ENTITY_KINDS` (`src/domain/entities.ts`); adding it
+is part of this implementation. Discovery wall pause/resume reuses the existing
 `workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a
 second checkpoint mechanism.
 
@@ -671,8 +747,8 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Local encrypted vault | Vault v2 encrypted records (§3); no hosted service. |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
-| CVV most sensitive | Stored encrypted; reveal is refused outright (§4); fill requires a dedicated accessor. |
-| Raw PII never to AI | The agent/AI layer accepts structure-only requests; provider adapters validate redaction, and the discovery-pass StructuralSanitizer (§5.2) further allow-lists and redacts browser structure. |
+| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. A site-collected CVV Disclosure is the new Issue #514 target policy, but is **not yet implemented**: `domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude `MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write — not just the last-4 reduction `card.number` gets — so no CVV Disclosure can be persisted today through either tier. See `security.md`'s known-gap note; do not assume CVV Disclosure storage works until that code path is changed. |
+| Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
 | Local diagnosability without telemetry | Encrypted `diagnostic` records plus sanitized rotating operational logs and user-initiated support-bundle export (§3.5); no automatic upload. |
@@ -688,9 +764,11 @@ wrong mapping makes the user choose over false information.
 
 For site-wide discovery, Soroeru chooses a bounded observe/propose loop over a single static call
 or autonomous browser control. A static call lacks multi-page reach; autonomous control gives
-untrusted DOM excessive authority. Reconsider only if measurement shows inadequate coverage and
-a replacement preserves structure/value separation, schema-only proposals, deterministic local
-execution, and existing gates.
+untrusted DOM excessive authority. Reconsider only if measurement shows inadequate coverage and a
+replacement preserves schema-only navigation proposals, deterministic local execution of every
+write, and existing gates (wall hand-off, budgets, same-site scope). Structure/value separation
+remains the rule for every AI use except Visibility collection, whose bounded loop intentionally
+reads and returns values as part of the loop itself (Issue #514, §5.2).
 
 Measurement plan:
 
