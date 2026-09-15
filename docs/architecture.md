@@ -171,7 +171,9 @@ known alternatives and concrete triggers for reconsideration:
   binding. A future adapter may automate an IdP only through a separately approved exact-origin
   grant and dedicated security design, never through the Site Account grant.
 - **Thin adapters, browser-neutral semantics**: `PageDriver` retains the #381 split between
-  structure snapshots and local value reads. A browser-neutral session/factory/transport
+  structure snapshots and local value reads for every use except Visibility collection, whose
+  AI-driven exploration pass reads values directly as part of the loop (Issue #514, §5.2). A
+  browser-neutral session/factory/transport
   contract owns lifecycle, capability negotiation, cancellation, and typed errors. Chrome
   details—numeric tab IDs, extension IDs, Native Messaging framing—must not cross that seam.
   Edge is the nearest future adapter; Firefox requires a capability spike; Safari requires a
@@ -188,6 +190,26 @@ known alternatives and concrete triggers for reconsideration:
   release infrastructure that is not yet required. Reconsider when distribution moves beyond
   invited beta users, when manual upgrade friction blocks validation, or when Developer ID
   signing/notarization credentials become available for a release issue.
+- **AI-driven Visibility collection may read raw personal values (Issue #514)**: this reverses
+  the prior "agent layer never sees raw values" invariant, but only for Visibility collection.
+  Alternatives considered: (a) keep collection structure-only and improve deterministic
+  discovery's page/field coverage instead (rejected — Issue #381's own field trial showed
+  regex-based link/label matching misses whole pages, e.g. "ログインとセキュリティ", "プライバシー",
+  that a purely structural signal cannot name in advance); (b) keep the #381 structure-only
+  AI-navigation design and add a second, still-local value-reading step keyed by the model's
+  page-purpose/field-location proposal rather than by the model itself reading values (rejected
+  as the default — this is strictly safer and remains available as the deterministic/mapped
+  fallback tier, but was explicitly not what the Product Owner asked for: Issue #514 is a
+  deliberate choice to let the model read and classify values directly, not only propose where
+  to look); (c) send only redacted/tokenized values (rejected — token-for-value substitution
+  breaks the model's ability to classify or return the value itself, defeating the purpose).
+  This is a Product Owner decision, not a technical constraint — see Issue #514 for the full
+  deliberation. **Reconsider this decision** if: provider-side logging/retention cannot be
+  verified as disabled for the configured provider; a real credential-leak or account-takeover
+  incident is traced to this path; or the Product Owner decides to re-narrow the exception (e.g.
+  back to card/CVV/password excluded, general PII only) after seeing real collection runs. Every
+  other invariant this reverses only for this one path is listed in §5.2, §10, and
+  `security.md` §5.
 
 ### 2.2 Extension-primary migration and implementation split
 
@@ -467,6 +489,14 @@ local value-reading step. This lifts the earlier "never sees raw personal values
 specifically for Visibility collection; see `requirements.md` §8's Visibility collection exception
 for the non-negotiable-requirements wording, and `security.md` for the full threat-model update.
 
+**Implementation status:** this is the target policy, not yet fully implemented. In particular,
+`domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude
+`MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write, so no CVV Disclosure can
+be persisted today regardless of tier — this must change before AI-driven CVV collection can
+actually store a value (see §10's CVV row and `security.md`'s known-gap note). The
+`ai-assisted-discovery` capability, `siteCollectionMap` entity kind, and the AI-driven exploration
+loop itself are also not yet implemented; §5.2 describes where they land once built.
+
 Collection uses two tiers, chosen per REQ-013's AI-optionality rule (a third, later tier is
 unaffected):
 
@@ -520,7 +550,8 @@ hash, so unchanged rescans stay dismissed and changed observations can surface o
 
 Implementation extends both `Capability.operationType` and `Mandate.operation` with the literal
 `ai-assisted-discovery`; it does not overload `collection`. Maps use the encrypted
-`siteCollectionMap` entity kind. Discovery wall pause/resume reuses the existing
+`siteCollectionMap` entity kind — not yet in `ENTITY_KINDS` (`src/domain/entities.ts`); adding it
+is part of this implementation. Discovery wall pause/resume reuses the existing
 `workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a
 second checkpoint mechanism.
 
@@ -701,7 +732,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Local encrypted vault | Vault v2 encrypted records (§3); no hosted service. |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
-| CVV most sensitive | Stored encrypted (canonical, and a site-collected Disclosure per Issue #514); reveal is refused outright for both (§4); fill requires a dedicated accessor. |
+| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. A site-collected CVV Disclosure is the new Issue #514 target policy, but is **not yet implemented**: `domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude `MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write — not just the last-4 reduction `card.number` gets — so no CVV Disclosure can be persisted today through either tier. See `security.md`'s known-gap note; do not assume CVV Disclosure storage works until that code path is changed. |
 | Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests, provider adapters validate redaction, and the discovery-pass StructuralSanitizer (§5.2) allow-lists and redacts browser structure. **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool) still applies. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |

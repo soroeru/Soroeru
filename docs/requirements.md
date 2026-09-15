@@ -320,7 +320,7 @@ registration (last).**
   encrypted bytes only. No other external destination, and no telemetry / analytics / crash
   reporting.
 - Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
-  derived key must never persist outside memory. A user-entered canonical CVV (used for fill)
+  derived key must never persist outside memory. A user-entered canonical CVV (fill use)
   remains the most sensitive field, requiring the strictest handling. Algorithm / KDF selection:
   see [`architecture.md`](architecture.md) §2 and §10.
 - **Visibility collection exception (Issue #514):** AI-driven Visibility collection is the one AI
@@ -330,14 +330,17 @@ registration (last).**
   registration field mapping, non-collection discovery, etc.) stays structure-only: never send
   raw personal values to those AI calls. Only the user's configured provider; no provider
   stateful features (PII prompt-caching, stored threads, memory) for any AI use.
+- **No AI use, including Visibility collection, ever performs form filling, terms acceptance,
+  final submission, card entry, or another irreversible action.** Those remain deterministic with
+  their applicable review-and-confirm gates and guards in every case; Visibility collection is
+  read-only regardless of the raw-value exception above.
 - AI browser analysis outside Visibility collection MUST pass through an allow-list structural
   sanitizer. Raw DOM, field or display values, prefilled/selected values, cookies, tokens, and
   value-reading results must not enter those AI requests, and AI output there is limited to a
   validated mapping/navigation schema referencing elements present in the sanitized snapshot; it
-  cannot issue free-form browser actions or invent URLs/selectors. Form filling, terms acceptance,
-  final submission, card entry, and irreversible actions remain deterministic with their
-  applicable review-and-confirm gates and guards. Visibility collection's AI-driven exploration
-  loop still enforces same-registrable-site navigation, per-site page/depth/time budgets, and
+  cannot issue free-form browser actions or invent URLs/selectors. Visibility collection's
+  AI-driven exploration loop still enforces same-registrable-site navigation, per-site
+  page/depth/time budgets, and
   immediate wall hand-off (never bypassed) — only the raw-value restriction is lifted for it.
 - AI-assisted discovery/collection is optional and bounded. Provider failure, invalid output,
   cancellation, wall detection, or exhaustion of the per-site limits owned by
@@ -434,7 +437,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; a user-entered canonical CVV (fill use) is treated as most sensitive. Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. If login fails because credentials are rejected, the login flow is unrecognized, or the site returns an error, stop after at most two login attempts for that site/credential set, do not enter same-site retry loops, and record the Site Account as `login failed / not collected` until the user explicitly updates credentials or retries later. | A | Must |
-| REQ-004 | Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic scan/classify as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers and CVV are stored in full (Issue #514 supersedes the earlier last-4/CVV-exclusion rule for Visibility collection). | A | Must |
+| REQ-004 | Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic collection (`architecture.md` §5.2) as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers and CVV are target-policy stored in full via the AI-driven path (Issue #514 supersedes the earlier last-4/CVV-exclusion rule for that path only; the deterministic fallback keeps the last-4/CVV-exclusion rule); CVV storage specifically is not yet implemented — `security.md` §3 known gap. | A | Must |
 | REQ-005 | Present the per-site view by composing Site Account + its Disclosures, showing normal-sensitivity values (name, address, phone, account id, etc.) plainly and immediately, masking only sensitive/most-sensitive values (card data, the site password) with reveal gated behind passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall, credential failure, site error, or unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
@@ -451,7 +454,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
 | REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | — | Won't (MVP) |
 | REQ-020 | Run the デジタル認証アプリ integration through a minimal, OSS, zero-retention identity-auth BFF: registered relying party (client ID, redirect / back-channel logout URIs, private_key_jwt), egress to the Digital Agency only, basic-4 forwarded encrypted to the user's device and never persisted server-side. Narrowly-scoped exception to the no-backend principle, identity layer only. | A | Must |
-| REQ-021 | AI-assisted Visibility discovery may use a bounded observe/propose loop, but every proposal is schema-validated and locally executed; mapped values remain local, maps are encrypted local candidates, wall detection hands off, stale maps fall back per entry, and regeneration is explicit rather than silent. | A | Must |
+| REQ-021 | AI-driven Visibility collection (primary once AI is configured, Issue #514) uses a bounded observe/propose loop: every navigation proposal is schema-validated and locally executed (same-registrable-site, budgets, wall hand-off), but — unlike the rest of this loop's proposals — the values it returns are the raw personal values read from the current page, not schema-validated references to a local read; the automation/domain layer still performs every write. Maps are encrypted local candidates; stale maps fall back per entry; regeneration is explicit rather than silent. This requirement previously described a fully structure-only/local-values loop; §8's Visibility collection exception and `architecture.md` §5.2 supersede that for the value-reading step specifically. | A | Must |
 | REQ-022 | Record an observed unconfigured security item and show it as a non-blocking, dismissible review task; Soroeru neither recommends nor changes the setting automatically. | A | Must |
 
 ## 11. Glossary
