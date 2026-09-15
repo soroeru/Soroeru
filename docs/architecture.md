@@ -568,7 +568,10 @@ Implementation extends both `Capability.operationType` and `Mandate.operation` w
 `ai-assisted-discovery`; it does not overload `collection`. Maps use the encrypted
 `siteCollectionMap` entity kind, included in `ENTITY_KINDS` (`src/domain/entities.ts`, Issue #516).
 Its v1 shape stores per-account revisions, generation status, provenance, page purposes and
-fingerprints, and typed CSS/field-id item coordinates. Map URLs omit query/fragment/credentials;
+fingerprints, and typed item coordinates: CSS is restricted to `:root` plus positional
+`*:nth-child(N)` child steps, and field IDs to bounded scanner `f-N` / `d-N` coordinates.
+Value-bearing attribute selectors, DOM IDs/classes, and text selectors are rejected.
+Map URLs omit query/fragment/credentials;
 producers must minimize coordinates and enforce site scope before storing structural facts.
 Discovery wall pause/resume reuses the existing
 `workflowCheckpoint` entity and same-headed-session lifecycle from §6 rather than defining a

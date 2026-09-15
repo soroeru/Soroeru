@@ -320,7 +320,11 @@ export function isSensitiveAttributeKey(attributeKey: string): boolean {
 /** CVV is the most sensitive field (RFC-002 §6): reveal requires a dedicated accessor. */
 export const MOST_SENSITIVE_ATTRIBUTE_KEY = "card.cvv";
 
-/** Structure-only coordinates, never extracted values or page/request bodies. */
+/**
+ * Structure-only coordinates, never extracted values or page/request bodies.
+ * CSS is a :root-anchored chain of positional *:nth-child(N) steps only.
+ * fieldId is a bounded scanner-generated f-N / d-N coordinate, never a DOM id.
+ */
 export type CollectionItemLocator =
   | { kind: "css"; selector: string }
   | { kind: "field-id"; fieldId: string };

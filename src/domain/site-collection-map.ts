@@ -24,7 +24,20 @@ function pageUrl(value: unknown): boolean {
   }
 }
 
-/** Shape validation only; callers must still minimize coordinates and enforce site scope. */
+// Positional CSS contains no page-provided attribute, id, class, or text values.
+// Field IDs match the bounded local scanner coordinates (f-N / d-N), not DOM IDs.
+function positionalSelector(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.length <= 2048 &&
+    /^:root(?: > \*:nth-child\([1-9][0-9]{0,5}\)){1,64}$/.test(value)
+  );
+}
+function scannerFieldId(value: unknown): boolean {
+  return typeof value === "string" && /^[fd]-[1-9][0-9]{0,5}$/.test(value);
+}
+
+/** Shape/coordinate validation; producers must still minimize page routes and enforce site scope. */
 export function isSiteCollectionMap(value: unknown): value is SiteCollectionMap {
   if (
     !object(value, [
@@ -74,8 +87,12 @@ export function isSiteCollectionMap(value: unknown): value is SiteCollectionMap 
           return false;
         const locator = item.locator;
         return (
-          (object(locator, ["kind", "selector"]) && locator.kind === "css" && text(locator.selector)) ||
-          (object(locator, ["kind", "fieldId"]) && locator.kind === "field-id" && text(locator.fieldId))
+          (object(locator, ["kind", "selector"]) &&
+            locator.kind === "css" &&
+            positionalSelector(locator.selector)) ||
+          (object(locator, ["kind", "fieldId"]) &&
+            locator.kind === "field-id" &&
+            scannerFieldId(locator.fieldId))
         );
       });
     })

@@ -24,12 +24,12 @@ function fixture(): SiteCollectionMap {
         items: [
           {
             attributeKey: "email",
-            locator: { kind: "css", selector: "#email" },
+            locator: { kind: "css", selector: ":root > *:nth-child(2) > *:nth-child(1)" },
             fingerprint: "fake-field-hash",
           },
           {
             attributeKey: "phone.full",
-            locator: { kind: "field-id", fieldId: "phone" },
+            locator: { kind: "field-id", fieldId: "f-2" },
             fingerprint: "fake-phone-hash",
           },
         ],
@@ -110,6 +110,45 @@ test("maps and distinct AI authorization records roundtrip encrypted and maps fo
     new DomainService(reopened).deleteSiteAccount("site-1");
     assert.deepEqual(reopened.list("siteCollectionMap"), []);
     reopened.lock();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("map locators reject value-bearing selectors and page-provided IDs at the vault boundary", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-map-locator-"));
+  try {
+    const vault = await VaultV2.open(join(dir, "vault.json"), "fake-passphrase");
+    const selectors = [
+      '[value="4111111111111234"]',
+      "#user-example-test",
+      ".person-name",
+      ':root > [data-value="123"]',
+      ":root > *:nth-child(4111111111111234)",
+      ':root > *:nth-child(1), [value="123"]',
+      ":root > *:nth-child(0)",
+    ];
+    const fieldIds = [
+      "user@example.test",
+      "4111111111111234",
+      "f-4111111111111234",
+      "f-user-example-test",
+      'f-1[value="123"]',
+      "f-0",
+    ];
+    for (const locator of [
+      ...selectors.map((selector) => ({ kind: "css" as const, selector })),
+      ...fieldIds.map((fieldId) => ({ kind: "field-id" as const, fieldId })),
+    ]) {
+      const map = fixture();
+      map.pages[0]!.items[0]!.locator = locator;
+      assert.equal(isSiteCollectionMap(map), false);
+      assert.throws(() => vault.put("siteCollectionMap", map), /invalid site collection map/);
+    }
+    const map = fixture();
+    map.pages[0]!.items[0]!.locator = { kind: "field-id", fieldId: "d-12" };
+    assert.equal(isSiteCollectionMap(map), true);
+    vault.lock();
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
