@@ -204,7 +204,12 @@ known alternatives and concrete triggers for reconsideration:
   to look); (c) send only redacted/tokenized values (rejected — token-for-value substitution
   breaks the model's ability to classify or return the value itself, defeating the purpose).
   This is a Product Owner decision, not a technical constraint — see Issue #514 for the full
-  deliberation. **Reconsider this decision** if: provider-side logging/retention cannot be
+  deliberation. Because the model's raw-value read has no local corroboration source of its own
+  the way a mapped/deterministic read does, §5.2 item 1 requires the returned value to actually
+  appear in the page content captured for that step before it is stored — an integrity safeguard
+  against hallucination or a manipulated page, not a disclosure restriction; a value that fails
+  this check becomes `unknown`, never a guess. **Reconsider this decision** if: provider-side
+  logging/retention cannot be
   verified as disabled for the configured provider; a real credential-leak or account-takeover
   incident is traced to this path; or the Product Owner decides to re-narrow the exception (e.g.
   back to card/CVV/password excluded, general PII only) after seeing real collection runs. Every
@@ -512,6 +517,16 @@ unaffected):
    confirmation before navigation. The model has no general browser-control tool — it can only
    propose the next same-site read-only navigation and report values found on the current page;
    navigation, wall detection, and every write still execute locally.
+   **Local corroboration before write (integrity, not disclosure, safeguard):** the
+   automation/domain layer captures the page content given to the model for that navigation step
+   and requires a returned value (or its normalized form) to actually appear in that captured
+   content before `DomainService.addDisclosure` accepts it. A returned value that does not
+   corroborate against the page it was claimed to come from — whether from model hallucination or
+   from untrusted/manipulated page content trying to inject a fabricated value — is treated as
+   `unknown` / a review-task candidate, never stored as a confident Disclosure (same "prefer
+   unknown over a confident wrong answer" rule as the rest of this document,
+   `requirements.md` §8). This check is local and does not send anything back to the model; it
+   only gates what the write path accepts.
 2. **Deterministic discovery** (fallback when AI is not configured, or when an AI-driven pass
    fails, is cancelled, or exhausts its per-site budget mid-run — REQ-013):
    - login form traits;
@@ -733,7 +748,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
 | CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. A site-collected CVV Disclosure is the new Issue #514 target policy, but is **not yet implemented**: `domain-service.ts`'s `disclosureStoredValue`/`comparisonValue` currently hard-exclude `MOST_SENSITIVE_ATTRIBUTE_KEY` (`card.cvv`) from every Disclosure write — not just the last-4 reduction `card.number` gets — so no CVV Disclosure can be persisted today through either tier. See `security.md`'s known-gap note; do not assume CVV Disclosure storage works until that code path is changed. |
-| Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests, provider adapters validate redaction, and the discovery-pass StructuralSanitizer (§5.2) allow-lists and redacts browser structure. **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool) still applies. |
+| Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
 | Local diagnosability without telemetry | Encrypted `diagnostic` records plus sanitized rotating operational logs and user-initiated support-bundle export (§3.5); no automatic upload. |
