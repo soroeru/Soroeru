@@ -1,3 +1,5 @@
+import type { AiProvider } from "../src/agent/ai/provider.js";
+import type { VisibilityRunnerOptions } from "../src/automation/visibility-runner.js";
 // VisibilityService: the trusted main-process orchestrator for a Visibility run
 // (RFC-002 §5.1 / §5.2). It owns the single active run over the VisibilityRunner
 // and brokers the wall hand-off between the headed browser and the renderer:
@@ -31,6 +33,9 @@ export interface VisibilityServiceOptions {
   maxHandoffs?: number;
   /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
   aiEngine?: AiEngine;
+  collectionGrant?: VisibilityRunnerOptions["collectionGrant"];
+  confirmCollectionDestination?: VisibilityRunnerOptions["confirmCollectionDestination"];
+  decideCollectionTos?: VisibilityRunnerOptions["decideCollectionTos"];
   /** Plain-text diagnostics sink passed through to the runner (Issue #314); defaults to a no-op. */
   logger?: Logger;
 }
@@ -52,6 +57,7 @@ export class VisibilityService {
   private pendingSessionClose: Promise<void> | undefined;
   /** Optional AI fallback for DecisionEngine (Issue #310); mutable so the caller can rebuild it per vault-unlock session. */
   private aiEngine: AiEngine | undefined;
+  private collectionProvider: AiProvider | undefined;
   private readonly logger: Logger;
 
   constructor(private readonly options: VisibilityServiceOptions) {
@@ -67,12 +73,17 @@ export class VisibilityService {
   /** Unbind on lock; abort any active run so an in-flight task can unwind. */
   clearDomain(): void {
     this.abortRun();
+    this.collectionProvider = undefined;
     this.domain = undefined;
   }
 
   /** Replace the AI fallback (Issue #310): rebuilt per vault-unlock session, cleared on lock. */
   setAiEngine(aiEngine: AiEngine | undefined): void {
     this.aiEngine = aiEngine;
+  }
+
+  setCollectionProvider(provider: AiProvider | undefined): void {
+    this.collectionProvider = provider;
   }
 
   status(): VisibilityStatusView {
@@ -109,6 +120,14 @@ export class VisibilityService {
         handoff: (input) => this.onHandoff(input),
         isCanceled: () => this.cancelRequested,
         logger: this.logger,
+        ...(this.collectionProvider ? { collectionProvider: this.collectionProvider } : {}),
+        ...(this.options.collectionGrant ? { collectionGrant: this.options.collectionGrant } : {}),
+        ...(this.options.confirmCollectionDestination
+          ? { confirmCollectionDestination: this.options.confirmCollectionDestination }
+          : {}),
+        ...(this.options.decideCollectionTos
+          ? { decideCollectionTos: this.options.decideCollectionTos }
+          : {}),
         ...(this.options.maxHandoffs !== undefined ? { maxHandoffs: this.options.maxHandoffs } : {}),
         ...(this.aiEngine !== undefined ? { aiEngine: this.aiEngine } : {}),
       });

@@ -363,6 +363,21 @@ npm run build && node --env-file-if-exists=.env dist/compiled/<script>.js
 - [ ] ネットワークキャプチャ（開発者ツール／プロキシ等、任意）で、送信される JSON に
       `visibleText` やフィールド値、生の個人情報が含まれないことを確認する
 
+### 9.1 AI主導 Visibility Collection（Issue #517、本番UI未提供）
+
+`src/automation/ai-visibility-collector.ts` は §9 の `AiEngine`（構造のみ）とは別の、
+生の個人値をモデルに渡す唯一の経路（Issue #514/#517）。**本番の収集ゲート・L0/L1 UI
+（Issue #519）がまだ無いため、アプリ本体の通常操作からはまだ到達できない** — `VisibilityRunner`
+は `collectionGrant` コールバックが `undefined` を返す限り常に決定論探索にフォールバックする。
+
+現時点の検証手段は自動テストのみ（`tests/unit/ai-visibility-collection.test.ts`）:
+ハルシネーション/改ざんページ拒否、予算境界（pages/depth/calls/tokens/time）、ウォール
+ハンドオフからの決定論継続、ToS判断による両ティア停止、未知遷移先のペンディング、
+クローズドスキーマ拒否、実 Vault/DomainService への暗号化書き込みを検証済み。
+
+- [ ] `npm test` で上記スイートが全件パスすることを確認する（本番UIが無い間の唯一の回帰確認）
+- [ ] Issue #519 実装後、本セクションを実際の手動クリック手順に更新する
+
 ## 10. SSO ログイン・ハンドオフ（Issue #351）
 
 ID/PW 欄のない SSO 専用ログイン、または ID/PW 失敗後の SSO フォールバックを確認します。

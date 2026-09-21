@@ -1,0 +1,182 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { collectAiVisibility, type AiCollectionOptions, type CollectionBatch } from "../../src/automation/ai-visibility-collector.js";
+import { collectionInput, parseCollectionProposal, corroborateProposal } from "../../src/automation/ai-visibility-contract.js";
+import { collectionNavigation, collectionUrlAllowed } from "../../src/automation/visibility-navigation-policy.js";
+import type { CollectionObservation } from "../../src/automation/collection-observation.js";
+import type { PageDriver } from "../../src/automation/page-driver.js";
+import type { FormField } from "../../src/types.js";
+import type { AiProvider } from "../../src/agent/ai/provider.js";
+import { VaultV2 } from "../../src/store/vault-v2.js";
+import { DomainService } from "../../src/domain/domain-service.js";
+import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
+
+const siteUrl = "https://example.test/";
+function observation(path = "/profile", value = "fake@example.test", field: Partial<FormField> = {}): CollectionObservation {
+  return { token: { observationId: path, documentId: "doc", revision: 0, bindingEpoch: 1 },
+    snapshot: { url: new URL(path, siteUrl).href, title: "Account", fields: [], links: [], buttons: [], visibleText: "", iframeSrcs: [], wallMarkers: [] },
+    items: [{ id: "f-1", value, field: { fieldId: "f-1", tag: "input", type: "email", name: "email", id: "email", labels: ["メールアドレス"], autocomplete: "email", placeholder: "", nearbyText: "", required: false, ...field } }], targets: [] };
+}
+function proposal(o: CollectionObservation, overrides: Record<string, unknown> = {}) {
+  return { observationId: o.token.observationId, pagePurpose: "profile", values: [{ itemId: "f-1", attributeKey: "email", value: o.items[0]!.value, confidence: 1 }], nextTargetIds: [], done: true, ...overrides };
+}
+function fixture(provider?: AiProvider) {
+  let current = observation(), fresh = true, canceled = false, allowed = true;
+  const batches: CollectionBatch[] = [], navigations: string[] = [];
+  const page: PageDriver = {
+    goto: async () => {}, currentUrl: () => current.snapshot.url, snapshot: async () => current.snapshot,
+    readValues: async () => ({}), fillField: async () => {}, click: async () => {}, waitForReady: async () => {},
+    captureCollectionObservation: async () => current, checkCollectionObservation: async () => fresh,
+    gotoCollection: async url => { navigations.push(url); current = observation(new URL(url).pathname, "second@example.test"); },
+  };
+  const options: AiCollectionOptions = { page, siteUrl, provider: provider ?? { id: "fake", completeJson: async () => proposal(current) },
+    authorized: () => allowed, isCanceled: () => canceled,
+    commit: async batch => { batches.push(batch); return { disclosures: batch.candidates.length, relationships: 0 }; },
+    unknown: () => {}, wall: async () => false, tos: async () => "pending" };
+  return { options, batches, navigations, current: () => current, set: (v: CollectionObservation) => { current = v; },
+    stale: () => { fresh = false; }, cancel: () => { canceled = true; }, revoke: () => { allowed = false; } };
+}
+
+test("AI observes raw fake values with no tools, and commits before moving to the next page", async () => {
+  const f = fixture();
+  f.current().targets = [{ id: "n-0", href: siteUrl + "contact", text: "連絡先", passive: true }];
+  f.options.provider = { id: "fake", completeJson: async request => {
+    assert.equal(request.maxRetries, 0); assert.equal(request.maxTokens, 2048);
+    assert.ok(request.signal); assert.equal("tools" in request, false);
+    assert.match(request.user, /fake@example.test|second@example.test/);
+    if (f.navigations.length) assert.equal(f.batches.length, 1);
+    return proposal(f.current(), f.navigations.length ? {} : { nextTargetIds: ["n-0"], done: false });
+  }};
+  const r = await collectAiVisibility(f.options);
+  assert.equal(r.reason, "complete"); assert.equal(r.disclosures, 2); assert.equal(r.calls, 2);
+  assert.equal(f.batches[0]?.tier, "ai-driven");
+  assert.doesNotMatch(JSON.stringify(r), /fake@example|second@example/);
+});
+
+test("unsupported hallucination becomes a review fact, never a candidate", async () => {
+  const f = fixture();
+  f.options.provider = { id: "fake", completeJson: async () => proposal(f.current(), { values: [{ itemId: "f-1", attributeKey: "email", value: "invented@example.test", confidence: 1 }] }) };
+  const r = await collectAiVisibility(f.options);
+  assert.equal(r.disclosures, 0); assert.equal(r.facts[0]?.corroborated, false);
+  assert.doesNotMatch(JSON.stringify(r), /invented/);
+});
+
+for (const mode of ["provider-error", "invalid-response", "ai-canceled", "budget"] as const) {
+  test(`${mode} switches to rules-only on the same page without renewing the page budget`, async () => {
+    const f = fixture();
+    if (mode === "provider-error") f.options.provider = { id: "fake", completeJson: async () => { throw new Error("private provider body"); } };
+    if (mode === "invalid-response") f.options.provider = { id: "fake", completeJson: async () => ({ tools: ["click"] }) };
+    if (mode === "ai-canceled") f.options.aiSignal = AbortSignal.abort();
+    if (mode === "budget") f.options.limits = { calls: 0 };
+    const r = await collectAiVisibility(f.options);
+    assert.equal(r.fallbackReason, mode); assert.equal(r.pages, 1);
+    assert.equal(f.batches[0]?.tier, "deterministic"); assert.equal(f.navigations.length, 0);
+    assert.doesNotMatch(JSON.stringify(r), /private provider/);
+  });
+}
+
+test("a hung provider is bounded and a late reply cannot write", async () => {
+  const f = fixture({ id: "fake", completeJson: () => new Promise(() => {}) });
+  f.options.limits = { callMs: 5 };
+  const r = await collectAiVisibility(f.options);
+  assert.equal(r.fallbackReason, "provider-error"); assert.equal(f.batches[0]?.tier, "deterministic");
+});
+
+for (const change of ["stale", "cancel", "revoke"] as const) {
+  test(`${change} during the model call discards values`, async () => {
+    const f = fixture();
+    f.options.provider = { id: "fake", completeJson: async () => { f[change](); return proposal(f.current()); } };
+    const r = await collectAiVisibility(f.options);
+    assert.notEqual(r.reason, "complete"); assert.equal(f.batches.length, 0); assert.equal(f.navigations.length, 0);
+  });
+}
+
+test("wall handoff continues deterministically from the human's current page, never re-goto", async () => {
+  const f = fixture(); f.current().snapshot.wallMarkers = ["captcha"];
+  f.current().snapshot.visibleText = "私はロボットではありません";
+  let reads = 0; f.options.page.captureCollectionObservation = async () => { reads++; return f.current(); };
+  f.options.wall = async () => { assert.equal(reads, 0); f.set(observation("/contact")); return true; };
+  const r = await collectAiVisibility(f.options);
+  assert.equal(r.fallbackReason, "wall"); assert.equal(f.batches[0]?.tier, "deterministic"); assert.equal(f.navigations.length, 0);
+});
+
+for (const decision of ["pending", "stop", "proceed"] as const) {
+  test(`ToS decision ${decision} gates raw requests and both tiers`, async () => {
+    const f = fixture(); f.current().snapshot.visibleText = "スクレイピングを禁止";
+    let calls = 0; f.options.provider = { id: "fake", completeJson: async () => { calls++; return proposal(f.current()); } };
+    f.options.tos = async () => decision;
+    const r = await collectAiVisibility(f.options);
+    assert.equal(calls, decision === "proceed" ? 1 : 0);
+    assert.equal(r.reason, decision === "proceed" ? "complete" : decision === "pending" ? "tos-pending" : "tos-stopped");
+  });
+}
+
+test("unknown destination is pending without confirmation, and no deterministic detour occurs", async () => {
+  const f = fixture(); f.current().targets = [{ id: "n-0", href: siteUrl + "misc", text: "その他", passive: true }];
+  f.options.provider = { id: "fake", completeJson: async () => proposal(f.current(), { done: false, nextTargetIds: ["n-0"] }) };
+  const r = await collectAiVisibility(f.options);
+  assert.equal(r.reason, "unknown-destination"); assert.equal(f.navigations.length, 0);
+});
+
+for (const limits of [{ pages: 0 }, { tokens: 0 }, { depth: 0 }, { timeMs: 0 }]) {
+  test(`local budget boundary ${JSON.stringify(limits)}`, async () => {
+    const f = fixture(); f.options.limits = limits;
+    f.current().targets = [{ id: "n-0", href: siteUrl + "contact", text: "連絡先", passive: true }];
+    f.options.provider = { id: "fake", completeJson: async () => proposal(f.current(), { nextTargetIds: ["n-0"], done: false }) };
+    const r = await collectAiVisibility(f.options);
+    assert.ok(r.reason === "budget" || r.fallbackReason === "budget"); assert.equal(f.navigations.length, 0);
+  });
+}
+
+test("strict output rejects extra keys, invented IDs, duplicate mappings, bad enums and non-finite confidence", () => {
+  const o = observation(), input = collectionInput(o), good = proposal(o);
+  for (const bad of [ { ...good, tools: [] }, { ...good, pagePurpose: "purchase" }, { ...good, nextTargetIds: ["missing"] },
+    { ...good, values: [good.values[0], good.values[0]] }, { ...good, values: [{ ...good.values[0], selector: "*" }] },
+    { ...good, values: [{ ...good.values[0], itemId: "missing" }] }, { ...good, values: [{ ...good.values[0], confidence: NaN }] },
+    { ...good, values: [{ ...good.values[0], attributeKey: "custom.pin" }] }, { ...good, observationId: "old" } ]) {
+    assert.equal(parseCollectionProposal(bad, input), undefined);
+  }
+});
+
+test("corroboration is item-bound and conservative; PIN/My Number never enter the envelope", () => {
+  const o = observation(); const input = collectionInput(o);
+  const mismatch = parseCollectionProposal(proposal(o, { values: [{ itemId: "f-1", attributeKey: "name.full", value: o.items[0]!.value, confidence: 1 }] }), input)!;
+  assert.equal(corroborateProposal(mismatch, input).candidates.length, 0);
+  for (const secret of [observation("/profile", "1234", { labels: ["暗証番号"] }), observation("/profile", "123456789012")]) {
+    assert.equal(collectionInput(secret).items.length, 0);
+  }
+});
+
+for (const href of ["http://example.test/profile", "https://evil.test/profile", "https://sub.example.test/profile", "https://user:pass@example.test/profile", siteUrl + "profile?do=delete", siteUrl + "%2564elete", siteUrl + "profile#submit", siteUrl + "profile?x=%", siteUrl + "profile?unsubscribe=1"]) {
+  test(`reject navigation ${href}`, () => assert.equal(collectionUrlAllowed(href, siteUrl), false));
+}
+test("GET and familiar label cannot authorize mutation controls", () => {
+  assert.equal(collectionNavigation({ id: "n-0", href: siteUrl + "profile", text: "プロフィール変更", passive: true }, siteUrl), "deny");
+  assert.equal(collectionNavigation({ id: "n-0", href: siteUrl + "profile", text: "プロフィール", passive: false }, siteUrl), "deny");
+});
+
+test("runner uses real scoped authorization and typed encrypted persistence, hallucinations store no value", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "collection-517-"));
+  try {
+    const path = join(dir, "vault.json"), vault = await VaultV2.open(path, "fake-passphrase");
+    const domain = new DomainService(vault), site = domain.upsertSiteAccount({ domain: "example.test", url: siteUrl, displayName: "Fake" });
+    const f = fixture();
+    const runner = new VisibilityRunner({ domain, openSession: async () => ({ page: f.options.page, close: async () => {} }),
+      collectionProvider: f.options.provider,
+      collectionGrant: context => {
+        vault.put("mandate", { id: "m", siteAccountId: site.id, operation: "ai-assisted-discovery", authorizedAt: 2, scope: context.runId });
+        vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", updatedAt: 1 });
+        return { ...context, mandateId: "m", capabilityId: "c", capabilityUpdatedAt: 1 };
+      } });
+    const r = await runner.runSite(site.id);
+    assert.equal(r.disclosures, 1); assert.equal(r.status, "collected");
+    assert.equal(domain.listDisclosures()[0]?.collectionTier, "ai-driven");
+    await vault.save(); assert.doesNotMatch(await readFile(path, "utf8"), /fake@example.test/);
+    const reopened = new DomainService(await VaultV2.open(path, "fake-passphrase"));
+    assert.equal(reopened.listDisclosures()[0]?.siteHeldValue, "fake@example.test");
+    assert.doesNotMatch(JSON.stringify(domain.listConstraints()), /fake@example.test/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

@@ -260,6 +260,7 @@ export class SoroeruSession {
   private refreshAiEngine(): void {
     if (this.aiEngineOverride) return;
     const provider = this.aiProviderFactory();
+    this.visibility.setCollectionProvider(provider);
     if (!provider) {
       this.visibility.setAiEngine(undefined);
       return;

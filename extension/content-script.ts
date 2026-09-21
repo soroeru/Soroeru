@@ -1,9 +1,12 @@
+import { collectionObservationInPage, type ObservationToken } from "../src/automation/collection-observation.js";
 import { scanInPage } from "../src/agent/scan.js";
 
 /** The exact in-page scanner used by the Playwright path. */
 export const scanPage = scanInPage;
 
 type ContentCommand =
+  | { command: "captureCollectionObservation"; bindingEpoch: number }
+  | { command: "checkCollectionObservation"; token: ObservationToken }
   | { command: "snapshot" }
   | { command: "readValues"; fieldIds?: string[] }
   | { command: "readDisplayValues"; valueIds?: string[] }
@@ -100,6 +103,10 @@ async function waitForReady(): Promise<ReturnType<typeof scanPage>> {
 async function execute(command: ContentCommand): Promise<unknown> {
   showAutomationBanner();
   switch (command.command) {
+    case "captureCollectionObservation":
+      return collectionObservationInPage(scanPage, { kind: "capture", bindingEpoch: command.bindingEpoch });
+    case "checkCollectionObservation":
+      return collectionObservationInPage(scanPage, { kind: "check", token: command.token });
     case "stop":
       hideAutomationBanner();
       return { ok: true };

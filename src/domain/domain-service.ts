@@ -1,3 +1,4 @@
+import type { CollectionGrant } from "./collection-authorization.js";
 // DomainService (RFC-002 §3): typed services over the Vault v2 record vault for
 // the Soroeru domain. This layer owns semantic operations the UI/automation
 // call through (later via Electron IPC), the most important of which for
@@ -824,6 +825,24 @@ export class DomainService {
     if (input.siteAccountId !== undefined) constraint.siteAccountId = input.siteAccountId;
     this.vault.put("constraint", constraint);
     return constraint;
+  }
+
+  /** Live reads make revocation/reduction effective before every collection action. */
+  permitsAiCollection(grant: CollectionGrant, siteAccountId: string, runId: string, epoch: number): boolean {
+    if (grant.siteAccountId !== siteAccountId || grant.runId !== runId || grant.epoch !== epoch) return false;
+    const mandate = this.vault.get("mandate", grant.mandateId);
+    const capability = this.vault.get("capability", grant.capabilityId);
+    return !!mandate && !!capability && mandate.operation === "ai-assisted-discovery" &&
+      mandate.siteAccountId === siteAccountId && mandate.scope === runId &&
+      capability.operationType === "ai-assisted-discovery" && capability.updatedAt === grant.capabilityUpdatedAt &&
+      (capability.reducedAt === undefined || mandate.authorizedAt > capability.reducedAt) &&
+      (capability.level === "L0" || (capability.level === "L1" && capability.understandingCheckPassedAt !== undefined));
+  }
+
+  resolveCollectionConstraint(id: string, resolution: "user-proceeded" | "user-stopped"): void {
+    const constraint = this.vault.get("constraint", id);
+    if (!constraint) throw new Error("collection constraint missing");
+    this.vault.put("constraint", { ...constraint, resolution });
   }
 
   listConstraints(): Constraint[] {

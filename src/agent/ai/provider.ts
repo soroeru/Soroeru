@@ -14,6 +14,9 @@ export interface CompleteJsonOptions {
   /** JSON schema the response must conform to (structured outputs). */
   schema: Record<string, unknown>;
   maxTokens?: number;
+  signal?: AbortSignal;
+  /** Visibility accounts each attempt locally; no hidden SDK retries. */
+  maxRetries?: number;
 }
 
 export interface AiProvider {
@@ -60,7 +63,7 @@ export class AnthropicProvider implements AiProvider {
         // Stateless: no `metadata`, no prompt-cache `cache_control`, no
         // conversation continuation — each call is a fresh, single-turn request.
         messages: [{ role: "user", content: options.user }],
-      });
+      }, { ...(options.signal ? { signal: options.signal } : {}), ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}) });
     } catch (err) {
       throw new AiProviderError("AI provider request failed; default policy is to stop without fallback", "request-failed", {
         cause: err,
@@ -91,7 +94,7 @@ export class AnthropicProvider implements AiProvider {
 
 export type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal },
 ) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
 export class OpenAiProvider implements AiProvider {
@@ -115,6 +118,7 @@ export class OpenAiProvider implements AiProvider {
     try {
       res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
         method: "POST",
+        ...(options.signal ? { signal: options.signal } : {}),
         headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
         body: JSON.stringify({
           model: this.model,

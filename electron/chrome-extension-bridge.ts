@@ -29,6 +29,8 @@ export const CHROME_BRIDGE_COMMANDS = [
   "snapshot",
   "readValues",
   "readDisplayValues",
+  "captureCollectionObservation",
+  "checkCollectionObservation",
   "fillField",
   "click",
   "waitForReady",
