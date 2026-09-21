@@ -81,7 +81,7 @@ Proposed TypeScript contracts (implement with explicit discriminated unions):
 type CollectionStop =
   | "complete" | "provider-error" | "invalid-response" | "ai-canceled"
   | "wall" | "budget" | "authorization-required" | "unknown-destination"
-  | "user-canceled" | "session-invalid";
+  | "user-canceled" | "session-invalid" | "tos-pending" | "tos-stopped";
 type NavigationDecision =
   | { kind: "allow"; targetId: string }
   | { kind: "confirm"; targetId: string }
@@ -93,10 +93,35 @@ type CollectionAuthorization =
 ```
 
 Reasons are a closed enum in implementation, never model-provided prose.
-A collector outcome carries the stop reason, counts, verified candidates,
-value-free facts, and, for a wall, the existing `WallDetection` descriptor.
-Raw candidates remain in memory until the runner writes or discards them.
-No raw payload enters checkpoints, orchestration state or diagnostic records.
+A final collector outcome carries the stop reason, committed counts, value-free
+facts, and, for a wall, the existing `WallDetection` descriptor. It does not
+return uncommitted candidates from earlier pages. Use an awaited page-level
+callback to hand candidates to the runner before leaving the observed page:
+
+```ts
+interface VerifiedPageBatch {
+  token: ObservationToken;
+  // Known-key, locally corroborated candidates with observed values and locators.
+  candidates: readonly VerifiedCollectionCandidate[];
+  facts: readonly CollectionFact[];
+}
+type PageCommitResult =
+  | { kind: "committed"; disclosures: number; relationships: number }
+  | { kind: "discarded"; reason: "stale" | "authorization" | "canceled" }
+  | { kind: "storage-failed" };
+type CommitObservedPage = (batch: VerifiedPageBatch) => Promise<PageCommitResult>;
+```
+
+The runner supplies this callback. It checks live freshness, authorization and
+cancellation, then performs the synchronous typed domain-write batch with no
+intervening await. The collector must await its result before any next capture,
+navigation or observation-slot release. Only a `committed` acknowledgement adds
+to counts; discarded batches are never retried as writes against another page.
+Storage failure stops the run and is surfaced using the existing service failure
+path. After acknowledgement, discard raw candidates and retain only counts and
+value-free facts. This preserves one live observation slot while supporting
+multi-page collection. No raw payload enters checkpoints, orchestration state
+or diagnostic records.
 
 ### Authorization and integration boundary
 
@@ -332,6 +357,7 @@ only under the same valid session and remaining budget.
 | AI call/token budget exhausted | Disable AI | Remaining page/depth/time allowance only |
 | Shared page/depth/time budget exhausted | End bounded exploration | No new navigation; report partial/unknown with deterministic tier available on a later explicit run |
 | Unknown target | Await bounded typed confirmation or keep pending | Cannot let deterministic fallback navigate around the pending decision |
+| ToS prohibition | Dedicated decision callback; missing callback returns `tos-pending` | Pending/stop blocks both tiers; proceed requires local revalidation |
 | Lease invalid, lock, permission revoked | Abort and discard transient values | Requires rebind/unlock/revalidation; no automatic new session |
 
 For fallback use `DecisionEngine(new RuleEngine())` without the optional AiEngine,
@@ -340,8 +366,31 @@ blocked state and the guard rather than restarting a fresh unrestricted run.
 Do not re-enable AI on a fallback page. Keep verified counts across the switch;
 empty/partial outcomes must not be reported as complete collection. Preserve
 #420's current-page resume and #421's repeated-wall stopping/saved-page guidance.
-ToS prohibition on any observed page creates a pending Constraint and waits for
-the user's decision; a wall remains non-bypassable even after a ToS approval.
+ToS prohibition on any observed page is checked before sending values, committing
+that page or following its links, including pages reached during deterministic
+fallback. The runner records a pending `tos-automation-prohibition` Constraint
+and owns a distinct optional callback:
+
+```ts
+type DecideTosConstraint = (input: {
+  siteAccountId: string; constraintId: string; observationId: string;
+  safeSummary: string;
+}) => Promise<"proceed" | "stop">;
+```
+
+This callback is not the unknown-destination callback. No callback means return
+`tos-pending` with the Constraint unresolved; never hang or proceed silently.
+While a connected callback waits, pause active time and perform no further
+collection actions. Stop resolves the Constraint as `user-stopped` and returns
+`tos-stopped`; cancellation/session invalidation wins over a late decision.
+Proceed resolves it as `user-proceeded`, scoped to that site, run and observed
+clause. Then recheck authorization, live observation freshness, URL and walls
+before resuming. A changed observation requires recapture and a newly observed
+or changed prohibition requires a new decision; no blanket approval is inferred.
+The runner's trusted domain path updates the existing Constraint resolution
+through typed vault APIs. #519 supplies the production decision UI; an absent
+UI remains safely pending. A wall remains non-bypassable after ToS approval,
+and switching to deterministic mode cannot bypass a pending/stopped decision.
 
 ## Verification
 
@@ -370,6 +419,11 @@ boundaries instead of mirroring private helpers.
 - Each failure row above with a fake driver spy: safe continuation where allowed,
   zero navigation through an unresolved wall/cancel/pending target, same current
   page on resume, no tier-switch duplicate writes or falsely complete outcome.
+  Assert a two-page run awaits page one's commit acknowledgement before navigation;
+  stale/canceled batches never write, and storage failure prevents the next page.
+- ToS on landing/intermediate/fallback pages: missing callback yields pending;
+  stop blocks both tiers; proceed requires unchanged clause/scope and fresh wall/
+  authorization checks. Test changed clauses and late decisions after cancellation.
 - Typed domain/vault reload retains AI PAN/CVV behavior from #516; deterministic
   fallback retains last-4/CVV exclusion. Logs, errors, checkpoints, fact output
   and fixtures' aggregate measurements contain no sentinel raw values.
