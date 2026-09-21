@@ -878,3 +878,114 @@ test("deleteSiteAccount never touches an already-confirmed (validated) dynamic a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+for (const collectionTier of [
+  undefined,
+  "deterministic",
+  "ai-driven",
+] as const) {
+  test(`CVV storage and comparison follow explicit tier: ${collectionTier ?? "legacy"}`, async () => {
+    const { dir, service, vault } = await openService();
+    try {
+      service.setPersonalAttribute({
+        attributeKey: "card.cvv",
+        label: "CVV",
+        value: "123",
+      });
+      const row = service.addDisclosure({
+        siteAccountId: "fake-site",
+        attributeKey: "card.cvv",
+        siteHeldValue: "123",
+        normalizedValueHash: normalizedValueHash("card.cvv", "123"),
+        sourceKind: "billing-page",
+        collectionTier,
+      });
+      const allowed = collectionTier === "ai-driven";
+      assert.equal(row.siteHeldValue, allowed ? "123" : undefined);
+      assert.equal(
+        row.normalizedValueHash,
+        allowed ? normalizedValueHash("card.cvv", "123") : undefined,
+      );
+      assert.equal(row.staleState, allowed ? "current" : "unknown");
+      const hashOnly = service.addDisclosure({
+        siteAccountId: "another-fake-site",
+        attributeKey: "card.cvv",
+        normalizedValueHash: normalizedValueHash("card.cvv", "123"),
+        sourceKind: "billing-page",
+        collectionTier,
+      });
+      assert.equal(hashOnly.staleState, allowed ? "current" : "unknown");
+      service.setPersonalAttribute({
+        attributeKey: "card.cvv",
+        label: "CVV",
+        value: "456",
+      });
+      assert.equal(
+        service.getDisclosure(row.id)?.staleState,
+        allowed ? "stale" : "unknown",
+      );
+      await vault.save();
+      vault.lock();
+      const reopened = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+      assert.equal(
+        reopened.get("disclosure", row.id)?.siteHeldValue,
+        allowed ? "123" : undefined,
+      );
+      reopened.lock();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("full PAN comparisons survive reload, distinguish same suffix, and retain deterministic semantics", async () => {
+  const { dir, service, vault } = await openService();
+  try {
+    service.setPersonalAttribute({
+      attributeKey: "card.number",
+      label: "Card",
+      value: "4111111111111234",
+    });
+    const input = {
+      siteAccountId: "fake-site",
+      attributeKey: "card.number",
+      siteHeldValue: "4111 1111 1111 1234",
+      sourceKind: "billing-page" as const,
+    };
+    const ai = service.addDisclosure({ ...input, collectionTier: "ai-driven" });
+    const deterministic = service.addDisclosure(input);
+    assert.equal(ai.siteHeldValue, input.siteHeldValue);
+    assert.equal(ai.staleState, "current");
+    assert.equal(deterministic.siteHeldValue, "1234");
+    assert.notEqual(ai.id, deterministic.id);
+    assert.equal(
+      service.addDisclosure({
+        ...input,
+        collectionTier: "ai-driven",
+        observedAt: ai.observedAt + 1,
+      }).id,
+      ai.id,
+    );
+    await vault.save();
+    vault.lock();
+    const reopened = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const next = new DomainService(reopened);
+    next.setPersonalAttribute({
+      attributeKey: "card.number",
+      label: "Card",
+      value: "5555555555551234",
+    });
+    assert.equal(next.getDisclosure(ai.id)?.staleState, "stale");
+    assert.equal(next.getDisclosure(deterministic.id)?.staleState, "current");
+    const other = next.addDisclosure({
+      ...input,
+      siteHeldValue: "5555-5555-5555-1234",
+      collectionTier: "ai-driven",
+    });
+    assert.notEqual(other.id, ai.id);
+    assert.equal(other.staleState, "current");
+    reopened.lock();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

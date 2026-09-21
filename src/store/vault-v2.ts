@@ -11,9 +11,15 @@
 // unlock (the file header: version, KDF params, metadata, optional recovery
 // wrapper) is non-sensitive by design.
 
+import { isSiteCollectionMap } from "../domain/site-collection-map.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { ENTITY_KINDS, type DomainRecord, type EntityKind, type EntityPayloadMap } from "../domain/entities.js";
+import {
+  ENTITY_KINDS,
+  type DomainRecord,
+  type EntityKind,
+  type EntityPayloadMap,
+} from "../domain/entities.js";
 import { atomicWriteEncryptedStoreFile } from "./atomic-write.js";
 import {
   decryptRecord,
@@ -229,10 +235,15 @@ export class VaultV2 {
   private async loadRecords(envelopes: VaultRecordEnvelope[], key: MasterKey): Promise<void> {
     for (const env of envelopes) {
       if (!ENTITY_KIND_SET.has(env.entityKind)) {
-        throw new VaultCorruptError(`unknown entity kind "${env.entityKind}" in vault record ${env.recordId}`);
+        throw new VaultCorruptError(
+          `unknown entity kind "${env.entityKind}" in vault record ${env.recordId}`,
+        );
       }
       const plaintext = await decryptRecord(key, { iv: env.iv, ct: env.ciphertext });
       const payload = JSON.parse(plaintext) as DomainRecord;
+      if (env.entityKind === "siteCollectionMap" && !isSiteCollectionMap(payload)) {
+        throw new VaultCorruptError("invalid site collection map");
+      }
       if (env.recordId !== payload.id) {
         throw new VaultCorruptError(
           `vault record envelope id "${env.recordId}" does not match payload id "${payload.id}"`,
@@ -278,6 +289,9 @@ export class VaultV2 {
   put<K extends EntityKind>(kind: K, payload: EntityPayloadMap[K]): EntityPayloadMap[K] {
     this.requireKey();
     const now = Date.now();
+    if (kind === "siteCollectionMap" && !isSiteCollectionMap(payload)) {
+      throw new VaultCorruptError("invalid site collection map");
+    }
     const existing = this.bucket(kind).get(payload.id);
     this.bucket(kind).set(payload.id, {
       payload,
@@ -366,6 +380,14 @@ export class VaultV2 {
     const records: VaultRecordEnvelope[] = [];
     for (const kind of ENTITY_KINDS) {
       for (const [id, stored] of this.bucket(kind)) {
+        // Callers can mutate records returned by put/get/list. Validate the exact
+        // map being serialized before any await or encrypted file replacement.
+        if (
+          kind === "siteCollectionMap" &&
+          (!isSiteCollectionMap(stored.payload) || stored.payload.id !== id)
+        ) {
+          throw new VaultCorruptError("invalid site collection map");
+        }
         const enc = await encryptRecord(key, JSON.stringify(stored.payload));
         records.push({
           recordId: id,
@@ -430,7 +452,9 @@ export class VaultV2 {
         () => false,
       );
       if (exists) {
-        throw new Error(`refusing to overwrite existing vault at ${filePath} (pass { overwrite: true } to replace it)`);
+        throw new Error(
+          `refusing to overwrite existing vault at ${filePath} (pass { overwrite: true } to replace it)`,
+        );
       }
     }
     // persist: encrypted-store — restoring an encrypted export writes the same encrypted shape (§4)
@@ -445,10 +469,20 @@ export class VaultV2 {
    * caller still controls persistence: the migrated vault is saved on the next
    * save(), which writes the v2 shape over `filePath`.
    */
-  private static async migrateFromV1(filePath: string, file: LegacyV1File, passphrase: string): Promise<VaultV2> {
+  private static async migrateFromV1(
+    filePath: string,
+    file: LegacyV1File,
+    passphrase: string,
+  ): Promise<VaultV2> {
     const key = await deriveKey(passphrase, file.kdf);
     const now = Date.now();
-    const vault = new VaultV2(filePath, key, file.kdf, { createdAt: now, updatedAt: now, appName: APP_NAME }, file.recovery);
+    const vault = new VaultV2(
+      filePath,
+      key,
+      file.kdf,
+      { createdAt: now, updatedAt: now, appName: APP_NAME },
+      file.recovery,
+    );
     for (const record of file.records) {
       const payload = JSON.parse(await decryptRecord(key, record)) as LegacyV1Payload;
       vault.absorbLegacyPayload(payload, now);
@@ -467,7 +501,8 @@ export class VaultV2 {
           label: String(d.label ?? attributeKey),
           value: String(d.value ?? ""),
           valueType: "custom",
-          sensitivity: attributeKey.startsWith("card.") || attributeKey === "account.password" ? "sensitive" : "normal",
+          sensitivity:
+            attributeKey.startsWith("card.") || attributeKey === "account.password" ? "sensitive" : "normal",
           updatedAt: typeof d.updatedAt === "number" ? d.updatedAt : now,
         });
         return;
