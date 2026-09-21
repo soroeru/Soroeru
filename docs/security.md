@@ -37,7 +37,7 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
 | Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
-| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Issue #516 implements encrypted Disclosure storage for explicitly marked AI-driven collection writes. The production AI loop and its corroboration/gates remain pending (§3); reveal remains refused (§4). The deterministic fallback excludes both CVV value and hash. Canonical CVV remains most-sensitive and is decrypted only at fill time. |
+| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Issue #516 implements encrypted Disclosure storage for explicitly marked AI-driven collection writes; Issue #517 implements the exploration loop and captured-page corroboration that produce that tier (§3). Reveal remains refused (§4). Production authorization UI (collection gate, L0/L1) remains pending (`#519`). The deterministic fallback excludes both CVV value and hash. Canonical CVV remains most-sensitive and is decrypted only at fill time. |
 | Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | **Structure-only for every AI use except Visibility collection (Issue #514, §5):** that path sends raw values by design, to the user's own configured provider only, disclosed at the gate every run, with stateful provider features disabled and zero-retention/no-training options preferred. Every other AI use still sends structure only and fills values locally. |
 | AI-driven collection returns a hallucinated or manipulated-page-injected value | An untrusted page (or the model itself) causes a wrong value — e.g. a fabricated card number or CVV — to be written as if it were genuinely observed, silently poisoning the Disclosure ledger. | Local corroboration before write ([`architecture.md`](architecture.md) §5.2, Issue #514): the returned value must appear in the page content captured for that step before `DomainService.addDisclosure` accepts it; a non-corroborating value becomes `unknown`/a review task, never a stored Disclosure. |
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
@@ -106,9 +106,21 @@ and full PAN; omitted or `"deterministic"` retains last-4 storage and fully excl
 The tier persists with the Disclosure and selects normalized full-value comparison for AI
 records, including after canonical edits and vault reload. Deduplication keeps tiers separate.
 Legacy records without a tier retain deterministic comparison semantics.
-This domain marker does not prove authorization or corroborate a value against a page. The
-AI exploration loop, captured-page corroboration, and collection gate integration are pending
-in #517–#519. No existing deterministic caller opts into the AI tier.
+This domain marker does not prove authorization by itself — `DomainService.permitsAiCollection`
+additionally checks a live, run-scoped `ai-assisted-discovery` Mandate/Capability pair before any
+collector action (Issue #517). No existing deterministic caller opts into the AI tier.
+
+**Implementation status (Issue #517):** the AI exploration loop and captured-page corroboration
+are implemented (`src/automation/ai-visibility-collector.ts` and related modules). A value the
+model returns must match its own captured item verbatim (limited normalization only: NFC form,
+line-ending/whitespace trimming, and ASCII space/hyphen removal for phone/card items; passwords
+and CVV require exact match) before it is written; a masked PAN can never corroborate a proposed
+full number, and My Number/PIN-shaped values are rejected by local content/label classification
+regardless of the key the model assigned. A non-corroborating value becomes an `unknown-state`
+Constraint, never a stored Disclosure or its hash. Production authorization issuance — the
+collection gate naming the raw-value categories at L0, and the L1 understanding check — remains
+pending in `#519`; #517 ships with an injectable authorization seam so a scoped test/development
+grant can exercise the loop ahead of that production UI.
 
 **Known gap — `card.number` stale-state hash scheme (issue #229, documented tech debt,
 no code change yet)**: `card.number` Disclosures are now compared for staleness against

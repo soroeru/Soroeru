@@ -494,14 +494,33 @@ local value-reading step. This lifts the earlier "never sees raw personal values
 specifically for Visibility collection; see `requirements.md` §8's Visibility collection exception
 for the non-negotiable-requirements wording, and `security.md` for the full threat-model update.
 
-**Implementation status (Issue #516):** the domain foundation is implemented:
+**Implementation status (Issues #516–#517):** the domain foundation (#516) is implemented:
 `Capability.operationType` and `Mandate.operation` include `ai-assisted-discovery`, and
 `siteCollectionMap` has a versioned record type with validation on vault write/read and immediately before serialization.
 `DomainService.addDisclosure` accepts an explicit `collectionTier: "ai-driven"` from a trusted
 collection caller to retain CVV/full PAN; the persisted tier also selects full-value stale-state
 comparison. An absent tier retains deterministic last-4/CVV-exclusion behavior. This marker is
-not authorization or page corroboration. The AI exploration loop, local corroboration, map
-generation/recollection, and UI capability gates remain follow-up work (#517–#519).
+not authorization by itself — `DomainService.permitsAiCollection` additionally checks a live,
+run-scoped `ai-assisted-discovery` Mandate/Capability pair before any collector action.
+
+The AI-driven exploration and extraction loop (#517) is implemented as a separate module
+(`src/automation/ai-visibility-collector.ts`, `ai-visibility-contract.ts`,
+`collection-observation.ts`, `visibility-navigation-policy.ts`) alongside the existing
+structure-only `AiEngine` (Issue #276), which it does not use or extend. It enforces
+same-registrable-site navigation, per-site page/depth/call/token/time budgets, immediate wall and
+ToS-prohibition hand-off, a closed model output schema with no browser-control tool, and local
+corroboration before any write: a returned value must match its own captured item verbatim
+(with only NFC/whitespace/phone-and-card-separator normalization; passwords and CVV require exact
+match) before `VisibilityRunner` commits it as a Disclosure. A non-corroborating value becomes an
+`unknown-state` Constraint instead. `PageDriver.captureCollectionObservation` /
+`checkCollectionObservation` (both adapters) bind each observation to a document/revision/binding
+epoch so a stale or navigated-away response is discarded rather than written. Every documented
+failure mode (provider error, invalid response, cancellation, wall, budget exhaustion, ToS
+decision, unknown destination, session invalidation) falls back to the existing deterministic
+`DecisionEngine`/`PageExplorer` path within the same run, never a bare error. Production
+authorization issuance (the collection gate, L0/L1 UI) and `SiteCollectionMap`
+generation/recollection remain follow-up work (`#518`–`#519`); #517 only consumes #516's types and
+emits in-memory page-purpose/field-location facts for #518 to persist.
 
 Collection uses two tiers, chosen per REQ-013's AI-optionality rule (a third, later tier is
 unaffected):
@@ -784,7 +803,7 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Local encrypted vault | Vault v2 encrypted records (§3); no hosted service. |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
-| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. Issue #516 adds encrypted site-collected CVV Disclosure storage only for explicit `collectionTier: "ai-driven"`; omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. AI exploration, corroboration and UI gates remain pending (§5.2). |
+| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. Issue #516 adds encrypted site-collected CVV Disclosure storage only for explicit `collectionTier: "ai-driven"`; omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. Issue #517 implements the exploration loop and local corroboration that produce this tier; production authorization UI gates (L0/L1) remain pending (§5.2, `#519`). |
 | Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. |
 | Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |

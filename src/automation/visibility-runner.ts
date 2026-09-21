@@ -1,3 +1,9 @@
+import { randomUUID } from "node:crypto";
+import type { AiProvider } from "../agent/ai/provider.js";
+import type { CollectionGrant } from "../domain/collection-authorization.js";
+import { collectAiVisibility, type AiCollectionOptions } from "./ai-visibility-collector.js";
+import { permittedCollectionItem } from "./ai-visibility-contract.js";
+import { collectDisclosures } from "./disclosure-collector.js";
 import type { DomainService } from "../domain/domain-service.js";
 import type { Credential, SiteAccount } from "../domain/entities.js";
 import type { PageSnapshot } from "../types.js";
@@ -50,6 +56,11 @@ export interface VisibilityRunnerOptions {
   now?: () => number;
   /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
   aiEngine?: AiEngine;
+  collectionProvider?: AiProvider;
+  collectionGrant?: (context: { siteAccountId: string; runId: string; epoch: number }) => CollectionGrant | undefined;
+  collectionAiSignal?: AbortSignal;
+  confirmCollectionDestination?: AiCollectionOptions["confirmDestination"];
+  decideCollectionTos?: (input: { siteAccountId: string; constraintId: string; observationId: string; safeSummary: string }) => Promise<"proceed" | "stop">;
   /** Plain-text diagnostics sink for run outcomes / failure reasons (Issue #314); defaults to a no-op. */
   logger?: Logger;
 }
@@ -77,6 +88,63 @@ export interface VisibilityRunResult {
 }
 
 export class VisibilityRunner {
+  private async collectWithAi(site: SiteAccount, session: SiteSession, grant: CollectionGrant, runId: string): Promise<VisibilityRunResult> {
+    const domain = this.options.domain;
+    const authorized = (): boolean => !this.isCanceled() && domain.permitsAiCollection(grant, site.id, runId, 1);
+    const unknown = (): void => { domain.addConstraint({ siteAccountId: site.id, kind: "unknown-state", detail: "AI collection requires review", evidenceIds: [] }); };
+    const result = await collectAiVisibility({
+      page: session.page, provider: this.options.collectionProvider!,
+      // egress: target-site — fallback origin string only, not a network call; the collector navigates.
+      siteUrl: site.url ?? `https://${site.domain}/`,
+      authorized, isCanceled: () => this.isCanceled(),
+      ...(this.options.collectionAiSignal ? { aiSignal: this.options.collectionAiSignal } : {}),
+      ...(this.options.confirmCollectionDestination ? { confirmDestination: this.options.confirmCollectionDestination } : {}),
+      unknown,
+      wall: async (snapshot) => !!(await this.clearOrPause(site, session, snapshot, "collection", undefined)),
+      tos: async (observation) => {
+        const constraint = domain.addConstraint({ siteAccountId: site.id, kind: "tos-automation-prohibition", detail: "Automation prohibition requires a user decision", evidenceIds: [] });
+        if (!this.options.decideCollectionTos) return "pending";
+        const decision = await this.options.decideCollectionTos({ siteAccountId: site.id, constraintId: constraint.id, observationId: observation.token.observationId, safeSummary: "自動化禁止条項の可能性があります。" });
+        if (!authorized()) return "pending";
+        domain.resolveCollectionConstraint(constraint.id, decision === "proceed" ? "user-proceeded" : "user-stopped");
+        return decision;
+      },
+      commit: async (batch) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20_000);
+        try {
+          if (!(await session.page.checkCollectionObservation!(batch.observation.token, controller.signal)) || !authorized()) return;
+          // No await between final live check/authority check and the typed domain writes.
+          let disclosures = 0;
+          const safeUrl = new URL(batch.observation.snapshot.url).origin + "/";
+          if (batch.tier === "ai-driven") {
+            for (const candidate of batch.candidates) {
+              const evidence = domain.addEvidence({ siteAccountId: site.id, pageUrl: safeUrl, observedAt: this.now(), maskedSnippet: "Locally corroborated collection item" });
+              domain.addDisclosure({ siteAccountId: site.id, attributeKey: candidate.attributeKey, siteHeldValue: candidate.item.value,
+                observedAt: this.now(), sourcePageUrl: safeUrl, sourceKind: "profile-text", collectionTier: "ai-driven", confidence: 1, evidenceIds: [evidence.id] });
+              disclosures++;
+            }
+            if (batch.facts.some(f => !f.corroborated)) unknown();
+          } else {
+            const items = batch.observation.items.filter(permittedCollectionItem);
+            disclosures = collectDisclosures({ domain, siteAccount: site, snapshot: { ...batch.observation.snapshot, url: safeUrl },
+              fields: items.map(i => i.field), values: Object.fromEntries(items.map(i => [i.id, i.value])), now: this.now }).disclosures;
+          }
+          const relationships = this.recordRelationships(site, { ...batch.observation.snapshot, url: safeUrl });
+          return { disclosures, relationships };
+        } finally { clearTimeout(timer); controller.abort(); }
+      },
+    });
+    if (result.reason !== "complete") unknown();
+    const status = result.reason === "user-canceled" ? "canceled" : result.reason === "storage-failed" ? "failed" :
+      result.reason !== "complete" ? "handoff" :
+      result.disclosures > 0 ? "collected" : "no-data";
+    domain.saveCheckpoint({ workflow: "visibility", siteAccountId: site.id, step: "ai-collection", status: result.reason === "complete" ? "done" : "handoff",
+      resumeData: { reason: result.reason, disclosures: result.disclosures, relationships: result.relationships, pages: result.pages } });
+    return { siteAccountId: site.id, status, disclosures: result.disclosures, relationships: result.relationships,
+      constraints: domain.listConstraints().filter(c => c.siteAccountId === site.id).length };
+  }
+
   private readonly wallDetection = new WallDetectionService();
   private readonly now: () => number;
   private readonly logger: Logger;
@@ -329,6 +397,12 @@ export class VisibilityRunner {
       }
 
       siteAccount = this.updateImportedDisplayName(siteAccount, snapshot);
+      const runId = randomUUID();
+      const grant = this.options.collectionGrant?.({ siteAccountId, runId, epoch: 1 });
+      if (this.options.collectionProvider && grant && session.page.captureCollectionObservation && session.page.checkCollectionObservation &&
+          this.options.domain.permitsAiCollection(grant, siteAccountId, runId, 1)) {
+        return await this.collectWithAi(siteAccount, session, grant, runId);
+      }
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
       if (this.isCanceled()) return this.canceledResult(siteAccountId);
       const explorer = new PageExplorer(

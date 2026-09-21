@@ -15,8 +15,9 @@
 // always the vault's encrypted record, never a raw Playwright profile.
 
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
-import { snapshotPage, waitForFields } from "../agent/scan.js";
+import { scanInPage, snapshotPage, waitForFields } from "../agent/scan.js";
 import type { PageDriver, SiteSession } from "./page-driver.js";
+import { collectionObservationInPage, type CollectionObservation, type ObservationToken } from "./collection-observation.js";
 import type { PageSnapshot } from "../types.js";
 
 export type BrowserEngineName = "chromium" | "firefox" | "webkit";
@@ -77,7 +78,37 @@ function isMissingBrowserChannelError(err: unknown, channel: string): boolean {
 }
 
 /** A `PageDriver` over a real Playwright `Page`, keyed by the scanner's data-af-id stamps. */
-class PlaywrightPageDriver implements PageDriver {
+export class PlaywrightPageDriver implements PageDriver {
+  async captureCollectionObservation(signal: AbortSignal): Promise<CollectionObservation> {
+    signal.throwIfAborted();
+    const result = await this.page.evaluate<CollectionObservation>(`(${collectionObservationInPage.toString()})(${scanInPage.toString()}, {kind: "capture", bindingEpoch: 0})`);
+    signal.throwIfAborted();
+    return result;
+  }
+
+  async checkCollectionObservation(token: ObservationToken, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted || this.page.isClosed()) return false;
+    try {
+      const current = await this.page.evaluate<boolean>(`(${collectionObservationInPage.toString()})(${scanInPage.toString()}, ${JSON.stringify({kind: "check", token})})`);
+      return !signal.aborted && current;
+    } catch { return false; }
+  }
+
+  async gotoCollection(url: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const guard = async (route: import("playwright").Route): Promise<void> => {
+      const request = route.request();
+      if (signal.aborted || (request.isNavigationRequest() && (request.redirectedFrom() !== null || request.url() !== url || request.method() !== "GET"))) {
+        await route.abort();
+      } else await route.continue();
+    };
+    await this.page.route("**/*", guard);
+    try {
+      // egress: target-site — local collection policy approved this exact URL; redirects are refused.
+      await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+      signal.throwIfAborted();
+    } finally { await this.page.unroute("**/*", guard); }
+  }
   constructor(private readonly page: Page) {}
 
   async goto(url: string): Promise<void> {

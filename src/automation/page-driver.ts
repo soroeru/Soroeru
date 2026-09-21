@@ -6,11 +6,17 @@
 // Structure and values are kept separate on purpose: `snapshot()` returns
 // structure only (labels, attributes, wall markers) — the shape an optional AI
 // proposal may see — while `readValues()` returns the collected values locally,
-// which never leave the machine and are never sent to a model.
+// which stay local outside the separately authorized Visibility collection path.
 
+import type { CollectionObservation, ObservationToken } from "./collection-observation.js";
 import type { PageSnapshot } from "../types.js";
 
 export interface PageDriver {
+  /** Sole raw-value AI path (#514/#517); both operations are required for activation. */
+  captureCollectionObservation?(signal: AbortSignal): Promise<CollectionObservation>;
+  checkCollectionObservation?(token: ObservationToken, signal: AbortSignal): Promise<boolean>;
+  /** Must prevent redirect navigation requests; absent means no machine collection transition. */
+  gotoCollection?(url: string, signal: AbortSignal): Promise<void>;
   /** Navigate to a URL within the site the user acts on. */
   goto(url: string): Promise<void>;
   /** Current page URL. */

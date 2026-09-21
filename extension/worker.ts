@@ -1,3 +1,4 @@
+import { isObservationToken, type ObservationToken } from "../src/automation/collection-observation.js";
 import {
   CHROME_BRIDGE_PROTOCOL_VERSION,
   parseChromeBridgeMessage,
@@ -9,6 +10,8 @@ export const EXTENSION_COMMANDS = [
   "goto",
   "currentUrl",
   "snapshot",
+  "captureCollectionObservation",
+  "checkCollectionObservation",
   "readValues",
   "readDisplayValues",
   "fillField",
@@ -24,6 +27,8 @@ type ExtensionCommandName = (typeof EXTENSION_COMMANDS)[number];
 
 interface CommandPayload {
   tabId?: number;
+  token?: ObservationToken;
+  bindingEpoch?: number;
   url?: string;
   fieldId?: string;
   value?: string;
@@ -60,6 +65,14 @@ export function validateExtensionCommand(command: string, payload: unknown): Com
   if (command === "click") allowed.add("selector");
   if (command === "readValues") allowed.add("fieldIds");
   if (command === "readDisplayValues") allowed.add("valueIds");
+  if (command === "captureCollectionObservation") {
+    allowed.add("bindingEpoch");
+    if (!Number.isSafeInteger(payload.bindingEpoch)) throw new Error("invalid binding epoch");
+  }
+  if (command === "checkCollectionObservation") {
+    allowed.add("token");
+    if (!isObservationToken(payload.token)) throw new Error("invalid observation token");
+  }
   const unknown = Object.keys(payload).find((key) => !allowed.has(key));
   if (unknown) throw new Error(`unknown payload field: ${unknown}`);
   if (
@@ -327,11 +340,12 @@ async function executeCommand(
       ? { command: "fill", fieldId: payload.fieldId, value: payload.value }
       : command.command === "click"
         ? { command: "click", selector: payload.selector }
-        : { command: command.command, fieldIds: payload.fieldIds, valueIds: payload.valueIds };
+        : { command: command.command, fieldIds: payload.fieldIds, valueIds: payload.valueIds, token: payload.token, bindingEpoch: payload.bindingEpoch };
   const response = await chrome.tabs.sendMessage<{ ok: boolean; payload?: unknown; error?: string }>(
     tabId,
     contentCommand,
   );
+  if (!executionEpoch.isCurrent(commandGeneration)) return result(command, false, undefined, "execution stopped");
   if (!response.ok) return result(command, false, undefined, response.error ?? "content command failed");
   if (command.command === "snapshot" || command.command === "waitForReady") {
     // PageSnapshot requires the page URL and title, which the content script's

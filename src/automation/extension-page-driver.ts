@@ -1,3 +1,4 @@
+import { isObservationToken, type CollectionObservation, type ObservationToken } from "./collection-observation.js";
 // ExtensionPageDriver: PageDriver over the Chrome extension bridge (Issue #338,
 // design issue-291 §5). VisibilityRunner / login / collection / wall-handoff /
 // checkpoints stay surface-agnostic; this module only maps the narrow PageDriver
@@ -49,6 +50,7 @@ export class ExtensionBridgeError extends Error {
 export class ExtensionPageDriver implements PageDriver {
   private url = "";
   private closed = false;
+  private readonly bindingEpoch = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
 
   constructor(
     private readonly transport: ChromeBridgeTransport,
@@ -82,6 +84,29 @@ export class ExtensionPageDriver implements PageDriver {
     const snapshot = asPageSnapshot(payload);
     this.url = snapshot.url;
     return snapshot;
+  }
+
+  async captureCollectionObservation(signal: AbortSignal): Promise<CollectionObservation> {
+    this.assertOpen(); signal.throwIfAborted();
+    const payload = await this.command("captureCollectionObservation", { tabId: this.tabId, bindingEpoch: this.bindingEpoch });
+    this.assertOpen(); signal.throwIfAborted();
+    if (!isRecord(payload) || !isObservationToken(payload.token) || payload.token.bindingEpoch !== this.bindingEpoch ||
+      !Array.isArray(payload.items) || payload.items.length > 100 || !Array.isArray(payload.targets) || payload.targets.length > 100)
+      throw new ExtensionBridgeError("invalid collection observation");
+    asPageSnapshot(payload.snapshot);
+    const observation = payload as unknown as CollectionObservation;
+    this.url = observation.snapshot.url;
+    return observation;
+  }
+
+  async checkCollectionObservation(token: ObservationToken, signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted || token.bindingEpoch !== this.bindingEpoch) return false;
+    try {
+      this.assertOpen();
+      const payload = await this.command("checkCollectionObservation", { tabId: this.tabId, token });
+      this.assertOpen();
+      return !signal.aborted && payload === true;
+    } catch { return false; }
   }
 
   async readValues(): Promise<Record<string, string>> {
