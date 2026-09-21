@@ -121,11 +121,63 @@ provider factory rather than creating a second provider configuration source.
 
 ## Observation and model contracts
 
-Add an optional `PageDriver.captureCollectionObservation` method and implement
-it for the currently supported browser adapters. Drivers lacking the method
-fall back deterministically. The narrow bridge command must be validated in
-both the worker and extension adapter; it carries only the bound tab's observation.
-Read relevant `extension/AGENTS.md` before those changes.
+Add the following optional paired methods to `PageDriver`; a driver lacking
+either method falls back deterministically. Implement both for the currently
+supported adapters. These are proposed interfaces:
+
+```ts
+interface ObservationToken {
+  bindingEpoch: number;
+  documentId: string;
+  revision: number;
+  observationId: string;
+}
+type ObservationFreshness =
+  | { kind: "current" }
+  | { kind: "stale"; reason: "binding" | "document" | "revision" | "url" | "expired" }
+  | { kind: "unavailable" };
+// CollectionObservation is the bounded item/snapshot envelope described below.
+// Its token is local metadata, never model-created authority.
+interface CollectionObservationDriver {
+  captureCollectionObservation(signal: AbortSignal): Promise<CollectionObservation>;
+  checkCollectionObservation(token: ObservationToken,
+    signal: AbortSignal): Promise<ObservationFreshness>;
+}
+```
+
+The adapter owns `bindingEpoch`, incrementing it on bind/rebind, disconnect,
+close and session invalidation; Electron also checks the run's cancellation
+epoch independently. The isolated content-script context (or Playwright's
+per-document injected context) owns a random `documentId` created on document
+initialization, a monotonic revision and a bounded current-observation slot.
+Full navigation/reload replaces that context even at the same URL. Invalidation
+on pagehide/pageshow prevents a back-forward-cache restore from reviving a token.
+
+Install a MutationObserver before capture, incrementing the revision for DOM
+changes; drain pending records before capturing/checking. Scanner-owned marker
+writes happen before the capture baseline. At check time, also re-read and
+compare the bounded captured field properties, text and navigation items locally:
+programmatic input-value changes may not produce a DOM mutation. Compare against
+the browser context's retained observation, never a model-supplied copy. Missing
+context/observation, a new document, changed live URL/items/revision or epoch all
+fail closed. Keep only the current observation and clear it on invalidation or
+release; do not persist either the values or their comparison representation.
+
+The extension worker validates two narrow bridge commands, binds each to the
+selected tab and current binding epoch, and asks the live isolated content script
+for freshness. The extension adapter must not use its cached `currentUrl()` to
+answer this check. The Playwright adapter executes the equivalent live-context
+check and maps destroyed contexts to stale/unavailable. Both commands have local
+deadlines and strict input/output validation. Read `extension/AGENTS.md` before
+those changes.
+
+Check freshness before sending the captured payload, after the provider returns,
+and immediately before the synchronous candidate write batch. A stale result
+discards the response; unavailable invalidates the session. Any recapture is a
+new observation/call under the same budgets. This detects changes up to the live
+check; it does not freeze the remote site. Writes retain their capture timestamp
+and express an observation at that instant, not a claim that the page never
+changes afterward.
 
 One synchronous DOM observation produces a page revision/observation ID, current
 URL, wall-detection snapshot, bounded visible text blocks, form/display value
@@ -322,7 +374,11 @@ boundaries instead of mirroring private helpers.
   fallback retains last-4/CVV exclusion. Logs, errors, checkpoints, fact output
   and fixtures' aggregate measurements contain no sentinel raw values.
 - Fake adapter/bridge tests verify atomic observation, selected-tab isolation,
-  disconnect behavior and response validation. Manual fake-site checks cover the
+  disconnect behavior and response validation. Explicitly test same-URL reload,
+  binding replacement, back-forward-cache restore, DOM mutation and programmatic
+  field-value changes during a pending provider request, including a cached
+  adapter URL that has not changed. Assert no stale response is written.
+  Manual fake-site checks cover the
   headed wall hand-off/resume, unknown destination gate, abort and provider outage.
   Never use the user's real CSV, credentials or a live provider for these tests.
 
