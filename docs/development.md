@@ -1040,3 +1040,55 @@ single Issue to implement first.
   Git.
 - Keep durable workflow lessons near the owning document, Issue, or PR instead
   of reintroducing a generic learning log without a clear owner.
+
+### Jev triage provider terms and activation
+
+Issue #535 adds the isolated adapter and contracts; #536 connects them to the graph.
+No Jev request is made by the existing orchestration CLI in this stage. The configuration
+loader accepts the following optional section, and the plan CLI accepts `--triage off|shadow|assisted`. CLI mode overrides YAML while preserving
+the pinned model and budget. Defaults are off, `jev-1.13.0`, and 20 attempts.
+
+```yaml
+run:
+  triage:
+    mode: off
+    model: jev-1.13.0
+    maxRequests: 20
+```
+
+For adapter callers, create one `createTriageRunner` per run with a durable `persistState`
+callback and reload its `{runId, reserved, providerUnavailable}` snapshot when resuming.
+The callback must finish saving before it resolves; save failure prevents the request.
+Reserve-before-send deliberately charges an attempt slot even when the child rejects
+input or the process is interrupted. Never recreate an empty counter under an existing
+run ID. The graph will own this persistence in #536. `assisted` currently returns
+`input-not-approved`; it cannot adopt decisions yet. `off` neither starts a child nor
+uses a slot. `TYPESAFE_API_KEY` belongs in the process environment, never YAML, argv,
+Issue content, checkpoint, telemetry, or worker environments.
+
+Only reviewed public development Issues may be sent. Use fake data in examples; the
+preflight detector is incomplete and cannot certify the absence of personal information.
+Private repositories, changed revisions, obvious sensitive text, empty context, and large
+inputs return a fixed fallback reason without a provider call. Errors contain no raw
+provider body. A missing key falls back locally; 401/403 and 429/529 disable the provider
+for the run. Other errors consume their reserved slot with no retry. Usage is the API's
+validated integer count or `unavailable`; cost is not fabricated from missing data.
+
+**Terms reviewed 2026-09-27; no account settings changed or live paid requests made.**
+The [API reference](https://docs.typesafe.ai/api) specifies Bearer-authenticated structured
+questions and answers. We pin the resolved model, enforce the response contract, and use
+the fixed HTTPS endpoint with redirects disabled. This does not establish model quality;
+Japanese fixtures and routing evidence are evaluated separately in #537.
+
+The [Master Customer Agreement](https://typesafe.ai/legal/mca) dated 2026-09-23 permits API
+use subject to its documentation and limits. It requires customer authority over input;
+model training requires prior consent. It also permits continued use of input for deriving
+telemetry, fraud prevention, and legal compliance, and allows retention in standard backups.
+The [Privacy Policy](https://typesafe.ai/legal/privacy-policy) says input is not used for
+training and describes purpose-based retention rather than a fixed deletion period.
+The [DPA](https://typesafe.ai/legal/data-processing) likewise gives no general zero-day
+retention promise. [Zero data retention is an enterprise arrangement](https://docs.typesafe.ai/legal),
+not a guarantee inferred from possessing an API key. Before enabling shadow mode, the
+operator must check the terms and retention arrangement that apply to their own account,
+and decide whether the reviewed public Issue text is suitable for that processing.
+No code accepts terms, purchases credits, or changes billing settings for the operator.

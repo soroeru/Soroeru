@@ -1,3 +1,4 @@
+import { normalizeTriageConfig } from "./project-issue-triage-contract.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -7,6 +8,7 @@ export const DEFAULT_CONFIG_PATH = "state/project-issue-orchestrator.yaml";
 
 const PROJECT_KEYS = new Set(["owner", "ownerType", "name"]);
 const RUN_KEYS = new Set([
+  "triage",
   "maxParallel",
   "releasePolicy",
   "unavailableModels",
@@ -68,6 +70,7 @@ function normalizeDocument(document) {
   if (!new Set(["pr-created", "merged"]).has(releasePolicy)) fail("config-invalid-release-policy");
 
   return {
+    ...(run.triage === undefined ? {} : { triage: normalizeTriageConfig(run.triage) }),
     projectOwner,
     ownerType,
     projectName,
@@ -92,6 +95,12 @@ export async function loadOrchestratorConfig(filePath = DEFAULT_CONFIG_PATH, { c
 
 export function mergeOrchestratorConfig({ defaults = {}, yaml = {}, cli = {} } = {}) {
   const merged = { ...defaults, ...yaml, ...cli };
+  if (defaults.triage !== undefined || yaml.triage !== undefined || cli.triage !== undefined) {
+    merged.triage = normalizeTriageConfig({
+      ...(defaults.triage ?? {}), ...(yaml.triage ?? {}),
+      ...(typeof cli.triage === "string" ? { mode: cli.triage } : cli.triage ?? {}),
+    });
+  }
   if (typeof merged.unavailableModels === "string")
     merged.unavailableModels = parseUnavailableModels(merged.unavailableModels);
   if (typeof merged.unavailableAgents === "string")

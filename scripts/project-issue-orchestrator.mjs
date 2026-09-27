@@ -162,6 +162,7 @@ export function parseCliArgs(argv) {
     ["--parent-agent", "parentAgent"],
     ["--parent-model", "parentModel"],
     ["--config", "configPath"],
+    ["--triage", "triage"],
   ]);
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
@@ -217,6 +218,8 @@ export function parseCliArgs(argv) {
       else options[key].push(key === "existingWorktrees" ? Number(value) : value);
     } else options[key] = ["maxParallel"].includes(key) ? Number(value) : value;
   }
+  if (options.triage !== undefined && !["off", "shadow", "assisted"].includes(options.triage))
+    throw new Error("triage-invalid-mode");
   if (options.ownerType !== undefined && !OWNER_TYPES.has(options.ownerType))
     throw new Error("invalid-owner-type");
   if (options.milestoneJson && options.milestoneFile) throw new Error("milestone-source-conflict");

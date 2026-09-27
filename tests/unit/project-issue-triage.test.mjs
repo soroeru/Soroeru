@@ -1,0 +1,496 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  normalizeTriageInput,
+  normalizeTriageConfig,
+  triageContext,
+  parseDistribution,
+  parseTriageDecision,
+  fallbackResult,
+  RISKS,
+  SIZES,
+} from "../../scripts/project-issue-triage-contract.mjs";
+import { evaluateTriage, JEV_ENDPOINT, RESPONSE_LIMIT } from "../../scripts/project-issue-triage.mjs";
+import {
+  runTriageChild,
+  createTriageState,
+  createTriageRunner,
+} from "../../scripts/project-issue-triage-client.mjs";
+import { fetchTriageRevision } from "../../scripts/project-issue-github.mjs";
+import { loadOrchestratorConfig, mergeOrchestratorConfig } from "../../scripts/project-issue-config.mjs";
+import { spawnWorker } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
+import { parseCliArgs } from "../../scripts/project-issue-orchestrator.mjs";
+
+const now = Date.parse("2026-09-27T00:00:00Z");
+const input = {
+  issue: 123,
+  issueUpdatedAt: "2026-09-26T00:00:00Z",
+  policyVersion: "triage-v1",
+  model: "jev-1.13.0",
+  routes: [
+    { agent: "Codex", model: "fixture-a" },
+    { agent: "Claude", model: "fixture-b" },
+  ],
+  routeEvidence: [],
+};
+const config = { mode: "shadow" };
+const disclosure = {
+  isPrivate: false,
+  updatedAt: input.issueUpdatedAt,
+  title: "Change fixture wording",
+  body: "Update a local help message.",
+};
+const distribution = (options, choice) => ({
+  type: "choice",
+  choice,
+  confidence: 1,
+  probabilities: Object.fromEntries(options.map((option) => [option, option === choice ? 1 : 0])),
+});
+const response = () => ({
+  model: input.model,
+  answers: { risk: distribution(RISKS, "low"), size: distribution(SIZES, "XS") },
+  usage: { input_tokens: 30, output_tokens: 4 },
+});
+const dependencies = (overrides) => ({
+  now,
+  env: { TYPESAFE_API_KEY: "fake-test-key" },
+  fetchIssue: async () => disclosure,
+  fetchImpl: async () => Response.json(response()),
+  ...overrides,
+});
+const fallback = (i, reason) => ({ result: fallbackResult(triageContext(i), reason), usage: "unavailable" });
+async function temporary(t) {
+  const dir = await mkdtemp(path.join(tmpdir(), "triage-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+test("shadow sends only bounded issue text to fixed endpoint, projects structured output", async () => {
+  let sent;
+  const result = await evaluateTriage(
+    input,
+    config,
+    dependencies({
+      fetchImpl: async (url, request) => {
+        sent = { url, ...request, body: JSON.parse(request.body) };
+        return Response.json({ ...response(), rawText: "must never escape", secret: "fake-secret" });
+      },
+    }),
+  );
+  assert.equal(sent.url, JEV_ENDPOINT);
+  assert.equal(sent.redirect, "error");
+  assert.deepEqual(sent.body.state, { title: disclosure.title, body: disclosure.body });
+  assert.deepEqual(Object.keys(sent.body.questions), ["risk", "size"]);
+  assert.equal(result.result.status, "recommended");
+  assert.equal(result.result.route.choice, "abstain");
+  assert.deepEqual(result.usage, { inputTokens: 30, outputTokens: 4 });
+  assert.doesNotMatch(JSON.stringify(result), /must never escape|fake-secret|help message/);
+});
+
+for (const [name, change, reason] of [
+  ["private", { isPrivate: true }, "input-not-approved"],
+  ["unknown visibility", { isPrivate: undefined }, "input-not-approved"],
+  ["edited", { updatedAt: "2026-09-27T00:00:00Z" }, "stale-input"],
+  ["empty", { body: " " }, "insufficient-context"],
+  ["email", { body: "fake.person@example.invalid" }, "sensitive-input"],
+  ["credential", { body: "password=fake-test-password" }, "sensitive-input"],
+  ["phone", { body: "000-0000-0000" }, "sensitive-input"],
+  ["oversized", { body: "文".repeat(9000) }, "input-too-large"],
+])
+  test(`preflight rejects ${name} without external request`, async () => {
+    let sent = 0;
+    const result = await evaluateTriage(
+      input,
+      config,
+      dependencies({
+        fetchIssue: async () => ({ ...disclosure, ...change }),
+        fetchImpl: async () => {
+          sent++;
+          throw Error("unexpected");
+        },
+      }),
+    );
+    assert.equal(result.result.reason, reason);
+    assert.equal(sent, 0);
+  });
+
+test("off, assisted and absent key avoid even the issue-text fetch", async () => {
+  for (const [settings, env, reason] of [
+    [{}, {}, "disabled"],
+    [{ mode: "assisted" }, {}, "input-not-approved"],
+    [config, {}, "missing-key"],
+  ]) {
+    let fetched = 0;
+    const result = await evaluateTriage(
+      input,
+      settings,
+      dependencies({
+        env,
+        fetchIssue: async () => {
+          fetched++;
+          return disclosure;
+        },
+      }),
+    );
+    assert.equal(result.result.reason, reason);
+    assert.equal(fetched, 0);
+  }
+});
+
+for (const [status, reason] of [
+  [401, "auth-failed"],
+  [403, "auth-failed"],
+  [429, "rate-limited"],
+  [529, "rate-limited"],
+  [500, "provider-error"],
+])
+  test(`HTTP ${status} returns closed reason with no retries or error text`, async () => {
+    let calls = 0;
+    const result = await evaluateTriage(
+      input,
+      config,
+      dependencies({
+        fetchImpl: async () => {
+          calls++;
+          return new Response("private-error-body", { status });
+        },
+      }),
+    );
+    assert.equal(result.result.reason, reason);
+    assert.equal(calls, 1);
+    assert.doesNotMatch(JSON.stringify(result), /private-error-body/);
+  });
+
+test("malformed, excessive, model-mismatched and malformed-distribution responses fail closed", async () => {
+  const bad = response();
+  bad.answers.risk.probabilities.low = 0.2;
+  for (const make of [
+    () => new Response("bad JSON"),
+    () => new Response("x".repeat(RESPONSE_LIMIT + 1)),
+    () => Response.json({ ...response(), model: "jev-other" }),
+    () => Response.json(bad),
+  ]) {
+    const result = await evaluateTriage(input, config, dependencies({ fetchImpl: async () => make() }));
+    assert.equal(result.result.reason, "invalid-response");
+  }
+});
+
+test("cancellation and request deadline abort transport, without retry", async () => {
+  for (const cancel of [true, false]) {
+    const controller = new AbortController();
+    // Keep the event loop live: AbortSignal.timeout's timer is unref'ed.
+    const keepAlive = setInterval(() => {}, 1000);
+    try {
+      const result = await evaluateTriage(
+        input,
+        config,
+        dependencies({
+          signal: controller.signal,
+          requestTimeoutMs: 10,
+          fetchImpl: async (_url, { signal }) =>
+            new Promise((resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+              if (cancel) controller.abort();
+            }),
+        }),
+      );
+      assert.equal(result.result.reason, cancel ? "cancelled" : "timeout");
+    } finally {
+      clearInterval(keepAlive);
+    }
+  }
+});
+
+test("route comparison requires fresh comparable evidence, never names alone", async () => {
+  const routeEvidence = input.routes.map((r) => ({
+    ...r,
+    profileVersion: "v1",
+    benchmarkVersion: "suite1",
+    evaluatedAt: "2026-09-26T00:00:00Z",
+    tasks: [{ kind: "docs", samples: 10, passed: 9, medianDurationMs: 50 }],
+  }));
+  for (const [evidence, shouldAsk] of [
+    [routeEvidence, true],
+    [routeEvidence.slice(0, 1), false],
+    [routeEvidence.map((e) => ({ ...e, evaluatedAt: "2026-01-01T00:00:00Z" })), false],
+    [routeEvidence.map((e, i) => ({ ...e, benchmarkVersion: `suite${i}` })), false],
+  ]) {
+    let asked;
+    const result = await evaluateTriage(
+      { ...input, routeEvidence: evidence },
+      config,
+      dependencies({
+        fetchImpl: async (_url, request) => {
+          const question = JSON.parse(request.body).questions.route;
+          asked = Boolean(question);
+          const raw = response();
+          if (question) raw.answers.route = distribution(Object.keys(question.criteria), "abstain");
+          return Response.json(raw);
+        },
+      }),
+    );
+    assert.equal(asked, shouldAsk);
+    assert.equal(result.result.route.choice, "abstain");
+  }
+});
+
+test("low confidence or margin requires review; closed schemas reject injection", async () => {
+  const raw = response();
+  raw.answers.risk = {
+    type: "choice",
+    choice: "low",
+    probabilities: { low: 0.5, medium: 0.4, high: 0.1, critical: 0 },
+    confidence: 0.9,
+  };
+  const result = await evaluateTriage(
+    input,
+    config,
+    dependencies({ fetchImpl: async () => Response.json(raw) }),
+  );
+  assert.equal(result.result.disposition, "review-required");
+  assert.throws(() => normalizeTriageInput({ ...input, body: "forbidden" }));
+  assert.throws(() => normalizeTriageConfig({ endpoint: "https://example.invalid" }));
+  assert.throws(() => normalizeTriageConfig({ model: "jev-latest" }));
+  assert.throws(() => normalizeTriageConfig({ maxRequests: 21 }));
+  assert.throws(() => parseDistribution({ ...distribution(RISKS, "low"), choice: "high" }, RISKS));
+  const context = triageContext(input);
+  const { status, reason, ...metadata } = fallbackResult(context, "disabled");
+  assert.equal(
+    parseTriageDecision(
+      { ...metadata, action: "override", reason: "domain-review", riskCategory: "high", size: "S" },
+      context,
+    ).size,
+    "S",
+  );
+  assert.throws(() =>
+    parseTriageDecision(
+      {
+        ...metadata,
+        action: "override",
+        reason: "domain-review",
+        riskCategory: "high",
+        size: "S",
+        explanation: "unbounded",
+      },
+      context,
+    ),
+  );
+});
+
+test("durable reservation precedes execution, is serialized, and survives restart", async (t) => {
+  const dir = await temporary(t);
+  const stateFile = path.join(dir, "state.json");
+  let calls = 0;
+  const persistState = (value) => writeFile(stateFile, JSON.stringify(value));
+  const execute = async (i) => {
+    calls++;
+    assert.equal(JSON.parse(await readFile(stateFile, "utf8")).reserved, calls);
+    return fallback(i, "timeout");
+  };
+  const runner = createTriageRunner({
+    runId: "run-1",
+    state: createTriageState("run-1"),
+    persistState,
+    execute,
+  });
+  const results = await Promise.all(
+    Array.from({ length: 3 }, () => runner.run(input, { ...config, maxRequests: 2 })),
+  );
+  assert.deepEqual(
+    results.map((r) => r.result.reason),
+    ["timeout", "timeout", "budget-exhausted"],
+  );
+  const resumed = createTriageRunner({
+    runId: "run-1",
+    state: JSON.parse(await readFile(stateFile, "utf8")),
+    persistState,
+    execute,
+  });
+  assert.equal((await resumed.run(input, { ...config, maxRequests: 2 })).result.reason, "budget-exhausted");
+  assert.equal(calls, 2);
+});
+
+test("failed reservation prevents egress; auth and throttling disable the whole run", async () => {
+  for (const reason of ["auth-failed", "rate-limited"]) {
+    let saved;
+    let calls = 0;
+    const runner = createTriageRunner({
+      runId: "r",
+      state: createTriageState("r"),
+      persistState: async (s) => {
+        saved = s;
+      },
+      execute: async (i) => {
+        calls++;
+        return fallback(i, reason);
+      },
+    });
+    assert.equal((await runner.run(input, config)).result.reason, reason);
+    assert.equal((await runner.run(input, config)).result.reason, "provider-unavailable");
+    assert.equal(saved.providerUnavailable, true);
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  const runner = createTriageRunner({
+    runId: "r",
+    state: createTriageState("r"),
+    persistState: async () => {
+      throw Error("disk full");
+    },
+    execute: async (i) => {
+      calls++;
+      return fallback(i, "timeout");
+    },
+  });
+  assert.equal((await runner.run(input, config)).result.reason, "provider-unavailable");
+  assert.equal(calls, 0);
+});
+
+test("real child returns metadata only without credentials and supports timeout", async () => {
+  const result = await runTriageChild(input, config, { env: {} });
+  assert.equal(result.result.reason, "missing-key");
+  const timed = await runTriageChild(input, config, { env: {}, timeoutMs: 1 });
+  assert.equal(timed.result.reason, "timeout");
+});
+
+test("metadata read excludes title/body and treats unavailable revision as null", async () => {
+  let query;
+  const result = await fetchTriageRevision(123, {
+    graphql: async (q) => {
+      query = q;
+      return { repository: { issue: { updatedAt: input.issueUpdatedAt } } };
+    },
+  });
+  assert.deepEqual(result, { updatedAt: input.issueUpdatedAt });
+  assert.doesNotMatch(query, /\b(body|title)\b/);
+  assert.equal(
+    await fetchTriageRevision(123, {
+      graphql: async () => {
+        throw Error("private error");
+      },
+    }),
+    null,
+  );
+});
+
+test("YAML triage defaults and CLI mode override preserve pinned model and budget", async (t) => {
+  const dir = await temporary(t);
+  await writeFile(
+    path.join(dir, "config.yaml"),
+    `project:\n  owner: soroeru\n  ownerType: organization\n  name: Fixture\nrun:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  triage:\n    mode: shadow\n    model: jev-1.13.0\n    maxRequests: 3\n`,
+  );
+  const yaml = await loadOrchestratorConfig("config.yaml", { cwd: dir });
+  const cli = parseCliArgs(["--triage", "off"]);
+  assert.deepEqual(mergeOrchestratorConfig({ yaml, cli }).triage, {
+    mode: "off",
+    model: "jev-1.13.0",
+    maxRequests: 3,
+  });
+  assert.equal(normalizeTriageConfig().mode, "off");
+  assert.throws(() => parseCliArgs(["--triage", "anything"]));
+});
+
+test("ordinary worker process never inherits Jev credential", async (t) => {
+  const dir = await temporary(t);
+  const output = path.join(dir, "env.json");
+  const env = { ...process.env, TYPESAFE_API_KEY: "fake-test-key" };
+  const worker = spawnWorker(
+    process.execPath,
+    [
+      "-e",
+      'require("node:fs").writeFileSync(process.argv[1],JSON.stringify({hasKey:Object.hasOwn(process.env,"TYPESAFE_API_KEY")}))',
+      output,
+    ],
+    { env, timeoutMs: 5000 },
+  );
+  t.after(() => worker.kill());
+  assert.equal((await worker.wait()).code, 0);
+  assert.deepEqual(JSON.parse(await readFile(output, "utf8")), { hasKey: false });
+  assert.equal(env.TYPESAFE_API_KEY, "fake-test-key");
+});
+
+test("real child fetch keeps private body and gh stderr out of parent", async (t) => {
+  const dir = await temporary(t);
+  const gh = path.join(dir, "gh");
+  const payload = JSON.stringify({
+    data: {
+      repository: {
+        isPrivate: true,
+        issue: {
+          title: "fake-private-title",
+          body: "fake-private-body",
+          updatedAt: input.issueUpdatedAt,
+        },
+      },
+    },
+  });
+  await writeFile(
+    gh,
+    `#!${process.execPath}\nprocess.stderr.write("fake-private-error"); process.stdout.write(${JSON.stringify(payload)});\n`,
+    { mode: 0o700 },
+  );
+  const result = await runTriageChild(input, config, {
+    env: { PATH: dir, TYPESAFE_API_KEY: "fake-test-key" },
+  });
+  assert.equal(result.result.reason, "input-not-approved");
+  assert.doesNotMatch(JSON.stringify(result), /fake-private|fake-test-key/);
+});
+
+test("new run has its own budget while off and cancelled calls reserve nothing", async () => {
+  const runner = createTriageRunner({
+    runId: "new",
+    state: createTriageState("new"),
+    persistState: async () => {},
+    execute: async (i) => fallback(i, "timeout"),
+  });
+  assert.equal((await runner.run(input, {})).result.reason, "disabled");
+  assert.equal((await runner.run(input, config, { signal: AbortSignal.abort() })).result.reason, "cancelled");
+  assert.equal(runner.snapshot().reserved, 0);
+  assert.equal((await runner.run(input, config)).result.reason, "timeout");
+  assert.equal(runner.snapshot().reserved, 1);
+  assert.throws(() =>
+    createTriageRunner({ runId: "other", state: runner.snapshot(), persistState: async () => {} }),
+  );
+});
+
+test("provider cannot add answer keys or nominate a route outside the current pool", async () => {
+  const routeEvidence = input.routes.map((r) => ({
+    ...r,
+    profileVersion: "v1",
+    benchmarkVersion: "suite1",
+    evaluatedAt: "2026-09-26T00:00:00Z",
+    tasks: [{ kind: "docs", samples: 10, passed: 9, medianDurationMs: 50 }],
+  }));
+  for (const mutate of [
+    (raw) => {
+      raw.answers.route = distribution(["r0", "r1", "abstain"], "unavailable-model");
+    },
+    (raw) => {
+      raw.answers.unbounded = "fake-sensitive-response";
+    },
+    (raw) => {
+      raw.answers.risk.type = "noul";
+    },
+    (raw) => {
+      raw.answers.size.confidence = 2;
+    },
+  ]) {
+    const result = await evaluateTriage(
+      { ...input, routeEvidence },
+      config,
+      dependencies({
+        fetchImpl: async () => {
+          const raw = response();
+          raw.answers.route = distribution(["r0", "r1", "abstain"], "abstain");
+          mutate(raw);
+          return Response.json(raw);
+        },
+      }),
+    );
+    assert.equal(result.result.reason, "invalid-response");
+    assert.doesNotMatch(JSON.stringify(result), /fake-sensitive-response|unavailable-model/);
+  }
+});

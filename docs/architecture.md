@@ -1008,3 +1008,43 @@ The consequence differs by interruption path, and this is the gap the caps must 
    - Reconstructs sanitized episodes from telemetry logs (`scripts/project-issue-offline-eval.mjs`).
    - Provides deterministic state-transition replay to evaluate candidate routing policies.
    - Generates Quality-Token Frontier reports comparing terminal success rates, test/gate pass rates, PR merge rates, and quality-adjusted token efficiency without data leakage.
+
+### 13.6 Optional Issue Triage Boundary (`#535`)
+
+Jev is a development-only Issue classifier, separate from the desktop app's AI providers.
+It is off by default. `project-issue-triage-client.mjs` starts one short-lived child
+(`project-issue-triage.mjs`) with structured metadata over stdin. Only that child fetches
+the Issue title/body and sends them to the fixed TypeSafe endpoint. Private repositories,
+revision mismatches, detected credentials/personal values, and oversized requests fail
+closed. The detector is a conservative tripwire, not proof that arbitrary prose contains
+no personal information; operators must use public, reviewed development Issues with fake
+examples. There is no vault, application state, diff, or tool-history input.
+
+The parent accepts only validated enums, probability maps, version hashes, and integer
+usage counts. Raw Issue text, HTTP responses, error bodies, and stderr never enter parent
+state or telemetry. `TYPESAFE_API_KEY` is supplied through the triage child's environment
+and removed at both worker dispatch and process spawn. This is a data-flow boundary, not
+an OS sandbox: child processes share the local user's filesystem privileges.
+
+The contract module validates `TriageInput`, `TriageResult`, `TriageDecision`, and
+`RouteEvidence`. A route can only refer to the supplied verified pool. Comparable,
+recent benchmark evidence is required to ask a routing question; absent evidence yields
+`abstain`, rather than an inference from model names. Runtime availability checks belong
+to the capability adapters, independently of suitability evidence.
+
+The runner serializes requests and reserves each attempt durably before starting a child.
+Reservations are never refunded, including preflight failures; at most 20 attempts are
+allowed per run. A failed reservation prevents execution. Authentication or throttling
+failures disable the provider for that run. The caller owns one runner and its durable
+state; graph checkpoint integration is tracked separately in #536 and is not wired by
+#535. Assisted adoption remains disabled pending #538. There are no retries; HTTP time
+is capped at five seconds and the child process tree at ten seconds. Request/response
+bodies are capped at 24/64 KiB, with redirects rejected.
+
+This opt-in boundary adds external processing of reviewed development text in exchange
+for cheaper classification experiments. Node's built-in fetch avoids an additional SDK;
+keeping deterministic orchestration as the default preserves offline operation. Revisit
+the choice if evaluation cannot meet the risk-recall/adoption gates, if API contracts or
+retention terms change, or if process isolation needs an OS sandbox. The provider does
+not have an assumed zero-retention guarantee: see the dated terms review in
+[development.md](development.md#jev-triage-provider-terms-and-activation).
