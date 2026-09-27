@@ -648,6 +648,16 @@ runners. Counts shift with upstream updates; re-check at release time.
   published `image-size` version through the current latest (`2.0.2`) is in range —
   there is no patched release to move to. `npm audit`'s own `fixAvailable` suggests
   downgrading to `appdmg@0.1.0`, a pre-2015, far older major that is not a real fix.
+- **2026-09-27 update (GHSA-w3rx-r6r6-pgpr re-issued as source `1239766`).** The npm
+  advisory database re-issued GHSA-w3rx-r6r6-pgpr under a new source id with the revised
+  range `>=0.6.3 <=2.0.2`, so `image-size@2.0.3+` (currently `2.0.4`) is now outside it.
+  This is still not a usable fix: `appdmg@0.6.6` (its latest release) pins
+  `image-size@^0.7.4` and calls `require('image-size')(path, callback)`, while
+  `image-size@2` exports an object (`imageSize` / `default`) whose main entry accepts only
+  buffers, so forcing it through `overrides` would break `npm run package:dmg`. `npm
+  audit`'s `fixAvailable` now suggests downgrading to `appdmg@0.5.2`, again not a real fix.
+  The new source id is recorded with the same scoped `consumedBy` path; the older ids stay
+  recorded in case a registry still reports them.
 - **Why bounded.** Same premises as the `devDependency` chains above: build-time-only
   (`npm run package:dmg`), not present in the distributed runtime, and additionally
   `os`-restricted to `darwin` so it never installs on non-macOS machines at all — the
@@ -657,13 +667,14 @@ runners. Counts shift with upstream updates; re-check at release time.
   `consumedBy` dependency path (`["appdmg"]`) in
   [`scripts/accepted-advisories.json`](../scripts/accepted-advisories.json), which
   `scripts/audit-check.mjs` (the `audit:check` implementation) reads to exclude exactly
-  these two advisory ids **only when reached through that path** (`npm audit`'s
+  these advisory ids **only when reached through that path** (`npm audit`'s
   `effects` field). Any other new high/critical advisory still fails the gate, and so
   does the same advisory id if it ever reaches a different, unaccepted dependency path
   (e.g. `image-size` becoming a genuine runtime dependency instead of appdmg's
   build-time-only one) — the acceptance is scoped, not blanket.
-- **Re-evaluate** when `image-size` ships a release outside the `<=2.0.2` vulnerable
-  range, or `appdmg`/its DMG-maker chain drops the dependency.
+- **Re-evaluate** when `appdmg` (or its DMG-maker chain) accepts an `image-size` release
+  outside the `<=2.0.2` vulnerable range (`2.0.3+` now exists but is API-incompatible with
+  `appdmg@0.6.6`), or drops the dependency.
 - Upstream tracking: <https://github.com/image-size/image-size>,
   <https://github.com/LinusU/node-appdmg>.
 

@@ -1,4 +1,4 @@
-import { collectionObservationInPage, type ObservationToken } from "../src/automation/collection-observation.js";
+import { collectionObservationInPage, structuralFingerprintInPage, type ObservationToken } from "../src/automation/collection-observation.js";
 import { scanInPage } from "../src/agent/scan.js";
 
 /** The exact in-page scanner used by the Playwright path. */
@@ -104,7 +104,7 @@ async function execute(command: ContentCommand): Promise<unknown> {
   showAutomationBanner();
   switch (command.command) {
     case "captureCollectionObservation":
-      return collectionObservationInPage(scanPage, { kind: "capture", bindingEpoch: command.bindingEpoch });
+      return collectionObservationInPage(scanPage, { kind: "capture", bindingEpoch: command.bindingEpoch }, structuralFingerprintInPage);
     case "checkCollectionObservation":
       return collectionObservationInPage(scanPage, { kind: "check", token: command.token });
     case "stop":

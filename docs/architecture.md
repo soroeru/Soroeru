@@ -518,9 +518,26 @@ epoch so a stale or navigated-away response is discarded rather than written. Ev
 failure mode (provider error, invalid response, cancellation, wall, budget exhaustion, ToS
 decision, unknown destination, session invalidation) falls back to the existing deterministic
 `DecisionEngine`/`PageExplorer` path within the same run, never a bare error. Production
-authorization issuance (the collection gate, L0/L1 UI) and `SiteCollectionMap`
-generation/recollection remain follow-up work (`#518`–`#519`); #517 only consumes #516's types and
-emits in-memory page-purpose/field-location facts for #518 to persist.
+authorization issuance (the collection gate, L0/L1 UI) remains follow-up work (`#519`).
+
+`SiteCollectionMap` generation and map-based recollection (#518) are implemented in
+`src/automation/collection-map.ts`, `VisibilityRunner`, and `DomainService`
+(`getSiteCollectionMap` / `saveSiteCollectionMap`). An AI-driven run turns its committed,
+locally corroborated facts into map pages (field-id locators plus locally computed
+fingerprints) and saves the next map revision: `ready` when the run completed without
+fallback, `candidate` otherwise. When a live `ai-assisted-discovery` grant exists and the site
+has a map, the runner uses the map first and makes no provider call: it navigates to each
+mapped page through `gotoCollection`, runs wall/ToS checks, captures one observation, and
+reads only entries whose page fingerprint, item fingerprint, and local classifier key all
+still agree. Values read this way keep the `ai-driven` tier of the run that created and
+corroborated the entry. A mismatch (page gone, page changed, selector miss, item changed, or
+classification disagreement) isolates only that entry. The rest of the observed page falls back
+to the deterministic tier, and the run records an `unknown-state` Constraint that suggests
+regeneration. When no mapped page can be observed, the run falls back to deterministic
+exploration. Recollection never rewrites the map; only
+`runSite(id, { regenerateCollectionMap: true })`, set from an explicit user action, runs
+AI-driven collection again and replaces the map. Without a live grant the map is not used.
+The user-facing regeneration control and provenance display belong to #519/#520.
 
 Collection uses two tiers, chosen per REQ-013's AI-optionality rule (a third, later tier is
 unaffected):
@@ -600,24 +617,30 @@ During `put`/`save`/`exportEncrypted`, invalid maps are rejected without writing
 vault; serialization revalidates maps because the general vault API exposes mutable record
 references.
 
-**Fingerprint producer contract (generation remains #518):** derive fingerprints locally from
+**Fingerprint producer contract (Issue #518 producer: `structuralFingerprintInPage`):** derive fingerprints locally from
 structure, never from model-supplied fingerprint claims or raw HTML/text/value hashes. Encode
 an ordered JSON array of `[childIndexPath, tag, controlType]` tuples in DOM preorder as UTF-8,
 then SHA-256 it into exactly 64 lowercase hexadecimal characters. `childIndexPath` is an array
 of one-based child-element positions relative to the fingerprinted root (empty for the root);
 `tag` is the lowercase standard HTML element name (`other` for custom/unknown elements);
 `controlType` is the browser-normalized standard input type for input elements, or the empty
-string for other elements. Page fingerprints cover the page element tree; item fingerprints
-cover the located element subtree. Exclude text, values, labels, IDs, classes, URLs, and all
+string for other elements. Page fingerprints cover the document body element tree (which
+excludes the extension's automation banner under `<html>`); item fingerprints cover the
+located element subtree. Non-rendered `script`/`style`/`noscript`/`template`/`link`/`meta`
+elements are skipped and consume no child index, so injected scripts do not invalidate a
+map. A tree over 20,000 elements yields no fingerprint, so that page is never mapped. Exclude text, values, labels, IDs, classes, URLs, and all
 other attributes. Schema validation enforces the output format, while the future local producer
 must enforce this input contract; a valid hash encoding alone does not prove its provenance.
+The producer runs synchronously inside the same in-page capture as the value read, and
+fingerprints never enter the model envelope.
 
 **Coordinate trade-off (Issue #516):** positional paths and bounded scanner IDs avoid retaining
 page-controlled values that can be embedded in selectors. Arbitrary CSS, DOM IDs/classes, and
 text/value selectors were rejected because a syntax-only validator cannot establish that those
 strings contain no personal values. This deliberately sacrifices resilience to inserted or
 reordered elements: require fingerprint agreement and fall back on mismatch, never silently
-read another element. Revisit the coordinate representation during #518 if an unchanged-page
+read another element. #518 uses only field-id locators (the scanner numbers elements
+deterministically for an unchanged page). Revisit the coordinate representation if an unchanged-page
 rerun fixture fails fingerprint/locator reuse solely because scanner numbering is unstable,
 or if an inserted non-data sibling makes an otherwise unchanged-item fixture fall back. Any
 replacement needs the same value-free guarantee before widening the schema.
