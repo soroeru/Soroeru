@@ -1,8 +1,9 @@
 import type { AiProvider } from "../agent/ai/provider.js";
 import type { PageDriver } from "./page-driver.js";
 import type { CollectionObservation } from "./collection-observation.js";
-import { COLLECTION_SCHEMA, collectionInput, corroborateProposal, parseCollectionProposal, type CollectionFact, type VerifiedCollectionCandidate } from "./ai-visibility-contract.js";
+import { COLLECTION_SCHEMA, collectionInput, corroborateProposal, parseCollectionProposal, type CollectionFact, type CollectionProposal, type VerifiedCollectionCandidate } from "./ai-visibility-contract.js";
 import { collectionNavigation, collectionUrlAllowed } from "./visibility-navigation-policy.js";
+import { buildMapPage, type SiteCollectionMapPage } from "./collection-map.js";
 import { WallDetectionService } from "./wall-detection.js";
 import { DecisionEngine } from "./decision-engine.js";
 import { RuleEngine } from "./rule-engine.js";
@@ -12,7 +13,9 @@ export type CollectionStop = "complete" | "provider-error" | "invalid-response" 
   "authorization-required" | "unknown-destination" | "user-canceled" | "session-invalid" | "tos-pending" | "tos-stopped" | "storage-failed";
 export interface CollectionLimits { pages: number; depth: number; calls: number; tokens: number; timeMs: number; callMs: number }
 export const COLLECTION_LIMITS: CollectionLimits = { pages: 10, depth: 3, calls: 10, tokens: 60_000, timeMs: 120_000, callMs: 20_000 };
-export interface CollectionOutcome { reason: CollectionStop; fallbackReason?: CollectionStop; disclosures: number; relationships: number; pages: number; calls: number; tokens: number; facts: CollectionFact[] }
+export interface CollectionOutcome { reason: CollectionStop; fallbackReason?: CollectionStop; disclosures: number; relationships: number; pages: number; calls: number; tokens: number; facts: CollectionFact[];
+  /** Value-free SiteCollectionMap pages from committed AI-driven batches (Issue #518). */
+  mapPages: SiteCollectionMapPage[] }
 export interface CollectionBatch { observation: CollectionObservation; candidates: VerifiedCollectionCandidate[]; facts: CollectionFact[]; tier: "ai-driven" | "deterministic" }
 export interface AiCollectionOptions {
   page: PageDriver;
@@ -40,7 +43,7 @@ export async function collectAiVisibility(o: AiCollectionOptions): Promise<Colle
   }
   const now = o.now ?? (() => performance.now());
   const started = now(); let paused = 0;
-  const result: CollectionOutcome = { reason: "complete", disclosures: 0, relationships: 0, pages: 0, calls: 0, tokens: 0, facts: [] };
+  const result: CollectionOutcome = { reason: "complete", disclosures: 0, relationships: 0, pages: 0, calls: 0, tokens: 0, facts: [], mapPages: [] };
   const stop = (reason: CollectionStop): CollectionOutcome => ({ ...result, reason });
   const controller = new AbortController();
   const timer = setInterval(() => { if (o.isCanceled()) controller.abort(); }, 25);
@@ -98,7 +101,7 @@ export async function collectAiVisibility(o: AiCollectionOptions): Promise<Colle
       if (!(await fresh()) || !valid()) return stop(o.isCanceled() ? "user-canceled" : "session-invalid");
       result.pages++; visited.add(observation.snapshot.url);
       let candidates: VerifiedCollectionCandidate[] = [], facts: CollectionFact[] = [];
-      let nextIds: string[] = [], done = false;
+      let nextIds: string[] = [], done = false, purpose: CollectionProposal["pagePurpose"] = "unknown";
       const input = collectionInput(observation);
       if (o.aiSignal?.aborted) fallback("ai-canceled");
       if (ai) {
@@ -116,7 +119,7 @@ export async function collectAiVisibility(o: AiCollectionOptions): Promise<Colle
             if (!(await fresh())) return stop("session-invalid");
             const proposal = parseCollectionProposal(raw, input);
             if (!proposal) fallback("invalid-response");
-            else { ({ candidates, facts } = corroborateProposal(proposal, input)); nextIds = proposal.nextTargetIds; done = proposal.done; }
+            else { ({ candidates, facts } = corroborateProposal(proposal, input)); nextIds = proposal.nextTargetIds; done = proposal.done; purpose = proposal.pagePurpose; }
           } catch { fallback(o.aiSignal?.aborted ? "ai-canceled" : "provider-error"); }
         }
       }
@@ -128,6 +131,8 @@ export async function collectAiVisibility(o: AiCollectionOptions): Promise<Colle
       catch { return stop("storage-failed"); }
       if (!committed) return stop(o.isCanceled() ? "user-canceled" : "session-invalid");
       result.disclosures += committed.disclosures; result.relationships += committed.relationships; result.facts.push(...facts);
+      const mapPage = ai ? buildMapPage(observation, purpose, facts, o.siteUrl) : undefined;
+      if (mapPage) result.mapPages.push(mapPage);
       if (!valid()) return stop(o.isCanceled() ? "user-canceled" : "authorization-required");
       if (!ai) {
         const decision = await rules.decide({ kind: "find-profile-links", snapshot: observation.snapshot,

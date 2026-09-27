@@ -378,6 +378,19 @@ npm run build && node --env-file-if-exists=.env dist/compiled/<script>.js
 - [ ] `npm test` で上記スイートが全件パスすることを確認する（本番UIが無い間の唯一の回帰確認）
 - [ ] Issue #519 実装後、本セクションを実際の手動クリック手順に更新する
 
+### 9.2 SiteCollectionMap とマップベース再収集（Issue #518、本番UI未提供）
+
+§9.1 と同じ理由でアプリ本体の通常操作からはまだ到達できない。AI主導の実行が完了すると
+`SiteCollectionMap`（値を含まないページURL・項目座標・構造フィンガープリント）が保存され、
+同じサイトを再収集するときは、許可（grant）がある限りマップを先に使う。このときAIプロバイダは呼び出さない。
+不一致はエントリ単位で切り離され、そのページの残りは決定論ティアで収集する。マップは
+`regenerateCollectionMap`（ユーザー操作からのみ設定）の場合だけ再生成される。
+
+- [ ] `npm test` で `tests/unit/site-collection-map-recollection.test.ts` が全件パスすることを確認する
+      （マップ保存・AI呼び出しなしの再収集・不一致の切り離しと決定論フォールバック・自動再生成しないこと・
+      実 Chromium でフィンガープリントに値が影響しないこと）
+- [ ] Issue #519/#520 実装後、再生成ボタンと provenance 表示を含む手動手順に更新する
+
 ## 10. SSO ログイン・ハンドオフ（Issue #351）
 
 ID/PW 欄のない SSO 専用ログイン、または ID/PW 失敗後の SSO フォールバックを確認します。
