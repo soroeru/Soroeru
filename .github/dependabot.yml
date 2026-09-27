@@ -30,6 +30,11 @@ updates:
         dependency-type: "development"
       production-dependencies:
         dependency-type: "production"
+    ignore:
+      # typescript-eslint requires typescript <6.1.0, so TypeScript 7 breaks
+      # `npm ci` (ERESOLVE). Remove once typescript-eslint supports 7 (#542).
+      - dependency-name: "typescript"
+        versions: [">=7.0.0"]
 
   # GitHub Actions pinned in workflows (keeps action versions current/patched).
   - package-ecosystem: "github-actions"

@@ -117,6 +117,11 @@ updates:
 Grouping batches routine version bumps into fewer PRs; **security updates are still
 opened individually** regardless of grouping, so they stay visible.
 
+When a major version cannot be adopted yet (for example, a peer-dependency range
+excludes it), add an `ignore` entry for that version range with a comment giving the
+reason and the condition for removing it. This repository currently ignores
+`typescript` `>=7.0.0` because `typescript-eslint` requires `typescript <6.1.0` (#542).
+
 ### Repository settings (one-time, requires admin)
 
 The config file only takes effect once the GitHub-side features are on. In
