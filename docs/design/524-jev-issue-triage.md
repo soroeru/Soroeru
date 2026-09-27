@@ -23,6 +23,8 @@ Project の Size は書き戻さず、起票時に Size を設定する運用も
 [`project-issue-modes.mjs`](../../scripts/project-issue-modes.mjs) は high/critical に対して direct-review を候補から外し、medium では `modePreferencesFor` が planning を優先する。
 したがってリスクを候補の並べ替えだけに使わず、`selectExecutionMode` の入力に渡す必要がある。
 
+`buildRunPlan` は全 runnable item に暫定の `eligibleModes`、`executionMode`、`roleProgram` を付ける。
+これらは通常の自動生成値であり、操作者の override ではない。
 実際の role program は [`project-issue-graph.mjs`](../../scripts/project-issue-graph.mjs) の `assignRoutesNode` が呼ぶ `ensureRoleState` で作られる。
 この処理は現在 Dynamic assignment の `interrupt()` より前に走り、既存 roleState があればそれを再利用する。
 採否を待たずに role program を確定すると、後から high と判定しても planner を挿入できない。
@@ -47,6 +49,12 @@ build_runnable_plan
 「planner は Issue bodies を取得しない」の planner は Project 計画生成処理を指す。
 実装の planner ロールは従来どおり自分の Issue を読む。
 追加する例外はトリアージ子プロセスだけであり、Project planner や親グラフへの本文転送は認めない。
+
+更新時刻は新規 `fetchTriageRevision(issue): Promise<{updatedAt:string}|null>` が GitHub の Issue metadata から取得する。
+この関数を `project-issue-github.mjs` に置き、本文を要求しない GraphQL query で日時形式を検証し、prepare node と dispatch 前の再確認で使う。
+Project query と `parseProjectItems` に日時があると仮定せず、取得値は別の `triageByIssue` に保持する。
+取得失敗や日時不正なら子プロセスを起動せず、`issueUpdatedAt:null`、reason=`fetch-failed` の fallback を作る。
+採用済み結果の再確認に失敗した場合も採用を取り消し、§6 の fallback 経路へ戻す。
 
 子プロセスは固定リポジトリ内の Issue 番号を受け取り、GitHub からタイトル、本文、更新時刻を取得する。
 取得した更新時刻が入力の issueUpdatedAt と異なる場合は `stale-input` とし、その本文を送信しない。
@@ -96,10 +104,24 @@ type Distribution<K extends string> = {
   probabilities: Record<K, number>;
   confidence: number;
 };
+type RouteEvidence = {
+  agent: string;
+  model: string;
+  profileVersion: string;
+  benchmarkVersion: string;
+  evaluatedAt: string;
+  tasks: Array<{
+    kind: 'docs' | 'local-code' | 'cross-component' | 'security';
+    samples: number;
+    passed: number;
+    medianDurationMs: number;
+  }>;
+};
 type TriageInput = {
   issue: number;
   issueUpdatedAt: string;
   routes: Route[]; // 現在の検証済み pool のラベルのみ
+  routeEvidence: RouteEvidence[]; // 評価済みの非機微な集計だけ
   policyVersion: 'triage-v1';
   model: string; // 設定済みの固定 model ID
 };
@@ -111,9 +133,10 @@ type FallbackReason =
   | 'invalid-response' | 'budget-exhausted' | 'insufficient-context';
 type TriageResult = {
   issue: number;
-  issueUpdatedAt: string;
+  issueUpdatedAt: string | null; // null は取得失敗の fallback のみ
   policyVersion: 'triage-v1';
   routeSetHash: string;
+  evidenceVersion: string; // 有効な評価集合の digest。未整備なら none
 } & (
   | { status: 'fallback'; reason: FallbackReason }
   | {
@@ -127,9 +150,10 @@ type TriageResult = {
 );
 type TriageDecision = {
   issue: number;
-  issueUpdatedAt: string;
+  issueUpdatedAt: string | null; // accept/override は有効な日時を必須とする
   policyVersion: 'triage-v1';
   routeSetHash: string;
+  evidenceVersion: string; // 有効な評価集合の digest。未整備なら none
   action: 'accept' | 'override' | 'fallback';
   riskCategory?: Risk;
   size?: Size;
@@ -147,7 +171,18 @@ Size は XS が文言など単一の局所変更、S が単一責務、M が複�
 route の候補は安定ソートした `{agent,model}` を `r0..rN` に写像し、`abstain` を追加する。
 候補は上限 32 件とし、超過時は route 質問を見送り、内部の route を `{choice:"abstain", probabilities:{abstain:1}, confidence:0}`、routeMap を空にする（risk と Size は評価できる）。
 これは API の回答ではなく、推薦を棄権したローカル値である。
-ラベルだけからモデル能力を実証したとはみなさず、同等または未知なら abstain を選ぶ rubric とする。
+推薦の根拠は §9 の評価で作る `RouteEvidence` とする。
+フェーズ C が同一の架空タスク集合を各 exact model に実行させ、受け入れ条件を満たした件数と所要時間を集計し、レビュー済みのローカル JSON に保存する。
+記録は上記型だけに制限し、本文、出力原文、個人情報、資格情報を含めない。
+評価タスクの区分ごとに最低 10 件を必要とし、30 日を超えた評価、model ID 不一致、異なる benchmarkVersion の混在は比較に使わない。
+prepare node が現在の pool と突き合わせ、利用可能な route の有効な評価だけを子プロセスへ渡す。
+能力評価は CLI の利用可能性の証明を代替しない。
+
+Jev の固定 rubric は本文の作業内容を task kind に対応付け、該当 kind の合格率を優先し、合格率が同じ場合にだけ所要時間を比較する。
+security を含む場合は security の評価を必須とし、複数 kind にまたがる場合は全 kind の評価を必要とする。
+最低件数を満たす比較可能な候補が二つ未満、該当 kind が不明、または成績が同等なら abstain とする。
+メーカーやモデル名の評判を追加の根拠に使わない。
+A/B の初期 shadow は能力評価が未整備なので route 推薦を棄権し、C の評価がそろってから D の推薦を有効化する。
 rankedRoutes は確率順にローカルで導出し、同率では安定ソート順を使う。
 初期版は実装担当の推薦だけを行い、planner と reviewer は既存の distinctness 規則で選ぶ。
 
@@ -211,13 +246,20 @@ route だけが要確認または abstain の場合は risk/Size を採用でき
 2. 既存の明示的 risk と採用した risk の高い方を `effectiveRisk` とする。Jev に既存の安全判断を引き下げさせない。
 3. 既存の Project Size と採用した Size の大きい方を `effectiveSize` とする。Project Size が未設定で推薦を採用した場合は推薦 Size を使い、両方なければ現行の `M` とする。
 4. `dependencies` と `changeScopeCount` は既存値を保ち、`selectExecutionMode({...item, riskCategory:effectiveRisk, size:effectiveSize})` へ渡す。現在の dependencyDepth は実際には直接依存の件数であり、本 Issue では推移的深さへの変更をしない。
-5. 選択結果は `determineEligibleModes` と `rankAndSelectMode` の制約内とし、未実装の `parallel-analysis-implement-review` は選ばない。high/critical は現状の `plan-implement-review` に進む。
+5. `resolve_triage` は採否後の `selectExecutionMode` 結果で、当該 runnable item の暫定 `eligibleModes`、`executionMode`、`roleProgram` をすべて再計算して置換する。更新後の plan を checkpoint に保存してから `ensureRoleState` に渡す。後続の `buildRunPlan` 再実行にも同じ採用値を適用し、既存 roleState がある Issue は §7 に従って変更しない。
+6. 選択結果は `determineEligibleModes` と `rankAndSelectMode` の制約内とし、未実装の `parallel-analysis-implement-review` は選ばない。high/critical は現状の `plan-implement-review` に進む。
 
-明示的な `item.executionMode` / `item.roleProgram` の既存 override も、採用後の eligible modes と実装済み program に照らして検証する。
+通常の plan の自動生成値を明示的 override として扱わない。
+テストや直接呼び出しで mode/program を明示したい場合は、新規の別入力 `modeOverride?: {executionMode:string; roleProgram:string[]}` に隔離し、採用後の eligible modes と実装済み program に照らして検証する。
 矛盾する direct-review は採用せず、`triage-mode-conflict` として構造化採否を取り直す。
 `--single-worker` は role program を使わないため shadow のみとし、assisted 指定時は `triage-single-worker-shadow` を表示する。
 
 未設定、障害、棄却時は既存の Size ベースのモード選択と手動ルーティングをそのまま使う。
+トリアージを有効にした run で fallback が生じた Issue は、`autoAssign` にかかわらず assignment の interrupt を必須にする。
+新規の Issue 単位フラグ `requiresManualAssignment:true` を checkpoint に残し、親が現在の pool 内の route を明示して再開したら消費する。
+resume を待つだけで run 全体を失敗させず、他の Issue は通常どおり進める。
+mode=off の run はこのフラグを設定せず、既存の autoAssign の挙動を維持する。
+§5 の障害理由と、legacy のモードで進める旨を assignment payload に表示する。
 この場合に Size 未設定を自動的に high に変える設計ではないため、従来の見逃しの可能性は残る。
 表示には必ず fallback 理由を付け、親が run 内の明示的 risk/Size override を渡せるようにする。
 
@@ -236,7 +278,7 @@ Astra や Fable など特定モデルの契約、有効化、利用可能性を�
 probe が別モデルへ代替されたことが分かる場合も成功扱いにせず、確認できた canonical model と selector の対応だけを採用する。
 probe は既存の隔離された作業ディレクトリと架空入力を使い、Issue 内容を渡さない。
 
-確認後に親 runtime と run の unavailable 指定を適用して `workerRoutes` を再構成し、そのラベルだけを Jev に渡す。
+確認後に親 runtime と run の unavailable 指定を適用して `workerRoutes` を再構成し、そのラベルと §4 の有効な評価集計だけを Jev に渡す。
 selector と CLI パスは capability record に保持し、Jev には渡さず、回答のラベルを現在の検証済み record へ戻して dispatch する。
 選択済み route は dispatch 直前にも exact model で確認し、使えなければ推薦を破棄する。
 再選定が必要な場合は pool を再検証してから Jev を再度呼ぶか、API 予算切れなら検証済み pool から手動選択する。
@@ -251,7 +293,8 @@ Dynamic assignment には推薦、分布、採否を追加表示するが、最�
 
 checkpoint の新規 `triageByIssue` は `TriageResult` と `TriageDecision` の allowlist 射影、評価時刻、消費枠だけを保存する。
 Issue 本文や任意の rationale を保存する列は作らない。
-routeSetHash はソートした agent/model ラベルから計算し、Issue 更新時刻と policy/model version を併せて鮮度判定に使う。
+routeSetHash はソートした agent/model ラベルから計算し、Issue 更新時刻、policy/model version、評価集合の evidenceVersion を併せて鮮度判定に使う。
+評価集合の変更は route 推薦と採否だけを無効化し、risk/Size の採否を維持する。
 既存 checkpoint にこの欄がない場合は mode=off と扱い、実行済み program を変更しない。
 
 初回 dispatch 前に Issue 更新時刻と pool を再確認する。
@@ -297,7 +340,7 @@ assisted への移行条件は、固定 holdout の high/critical 30 件以上�
 | データ境界 | fake の本文、秘密値、エラー内容が stdout/stderr/checkpoint/telemetry/dispatch payload に出ない。鍵が worker 環境にない |
 | 設定と予算 | off/鍵なしで通信ゼロ、CLI 優先、run 分離、20 回上限、中断再開で予算が復活しない |
 | モード結線 | #517 相当、medium、Size との矛盾、dependency 件数、changeScopeCount、明示的 mode の矛盾、single-worker |
-| graph と checkpoint | 採否後に初回 program を生成、interrupt 再開で再通信しない、古い checkpoint、Issue 更新、pool 更新、program 開始後の維持 |
+| graph と checkpoint | 採否後に初回 program を生成、interrupt 再開で再通信しない、古い checkpoint、更新時刻取得失敗、Issue 更新、pool 更新、評価変更、暫定 mode/program の再計算、fallback で autoAssign が interrupt を省略しない、program 開始後の維持 |
 | ルート検証 | 評価ごとの CLI 再確認、Astra/Fable 相当の未有効モデル除外、一モデルの成功が他を検証済みにしない、古い cache 不使用、選択後の利用不可と再選定上限、親除外、未検証候補の拒否、distinct reviewer、単一路線縮退、abstain、handoff で推薦を再使用しない |
 | opt-in の手動試験 | 架空 Issue だけで実 API の契約、使用量、待ち時間、鍵なし fallback、shadow 表示と assisted 採否を確認 |
 
@@ -315,7 +358,7 @@ API の実呼び出しを CI の合格条件にせず、fake transport と決定
 | A0 | CLI discovery と exact model ごとの実行可否確認を全 worker adapter で統一。cache だけで推薦しない refresh 経路と、未契約モデルを除外する回帰テスト | #524 の設計レビュー |
 | A | 入出力 schema、独立子プロセス、設定と鍵管理、HTTP adapter、予算、データ境界テスト。既定 off。利用条件と保持条件を確認し、architecture §13 と development に開発時通信を記載 | #524 の設計レビュー |
 | B | graph の refresh/prepare/resolve node と checkpoint、shadow の比較表示、既存 dry-run の Jev 無通信の保証。orchestrate skill の両コピーに本文取得の限定例外を記載 | A0 と A |
-| C | 架空の評価セット、固定 holdout、risk 校正と route 比較のレポート。導入判断に必要な数値と限界を提出 | A。運用比較部分は B |
+| C | 架空の評価セット、固定 holdout、risk 校正と route 比較のレポート、version 付き RouteEvidence の作成。導入判断に必要な数値と限界を提出 | A。運用比較部分は B |
 | D | assisted の採否契約、effective risk/Size、mode override 検証、Dynamic assignment の推薦、更新と再開、#517 回帰テスト。利用手順を更新 | B と C の移行条件達成 |
 
 A/B の段階では実行判断を変えない。
