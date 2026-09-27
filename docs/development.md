@@ -296,15 +296,36 @@ minimal, locally-generated tool-use task ("create this exact file with this
 exact marker" in a throwaway sandbox directory), then check the artifact. Only
 a route that actually completed that task under `DEFAULT_HEADLESS_PROBE_TIMEOUT_MS`
 (120s) becomes verified; the probe never persists the generated prompt, the
-marker, or stdout/stderr. Claude candidates are probed independently because
+marker, or stdout/stderr. Every adapter probes each candidate independently because
 model entitlement, quota, or usage-credit availability can differ within the
-same authenticated CLI; one successful Claude model never verifies another.
+same authenticated CLI; one successful model never verifies another. A known
+model substitution reported in CLI model metadata fails with `model-mismatch`.
+A matching artifact does not override a timeout or unsuccessful process exit.
 This is why `claude`, `grok`, and `agy` selectors now
 include a permission-bypass flag (`--permission-mode bypassPermissions` /
 `--dangerously-skip-permissions`) and, for `grok`, `-p`/`--single` instead of a
 bare positional prompt — without them the CLI either stops at an edit-approval
 prompt with no human to answer it, or (for `grok`) tries to open an interactive
 session that requires a real TTY.
+
+For Jev integration (#534), `refreshWorkerRoutes(options)` always discovers a
+fresh pool without reading or writing the capability cache. It returns the
+usual discovery result plus `workerRoutes`, after applying `parentAgent`,
+`unavailableAgents`, and `unavailableModels`. Call it once per selection batch,
+again for reselection or handoff; only a caller within the same batch may share
+that result. The generic cache-aware API remains available for existing callers.
+Probe schema version 3 invalidates caches created by the old adapter-wide probes.
+
+`verifyWorkerRoute(route, options)` is the dispatch preflight API. It re-reads
+the selected agent's catalog, probes only that exact model, and compares the
+fresh selector against the selected route. It never executes an input selector.
+It returns `{ok:true, route, probedAt}` or `{ok:false, reason}` with a closed
+reason; a missing/excluded route or selector drift is `model-not-selectable`.
+Callers must reselect on failure rather than dispatching the old route. These
+APIs are not yet wired into the execution graph; #536/#538 own that integration.
+CLI-reported model metadata can reveal substitutions; a CLI that reports no
+actual model still proves only that its exact selector completed the probe,
+not independent attestation of which backend served it.
 
 Only verified routes enter the pool; closed diagnostic reasons include
 `cli-not-found`, `auth-unavailable`, `model-not-selectable`, `model-mismatch`,

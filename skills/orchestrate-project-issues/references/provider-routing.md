@@ -20,9 +20,9 @@ routes at run time.
    never invented.
 3. Each adapter performs CLI existence and auth/availability checks, then exact model selection. A
    model list alone does not make a route usable: each adapter also runs a **headless execution
-   probe** once (not per model) — spawn the CLI with no TTY attached and a minimal, locally-generated
+   probe** for each exact model/selector pair — spawn the CLI with no TTY attached and a minimal, locally-generated
    tool-use task ("create this exact file with this exact marker"), then check the artifact. Only a
-   route whose adapter actually completed that task under a fixed timeout emits capability records of
+   route whose exact model actually completed that task under a fixed timeout emits capability records of
    shape `{agent, requestedModel, model, role, selector, selectable, verifiable, timeoutMs}`. This
    catches CLIs that answer an auth/model-list check but cannot actually act unattended (e.g. a CLI
    that demands a real TTY, or one whose "print" mode only ever answers in prose and never touches a

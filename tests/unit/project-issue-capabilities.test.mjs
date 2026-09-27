@@ -733,7 +733,7 @@ test("a failed headless probe zeroes out an adapter's records instead of trustin
   assert.deepEqual(result.capabilities, []);
   assert.deepEqual(
     result.diagnostics.filter((entry) => entry.agent === "Grok"),
-    [{ agent: "Grok", status: "failed", reason: REASON_CODES.TTY_REQUIRED }],
+    [{ agent: "Grok", status: "failed", reason: REASON_CODES.TTY_REQUIRED, model: "grok-test" }],
   );
 });
 

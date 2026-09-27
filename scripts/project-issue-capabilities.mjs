@@ -17,12 +17,15 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   PROBE_SCHEMA_VERSION,
+  REASON_CODES,
   getRepositoryCommit,
   readCliVersion,
   runProcess,
   writeJsonAtomic,
 } from "./project-issue-runtime-adapters/shared.mjs";
 import { RUNTIME_ADAPTERS, discoverAllCapabilities } from "./project-issue-runtime-adapters/index.mjs";
+
+import { selectWorkerRoutes } from "./project-issue-plan.mjs";
 
 export const DEFAULT_CAPABILITIES_OUTPUT = "state/project-issue-capabilities.json";
 
@@ -58,6 +61,7 @@ export async function discoverCapabilities(options = {}) {
     headlessExecProbe: options.headlessExecProbe,
     headlessProbeTimeoutMs: options.headlessProbeTimeoutMs,
     only: options.only,
+    modelFilter: options.modelFilter,
   });
 
   // Strip anything that is not a closed diagnostic field (defense in depth).
@@ -243,6 +247,38 @@ export async function loadOrRefreshCapabilities(options = {}) {
   };
   if (!dryRun && cachePath) await writeJsonAtomic(cachePath, merged);
   return { ...merged, reused: false, reprobedAgents: [...staleAgents] };
+}
+
+/**
+ * Fresh pool for one triage batch. Never reads/writes a capability cache.
+ * Call again for every new selection batch; only the caller may share a result
+ * within that batch. Parent/unavailable exclusions remain deterministic.
+ */
+export async function refreshWorkerRoutes(options = {}) {
+  const result = await discoverCapabilities({ ...options, outputPath: undefined });
+  return { ...result, workerRoutes: selectWorkerRoutes(result.capabilities, options) };
+}
+
+/**
+ * Dispatch preflight: re-read the selected agent's catalog and probe only the
+ * exact model. Never execute the supplied selector; compare it to fresh CLI
+ * discovery. A changed selector or a failed model requires route reselection.
+ */
+export async function verifyWorkerRoute(route, options = {}) {
+  const agent = canonicalAgentName(route?.agent);
+  if (!agent || typeof route?.model !== "string" || !route.model ||
+      typeof route?.selector !== "string" || !route.selector) {
+    return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
+  }
+  const result = await refreshWorkerRoutes({
+    ...options, only: [agent], modelFilter: route.model,
+  });
+  const verified = result.workerRoutes.find((candidate) =>
+    candidate.agent === agent && candidate.model === route.model && candidate.selector === route.selector);
+  if (verified) return { ok: true, route: verified, probedAt: result.probedAt };
+  const failure = result.diagnostics.find((entry) =>
+    entry.agent === agent && entry.status === "failed" && (!entry.model || entry.model === route.model));
+  return { ok: false, reason: failure?.reason ?? REASON_CODES.MODEL_NOT_SELECTABLE };
 }
 
 export function parseCapabilitiesCliArgs(argv) {
