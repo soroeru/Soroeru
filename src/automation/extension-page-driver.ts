@@ -1,4 +1,4 @@
-import { isObservationToken, type CollectionObservation, type ObservationToken } from "./collection-observation.js";
+import { isCollectionFingerprints, isObservationToken, type CollectionObservation, type ObservationToken } from "./collection-observation.js";
 // ExtensionPageDriver: PageDriver over the Chrome extension bridge (Issue #338,
 // design issue-291 §5). VisibilityRunner / login / collection / wall-handoff /
 // checkpoints stay surface-agnostic; this module only maps the narrow PageDriver
@@ -95,6 +95,8 @@ export class ExtensionPageDriver implements PageDriver {
       throw new ExtensionBridgeError("invalid collection observation");
     asPageSnapshot(payload.snapshot);
     const observation = payload as unknown as CollectionObservation;
+    // Malformed fingerprints only disqualify the page from map use; they never fail collection.
+    if (observation.fingerprints !== undefined && !isCollectionFingerprints(observation.fingerprints)) delete observation.fingerprints;
     this.url = observation.snapshot.url;
     return observation;
   }

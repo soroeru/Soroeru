@@ -3,9 +3,12 @@ import type { AiProvider } from "../agent/ai/provider.js";
 import type { CollectionGrant } from "../domain/collection-authorization.js";
 import { collectAiVisibility, type AiCollectionOptions } from "./ai-visibility-collector.js";
 import { permittedCollectionItem } from "./ai-visibility-contract.js";
+import { mapPageUrl, matchMapPage, mergeMapPages, type MapMismatch } from "./collection-map.js";
+import type { CollectionObservation } from "./collection-observation.js";
+import { collectionUrlAllowed } from "./visibility-navigation-policy.js";
 import { collectDisclosures } from "./disclosure-collector.js";
 import type { DomainService } from "../domain/domain-service.js";
-import type { Credential, SiteAccount } from "../domain/entities.js";
+import type { Credential, SiteAccount, SiteCollectionMap } from "../domain/entities.js";
 import type { PageSnapshot } from "../types.js";
 import { collectDuringExploration } from "./disclosure-collector.js";
 import { DecisionEngine, type AiEngine } from "./decision-engine.js";
@@ -101,14 +104,7 @@ export class VisibilityRunner {
       ...(this.options.confirmCollectionDestination ? { confirmDestination: this.options.confirmCollectionDestination } : {}),
       unknown,
       wall: async (snapshot) => !!(await this.clearOrPause(site, session, snapshot, "collection", undefined)),
-      tos: async (observation) => {
-        const constraint = domain.addConstraint({ siteAccountId: site.id, kind: "tos-automation-prohibition", detail: "Automation prohibition requires a user decision", evidenceIds: [] });
-        if (!this.options.decideCollectionTos) return "pending";
-        const decision = await this.options.decideCollectionTos({ siteAccountId: site.id, constraintId: constraint.id, observationId: observation.token.observationId, safeSummary: "自動化禁止条項の可能性があります。" });
-        if (!authorized()) return "pending";
-        domain.resolveCollectionConstraint(constraint.id, decision === "proceed" ? "user-proceeded" : "user-stopped");
-        return decision;
-      },
+      tos: (observation) => this.decideCollectionTos(site, observation, authorized),
       commit: async (batch) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 20_000);
@@ -136,6 +132,15 @@ export class VisibilityRunner {
       },
     });
     if (result.reason !== "complete") unknown();
+    if (result.mapPages.length) {
+      // Issue #518: the map is a byproduct of this AI-driven run only; partial runs stay candidates.
+      try {
+        domain.saveSiteCollectionMap({ siteAccountId: site.id, observedAt: this.now(), pages: mergeMapPages(result.mapPages),
+          generationStatus: result.reason === "complete" && !result.fallbackReason ? "ready" : "candidate" });
+      } catch (err) {
+        this.logger.warn("visibility", "site collection map not saved", { domain: site.domain, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
     const status = result.reason === "user-canceled" ? "canceled" : result.reason === "storage-failed" ? "failed" :
       result.reason !== "complete" ? "handoff" :
       result.disclosures > 0 ? "collected" : "no-data";
@@ -143,6 +148,114 @@ export class VisibilityRunner {
       resumeData: { reason: result.reason, disclosures: result.disclosures, relationships: result.relationships, pages: result.pages } });
     return { siteAccountId: site.id, status, disclosures: result.disclosures, relationships: result.relationships,
       constraints: domain.listConstraints().filter(c => c.siteAccountId === site.id).length };
+  }
+
+  private async decideCollectionTos(site: SiteAccount, observation: CollectionObservation, authorized: () => boolean): Promise<"proceed" | "stop" | "pending"> {
+    const domain = this.options.domain;
+    const constraint = domain.addConstraint({ siteAccountId: site.id, kind: "tos-automation-prohibition", detail: "Automation prohibition requires a user decision", evidenceIds: [] });
+    if (!this.options.decideCollectionTos) return "pending";
+    const decision = await this.options.decideCollectionTos({ siteAccountId: site.id, constraintId: constraint.id, observationId: observation.token.observationId, safeSummary: "自動化禁止条項の可能性があります。" });
+    if (!authorized()) return "pending";
+    domain.resolveCollectionConstraint(constraint.id, decision === "proceed" ? "user-proceeded" : "user-stopped");
+    return decision;
+  }
+
+  /**
+   * Issue #518 map-based recollection: navigate to mapped pages and read mapped items
+   * locally, with no provider call. Mismatched entries are isolated; the observed page's
+   * remaining items fall back to the deterministic tier. Never regenerates the map.
+   * Returns undefined when no mapped page could be observed, so the caller falls back to
+   * deterministic exploration.
+   */
+  private async collectFromMap(site: SiteAccount, session: SiteSession, grant: CollectionGrant, runId: string, map: SiteCollectionMap): Promise<VisibilityRunResult | undefined> {
+    const domain = this.options.domain, page = session.page;
+    // egress: target-site — fallback origin string only; navigation targets are the map's same-site URLs.
+    const siteUrl = site.url ?? `https://${site.domain}/`;
+    const authorized = (): boolean => !this.isCanceled() && domain.permitsAiCollection(grant, site.id, runId, 1);
+    const step = async <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(new Error("collection map step timed out")); }, 20_000);
+      });
+      try { return await Promise.race([fn(controller.signal), timeout]); } finally { clearTimeout(timer); controller.abort(); }
+    };
+    let disclosures = 0, relationships = 0, observed = 0;
+    const mismatches: { attributeKey: string; reason: MapMismatch }[] = [];
+    const gone = (entries: SiteCollectionMap["pages"][number]["items"]): void => {
+      mismatches.push(...entries.map(e => ({ attributeKey: e.attributeKey, reason: "page-gone" as const })));
+    };
+    const finish = (reason: "complete" | "wall" | "user-canceled" | "authorization-required" | "session-invalid" | "tos-pending" | "tos-stopped"): VisibilityRunResult => {
+      if (mismatches.length) {
+        domain.addConstraint({ siteAccountId: site.id, kind: "unknown-state", evidenceIds: [],
+          detail: `Site collection map mismatch (${mismatches.length} entries); regenerate the map to refresh it` });
+      }
+      if (reason !== "complete" && reason !== "user-canceled") {
+        domain.addConstraint({ siteAccountId: site.id, kind: "unknown-state", detail: "Map-based collection requires review", evidenceIds: [] });
+      }
+      domain.saveCheckpoint({ workflow: "visibility", siteAccountId: site.id, step: "map-collection", status: reason === "complete" ? "done" : "handoff",
+        resumeData: { reason, mapRevision: map.revision, pages: observed, mismatched: mismatches.length, disclosures, relationships } });
+      const status = reason === "user-canceled" ? "canceled" : reason !== "complete" ? "handoff" : disclosures > 0 ? "collected" : "no-data";
+      return { siteAccountId: site.id, status, disclosures, relationships,
+        constraints: domain.listConstraints().filter(c => c.siteAccountId === site.id).length };
+    };
+    const stopped = (): VisibilityRunResult => finish(this.isCanceled() ? "user-canceled" : "authorization-required");
+    for (const mapPage of map.pages) {
+      if (!authorized()) return stopped();
+      if (!collectionUrlAllowed(mapPage.url, siteUrl)) { gone(mapPage.items); continue; }
+      if (mapPageUrl(page.currentUrl(), siteUrl) !== mapPage.url) {
+        if (!page.gotoCollection) { gone(mapPage.items); continue; }
+        // Redirects are refused by the adapter; a refused or failed navigation means the page is gone.
+        try { await step(s => page.gotoCollection!(mapPage.url, s)); } catch { gone(mapPage.items); continue; }
+        if (!authorized()) return stopped();
+      }
+      const snapshot = await step(() => page.snapshot());
+      if (!authorized()) return stopped();
+      if (this.wallDetection.detect(snapshot)) {
+        // Hand off in the same headed session; afterwards the URL check decides whether this page is still usable.
+        if (!(await this.clearOrPause(site, session, snapshot, "map-collection", undefined))) return finish("wall");
+        if (!authorized()) return stopped();
+      }
+      const observation = await step(s => page.captureCollectionObservation!(s));
+      if (!authorized()) return stopped();
+      if (!collectionUrlAllowed(observation.snapshot.url, siteUrl)) return finish("session-invalid");
+      if (this.wallDetection.detect(observation.snapshot)) { gone(mapPage.items); continue; }
+      if (this.wallDetection.detectTosProhibition(observation.snapshot)) {
+        const decision = await this.decideCollectionTos(site, observation, authorized);
+        if (!authorized()) return stopped();
+        if (decision !== "proceed") return finish(decision === "pending" ? "tos-pending" : "tos-stopped");
+      }
+      const match = matchMapPage(mapPage, observation, siteUrl);
+      if (match.mismatched.length && match.mismatched.every(m => m.reason === "page-gone")) { mismatches.push(...match.mismatched); continue; }
+      if (!(await step(s => page.checkCollectionObservation!(observation.token, s))) || !authorized()) {
+        return this.isCanceled() ? stopped() : finish("session-invalid");
+      }
+      // No await between the final live/authority check and the typed domain writes.
+      observed++;
+      const safeUrl = new URL(observation.snapshot.url).origin + "/";
+      for (const candidate of match.matched) {
+        const evidence = domain.addEvidence({ siteAccountId: site.id, pageUrl: safeUrl, observedAt: this.now(), maskedSnippet: "Collected from site collection map" });
+        // Same tier as the authorized AI-driven run that established and corroborated this entry.
+        domain.addDisclosure({ siteAccountId: site.id, attributeKey: candidate.attributeKey, siteHeldValue: candidate.item.value,
+          observedAt: this.now(), sourcePageUrl: safeUrl, sourceKind: "profile-text", collectionTier: "ai-driven", confidence: 1, evidenceIds: [evidence.id] });
+        disclosures++;
+      }
+      if (match.mismatched.length) {
+        mismatches.push(...match.mismatched);
+        // Deterministic fallback on the same observed page, excluding items already read from the map.
+        const read = new Set(match.matched.map(c => c.item.id));
+        const items = observation.items.filter(i => permittedCollectionItem(i) && !read.has(i.id));
+        disclosures += collectDisclosures({ domain, siteAccount: site, snapshot: { ...observation.snapshot, url: safeUrl },
+          fields: items.map(i => i.field), values: Object.fromEntries(items.map(i => [i.id, i.value])), now: this.now }).disclosures;
+      }
+      relationships += this.recordRelationships(site, { ...observation.snapshot, url: safeUrl });
+    }
+    if (observed === 0) {
+      domain.addConstraint({ siteAccountId: site.id, kind: "unknown-state", evidenceIds: [],
+        detail: "Site collection map pages were not found; regenerate the map to refresh it" });
+      return undefined;
+    }
+    return finish("complete");
   }
 
   private readonly wallDetection = new WallDetectionService();
@@ -164,7 +277,11 @@ export class VisibilityRunner {
     this.logger = options.logger ?? noopLogger;
   }
 
-  async runSite(siteAccountId: string): Promise<VisibilityRunResult> {
+  /**
+   * `regenerateCollectionMap` must only come from an explicit user action (Issue #518):
+   * it skips the stored map and runs AI-driven collection, which replaces the map.
+   */
+  async runSite(siteAccountId: string, runOptions: { regenerateCollectionMap?: boolean } = {}): Promise<VisibilityRunResult> {
     this.wallKindCounts = new Map();
     this.suggestedSavedPageImport = false;
     this.recordedStopThisRun = false;
@@ -399,9 +516,23 @@ export class VisibilityRunner {
       siteAccount = this.updateImportedDisplayName(siteAccount, snapshot);
       const runId = randomUUID();
       const grant = this.options.collectionGrant?.({ siteAccountId, runId, epoch: 1 });
-      if (this.options.collectionProvider && grant && session.page.captureCollectionObservation && session.page.checkCollectionObservation &&
+      if (grant && session.page.captureCollectionObservation && session.page.checkCollectionObservation &&
           this.options.domain.permitsAiCollection(grant, siteAccountId, runId, 1)) {
-        return await this.collectWithAi(siteAccount, session, grant, runId);
+        // A stored map is used first, with no provider call; regeneration is user-initiated only.
+        const map = runOptions.regenerateCollectionMap ? undefined : this.options.domain.getSiteCollectionMap(siteAccountId);
+        if (map) {
+          const mapped = await this.collectFromMap(siteAccount, session, grant, runId, map);
+          if (mapped) return mapped;
+          if (this.isCanceled()) return this.canceledResult(siteAccountId);
+          // No mapped page was observable: deterministic exploration from the start page.
+          // egress: target-site — navigate only to the site account the user imported/selected.
+          await session.page.goto(targetUrl);
+          snapshot = await this.clearOrPause(siteAccount, session, await session.page.snapshot(), "collection", undefined);
+          if (this.isCanceled()) return this.canceledResult(siteAccountId);
+          if (!snapshot) return this.handoffResult(siteAccountId);
+        } else if (this.options.collectionProvider) {
+          return await this.collectWithAi(siteAccount, session, grant, runId);
+        }
       }
       const constraints = this.recordTosConstraint(siteAccount, snapshot);
       if (this.isCanceled()) return this.canceledResult(siteAccountId);

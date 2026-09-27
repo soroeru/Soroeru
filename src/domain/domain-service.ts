@@ -24,6 +24,7 @@ import {
   type PersonalAttribute,
   type SessionState,
   type SiteAccount,
+  type SiteCollectionMap,
   type Sensitivity,
   type StaleState,
   type WorkflowCheckpoint,
@@ -825,6 +826,41 @@ export class DomainService {
     if (input.siteAccountId !== undefined) constraint.siteAccountId = input.siteAccountId;
     this.vault.put("constraint", constraint);
     return constraint;
+  }
+
+  // --- Site Collection Maps (Issue #518) ---
+
+  /** The active map for a site: the highest revision; failed generations are never active. */
+  getSiteCollectionMap(siteAccountId: string): SiteCollectionMap | undefined {
+    return this.vault.list("siteCollectionMap")
+      .filter((map) => map.siteAccountId === siteAccountId && map.generationStatus !== "failed")
+      .sort((a, b) => b.revision - a.revision)[0];
+  }
+
+  /**
+   * Replace the site's map with the next revision. Only an AI-driven generation run
+   * (first collection or explicit user-requested regeneration) calls this; map-based
+   * recollection never regenerates. Vault validation rejects invalid maps.
+   */
+  saveSiteCollectionMap(input: {
+    siteAccountId: string;
+    generationStatus: "candidate" | "ready";
+    observedAt: number;
+    pages: SiteCollectionMap["pages"];
+  }): SiteCollectionMap {
+    const existing = this.vault.list("siteCollectionMap").filter((map) => map.siteAccountId === input.siteAccountId);
+    const map: SiteCollectionMap = {
+      id: randomUUID(),
+      schemaVersion: 1,
+      siteAccountId: input.siteAccountId,
+      revision: Math.max(0, ...existing.map((m) => m.revision)) + 1,
+      generationStatus: input.generationStatus,
+      provenance: { kind: "ai-driven", observedAt: input.observedAt },
+      pages: input.pages,
+    };
+    this.vault.put("siteCollectionMap", map);
+    for (const old of existing) this.vault.delete("siteCollectionMap", old.id);
+    return map;
   }
 
   /** Live reads make revocation/reduction effective before every collection action. */

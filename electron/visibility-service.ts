@@ -103,8 +103,12 @@ export class VisibilityService {
   /**
    * Run Visibility collection for one site. Rejects a concurrent run (one headed
    * session at a time) and returns a sanitized, counts-only result.
+   * `regenerateCollectionMap` is only set from an explicit user action (Issue #518).
    */
-  async runSite(siteAccountId: string): Promise<VisibilityRunResultView> {
+  async runSite(
+    siteAccountId: string,
+    runOptions: { regenerateCollectionMap?: boolean } = {},
+  ): Promise<VisibilityRunResultView> {
     if (!this.domain) {
       return { siteAccountId, status: "locked", disclosures: 0, relationships: 0, constraints: 0 };
     }
@@ -132,7 +136,7 @@ export class VisibilityService {
         ...(this.aiEngine !== undefined ? { aiEngine: this.aiEngine } : {}),
       });
       this.emit({ type: "run-started", siteAccountId });
-      const view = toView(await runner.runSite(siteAccountId));
+      const view = toView(await runner.runSite(siteAccountId, runOptions));
       this.emit({ type: "run-finished", result: view });
       return view;
     } finally {

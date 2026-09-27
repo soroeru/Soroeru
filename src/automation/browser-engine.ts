@@ -17,7 +17,7 @@
 import { chromium, firefox, webkit, type Browser, type BrowserContext, type BrowserContextOptions, type Page } from "playwright";
 import { scanInPage, snapshotPage, waitForFields } from "../agent/scan.js";
 import type { PageDriver, SiteSession } from "./page-driver.js";
-import { collectionObservationInPage, type CollectionObservation, type ObservationToken } from "./collection-observation.js";
+import { collectionObservationInPage, structuralFingerprintInPage, type CollectionObservation, type ObservationToken } from "./collection-observation.js";
 import type { PageSnapshot } from "../types.js";
 
 export type BrowserEngineName = "chromium" | "firefox" | "webkit";
@@ -81,7 +81,7 @@ function isMissingBrowserChannelError(err: unknown, channel: string): boolean {
 export class PlaywrightPageDriver implements PageDriver {
   async captureCollectionObservation(signal: AbortSignal): Promise<CollectionObservation> {
     signal.throwIfAborted();
-    const result = await this.page.evaluate<CollectionObservation>(`(${collectionObservationInPage.toString()})(${scanInPage.toString()}, {kind: "capture", bindingEpoch: 0})`);
+    const result = await this.page.evaluate<CollectionObservation>(`(${collectionObservationInPage.toString()})(${scanInPage.toString()}, {kind: "capture", bindingEpoch: 0}, ${structuralFingerprintInPage.toString()})`);
     signal.throwIfAborted();
     return result;
   }
