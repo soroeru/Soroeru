@@ -1023,13 +1023,16 @@ examples. There is no vault, application state, diff, or tool-history input.
 The parent accepts only validated enums, probability maps, version hashes, and integer
 usage counts. Raw Issue text, HTTP responses, error bodies, and stderr never enter parent
 state or telemetry. `TYPESAFE_API_KEY` is supplied through the triage child's environment
-and removed at both worker dispatch and process spawn. This is a data-flow boundary, not
+and removed before the GitHub CLI subprocess, worker dispatch, and worker process spawn. This is a data-flow boundary, not
 an OS sandbox: child processes share the local user's filesystem privileges.
 
 The contract module validates `TriageInput`, `TriageResult`, `TriageDecision`, and
 `RouteEvidence`. A route can only refer to the supplied verified pool. Comparable,
-recent benchmark evidence is required to ask a routing question; absent evidence yields
-`abstain`, rather than an inference from model names. Runtime availability checks belong
+recent benchmark evidence with identical task-kind coverage is required to ask a routing question; absent evidence yields
+`abstain`, rather than an inference from model names. Mapping the Issue to those task kinds
+remains a model instruction; shadow evaluation must establish its quality before adoption.
+Acceptance validates the corresponding usable result, and preferred routes additionally
+require a confident, non-abstaining route answer. Runtime availability checks belong
 to the capability adapters, independently of suitability evidence.
 
 The runner serializes requests and reserves each attempt durably before starting a child.

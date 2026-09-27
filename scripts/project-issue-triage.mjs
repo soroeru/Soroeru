@@ -80,10 +80,12 @@ export function buildTriageRequest(input, context, disclosure) {
 
 async function fetchIssueForTriage(issue, { signal, env }) {
   const query = `query($number:Int!){repository(owner:"soroeru",name:"Soroeru"){isPrivate issue(number:$number){title body updatedAt}}}`;
+  const githubEnv = { ...env };
+  delete githubEnv.TYPESAFE_API_KEY;
   const { stdout } = await execFileAsync(
     "gh",
     ["api", "graphql", "-f", `query=${query}`, "-F", `number=${issue}`],
-    { encoding: "utf8", maxBuffer: RESPONSE_LIMIT, timeout: 4_000, signal, env },
+    { encoding: "utf8", maxBuffer: RESPONSE_LIMIT, timeout: 4_000, signal, env: githubEnv },
   );
   const parsed = JSON.parse(stdout);
   if (parsed.errors) throw new Error("fetch-failed");

@@ -1,4 +1,6 @@
 import test from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -429,7 +431,7 @@ test("real child fetch keeps private body and gh stderr out of parent", async (t
   });
   await writeFile(
     gh,
-    `#!${process.execPath}\nprocess.stderr.write("fake-private-error"); process.stdout.write(${JSON.stringify(payload)});\n`,
+    `#!${process.execPath}\nif (process.env.TYPESAFE_API_KEY) process.exit(9); process.stderr.write("fake-private-error"); process.stdout.write(${JSON.stringify(payload)});\n`,
     { mode: 0o700 },
   );
   const result = await runTriageChild(input, config, {
@@ -493,4 +495,138 @@ test("provider cannot add answer keys or nominate a route outside the current po
     assert.equal(result.result.reason, "invalid-response");
     assert.doesNotMatch(JSON.stringify(result), /fake-sensitive-response|unavailable-model/);
   }
+});
+
+test("route pool excludes unevaluated models and incompatible task coverage", async () => {
+  const routeEvidence = input.routes.map((r) => ({
+    ...r,
+    profileVersion: "v1",
+    benchmarkVersion: "suite1",
+    evaluatedAt: "2026-09-26T00:00:00Z",
+    tasks: [{ kind: "docs", samples: 10, passed: 9, medianDurationMs: 50 }],
+  }));
+  const extended = normalizeTriageInput({
+    ...input,
+    routes: [...input.routes, { agent: "Grok", model: "no-evidence" }],
+    routeEvidence,
+  });
+  const context = triageContext(extended, now);
+  assert.equal(Object.keys(context.routeMap).length, 2);
+  assert.ok(Object.values(context.routeMap).every((r) => r.agent !== "Grok"));
+  extended.routeEvidence[0].tasks[0].kind = "security";
+  assert.deepEqual(triageContext(extended, now).routeMap, {});
+});
+
+test("accept requires the corresponding usable result and cannot silently override it", async () => {
+  const normalized = normalizeTriageInput(input);
+  const context = triageContext(normalized, now);
+  const { status, reason, ...metadata } = fallbackResult(context, "disabled");
+  const decision = { ...metadata, action: "accept", reason: "accepted" };
+  const { result } = await evaluateTriage(normalized, config, dependencies());
+  assert.equal(parseTriageDecision(decision, context, result).riskCategory, "low");
+  assert.throws(() => parseTriageDecision(decision, context));
+  assert.throws(() => parseTriageDecision(decision, context, fallbackResult(context, "missing-key")));
+  assert.throws(() => parseTriageDecision({ ...decision, riskCategory: "high" }, context, result));
+  const uncertain = structuredClone(result);
+  uncertain.risk.confidence = 0.1;
+  assert.throws(() => parseTriageDecision(decision, context, uncertain));
+  assert.throws(() =>
+    parseTriageDecision({ ...decision, action: "fallback", reason: "legacy-fallback", size: "S" }, context),
+  );
+  assert.equal(
+    parseTriageDecision(
+      { ...decision, action: "override", reason: "domain-review", riskCategory: "high", size: "M" },
+      context,
+    ).riskCategory,
+    "high",
+  );
+});
+
+test("risk and size may be accepted while uncertain route adoption is refused", async () => {
+  const routeEvidence = input.routes.map((r) => ({
+    ...r,
+    profileVersion: "v1",
+    benchmarkVersion: "suite1",
+    evaluatedAt: "2026-09-26T00:00:00Z",
+    tasks: [{ kind: "docs", samples: 10, passed: 9, medianDurationMs: 50 }],
+  }));
+  const normalized = normalizeTriageInput({ ...input, routeEvidence });
+  const context = triageContext(normalized, now);
+  const raw = response();
+  raw.answers.route = { ...distribution(["r0", "r1", "abstain"], "r0"), confidence: 0.1 };
+  const { result } = await evaluateTriage(
+    normalized,
+    config,
+    dependencies({ fetchImpl: async () => Response.json(raw) }),
+  );
+  const { status, reason, ...metadata } = fallbackResult(context, "disabled");
+  const decision = { ...metadata, action: "accept", reason: "accepted" };
+  assert.equal(parseTriageDecision(decision, context, result).preferredRoute, undefined);
+  assert.throws(() =>
+    parseTriageDecision({ ...decision, preferredRoute: context.routeMap.r0 }, context, result),
+  );
+  const confident = structuredClone(result);
+  confident.route.confidence = 1;
+  assert.deepEqual(
+    parseTriageDecision({ ...decision, preferredRoute: context.routeMap.r0 }, context, confident)
+      .preferredRoute,
+    context.routeMap.r0,
+  );
+});
+
+test("actual CLI applies triage mode override to effective run configuration", async (t) => {
+  const dir = await temporary(t);
+  await writeFile(path.join(dir, "git"), `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o700 });
+  const configPath = path.join(dir, "config.yaml");
+  await writeFile(
+    configPath,
+    `project:\n  owner: soroeru\n  ownerType: organization\n  name: Fixture\nrun:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  triage:\n    mode: shadow\n    maxRequests: 3\n`,
+  );
+  const inputPath = path.join(dir, "input.json");
+  const route = (agent, role) => ({
+    agent,
+    role,
+    model: "fixture",
+    selector: "fixture",
+    selectable: true,
+    verifiable: true,
+    timeoutMs: 1000,
+  });
+  await writeFile(
+    inputPath,
+    JSON.stringify({
+      items: [
+        {
+          number: 123,
+          title: "Fixture",
+          url: "https://example.invalid/issues/123",
+          status: "Ready",
+          priority: "P2",
+          dependencies: [],
+        },
+      ],
+      options: {
+        parent: { agent: "Codex", model: "fixture" },
+        capabilities: [route("Codex", "parent"), route("Claude", "worker")],
+      },
+    }),
+  );
+  const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
+  const { stdout } = await promisify(execFile)(
+    process.execPath,
+    [
+      script.pathname,
+      "--input",
+      inputPath,
+      "--issues",
+      "123",
+      "--config",
+      configPath,
+      "--triage",
+      "off",
+      "--dry-run",
+    ],
+    { env: { ...process.env, PATH: dir } },
+  );
+  assert.deepEqual(JSON.parse(stdout).triage, { mode: "off", model: "jev-1.13.0", maxRequests: 3 });
 });

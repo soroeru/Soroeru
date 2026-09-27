@@ -125,12 +125,24 @@ export function triageContext(input, now = Date.now()) {
     .sort((a, b) => `${a.agent}:${a.model}`.localeCompare(`${b.agent}:${b.model}`, "en"));
   if (
     new Set(evidence.map((e) => e.benchmarkVersion)).size > 1 ||
+    new Set(
+      evidence.map((e) =>
+        e.tasks
+          .map((t) => t.kind)
+          .sort()
+          .join(","),
+      ),
+    ).size > 1 ||
     evidence.length < 2 ||
     input.routes.length > 32
   )
     evidence = [];
-  const routeMap = evidence.length ? Object.fromEntries(input.routes.map((r, i) => [`r${i}`, r])) : {};
+  const candidates = input.routes.filter((r) =>
+    evidence.some((e) => e.agent === r.agent && e.model === r.model),
+  );
+  const routeMap = Object.fromEntries(candidates.map((r, i) => [`r${i}`, r]));
   return {
+    model: input.model,
     issue: input.issue,
     issueUpdatedAt: input.issueUpdatedAt,
     policyVersion: TRIAGE_POLICY,
@@ -210,7 +222,7 @@ export function parseTriageResult(raw, input, context) {
   if (Object.keys(context.routeMap).length) answers.route = { ...raw.route, type: "choice" };
   return parseTriageResponse({ model: raw.model, answers }, input, context);
 }
-export function parseTriageDecision(raw, context) {
+export function parseTriageDecision(raw, context, recommendation) {
   keys(raw, [
     "issue",
     "issueUpdatedAt",
@@ -235,11 +247,36 @@ export function parseTriageDecision(raw, context) {
   if (raw.action === "override") requireValue(RISKS.includes(raw.riskCategory) && SIZES.includes(raw.size));
   if (raw.riskCategory !== undefined) requireValue(RISKS.includes(raw.riskCategory));
   if (raw.size !== undefined) requireValue(SIZES.includes(raw.size));
-  if (raw.preferredRoute) {
-    const preferred = route(raw.preferredRoute);
+  let result;
+  if (raw.action === "accept" || raw.preferredRoute !== undefined) {
+    result = parseTriageResult(recommendation, { model: context.model }, context);
+    requireValue(result.status === "recommended");
+  }
+  if (raw.action === "fallback") {
     requireValue(
-      Object.values(context.routeMap).some((r) => r.agent === preferred.agent && r.model === preferred.model),
+      raw.riskCategory === undefined && raw.size === undefined && raw.preferredRoute === undefined,
     );
   }
-  return { ...raw, ...(raw.preferredRoute ? { preferredRoute: route(raw.preferredRoute) } : {}) };
+  if (raw.action === "accept") {
+    requireValue(result.disposition === "usable" && raw.reason === "accepted");
+    requireValue(raw.riskCategory === undefined || raw.riskCategory === result.risk.choice);
+    requireValue(raw.size === undefined || raw.size === result.size.choice);
+  }
+  // Keep the original route distribution for shadow evaluation, but never adopt
+  // an abstaining or uncertain answer as a preferred route.
+  if (raw.preferredRoute !== undefined) {
+    const preferred = route(raw.preferredRoute);
+    const suggested = result.routeMap[result.route.choice];
+    requireValue(
+      !requiresReview(result.route) &&
+        suggested &&
+        preferred.agent === suggested.agent &&
+        preferred.model === suggested.model,
+    );
+  }
+  return {
+    ...raw,
+    ...(raw.action === "accept" ? { riskCategory: result.risk.choice, size: result.size.choice } : {}),
+    ...(raw.preferredRoute ? { preferredRoute: route(raw.preferredRoute) } : {}),
+  };
 }

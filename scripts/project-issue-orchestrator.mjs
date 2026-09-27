@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { normalizeTriageConfig } from "./project-issue-triage-contract.mjs";
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -117,6 +118,7 @@ export async function runOrchestration(input) {
   if (plan.runnable.length && !workerRoutes.length) throw new Error("no-worker-route-available");
   return {
     dryRun,
+    ...(options.triage === undefined ? {} : { triage: normalizeTriageConfig(options.triage) }),
     ...(input.fetchedBytes === undefined ? {} : { fetchedBytes: input.fetchedBytes }),
     plan,
     workerRoutes,
@@ -299,6 +301,7 @@ async function main() {
   const merged = mergeOrchestratorConfig({
     yaml: yamlConfig,
     cli: {
+      ...(cli.triage === undefined ? {} : { triage: cli.triage }),
       ...(cli.projectOwner === undefined ? {} : { projectOwner: cli.projectOwner }),
       ...(cli.ownerType === undefined ? {} : { ownerType: cli.ownerType }),
       ...(cli.projectName === undefined ? {} : { projectName: cli.projectName }),
@@ -310,6 +313,7 @@ async function main() {
   });
   const effectiveCli = {
     ...cli,
+    ...(merged.triage === undefined ? {} : { triage: merged.triage }),
     ...(merged.projectOwner === undefined ? {} : { projectOwner: merged.projectOwner }),
     ...(merged.ownerType === undefined ? {} : { ownerType: merged.ownerType }),
     ...(merged.projectName === undefined ? {} : { projectName: merged.projectName }),
@@ -394,6 +398,7 @@ async function main() {
 
   input.options = {
     ...(input.options ?? {}),
+    ...(effectiveCli.triage === undefined ? {} : { triage: effectiveCli.triage }),
     ...(cli.dryRun === undefined ? {} : { dryRun: cli.dryRun }),
     ...(cli.simulateMilestone === undefined ? {} : { simulateMilestone: cli.simulateMilestone }),
     ...(effectiveCli.maxParallel === undefined ? {} : { maxParallel: effectiveCli.maxParallel }),
