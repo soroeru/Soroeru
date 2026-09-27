@@ -15,9 +15,9 @@ routes at run time.
    automatically when its recorded CLI path/`--version` no longer matches. Run
    `node scripts/project-issue-capabilities.mjs` directly only when you specifically want an
    unconditional full re-discovery outside the orchestrator (it always probes every adapter fresh).
-2. Adapters are evaluated in fixed order: **Codex → Claude → Grok → Gemini**. Gemini is probed through
-   the Antigravity CLI (`agy`) when present; a bare `gemini` binary is accepted if it is on `PATH`, but
-   never invented.
+2. Adapters are evaluated in fixed order: **Codex → Claude → Grok → Gemini**. Only the independent
+   `gemini` CLI is eligible for Gemini. Antigravity (`agy`) was withdrawn by the Product Owner
+   and is excluded even when installed or present in an old cache/explicit capability file.
 3. Each adapter performs CLI existence and auth/availability checks, then exact model selection. A
    model list alone does not make a route usable: each adapter also runs a **headless execution
    probe** for each exact model/selector pair — spawn the CLI with no TTY attached and a minimal, locally-generated
@@ -68,5 +68,6 @@ the capability record, reusing the exact `selector` and `model`. Use
 or the `dispatchWorker` export. The worker receives only Issue number, agent/model route, release
 policy, and next milestone.
 
-Runtime interfaces differ. Do not hard-code a claim that Claude, Codex, Grok, Gemini, or Antigravity
-is permanently available or unavailable.
+Runtime interfaces differ. Verify availability for each supported CLI and exact model.
+Antigravity is an explicit operator exclusion, not a transient probe failure; it must not be
+reintroduced by cache refresh or handoff.

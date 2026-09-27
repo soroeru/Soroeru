@@ -90,7 +90,7 @@ test("discovers only verified routes and keeps partial failures isolated", async
   );
   await makeFakeBin(
     bin,
-    "agy",
+    "gemini",
     `
     if (process.argv[2] === "models") {
       process.stderr.write("auth required\\n");
@@ -524,29 +524,29 @@ test("dispatch timeout kills only the worker process tree", async () => {
   assert.equal(waited.timedOut, true);
 });
 
-test("splitSelector preserves quoted multi-word model ids used by Gemini/agy", () => {
-  assert.deepEqual(splitSelector(`/bin/agy --model "Gemini 3.1 Pro (High)" --print`), [
-    "/bin/agy",
+test("splitSelector preserves quoted multi-word model ids used by Gemini", () => {
+  assert.deepEqual(splitSelector(`/bin/gemini --model "Gemini 3.1 Pro (High)" --print`), [
+    "/bin/gemini",
     "--model",
     "Gemini 3.1 Pro (High)",
     "--print",
   ]);
 });
 
-test("Gemini adapter records agy models with exact display names", async () => {
+test("Gemini adapter records native CLI models with exact display names", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-cap-gemini-"));
   const bin = path.join(directory, "bin");
   await mkdir(bin);
-  const agyPath = path.join(bin, "agy");
-  await makeFakeBin(bin, "agy", "process.exit(0);");
+  const geminiPath = path.join(bin, "gemini");
+  await makeFakeBin(bin, "gemini", "process.exit(0);");
   const result = await discoverAllCapabilities({
     env: { ...process.env, PATH: isolatedPath(bin) },
     pathEnv: isolatedPath(bin),
     timeoutMs: 3_000,
     workerTimeoutMs: 9_000,
-    resolveExecutable: async (name) => (name === "agy" || name === agyPath ? agyPath : null),
+    resolveExecutable: async (name) => (name === "gemini" || name === geminiPath ? geminiPath : null),
     runProcess: async (command, args) => {
-      if (path.basename(command) === "agy" && args[0] === "models") {
+      if (path.basename(command) === "gemini" && args[0] === "models") {
         return {
           code: 0,
           signal: null,
@@ -570,10 +570,7 @@ test("Gemini adapter records agy models with exact display names", async () => {
   ]);
   assert.ok(geminiWorkers[0].selector.includes("--model"));
   assert.ok(geminiWorkers[0].selector.includes("Gemini 3.1 Pro (High)"));
-  // agy's `--print` is a Go string flag consuming the next argv token as the
-  // prompt, so it must be the last selector token (launch appends the prompt
-  // right after it) and skip-permissions/print-timeout must come before it.
-  assert.match(geminiWorkers[0].selector, /--dangerously-skip-permissions --print-timeout 9000ms --print$/);
+  assert.doesNotMatch(geminiWorkers[0].selector, /--print-timeout|--dangerously-skip-permissions/);
 });
 
 test("capabilities CLI module is importable from the repository root", async () => {

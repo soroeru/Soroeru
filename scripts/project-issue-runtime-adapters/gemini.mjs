@@ -5,6 +5,7 @@ import {
   buildWorkerPrompt,
   capabilityRecord,
   diagnostic,
+  isAntigravityCommand,
   quoteSelectorArg,
   resolveExecutable,
   verifyModelCandidate,
@@ -16,13 +17,10 @@ import {
 export const agent = "Gemini";
 export const evaluationOrder = 3;
 
-/**
- * Antigravity (`agy`) is the Gemini runtime used in this repository.
- * A bare `gemini` CLI is also accepted when present, but never invented.
- */
-const CLI_NAMES = ["agy", "gemini"];
+// Only the independent Gemini CLI is eligible; Antigravity is retired.
+const CLI_NAMES = ["gemini"];
 
-function parseAgyModels(stdout) {
+function parseModels(stdout) {
   const text = String(stdout ?? "").trim();
   if (!text) return null;
   try {
@@ -45,7 +43,7 @@ function parseAgyModels(stdout) {
     if (!name) continue;
     if (/^available models/i.test(name) || /^usage of/i.test(name)) continue;
     // Reject prose/tips: require a product-style model display name.
-    // Real agy lines look like "Gemini 3.1 Pro (High)" / "Claude Sonnet 4.6 (Thinking)".
+    // Preserve model labels returned by the CLI, including spaces.
     if (!/^(Gemini|Claude|GPT)\b/i.test(name)) continue;
     if (/[.!?]$/.test(name)) continue;
     models.push({ model: name, requestedModel: name });
@@ -63,13 +61,12 @@ export async function discover(ctx = {}) {
   const records = [];
 
   let cliPath = null;
-  let cliName = null;
   const names = ctx.cliPath ? [ctx.cliPath] : CLI_NAMES;
   for (const name of names) {
+    if (isAntigravityCommand(name)) continue;
     const resolved = await resolve(name, { env, pathEnv: ctx.pathEnv });
-    if (resolved) {
+    if (resolved && !isAntigravityCommand(resolved)) {
       cliPath = resolved;
-      cliName = name;
       break;
     }
   }
@@ -88,7 +85,7 @@ export async function discover(ctx = {}) {
     return { records, diagnostics };
   }
 
-  const models = parseAgyModels(listed.stdout);
+  const models = parseModels(listed.stdout);
   if (!models?.length) {
     diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE }));
     return { records, diagnostics };
@@ -96,7 +93,6 @@ export async function discover(ctx = {}) {
 
   const candidates = [];
   for (const { model, requestedModel } of models) {
-    // Prefer print/non-interactive flags for agy when launching workers.
     const modelArg = quoteSelectorArg(model);
     if (!modelArg) {
       diagnostics.push(
@@ -104,18 +100,7 @@ export async function discover(ctx = {}) {
       );
       continue;
     }
-    // `--dangerously-skip-permissions` is required for a tool call (file
-    // write) to complete headlessly; without it `--print` answers in prose
-    // and exits 0 with no artifact produced. Flag order is load-bearing:
-    // agy uses Go-style flag parsing where `--print` is a *string* flag that
-    // consumes the next argv token as the prompt, so `--print` must be the
-    // final selector token with the prompt appended directly after it —
-    // `--print --dangerously-skip-permissions <prompt>` makes agy treat the
-    // permissions flag itself as the prompt and ignore the real one.
-    const selector =
-      cliName === "agy" || /\/agy$/.test(cliPath)
-        ? `${cliPath} --model ${modelArg} --dangerously-skip-permissions --print-timeout ${workerTimeoutMs}ms --print`
-        : `${cliPath} --model ${modelArg}`;
+    const selector = `${cliPath} --model ${modelArg}`;
     candidates.push({ model, requestedModel, selector });
   }
   const selected = ctx.modelFilter === undefined
@@ -147,7 +132,9 @@ export async function launch(ctx, job) {
   const env = ctx.env ?? process.env;
   const tokens = splitSelector(job.selector);
   const command = tokens[0];
+  if (isAntigravityCommand(command)) throw new Error("runtime-retired");
   const cliPath = (await resolve(command, { env, pathEnv: ctx.pathEnv })) ?? command;
+  if (isAntigravityCommand(cliPath)) throw new Error("runtime-retired");
   const prompt = buildWorkerPrompt(job);
   const args = [...tokens.slice(1), prompt];
   return runSpawn(cliPath, args, {

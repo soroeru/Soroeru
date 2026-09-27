@@ -491,23 +491,17 @@ test("excludes every model of the parent agent from the worker route pool", () =
   ];
   assert.deepEqual(
     selectWorkerRoutes(capabilities, { parentAgent: "Codex" }).map(({ agent, model }) => `${agent}:${model}`),
-    ["Claude:sonnet", "agy:gemini-2.5-pro", "Grok:grok-4"],
+    ["Claude:sonnet", "Grok:grok-4"],
   );
 });
 
-test("treats agy as the Gemini parent runtime alias", () => {
-  const capabilities = [workerRoute("Gemini", "Gemini 3.1 Pro (High)"), workerRoute("Claude", "sonnet")];
-  assert.deepEqual(
-    selectWorkerRoutes(capabilities, { parentAgent: "agy" }).map(({ agent }) => agent),
-    ["Claude"],
-  );
-  assert.equal(
-    validateCapabilities(
-      [{ agent: "agy", model: "Gemini 3.1 Pro (High)", role: "parent" }],
-      [{ ...capabilities[0], role: "parent", requestedModel: "Gemini 3.1 Pro (High)" }],
-    )[0].agent,
-    "Gemini",
-  );
+test("does not treat retired agy as an eligible Gemini runtime alias", () => {
+  const capabilities = [workerRoute("Gemini", "fixture"), workerRoute("Claude", "sonnet")];
+  assert.throws(() => selectWorkerRoutes(capabilities, { parentAgent: "agy" }), /runtime-retired/);
+  assert.throws(() => validateCapabilities(
+    [{ agent: "agy", model: "fixture", role: "parent" }],
+    [{ ...capabilities[0], role: "parent" }],
+  ), /routing-unavailable/);
 });
 
 test("orchestration degrades to the remaining agents below maxParallel", async () => {

@@ -28,7 +28,7 @@ export const DEFAULT_WORKER_TIMEOUT_MS = 3_600_000;
 // status check), so it gets its own, longer budget.
 export const DEFAULT_HEADLESS_PROBE_TIMEOUT_MS = 120_000;
 
-export const PROBE_SCHEMA_VERSION = 3;
+export const PROBE_SCHEMA_VERSION = 4;
 
 /** Stderr/stdout patterns that indicate the CLI demanded a real TTY/PTY. */
 const TTY_REQUIRED_PATTERN =
@@ -288,6 +288,16 @@ export function splitSelector(selector) {
   }
   if (!tokens.length) throw new Error("invalid-selector");
   return tokens;
+}
+
+/** Antigravity was withdrawn by the Product Owner; do not revive cached routes. */
+export function isAntigravityCommand(command) {
+  return typeof command === "string" && /^(agy|antigravity)(?:\.exe)?$/i.test(command.split(/[\\/]/).at(-1));
+}
+export function isRetiredRuntimeRoute(route) {
+  if (/^(agy|antigravity)$/i.test(String(route?.agent ?? "").trim())) return true;
+  if (typeof route?.selector !== "string" || !route.selector.trim()) return false;
+  return isAntigravityCommand(splitSelector(route.selector)[0]);
 }
 
 export function capabilityRecord({

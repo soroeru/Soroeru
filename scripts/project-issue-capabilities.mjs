@@ -19,6 +19,8 @@ import {
   PROBE_SCHEMA_VERSION,
   REASON_CODES,
   getRepositoryCommit,
+  isAntigravityCommand,
+  isRetiredRuntimeRoute,
   readCliVersion,
   runProcess,
   writeJsonAtomic,
@@ -185,7 +187,9 @@ export async function loadOrRefreshCapabilities(options = {}) {
   const schemaMismatch = cached && cached.probeSchemaVersion !== PROBE_SCHEMA_VERSION;
   const commitMismatch = cached && currentRepositoryCommit && cached.repositoryCommit !== currentRepositoryCommit;
 
-  if (!cached || refresh || schemaMismatch || commitMismatch) {
+  const retiredCache = cached && ((cached.capabilities ?? []).some(isRetiredRuntimeRoute) ||
+    Object.values(cached.cli ?? {}).some(entry => isAntigravityCommand(entry?.path)));
+  if (!cached || refresh || schemaMismatch || commitMismatch || retiredCache) {
     const fresh = await discoverCapabilities({
       ...discoveryOptions,
       ...(dryRun ? {} : { outputPath: cachePath }),
@@ -266,6 +270,7 @@ export async function refreshWorkerRoutes(options = {}) {
  * discovery. A changed selector or a failed model requires route reselection.
  */
 export async function verifyWorkerRoute(route, options = {}) {
+  if (isRetiredRuntimeRoute(route)) return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
   const agent = canonicalAgentName(route?.agent);
   if (!agent || typeof route?.model !== "string" || !route.model ||
       typeof route?.selector !== "string" || !route.selector) {

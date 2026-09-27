@@ -64,7 +64,7 @@ npx playwright install chromium firefox webkit
 ### Agent configuration
 
 `AGENTS.md` is the concise shared instruction source. `CLAUDE.md` imports it with `@AGENTS.md` and
-contains Claude-only session conventions; `.agents/rules/GEMINI.md` is a small Gemini/agy adapter,
+contains Claude-only session conventions; `.agents/rules/GEMINI.md` is a small Gemini CLI adapter,
 not a synchronized copy. Area-specific guidance lives in Claude path rules and nested `AGENTS.md`
 files so it loads only when relevant.
 
@@ -288,7 +288,7 @@ with `no-worker-route-available` before any worktree mutation.
 
 Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
 `scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
-Gemini; Gemini via Antigravity `agy` when present). An adapter that passes
+Gemini; only the independent `gemini` CLI, with Antigravity `agy` excluded). An adapter that passes
 auth/model-list checks is still not enough: every selectable route also runs a
 **headless execution probe** for its exact model selector (`runHeadlessExecProbe` in
 `project-issue-runtime-adapters/shared.mjs`) — spawn the CLI with no TTY and a
@@ -301,7 +301,7 @@ model entitlement, quota, or usage-credit availability can differ within the
 same authenticated CLI; one successful model never verifies another. A known
 model substitution reported in CLI model metadata fails with `model-mismatch`.
 A matching artifact does not override a timeout or unsuccessful process exit.
-This is why `claude`, `grok`, and `agy` selectors now
+This is why `claude` and `grok` selectors
 include a permission-bypass flag (`--permission-mode bypassPermissions` /
 `--dangerously-skip-permissions`) and, for `grok`, `-p`/`--single` instead of a
 bare positional prompt — without them the CLI either stops at an edit-approval
@@ -316,7 +316,12 @@ again for reselection or handoff; only a caller within the same batch may share
 that result. The generic cache-aware API remains available for existing callers.
 Ordinary cache reads retain partial successes without re-probing the whole
 agent because one model failed; fully unavailable agents are still retried.
-Probe schema version 3 invalidates caches created by the old adapter-wide probes.
+Probe schema version 4 invalidates older probes, including cached Antigravity routes.
+
+Antigravity (`agy`) is excluded from worker discovery and dispatch following the
+Product Owner's cancellation (#534). Installed binaries and cached or explicitly supplied
+`Gemini`/`agy` selectors do not override this exclusion. Independent Gemini CLI routes still
+require successful per-model verification.
 
 `verifyWorkerRoute(route, options)` is the dispatch preflight API. It re-reads
 the selected agent's catalog, probes only that exact model, and compares the
@@ -333,14 +338,10 @@ Only verified routes enter the pool; closed diagnostic reasons include
 `cli-not-found`, `auth-unavailable`, `model-not-selectable`, `model-mismatch`,
 `verification-timeout`, `probe-failed`, and the headless-probe-specific
 `tty-required` (the CLI demanded a real terminal), `non-agentic-print-mode`
-(exited cleanly but never produced the artifact — observed for `agy --print`
-without the skip-permissions flag or with the flags mis-ordered), and
+(exited cleanly but never produced the artifact), and
 `headless-exec-failed` (any other unexplained failure, including a model-specific
 credit or quota rejection). Failed diagnostics contain only the closed reason
-and model label, never CLI response bodies. Two launch quirks
-found by live verification: `agy`'s `--print` is a Go-style _string_ flag
-that consumes the next argv token as the prompt, so it must be the final
-selector token with the prompt appended directly after it; and `codex exec`
+and model label, never CLI response bodies. The `codex exec` command
 refuses to run outside a trusted/git directory, so the Codex probe passes
 `--skip-git-repo-check` (probe-only — real dispatch runs inside the Issue's
 git worktree and needs no such flag). Dispatch of a selected route reuses the same exact
@@ -365,7 +366,7 @@ canonical model identifier, for example:
 The permission-bypass flags described above are baked into the **selector
 itself**, not just the probe invocation — `project-issue-dispatch.mjs`
 launches every real worker/parent for these agents with that exact same
-selector, so a dispatched Claude, Grok, or Antigravity worker always runs
+selector, so a dispatched Claude, Grok, or native Gemini worker always runs
 with permission prompts fully bypassed, the same way `codex exec` already
 does. This is required for unattended dispatch to work at all (there is no
 human present to answer an approval prompt), not a change specific to this

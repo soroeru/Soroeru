@@ -1,16 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, readFile, writeFile, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { discoverCapabilities, loadOrRefreshCapabilities, refreshWorkerRoutes, verifyWorkerRoute } from "../../scripts/project-issue-capabilities.mjs";
 
-import { runHeadlessExecProbe } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
+import { launchWithAdapter } from "../../scripts/project-issue-runtime-adapters/index.mjs";
+import { selectWorkerRoutes } from "../../scripts/project-issue-plan.mjs";
+import { runHeadlessExecProbe, PROBE_SCHEMA_VERSION, getRepositoryCommit } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
 
 async function fakeRuntime(t, agent) {
   const directory = await mkdtemp(path.join(tmpdir(), "soroeru-model-verification-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const name = { Codex: "codex", Claude: "claude", Grok: "grok", Gemini: "agy" }[agent];
+  const name = { Codex: "codex", Claude: "claude", Grok: "grok", Gemini: "gemini" }[agent];
   const cliPath = path.join(directory, name);
   const models = ["working", "unavailable", "quota", "unauthorized", "substituted", "working-last"];
   await writeFile(cliPath, `#!${process.execPath}
@@ -152,4 +154,46 @@ test("an agent with no successful model is retried on the next cache read", asyn
   const recovered = await loadOrRefreshCapabilities({ ...options, cachePath });
   assert.equal(recovered.reused, false);
   assert.ok(recovered.capabilities.some(r => r.model === "working"));
+});
+
+test("Antigravity is excluded from discovery, including explicit CLI overrides", async (t) => {
+  const { directory, options } = await fakeRuntime(t, "Gemini");
+  const agy = path.join(directory, "agy");
+  await rename(path.join(directory, "gemini"), agy);
+  let invoked = 0;
+  for (const adapters of [undefined, { Gemini: { cliPath: agy } }]) {
+    const result = await discoverCapabilities({ ...options, adapters, runProcess: async () => { invoked++; throw Error("unexpected retired runtime"); } });
+    assert.deepEqual(result.capabilities, []);
+  }
+  assert.equal(invoked, 0);
+});
+
+test("retired routes cannot return through explicit worker pools or dispatch", async () => {
+  let spawned = 0;
+  const record = { agent: "Gemini", model: "fixture", selector: '"/retired path/agy" --model fixture --print', role: "worker", selectable: true, verifiable: true, timeoutMs: 1000 };
+  for (const retired of [record, { ...record, agent: "Antigravity" }, { ...record, agent: "agy" }]) {
+    assert.deepEqual(selectWorkerRoutes([retired]), []);
+    assert.equal((await verifyWorkerRoute(retired)).ok, false);
+    await assert.rejects(launchWithAdapter(retired.agent, retired, { spawnWorker: () => { spawned++; } }), /runtime-retired/);
+  }
+  assert.equal(spawned, 0);
+  const native = { ...record, selector: "/native/gemini --model fixture" };
+  assert.deepEqual(selectWorkerRoutes([native]), [native]);
+});
+
+test("fresh-looking Antigravity cache is discarded before CLI version checks", async (t) => {
+  const { directory, options } = await fakeRuntime(t, "Gemini");
+  const agy = path.join(directory, "agy");
+  await rename(path.join(directory, "gemini"), agy);
+  const cachePath = path.join(directory, "capabilities.json");
+  await writeFile(cachePath, JSON.stringify({
+    probeSchemaVersion: PROBE_SCHEMA_VERSION, repositoryCommit: await getRepositoryCommit(process.cwd()),
+    capabilities: [{ agent: "Gemini", model: "working", role: "worker", selector: `${agy} --model working --print`, selectable: true, verifiable: true, timeoutMs: 1000 }],
+    diagnostics: [], cli: { Gemini: { path: agy, version: "test-cli-1" } },
+  }));
+  let invoked = 0;
+  const result = await loadOrRefreshCapabilities({ ...options, cachePath, runProcess: async () => { invoked++; throw Error("retired runtime invoked"); } });
+  assert.deepEqual(result.capabilities, []);
+  assert.equal(result.reused, false);
+  assert.equal(invoked, 0);
 });
