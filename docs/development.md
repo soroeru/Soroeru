@@ -314,6 +314,8 @@ usual discovery result plus `workerRoutes`, after applying `parentAgent`,
 `unavailableAgents`, and `unavailableModels`. Call it once per selection batch,
 again for reselection or handoff; only a caller within the same batch may share
 that result. The generic cache-aware API remains available for existing callers.
+Ordinary cache reads retain partial successes without re-probing the whole
+agent because one model failed; fully unavailable agents are still retried.
 Probe schema version 3 invalidates caches created by the old adapter-wide probes.
 
 `verifyWorkerRoute(route, options)` is the dispatch preflight API. It re-reads

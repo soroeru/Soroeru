@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { discoverCapabilities, refreshWorkerRoutes, verifyWorkerRoute } from "../../scripts/project-issue-capabilities.mjs";
+import { discoverCapabilities, loadOrRefreshCapabilities, refreshWorkerRoutes, verifyWorkerRoute } from "../../scripts/project-issue-capabilities.mjs";
 
 import { runHeadlessExecProbe } from "../../scripts/project-issue-runtime-adapters/shared.mjs";
 
@@ -127,3 +127,29 @@ for (const [outcome, reason] of [
     assert.deepEqual(result, { ok: false, reason });
   });
 }
+
+test("ordinary cache reuses partial success while explicit refresh rechecks unavailable siblings", async (t) => {
+  const { directory, options } = await fakeRuntime(t, "Codex");
+  const cachePath = path.join(directory, "capabilities.json");
+  await discoverCapabilities({ ...options, outputPath: cachePath });
+  await writeFile(path.join(directory, "disabled.json"), JSON.stringify(["working"]));
+  const cached = await loadOrRefreshCapabilities({ ...options, cachePath });
+  assert.equal(cached.reused, true);
+  assert.ok(cached.capabilities.some(r => r.model === "working"));
+  const refreshed = await loadOrRefreshCapabilities({ ...options, cachePath, refresh: true });
+  assert.equal(refreshed.reused, false);
+  assert.equal(refreshed.capabilities.some(r => r.model === "working"), false);
+  assert.ok(refreshed.capabilities.some(r => r.model === "working-last"));
+});
+
+test("an agent with no successful model is retried on the next cache read", async (t) => {
+  const { directory, options } = await fakeRuntime(t, "Codex");
+  const cachePath = path.join(directory, "capabilities.json");
+  const disabled = path.join(directory, "disabled.json");
+  await writeFile(disabled, JSON.stringify(["working", "working-last"]));
+  await discoverCapabilities({ ...options, outputPath: cachePath });
+  await rm(disabled);
+  const recovered = await loadOrRefreshCapabilities({ ...options, cachePath });
+  assert.equal(recovered.reused, false);
+  assert.ok(recovered.capabilities.some(r => r.model === "working"));
+});

@@ -204,13 +204,14 @@ export async function loadOrRefreshCapabilities(options = {}) {
     throw new Error(`unknown-invalidate-agent:${unknownInvalidateAgents.join(",")}`);
   }
 
-  // A cached "failed" diagnostic is never trusted as permanent: re-checking
-  // it is cheap (an auth/model-list probe that fails fast, or nothing at all
-  // when the CLI still isn't on PATH) and the alternative — silently
-  // excluding that agent from routing forever once its `cli` entry (if any)
-  // stops drifting — is the outcome Issue #434's review flagged.
+  // Retry wholly unavailable agents, but retain ordinary cache reuse when
+  // only a sibling model failed. Fresh triage batches use refreshWorkerRoutes
+  // and always re-probe, including models with a previously failed probe.
   const previouslyFailedAgents = (cached.diagnostics ?? [])
-    .filter((entry) => entry.status === "failed")
+    .filter((entry) => entry.status === "failed" && (
+      !entry.model || !(cached.capabilities ?? []).some((record) =>
+        record.agent === entry.agent && record.selectable === true && record.verifiable === true)
+    ))
     .map((entry) => entry.agent);
 
   const staleAgents = new Set([
