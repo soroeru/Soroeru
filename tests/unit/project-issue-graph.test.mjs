@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -380,6 +380,106 @@ test("one stale Issue keeps another Issue's pending assignment intact", async ()
   assert.deepEqual((await run.state()).assignments.map(({ number }) => number), [2]);
   await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
   assert.deepEqual(deps.dispatched.map(({ issueNumber }) => issueNumber).sort(), [1, 2]);
+});
+
+test("a changed route evaluation before first dispatch invalidates shadow and requires manual assignment", async () => {
+  let evidenceReads = 0;
+  const evaluatedAt = new Date().toISOString();
+  const evaluation = (agent, model) => ({
+    agent, model, evaluatedAt, benchmarkVersion: "fake-bench-1",
+    tasks: [{ kind: "implementation", samples: 10 }],
+  });
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => (++evidenceReads === 1
+      ? [] : [evaluation("Claude", "sonnet"), evaluation("Grok", "grok-4")]),
+    runTriage: async (input) => ({ result: shadowRecommendation(input) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "stale-input");
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal(deps.dispatched.length, 1);
+});
+
+test("Jev receives only freshly verified worker routes, never the parent runtime or unavailable models", async () => {
+  const sent = [];
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: [
+      parentRecord, workerRoute("Codex", "gpt-5-codex"),
+      workerRoute("Claude", "sonnet"), workerRoute("Grok", "grok-4"),
+    ] }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => { sent.push(input.routes); return { result: shadowRecommendation(input) }; },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: {
+    triage: shadowConfig, unavailableModels: ["grok-4"],
+  } }));
+  assert.deepEqual(sent, [[{ agent: "Claude", model: "sonnet" }]]);
+  assert.deepEqual(deps.dispatched.map(({ route }) => route.model), ["sonnet"]);
+});
+
+test("triage exception text never reaches state, checkpoint, interrupt, or summary", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-shadow-error-"));
+  try {
+    const markers = ["fake-key-DO_NOT_STORE", "FAKE_ISSUE_BODY_DO_NOT_STORE"];
+    const deps = makeDeps({
+      refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+      fetchTriageRevision: async () => revision,
+      triageEvidence: async () => [],
+      runTriage: async () => { throw new Error(`TYPESAFE_API_KEY=${markers[0]} body=${markers[1]}`); },
+      verifyTriageRoute: async () => ({ ok: true }),
+    });
+    const checkpointFile = path.join(directory, "run.json");
+    const run = makeRun({ deps, checkpointer: await FileCheckpointSaver.load(checkpointFile) });
+    const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+    assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "provider-error");
+    const state = await run.state();
+    const outputs = [
+      JSON.stringify(paused.__interrupt__), JSON.stringify(state),
+      JSON.stringify(buildSummary(state, "in-progress")), await readFile(checkpointFile, "utf8"),
+    ];
+    for (const output of outputs)
+      for (const marker of markers) assert.equal(output.includes(marker), false, `leaks ${marker}`);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a checkpoint written before shadow triage resumes as triage off without contacting Jev", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-legacy-checkpoint-"));
+  try {
+    const unexpected = async () => { throw new Error("unexpected-triage-call"); };
+    const deps = makeDeps({
+      refreshTriageRoutes: unexpected, fetchTriageRevision: unexpected,
+      runTriage: unexpected, verifyTriageRoute: unexpected,
+    });
+    const file = path.join(directory, "run.json");
+    const first = makeRun({ deps, checkpointer: await FileCheckpointSaver.load(file) });
+    const input = makeInput({ items: [item(1)] });
+    delete input.config.triage;
+    await first.invoke(input);
+    // Drop the triage sections to mimic a checkpoint file written before #536.
+    const { triageBudgets, triageAttempts, ...legacy } = JSON.parse(await readFile(file, "utf8"));
+    assert.deepEqual([triageBudgets, triageAttempts], [{}, {}]);
+    await writeFile(file, JSON.stringify(legacy));
+    const saver = await FileCheckpointSaver.load(file);
+    assert.equal(saver.triageBudget(triageRunId("t")), null);
+    const restarted = makeRun({ deps, checkpointer: saver });
+    await restarted.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
+    const done = await restarted.resume({ accepted: true });
+    assert.equal(done.runStatus, "complete");
+    assert.equal(Object.hasOwn(done.summary, "shadowTriage"), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("fails closed on a dependency cycle", async () => {
