@@ -76,7 +76,10 @@ export async function dispatchWorker(input, ctx = {}) {
     cwd: input.cwd,
   };
 
-  const handle = await launchWithAdapter(route.agent, job, ctx);
+  // Development-only Jev credentials belong to the triage child, never workers.
+  const workerEnv = { ...(ctx.env ?? process.env) };
+  delete workerEnv.TYPESAFE_API_KEY;
+  const handle = await launchWithAdapter(route.agent, job, { ...ctx, env: workerEnv });
   return {
     agent: route.agent,
     model: route.model,

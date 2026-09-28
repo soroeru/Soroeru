@@ -414,8 +414,10 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error("invalid-timeout-ms");
   }
+  const workerEnv = { ...env };
+  delete workerEnv.TYPESAFE_API_KEY;
   const child = spawn(command, args, {
-    env,
+    env: workerEnv,
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
