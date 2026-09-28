@@ -1,8 +1,14 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import { MemorySaver } from "@langchain/langgraph-checkpoint";
 
 import { writeJsonAtomic } from "./project-issue-runtime-adapters/shared.mjs";
+
+/** Domain-separated, closed-alphabet key; avoids prototype names and arbitrary CLI IDs. */
+export function triageRunId(threadId) {
+  return `t-${createHash("sha256").update(String(threadId)).digest("hex")}`;
+}
 
 /**
  * File-backed LangGraph checkpoint saver for project-issue orchestration.
@@ -143,6 +149,8 @@ export class FileCheckpointSaver extends MemorySaver {
     await super.deleteThread(threadId);
     delete this.#triageBudgets[threadId];
     delete this.#triageAttempts[threadId];
+    delete this.#triageBudgets[triageRunId(threadId)];
+    delete this.#triageAttempts[triageRunId(threadId)];
     await this.#persist();
   }
 }

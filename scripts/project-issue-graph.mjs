@@ -76,7 +76,7 @@ import {
   selectExecutionMode,
   skillForRole,
 } from "./project-issue-roles.mjs";
-import { FileCheckpointSaver } from "./project-issue-graph-checkpointer.mjs";
+import { FileCheckpointSaver, triageRunId } from "./project-issue-graph-checkpointer.mjs";
 import { verifyRepositoryFreshness } from "./project-issue-runtime-adapters/shared.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -824,8 +824,11 @@ async function preflightTriageDispatchNode(state, config) {
     if (worktreeExists(state, assignment.number)) continue;
     const entry = (state.triageByIssue ?? []).find(({ issue }) => issue === assignment.number);
     const revision = await deps.fetchTriageRevision(assignment.number).catch(() => null);
-    let reason = !revision || (entry?.result.issueUpdatedAt &&
-      revision.updatedAt !== entry.result.issueUpdatedAt) ? "stale-input" : null;
+    // A fallback was already presented for explicit manual assignment. A
+    // continuing metadata outage must not turn that approved route into a
+    // repeated stale-input loop; exact CLI route verification still applies.
+    let reason = (!revision && entry?.result.status !== "fallback") || (entry?.result.issueUpdatedAt &&
+      revision?.updatedAt !== entry.result.issueUpdatedAt) ? "stale-input" : null;
     let refreshed;
     let pool;
     if (!reason) {
@@ -1420,11 +1423,12 @@ export function buildOrchestrationGraph({ checkpointer } = {}) {
 
 export function createDefaultDeps({ cwd, checkpointer, threadId }) {
   let triageRunner;
+  const runId = triageRunId(threadId);
   const runner = () => {
     if (!checkpointer || !threadId) throw new Error("triage-persistence-required");
     triageRunner ??= createTriageRunner({
-      runId: threadId,
-      state: checkpointer.triageBudget(threadId) ?? createTriageState(threadId),
+      runId,
+      state: checkpointer.triageBudget(runId) ?? createTriageState(runId),
       persistState: (snapshot) => checkpointer.reserveTriageBudget(snapshot),
     });
     return triageRunner;
@@ -1432,7 +1436,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
   return {
     uuid: () => crypto.randomUUID(),
     now: () => new Date().toISOString(),
-    triageBudget: () => checkpointer?.triageBudget(threadId) ?? null,
+    triageBudget: () => checkpointer?.triageBudget(runId) ?? null,
     triageEvidence: async () => [],
     claimTriageAttempt: async (input) => {
       const context = triageContext(input);
@@ -1440,7 +1444,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
         .update(JSON.stringify([context.issue, context.issueUpdatedAt, context.model,
           context.policyVersion, context.routeSetHash, context.evidenceVersion]))
         .digest("hex");
-      return checkpointer.beginTriageAttempt(threadId, fingerprint);
+      return checkpointer.beginTriageAttempt(runId, fingerprint);
     },
     runTriage: (input, triage) => runner().run(input, triage),
     refreshTriageRoutes: (state) => refreshWorkerRoutes({

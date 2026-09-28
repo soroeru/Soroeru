@@ -14,7 +14,7 @@ import {
   createDefaultDeps,
   parseGraphCliArgs,
 } from "../../scripts/project-issue-graph.mjs";
-import { FileCheckpointSaver } from "../../scripts/project-issue-graph-checkpointer.mjs";
+import { FileCheckpointSaver, triageRunId } from "../../scripts/project-issue-graph-checkpointer.mjs";
 import { fallbackResult, parseTriageResponse, triageContext } from "../../scripts/project-issue-triage-contract.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -183,6 +183,8 @@ test("shadow fallback pauses auto assignment and never contacts Jev after revisi
   assert.equal(requests, 0);
   assert.equal(deps.dispatched.length, 0);
   assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "fetch-failed");
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal(deps.dispatched.length, 1);
 });
 
 test("auto assignment still exposes the shadow comparison in the run summary", async () => {
@@ -976,6 +978,23 @@ test("triage request reservations survive restart and cannot be refunded", async
     );
     await restarted.deleteThread("run");
     assert.equal((await FileCheckpointSaver.load(checkpointFile)).triageBudget("run"), null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("unusual graph thread IDs map to a stable valid triage budget ID", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-triage-id-"));
+  try {
+    const file = path.join(directory, "run.json");
+    const saver = await FileCheckpointSaver.load(file);
+    const runId = triageRunId("run.with.dot");
+    assert.match(runId, /^[\w-]{1,100}$/);
+    await saver.reserveTriageBudget({ runId, reserved: 1, providerUnavailable: false });
+    const deps = createDefaultDeps({ cwd: process.cwd(), checkpointer: saver, threadId: "run.with.dot" });
+    assert.equal(deps.triageBudget().reserved, 1);
+    await saver.deleteThread("run.with.dot");
+    assert.equal((await FileCheckpointSaver.load(file)).triageBudget(runId), null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
