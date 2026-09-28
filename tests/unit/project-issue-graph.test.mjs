@@ -317,6 +317,69 @@ test("assisted triage is explicitly unavailable before adoption", async () => {
   assert.equal(run.deps.dispatched.length, 0);
 });
 
+test("a later dispatch batch refreshes and triages its newly available Issue", async () => {
+  const called = [];
+  let refreshes = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => { refreshes += 1; return { capabilities: defaultCapabilities }; },
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => { called.push(input.issue); return { result: shadowRecommendation(input) }; },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1), item(2)], config: { triage: shadowConfig } }));
+  assert.deepEqual(called, [1]);
+  await run.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
+  await run.resume({ accepted: true });
+  assert.deepEqual(called, [1, 2]);
+  assert.ok(refreshes >= 3);
+  assert.deepEqual(deps.dispatched.map(({ issueNumber }) => issueNumber), [1, 2]);
+});
+
+test("a successful Issue dispatches while another Issue awaits fallback assignment", async () => {
+  const called = [];
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => {
+      called.push(input.issue);
+      return { result: input.issue === 1
+        ? fallbackResult(triageContext(input), "provider-error") : shadowRecommendation(input) };
+    },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1), item(2)], config: {
+    triage: shadowConfig, maxParallel: 2,
+  } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.deepEqual(deps.dispatched.map(({ issueNumber }) => issueNumber), [2]);
+  assert.deepEqual(called, [1, 2]);
+  assert.deepEqual(paused.__interrupt__[0].value.assign.issues.map(({ number }) => number), [1]);
+});
+
+test("one stale Issue keeps another Issue's pending assignment intact", async () => {
+  let issueOneReads = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async (issue) => issue === 1 && ++issueOneReads > 1
+      ? { updatedAt: "2026-07-22T00:00:00.000Z" } : revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(input) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1), item(2)], config: {
+    triage: shadowConfig, maxParallel: 2,
+  } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.deepEqual((await run.state()).assignments.map(({ number }) => number), [2]);
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.deepEqual(deps.dispatched.map(({ issueNumber }) => issueNumber).sort(), [1, 2]);
+});
+
 test("fails closed on a dependency cycle", async () => {
   const run = makeRun();
   const result = await run.invoke(makeInput({ items: [item(1, [2]), item(2, [1])] }));
