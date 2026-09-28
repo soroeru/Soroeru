@@ -1,4 +1,4 @@
-# Gemini / agy repository adapter
+# Gemini CLI repository adapter
 
 Before non-trivial work, read the repository-root `AGENTS.md`. It is the shared and authoritative
 instruction source for product boundaries, architecture constraints, worktree rules, and quality
@@ -21,5 +21,5 @@ gates. This file contains only runtime-specific additions and is not a mirrored 
 
 ## Maintenance
 
-`AGENTS.md` is the only shared source to update. Change this adapter only for Gemini/agy runtime
+`AGENTS.md` is the only shared source to update. Change this adapter only for Gemini CLI runtime
 behavior; do not regenerate or manually synchronize shared product text into it.

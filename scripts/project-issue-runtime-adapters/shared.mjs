@@ -28,7 +28,7 @@ export const DEFAULT_WORKER_TIMEOUT_MS = 3_600_000;
 // status check), so it gets its own, longer budget.
 export const DEFAULT_HEADLESS_PROBE_TIMEOUT_MS = 120_000;
 
-export const PROBE_SCHEMA_VERSION = 2;
+export const PROBE_SCHEMA_VERSION = 4;
 
 /** Stderr/stdout patterns that indicate the CLI demanded a real TTY/PTY. */
 const TTY_REQUIRED_PATTERN =
@@ -184,6 +184,7 @@ export function runProcess(
 export async function runHeadlessExecProbe({
   cliPath,
   args = [],
+  expectedModel,
   run = runProcess,
   timeoutMs = DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   env = process.env,
@@ -206,9 +207,12 @@ export async function runHeadlessExecProbe({
     } catch {
       artifactMatches = false;
     }
-    if (artifactMatches) return { ok: true };
     if (result.timedOut) return { ok: false, reason: REASON_CODES.VERIFICATION_TIMEOUT };
     const combinedOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    if (expectedModel && reportedModels(result).some((model) => model !== expectedModel)) {
+      return { ok: false, reason: REASON_CODES.MODEL_MISMATCH };
+    }
+    if (artifactMatches && result.code === 0) return { ok: true };
     if (TTY_REQUIRED_PATTERN.test(combinedOutput)) return { ok: false, reason: REASON_CODES.TTY_REQUIRED };
     // Exited cleanly but produced no artifact: a print/response-only mode
     // that never actually exercised a tool (observed for `agy --print`).
@@ -216,6 +220,47 @@ export async function runHeadlessExecProbe({
     return { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED };
   } finally {
     await fs.rm(sandboxDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Read explicit CLI model metadata only; never return or persist raw output. */
+function reportedModels(result) {
+  const models = [];
+  for (const output of [result.stdout, result.stderr]) {
+    for (const line of String(output ?? "").split(/\r?\n/)) {
+      try {
+        const event = JSON.parse(line);
+        if (typeof event?.model === "string") models.push(event.model);
+      } catch {
+        // Codex's CLI session header reports the selected canonical model.
+        const match = line.match(/^model:\s*(\S+)\s*$/);
+        if (match) models.push(match[1]);
+      }
+    }
+  }
+  return models;
+}
+
+/** Verify one exact candidate, isolating failures and exposing closed reasons only. */
+export async function verifyModelCandidate(candidate, ctx = {}) {
+  try {
+    const tokens = splitSelector(candidate.selector);
+    const result = await (ctx.headlessExecProbe ?? runHeadlessExecProbe)({
+      cliPath: tokens[0],
+      args: [...tokens.slice(1), ...(ctx.extraArgs ?? [])],
+      expectedModel: candidate.model,
+      run: ctx.run ?? runProcess,
+      timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+      env: ctx.env ?? process.env,
+    });
+    if (result?.ok === true) return { ok: true };
+    return {
+      ok: false,
+      reason: Object.values(REASON_CODES).includes(result?.reason)
+        ? result.reason : REASON_CODES.HEADLESS_EXEC_FAILED,
+    };
+  } catch {
+    return { ok: false, reason: REASON_CODES.PROBE_FAILED };
   }
 }
 
@@ -243,6 +288,16 @@ export function splitSelector(selector) {
   }
   if (!tokens.length) throw new Error("invalid-selector");
   return tokens;
+}
+
+/** Antigravity was withdrawn by the Product Owner; do not revive cached routes. */
+export function isAntigravityCommand(command) {
+  return typeof command === "string" && /^(agy|antigravity)(?:\.exe)?$/i.test(command.split(/[\\/]/).at(-1));
+}
+export function isRetiredRuntimeRoute(route) {
+  if (/^(agy|antigravity)$/i.test(String(route?.agent ?? "").trim())) return true;
+  if (typeof route?.selector !== "string" || !route.selector.trim()) return false;
+  return isAntigravityCommand(splitSelector(route.selector)[0]);
 }
 
 export function capabilityRecord({
