@@ -1039,8 +1039,12 @@ The runner serializes requests and reserves each attempt durably before starting
 Reservations are never refunded, including preflight failures; at most 20 attempts are
 allowed per run. A failed reservation prevents execution. Authentication or throttling
 failures disable the provider for that run. The caller owns one runner and its durable
-state; graph checkpoint integration is tracked separately in #536 and is not wired by
-#535. Assisted adoption remains disabled pending #538. There are no retries; HTTP time
+state. In graph shadow mode (#536), the file checkpoint saves a request fingerprint
+and reservation before the child starts; closed triage results and revision/pool hashes are checkpointed
+separately from the Issue body. The graph refreshes CLI routes per selection batch,
+compares metadata and pool state before first dispatch, and requires manual route
+assignment after fallback. Shadow does not alter risk, Size, mode, or route. Assisted
+adoption remains disabled pending #538. There are no retries; HTTP time
 is capped at five seconds and the child process tree at ten seconds. Request/response
 bodies are capped at 24/64 KiB, with redirects rejected.
 

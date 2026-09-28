@@ -15,6 +15,7 @@ import {
   parseGraphCliArgs,
 } from "../../scripts/project-issue-graph.mjs";
 import { FileCheckpointSaver } from "../../scripts/project-issue-graph-checkpointer.mjs";
+import { fallbackResult, parseTriageResponse, triageContext } from "../../scripts/project-issue-triage-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -72,6 +73,7 @@ function makeDeps(overrides = {}) {
     loadCapabilities: async () => {
       throw new Error("unexpected-discovery");
     },
+    claimTriageAttempt: async () => true,
     invalidateCapabilities: async () => defaultCapabilities,
     fetchItems: async () => {
       throw new Error("unexpected-fetch");
@@ -116,6 +118,204 @@ function makeRun({ deps = makeDeps(), checkpointer = new MemorySaver(), threadId
     state: async () => (await graph.getState(config)).values,
   };
 }
+
+const shadowConfig = { mode: "shadow", model: "jev-1.13.0", maxRequests: 20 };
+const revision = { updatedAt: "2026-07-21T00:00:00.000Z" };
+function shadowRecommendation(input) {
+  const choice = (selected, options) => ({
+    type: "choice", choice: selected, confidence: 0.9,
+    probabilities: Object.fromEntries(options.map((option) => [option, option === selected ? 1 : 0])),
+  });
+  return parseTriageResponse({ model: input.model, answers: {
+    risk: choice("high", ["low", "medium", "high", "critical"]),
+    size: choice("XL", ["XS", "S", "M", "L", "XL"]),
+  } }, input, triageContext(input));
+}
+
+test("shadow triage displays a closed recommendation without changing mode or route", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-shadow-"));
+  try {
+  let requests = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    triageBudget: () => ({ runId: "t", reserved: requests, providerUnavailable: false }),
+    runTriage: async (input) => { requests += 1; return { result: { ...shadowRecommendation(input), secret: "DO_NOT_STORE" } }; },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const checkpointFile = path.join(directory, "run.json");
+  const run = makeRun({ deps, checkpointer: await FileCheckpointSaver.load(checkpointFile) });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: {
+    triage: shadowConfig, autoAssign: false, singleWorker: false,
+  } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(requests, 1);
+  const issue = paused.__interrupt__[0].value.assign.issues[0];
+  assert.equal(issue.shadowTriage.risk.choice, "high");
+  assert.equal(issue.legacyMode, "direct-review");
+  assert.equal(issue.executionMode, "direct-review");
+  const state = await run.state();
+  assert.equal(JSON.stringify(state).includes("DO_NOT_STORE"), false);
+  assert.equal((await readFile(checkpointFile, "utf8")).includes("DO_NOT_STORE"), false);
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal(requests, 1);
+  assert.equal(deps.dispatched[0].route.agent, "Claude");
+  assert.equal(JSON.stringify(deps.dispatched[0]).includes("DO_NOT_STORE"), false);
+  assert.deepEqual((await run.state()).roleStates[0].program, ["implementer", "reviewer"]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("shadow fallback pauses auto assignment and never contacts Jev after revision failure", async () => {
+  let requests = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => null,
+    triageEvidence: async () => [],
+    runTriage: async () => { requests += 1; throw new Error("unexpected-request"); },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(requests, 0);
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "fetch-failed");
+});
+
+test("auto assignment still exposes the shadow comparison in the run summary", async () => {
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(input) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  const comparison = buildSummary(await run.state(), "in-progress").shadowTriage[0];
+  assert.equal(comparison.result.risk.choice, "high");
+  assert.equal(comparison.legacyMode, "direct-review");
+  assert.deepEqual(comparison.assignedRoute, { agent: "Claude", model: "sonnet" });
+});
+
+test("provider fallback requires manual assignment even with autoAssign", async () => {
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: fallbackResult(triageContext(input), "provider-error") }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "provider-error");
+});
+
+test("exhausted durable triage budget skips the child and waits for manual assignment", async () => {
+  let claims = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    triageBudget: () => ({ runId: "t", reserved: 20, providerUnavailable: false }),
+    claimTriageAttempt: async () => { claims += 1; return true; },
+    runTriage: async () => { throw new Error("unexpected-request"); },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "budget-exhausted");
+  assert.equal(claims, 0);
+});
+
+test("resuming shadow assignment from a file checkpoint does not send Jev again", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-shadow-resume-"));
+  try {
+    let requests = 0;
+    const deps = makeDeps({
+      refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+      fetchTriageRevision: async () => revision,
+      triageEvidence: async () => [],
+      runTriage: async (input) => { requests += 1; return { result: shadowRecommendation(input) }; },
+      verifyTriageRoute: async () => ({ ok: true }),
+    });
+    const file = path.join(directory, "run.json");
+    const first = makeRun({ deps, checkpointer: await FileCheckpointSaver.load(file) });
+    await first.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig, autoAssign: false } }));
+    const restarted = makeRun({ deps, checkpointer: await FileCheckpointSaver.load(file) });
+    await restarted.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+    assert.equal(requests, 1);
+    assert.equal(deps.dispatched.length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an Issue edit before first dispatch invalidates shadow and requires manual assignment", async () => {
+  let reads = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => (++reads === 1 ? revision : { updatedAt: "2026-07-22T00:00:00.000Z" }),
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(input) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "stale-input");
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal(deps.dispatched.length, 1);
+});
+
+test("a changed verified pool invalidates the route recommendation before dispatch", async () => {
+  let refreshes = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: ++refreshes === 1
+      ? defaultCapabilities : [parentRecord, workerRoute("Grok", "grok-4")] }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(input) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "stale-input");
+  assert.deepEqual(paused.__interrupt__[0].value.assign.workerRoutes, [{ agent: "Grok", model: "grok-4" }]);
+});
+
+test("shadow triage does not invent a worker when fresh CLI discovery has none", async () => {
+  let requests = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: [parentRecord] }),
+    runTriage: async () => { requests += 1; throw new Error("unexpected-request"); },
+  });
+  const run = makeRun({ deps });
+  const result = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(result.runStatus, "failed");
+  assert.equal(result.failureReason, "no-worker-route-available");
+  assert.equal(requests, 0);
+  assert.equal(deps.dispatched.length, 0);
+});
+
+test("assisted triage is explicitly unavailable before adoption", async () => {
+  const run = makeRun();
+  const result = await run.invoke(makeInput({ items: [item(1)], config: {
+    triage: { ...shadowConfig, mode: "assisted" },
+  } }));
+  assert.equal(result.runStatus, "failed");
+  assert.equal(result.failureReason, "triage-assisted-not-available");
+  assert.equal(run.deps.dispatched.length, 0);
+});
 
 test("fails closed on a dependency cycle", async () => {
   const run = makeRun();
@@ -690,6 +890,29 @@ test("deleteThread persists across a checkpointer reload", async () => {
 
     const reloaded = await FileCheckpointSaver.load(checkpointFile);
     assert.equal(await reloaded.getTuple({ configurable: { thread_id: "wipe" } }), undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("triage request reservations survive restart and cannot be refunded", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-triage-budget-"));
+  const checkpointFile = path.join(directory, "run.json");
+  try {
+    const saver = await FileCheckpointSaver.load(checkpointFile);
+    assert.equal(await saver.beginTriageAttempt("run", "fake-context-hash"), true);
+    await saver.reserveTriageBudget({ runId: "run", reserved: 1, providerUnavailable: false });
+    const restarted = await FileCheckpointSaver.load(checkpointFile);
+    assert.equal(await restarted.beginTriageAttempt("run", "fake-context-hash"), false);
+    assert.deepEqual(restarted.triageBudget("run"), {
+      runId: "run", reserved: 1, providerUnavailable: false,
+    });
+    await assert.rejects(
+      restarted.reserveTriageBudget({ runId: "run", reserved: 0, providerUnavailable: false }),
+      /triage-budget-regression/,
+    );
+    await restarted.deleteThread("run");
+    assert.equal((await FileCheckpointSaver.load(checkpointFile)).triageBudget("run"), null);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
