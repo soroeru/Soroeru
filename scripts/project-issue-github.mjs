@@ -1,3 +1,4 @@
+import { validTimestamp } from "./project-issue-triage-contract.mjs";
 import { OWNER_TYPES } from "./project-issue-assignment.mjs";
 
 export const DEFAULT_PROJECT_FIELD_NAMES = Object.freeze({
@@ -255,4 +256,17 @@ export async function transitionBacklogToReady({
   }
 
   return { transitioned: toTransition.map((t) => t.issueNumber) };
+}
+
+/** Read only metadata: the parent must never request the triage Issue body. */
+export async function fetchTriageRevision(issue, { graphql } = {}) {
+  if (!Number.isSafeInteger(issue) || issue <= 0 || typeof graphql !== "function") return null;
+  try {
+    const data = await graphql(
+      'query TriageRevision($number:Int!){repository(owner:"soroeru",name:"Soroeru"){issue(number:$number){updatedAt}}}',
+      { number: issue },
+    );
+    const updatedAt = data?.repository?.issue?.updatedAt;
+    return validTimestamp(updatedAt) ? { updatedAt } : null;
+  } catch { return null; }
 }

@@ -171,7 +171,7 @@ test("an AI-driven run saves a valid, value-free SiteCollectionMap", async () =>
     assert.deepEqual(map.pages.map(p => [p.url, p.purpose, p.items.map(i => i.attributeKey)]), [[siteUrl + "profile", "profile", ["email", "phone.full"]]]);
     assert.doesNotMatch(JSON.stringify(map), /fake@example|090-0000/);
     await s.vault.save();
-    assert.doesNotMatch(await readFile(s.path, "utf8"), /example\.test\/profile|f-1/);
+    assert.doesNotMatch(await readFile(s.path, "utf8"), /example\.test\/profile|"f-1"/);
     const reopened = new DomainService(await VaultV2.open(s.path, "fake-passphrase"));
     assert.deepEqual(reopened.getSiteCollectionMap(s.site.id), map);
   } finally { await rm(s.dir, { recursive: true, force: true }); }

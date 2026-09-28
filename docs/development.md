@@ -64,7 +64,7 @@ npx playwright install chromium firefox webkit
 ### Agent configuration
 
 `AGENTS.md` is the concise shared instruction source. `CLAUDE.md` imports it with `@AGENTS.md` and
-contains Claude-only session conventions; `.agents/rules/GEMINI.md` is a small Gemini/agy adapter,
+contains Claude-only session conventions; `.agents/rules/GEMINI.md` is a small Gemini CLI adapter,
 not a synchronized copy. Area-specific guidance lives in Claude path rules and nested `AGENTS.md`
 files so it loads only when relevant.
 
@@ -288,7 +288,7 @@ with `no-worker-route-available` before any worktree mutation.
 
 Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
 `scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
-Gemini; Gemini via Antigravity `agy` when present). An adapter that passes
+Gemini; only the independent `gemini` CLI, with Antigravity `agy` excluded). An adapter that passes
 auth/model-list checks is still not enough: every selectable route also runs a
 **headless execution probe** for its exact model selector (`runHeadlessExecProbe` in
 `project-issue-runtime-adapters/shared.mjs`) — spawn the CLI with no TTY and a
@@ -296,28 +296,52 @@ minimal, locally-generated tool-use task ("create this exact file with this
 exact marker" in a throwaway sandbox directory), then check the artifact. Only
 a route that actually completed that task under `DEFAULT_HEADLESS_PROBE_TIMEOUT_MS`
 (120s) becomes verified; the probe never persists the generated prompt, the
-marker, or stdout/stderr. Claude candidates are probed independently because
+marker, or stdout/stderr. Every adapter probes each candidate independently because
 model entitlement, quota, or usage-credit availability can differ within the
-same authenticated CLI; one successful Claude model never verifies another.
-This is why `claude`, `grok`, and `agy` selectors now
+same authenticated CLI; one successful model never verifies another. A known
+model substitution reported in CLI model metadata fails with `model-mismatch`.
+A matching artifact does not override a timeout or unsuccessful process exit.
+This is why `claude` and `grok` selectors
 include a permission-bypass flag (`--permission-mode bypassPermissions` /
 `--dangerously-skip-permissions`) and, for `grok`, `-p`/`--single` instead of a
 bare positional prompt — without them the CLI either stops at an edit-approval
 prompt with no human to answer it, or (for `grok`) tries to open an interactive
 session that requires a real TTY.
 
+For Jev integration (#534), `refreshWorkerRoutes(options)` always discovers a
+fresh pool without reading or writing the capability cache. It returns the
+usual discovery result plus `workerRoutes`, after applying `parentAgent`,
+`unavailableAgents`, and `unavailableModels`. Call it once per selection batch,
+again for reselection or handoff; only a caller within the same batch may share
+that result. The generic cache-aware API remains available for existing callers.
+Ordinary cache reads retain partial successes without re-probing the whole
+agent because one model failed; fully unavailable agents are still retried.
+Probe schema version 4 invalidates older probes, including cached Antigravity routes.
+
+Antigravity (`agy`) is excluded from worker discovery and dispatch following the
+Product Owner's cancellation (#534). Installed binaries and cached or explicitly supplied
+`Gemini`/`agy` selectors do not override this exclusion. Independent Gemini CLI routes still
+require successful per-model verification.
+
+`verifyWorkerRoute(route, options)` is the dispatch preflight API. It re-reads
+the selected agent's catalog, probes only that exact model, and compares the
+fresh selector against the selected route. It never executes an input selector.
+It returns `{ok:true, route, probedAt}` or `{ok:false, reason}` with a closed
+reason; a missing/excluded route or selector drift is `model-not-selectable`.
+Callers must reselect on failure rather than dispatching the old route. These
+APIs are not yet wired into the execution graph; #536/#538 own that integration.
+CLI-reported model metadata can reveal substitutions; a CLI that reports no
+actual model still proves only that its exact selector completed the probe,
+not independent attestation of which backend served it.
+
 Only verified routes enter the pool; closed diagnostic reasons include
 `cli-not-found`, `auth-unavailable`, `model-not-selectable`, `model-mismatch`,
 `verification-timeout`, `probe-failed`, and the headless-probe-specific
 `tty-required` (the CLI demanded a real terminal), `non-agentic-print-mode`
-(exited cleanly but never produced the artifact — observed for `agy --print`
-without the skip-permissions flag or with the flags mis-ordered), and
+(exited cleanly but never produced the artifact), and
 `headless-exec-failed` (any other unexplained failure, including a model-specific
 credit or quota rejection). Failed diagnostics contain only the closed reason
-and model label, never CLI response bodies. Two launch quirks
-found by live verification: `agy`'s `--print` is a Go-style _string_ flag
-that consumes the next argv token as the prompt, so it must be the final
-selector token with the prompt appended directly after it; and `codex exec`
+and model label, never CLI response bodies. The `codex exec` command
 refuses to run outside a trusted/git directory, so the Codex probe passes
 `--skip-git-repo-check` (probe-only — real dispatch runs inside the Issue's
 git worktree and needs no such flag). Dispatch of a selected route reuses the same exact
@@ -342,7 +366,7 @@ canonical model identifier, for example:
 The permission-bypass flags described above are baked into the **selector
 itself**, not just the probe invocation — `project-issue-dispatch.mjs`
 launches every real worker/parent for these agents with that exact same
-selector, so a dispatched Claude, Grok, or Antigravity worker always runs
+selector, so a dispatched Claude, Grok, or native Gemini worker always runs
 with permission prompts fully bypassed, the same way `codex exec` already
 does. This is required for unattended dispatch to work at all (there is no
 human present to answer an approval prompt), not a change specific to this
@@ -1040,3 +1064,55 @@ single Issue to implement first.
   Git.
 - Keep durable workflow lessons near the owning document, Issue, or PR instead
   of reintroducing a generic learning log without a clear owner.
+
+### Jev triage provider terms and activation
+
+Issue #535 adds the isolated adapter and contracts; #536 connects them to the graph.
+No Jev request is made by the existing orchestration CLI in this stage. The configuration
+loader accepts the following optional section, and the plan CLI accepts `--triage off|shadow|assisted`. CLI mode overrides YAML while preserving
+the pinned model and budget. Defaults are off, `jev-1.13.0`, and 20 attempts.
+
+```yaml
+run:
+  triage:
+    mode: off
+    model: jev-1.13.0
+    maxRequests: 20
+```
+
+For adapter callers, create one `createTriageRunner` per run with a durable `persistState`
+callback and reload its `{runId, reserved, providerUnavailable}` snapshot when resuming.
+The callback must finish saving before it resolves; save failure prevents the request.
+Reserve-before-send deliberately charges an attempt slot even when the child rejects
+input or the process is interrupted. Never recreate an empty counter under an existing
+run ID. The graph will own this persistence in #536. `assisted` currently returns
+`input-not-approved`; it cannot adopt decisions yet. `off` neither starts a child nor
+uses a slot. `TYPESAFE_API_KEY` belongs in the process environment, never YAML, argv,
+Issue content, checkpoint, telemetry, or worker environments.
+
+Only reviewed public development Issues may be sent. Use fake data in examples; the
+preflight detector is incomplete and cannot certify the absence of personal information.
+Private repositories, changed revisions, obvious sensitive text, empty context, and large
+inputs return a fixed fallback reason without a provider call. Errors contain no raw
+provider body. A missing key falls back locally; 401/403 and 429/529 disable the provider
+for the run. Other errors consume their reserved slot with no retry. Usage is the API's
+validated integer count or `unavailable`; cost is not fabricated from missing data.
+
+**Terms reviewed 2026-09-27; no account settings changed or live paid requests made.**
+The [API reference](https://docs.typesafe.ai/api) specifies Bearer-authenticated structured
+questions and answers. We pin the resolved model, enforce the response contract, and use
+the fixed HTTPS endpoint with redirects disabled. This does not establish model quality;
+Japanese fixtures and routing evidence are evaluated separately in #537.
+
+The [Master Customer Agreement](https://typesafe.ai/legal/mca) dated 2026-09-23 permits API
+use subject to its documentation and limits. It requires customer authority over input;
+model training requires prior consent. It also permits continued use of input for deriving
+telemetry, fraud prevention, and legal compliance, and allows retention in standard backups.
+The [Privacy Policy](https://typesafe.ai/legal/privacy-policy) says input is not used for
+training and describes purpose-based retention rather than a fixed deletion period.
+The [DPA](https://typesafe.ai/legal/data-processing) likewise gives no general zero-day
+retention promise. [Zero data retention is an enterprise arrangement](https://docs.typesafe.ai/legal),
+not a guarantee inferred from possessing an API key. Before enabling shadow mode, the
+operator must check the terms and retention arrangement that apply to their own account,
+and decide whether the reviewed public Issue text is suitable for that processing.
+No code accepts terms, purchases credits, or changes billing settings for the operator.

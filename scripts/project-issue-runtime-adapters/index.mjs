@@ -2,7 +2,7 @@ import * as claude from "./claude.mjs";
 import * as codex from "./codex.mjs";
 import * as gemini from "./gemini.mjs";
 import * as grok from "./grok.mjs";
-import { REASON_CODES } from "./shared.mjs";
+import { REASON_CODES, isRetiredRuntimeRoute } from "./shared.mjs";
 
 /** Fixed evaluation order: Codex → Claude → Grok → Gemini. */
 export const RUNTIME_ADAPTERS = Object.freeze([codex, claude, grok, gemini]);
@@ -54,6 +54,7 @@ export async function discoverAllCapabilities(ctx = {}) {
 }
 
 export async function launchWithAdapter(agentName, job, ctx = {}) {
+  if (isRetiredRuntimeRoute({ agent: agentName, selector: job?.selector })) throw new Error("runtime-retired");
   const adapter = getAdapter(agentName);
   if (!adapter?.launch) throw new Error(`dispatch-adapter-unavailable:${agentName}`);
   return adapter.launch(ctx, job);

@@ -17,12 +17,17 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   PROBE_SCHEMA_VERSION,
+  REASON_CODES,
   getRepositoryCommit,
+  isAntigravityCommand,
+  isRetiredRuntimeRoute,
   readCliVersion,
   runProcess,
   writeJsonAtomic,
 } from "./project-issue-runtime-adapters/shared.mjs";
 import { RUNTIME_ADAPTERS, discoverAllCapabilities } from "./project-issue-runtime-adapters/index.mjs";
+
+import { selectWorkerRoutes } from "./project-issue-plan.mjs";
 
 export const DEFAULT_CAPABILITIES_OUTPUT = "state/project-issue-capabilities.json";
 
@@ -58,6 +63,7 @@ export async function discoverCapabilities(options = {}) {
     headlessExecProbe: options.headlessExecProbe,
     headlessProbeTimeoutMs: options.headlessProbeTimeoutMs,
     only: options.only,
+    modelFilter: options.modelFilter,
   });
 
   // Strip anything that is not a closed diagnostic field (defense in depth).
@@ -181,7 +187,9 @@ export async function loadOrRefreshCapabilities(options = {}) {
   const schemaMismatch = cached && cached.probeSchemaVersion !== PROBE_SCHEMA_VERSION;
   const commitMismatch = cached && currentRepositoryCommit && cached.repositoryCommit !== currentRepositoryCommit;
 
-  if (!cached || refresh || schemaMismatch || commitMismatch) {
+  const retiredCache = cached && ((cached.capabilities ?? []).some(isRetiredRuntimeRoute) ||
+    Object.values(cached.cli ?? {}).some(entry => isAntigravityCommand(entry?.path)));
+  if (!cached || refresh || schemaMismatch || commitMismatch || retiredCache) {
     const fresh = await discoverCapabilities({
       ...discoveryOptions,
       ...(dryRun ? {} : { outputPath: cachePath }),
@@ -200,13 +208,14 @@ export async function loadOrRefreshCapabilities(options = {}) {
     throw new Error(`unknown-invalidate-agent:${unknownInvalidateAgents.join(",")}`);
   }
 
-  // A cached "failed" diagnostic is never trusted as permanent: re-checking
-  // it is cheap (an auth/model-list probe that fails fast, or nothing at all
-  // when the CLI still isn't on PATH) and the alternative — silently
-  // excluding that agent from routing forever once its `cli` entry (if any)
-  // stops drifting — is the outcome Issue #434's review flagged.
+  // Retry wholly unavailable agents, but retain ordinary cache reuse when
+  // only a sibling model failed. Fresh triage batches use refreshWorkerRoutes
+  // and always re-probe, including models with a previously failed probe.
   const previouslyFailedAgents = (cached.diagnostics ?? [])
-    .filter((entry) => entry.status === "failed")
+    .filter((entry) => entry.status === "failed" && (
+      !entry.model || !(cached.capabilities ?? []).some((record) =>
+        record.agent === entry.agent && record.selectable === true && record.verifiable === true)
+    ))
     .map((entry) => entry.agent);
 
   const staleAgents = new Set([
@@ -243,6 +252,39 @@ export async function loadOrRefreshCapabilities(options = {}) {
   };
   if (!dryRun && cachePath) await writeJsonAtomic(cachePath, merged);
   return { ...merged, reused: false, reprobedAgents: [...staleAgents] };
+}
+
+/**
+ * Fresh pool for one triage batch. Never reads/writes a capability cache.
+ * Call again for every new selection batch; only the caller may share a result
+ * within that batch. Parent/unavailable exclusions remain deterministic.
+ */
+export async function refreshWorkerRoutes(options = {}) {
+  const result = await discoverCapabilities({ ...options, outputPath: undefined });
+  return { ...result, workerRoutes: selectWorkerRoutes(result.capabilities, options) };
+}
+
+/**
+ * Dispatch preflight: re-read the selected agent's catalog and probe only the
+ * exact model. Never execute the supplied selector; compare it to fresh CLI
+ * discovery. A changed selector or a failed model requires route reselection.
+ */
+export async function verifyWorkerRoute(route, options = {}) {
+  if (isRetiredRuntimeRoute(route)) return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
+  const agent = canonicalAgentName(route?.agent);
+  if (!agent || typeof route?.model !== "string" || !route.model ||
+      typeof route?.selector !== "string" || !route.selector) {
+    return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
+  }
+  const result = await refreshWorkerRoutes({
+    ...options, only: [agent], modelFilter: route.model,
+  });
+  const verified = result.workerRoutes.find((candidate) =>
+    candidate.agent === agent && candidate.model === route.model && candidate.selector === route.selector);
+  if (verified) return { ok: true, route: verified, probedAt: result.probedAt };
+  const failure = result.diagnostics.find((entry) =>
+    entry.agent === agent && entry.status === "failed" && (!entry.model || entry.model === route.model));
+  return { ok: false, reason: failure?.reason ?? REASON_CODES.MODEL_NOT_SELECTABLE };
 }
 
 export function parseCapabilitiesCliArgs(argv) {
