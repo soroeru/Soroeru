@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   REASON_CODES,
@@ -12,7 +11,7 @@ import {
   diagnostic,
   quoteSelectorArg,
   resolveExecutable,
-  runHeadlessExecProbe,
+  verifyModelCandidate,
   runProcess,
   spawnWorker,
   splitSelector,
@@ -192,43 +191,23 @@ export async function discover(ctx = {}) {
     const selector = `${cliPath} --model ${modelArg} --permission-mode bypassPermissions`;
     candidates.push({ model, requestedModel: requestedModel ?? model, selector });
   }
-  if (!candidates.length) return { records, diagnostics };
-
-  // Probe every exact selector/model pair. Authentication and CLI behavior
-  // may be shared, but entitlement, quota, and credit availability can differ
-  // by model. One successful model must never verify another candidate.
-  const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
-  for (const { model, requestedModel, selector } of candidates) {
-    const probeTokens = splitSelector(selector);
-    const probeResult = await probe({
-      cliPath: probeTokens[0],
-      args: [...probeTokens.slice(1), "-p"],
-      run,
-      timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
-      env,
-    });
-    if (!probeResult.ok) {
-      diagnostics.push(
-        diagnostic({
-          agent,
-          status: "failed",
-          reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED,
-          model,
-        }),
-      );
+  const selected = ctx.modelFilter === undefined
+    ? candidates
+    : candidates.filter((candidate) => candidate.model === ctx.modelFilter);
+  if (!selected.length) {
+    diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE }));
+  }
+  for (const candidate of selected) {
+    const { model, requestedModel, selector } = candidate;
+    const result = await verifyModelCandidate(candidate, { ...ctx, run, env, extraArgs: ["-p"] });
+    if (!result.ok) {
+      diagnostics.push(diagnostic({ agent, status: "failed", reason: result.reason, model }));
       continue;
     }
     for (const role of ["worker", "parent"]) {
-      records.push(
-        capabilityRecord({
-          agent,
-          requestedModel,
-          model,
-          role,
-          selector,
-          timeoutMs: workerTimeoutMs,
-        }),
-      );
+      records.push(capabilityRecord({
+        agent, requestedModel, model, role, selector, timeoutMs: workerTimeoutMs,
+      }));
     }
     diagnostics.push(diagnostic({ agent, status: "ok", model }));
   }

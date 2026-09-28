@@ -1,5 +1,4 @@
 import {
-  DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   DEFAULT_PROBE_TIMEOUT_MS,
   DEFAULT_WORKER_TIMEOUT_MS,
   REASON_CODES,
@@ -8,7 +7,7 @@ import {
   diagnostic,
   quoteSelectorArg,
   resolveExecutable,
-  runHeadlessExecProbe,
+  verifyModelCandidate,
   runProcess,
   spawnWorker,
   splitSelector,
@@ -129,41 +128,23 @@ export async function discover(ctx = {}) {
     }
     candidates.push({ model, requestedModel, selector: `${cliPath} exec -m ${modelArg}` });
   }
-  if (!candidates.length) return { records, diagnostics };
-
-  // `codex exec` already runs headlessly by design; still probe it, once per
-  // adapter, so a future CLI regression is caught the same way as the others.
-  // `--skip-git-repo-check` is probe-only: the probe sandbox is a bare tmp
-  // dir and `codex exec` refuses to run outside a trusted/git directory,
-  // while real dispatch always runs inside the Issue's git worktree.
-  const probe = ctx.headlessExecProbe ?? runHeadlessExecProbe;
-  const probeTokens = splitSelector(candidates[0].selector);
-  const probeResult = await probe({
-    cliPath: probeTokens[0],
-    args: [...probeTokens.slice(1), "--skip-git-repo-check"],
-    run,
-    timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
-    env,
-  });
-  if (!probeResult.ok) {
-    diagnostics.push(
-      diagnostic({ agent, status: "failed", reason: probeResult.reason ?? REASON_CODES.HEADLESS_EXEC_FAILED }),
-    );
-    return { records, diagnostics };
+  const selected = ctx.modelFilter === undefined
+    ? candidates
+    : candidates.filter((candidate) => candidate.model === ctx.modelFilter);
+  if (!selected.length) {
+    diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE }));
   }
-
-  for (const { model, requestedModel, selector } of candidates) {
+  for (const candidate of selected) {
+    const { model, requestedModel, selector } = candidate;
+    const result = await verifyModelCandidate(candidate, { ...ctx, run, env, extraArgs: ["--skip-git-repo-check"] });
+    if (!result.ok) {
+      diagnostics.push(diagnostic({ agent, status: "failed", reason: result.reason, model }));
+      continue;
+    }
     for (const role of ["worker", "parent"]) {
-      records.push(
-        capabilityRecord({
-          agent,
-          requestedModel,
-          model,
-          role,
-          selector,
-          timeoutMs: workerTimeoutMs,
-        }),
-      );
+      records.push(capabilityRecord({
+        agent, requestedModel, model, role, selector, timeoutMs: workerTimeoutMs,
+      }));
     }
     diagnostics.push(diagnostic({ agent, status: "ok", model }));
   }

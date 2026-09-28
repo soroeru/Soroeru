@@ -1,3 +1,4 @@
+import { isRetiredRuntimeRoute } from "./project-issue-runtime-adapters/shared.mjs";
 import { canonicalizeAgent, isCanonicalDate, OWNER_TYPES } from "./project-issue-assignment.mjs";
 import { roleProgramForMode, selectExecutionMode } from "./project-issue-roles.mjs";
 
@@ -175,6 +176,7 @@ export function validateCapabilities(requiredRoutes, capabilities) {
     );
     if (
       !match ||
+      isRetiredRuntimeRoute(match) ||
       (match.requestedModel !== undefined &&
         (typeof match.requestedModel !== "string" || match.requestedModel.trim() === "")) ||
       typeof match.model !== "string" ||
@@ -206,6 +208,7 @@ export function selectWorkerRoutes(
     unavailableAgents.map((agent) => (canonicalizeAgent(agent) ?? "").toLowerCase()).filter(Boolean),
   );
   if (parentAgent !== undefined) {
+    if (isRetiredRuntimeRoute({ agent: parentAgent })) throw new Error("runtime-retired");
     const canonicalParent = canonicalizeAgent(parentAgent);
     if (!canonicalParent) throw new Error("invalid-parent-agent");
     excludedAgents.add(canonicalParent.toLowerCase());
@@ -213,7 +216,7 @@ export function selectWorkerRoutes(
   const excludedModels = new Set(unavailableModels);
   const routes = [];
   for (const record of capabilities) {
-    if (record?.role !== "worker") continue;
+    if (record?.role !== "worker" || isRetiredRuntimeRoute(record)) continue;
     if (
       typeof record.agent !== "string" ||
       record.agent.trim() === "" ||
