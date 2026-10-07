@@ -66,7 +66,7 @@ Follow this workflow:
 3. Implement the Issue (all edits and commits stay in the Issue worktree).
 4. After committing, check the commit command's own output for
    `[local-ai-review] queued ...`. If present, wait for that result by
-   running `scripts/wait-for-local-ai-review.sh --unit <unit[,unit...]>` via a
+   running `scripts/wait-for-local-ai-review.sh --unit <unit[,unit...]> --print` via a
    single backgrounded shell command (Claude Code: `Bash` with
    `run_in_background: true`) so its one completion notification replaces
    manual re-checking — never a chain of short-interval wakeups or ad hoc
@@ -74,7 +74,9 @@ Follow this workflow:
    exactly one long fallback wakeup (comfortably above the script's
    `--timeout`) as a dead-man's switch only, not a second poll loop. See
    `docs/local-ai-review.md` §10 for the script's flags and matching
-   mechanics. This workflow allows **up to two local AI review runs in the
+   mechanics. Read the verdict and findings from that command's `--print`
+   output; direct reads of `state/ai-reviews/` are denied by the repository
+   guard. This workflow allows **up to two local AI review runs in the
    current handoff epoch** (never open-ended, see `docs/local-ai-review.md`
    §6): apply a fix pass for
    the first review's actionable findings and commit it *without*

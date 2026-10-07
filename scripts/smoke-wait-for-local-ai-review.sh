@@ -47,6 +47,63 @@ printf '%s\n' "$OUT" | grep -qF "20260101-000000-claude-code-111.md" \
   || fail_msg "expected the matched file path in output, got: $OUT"
 rm -f state/ai-reviews/*.md
 
+# --- 1b. --print emits each finished result; the default does not --------
+printf -- "- commit: \`%s\`\nVerdict: PASS (code)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-112.md"
+printf -- "- commit: \`%s\`\nVerdict: NIT_ONLY (design)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-design-113.md"
+OUT=$(run_wait --unit code,design --timeout 5) || fail_msg "expected success without --print"
+printf '%s\n' "$OUT" | grep -q "Verdict:" \
+  && fail_msg "expected no result body without --print, got: $OUT"
+OUT=$(run_wait --unit code,design --timeout 5 --print) || fail_msg "expected success with --print"
+printf '%s\n' "$OUT" | head -1 | grep -q "^wait-for-local-ai-review: done " \
+  || fail_msg "expected the 'done' line first with --print, got: $OUT"
+# Each body must sit under its own header, in --unit order.
+EXPECTED_BODY=$(cat <<EOF
+
+===== 20260101-000000-claude-code-112.md =====
+- commit: \`$COMMIT\`
+Verdict: PASS (code)
+
+===== 20260101-000000-claude-design-113.md =====
+- commit: \`$COMMIT\`
+Verdict: NIT_ONLY (design)
+EOF
+)
+[ "$(printf '%s\n' "$OUT" | tail -n +2)" = "$EXPECTED_BODY" ] \
+  || fail_msg "expected headers and bodies in order with --print, got: $OUT"
+rm -f state/ai-reviews/*.md
+
+# --- 1c. several results for one unit and commit: --print shows the newest -
+printf -- "- commit: \`%s\`\nVerdict: PASS (old)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-115.md"
+printf -- "- commit: \`%s\`\nVerdict: NEEDS_CHANGES (new)\n" "$COMMIT" > "state/ai-reviews/20260102-000000-codex-code-116.md"
+OUT=$(run_wait --unit code --timeout 5 --print) || fail_msg "expected success with several results"
+printf '%s\n' "$OUT" | grep -qF "Verdict: NEEDS_CHANGES (new)" \
+  || fail_msg "expected the newest result with --print, got: $OUT"
+printf '%s\n' "$OUT" | grep -qF "PASS (old)" \
+  && fail_msg "expected the older result to be skipped, got: $OUT"
+printf '%s\n' "$OUT" | head -1 | grep -qF "20260102-000000-codex-code-116.md" \
+  || fail_msg "expected the newest path on the 'done' line, got: $OUT"
+printf '%s\n' "$OUT" | head -1 | grep -qF "20260101-000000-claude-code-115.md" \
+  && fail_msg "expected the older path off the 'done' line, got: $OUT"
+rm -f state/ai-reviews/*.md
+# A repeated local-time hour (DST) can give the newer result an earlier name.
+printf -- "- commit: \`%s\`\nVerdict: PASS (old)\n" "$COMMIT" > "state/ai-reviews/20260103-010000-claude-code-117.md"
+touch -t 202601030100 "state/ai-reviews/20260103-010000-claude-code-117.md"
+printf -- "- commit: \`%s\`\nVerdict: NEEDS_CHANGES (new)\n" "$COMMIT" > "state/ai-reviews/20260103-003000-claude-code-118.md"
+OUT=$(run_wait --unit code --timeout 5 --print) || fail_msg "expected success with a repeated hour"
+printf '%s\n' "$OUT" | grep -qF "Verdict: NEEDS_CHANGES (new)" \
+  || fail_msg "expected the most recently written result, got: $OUT"
+rm -f state/ai-reviews/*.md
+
+# --- 1d. --print never prints while the review lock is held ---------------
+touch "state/ai-reviews/.lock"
+printf -- "- commit: \`%s\`\nVerdict: PASS\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-114.md"
+if run_wait --unit code --timeout 2 --print >"$TMP_DIR/locked.out" 2>&1; then
+  fail_msg "expected timeout while the lock is held"
+fi
+grep -q "Verdict:" "$TMP_DIR/locked.out" \
+  && fail_msg "expected no result body while the lock is held, got: $(cat "$TMP_DIR/locked.out")"
+rm -f "$TMP_DIR/locked.out" state/ai-reviews/.lock state/ai-reviews/*.md
+
 # --- 2. lock present, cleared by a background job along with the file ---
 # -> succeeds only once both clear
 touch "state/ai-reviews/.lock"
