@@ -1043,7 +1043,8 @@ state. In graph shadow mode (#536), the file checkpoint saves a request fingerpr
 and reservation before the child starts; closed triage results and revision/pool hashes are checkpointed
 separately from the Issue body. The graph refreshes CLI routes per selection batch,
 compares metadata and pool state before first dispatch, and requires manual route
-assignment after fallback. Shadow does not alter risk, Size, mode, or route. Assisted
+assignment after fallback or a failed exact-route check. Shadow does not adopt Jev's
+risk, Size, mode, or route; handoff keeps the existing pool. Assisted
 adoption remains disabled pending #538. There are no retries; HTTP time
 is capped at five seconds and the child process tree at ten seconds. Request/response
 bodies are capped at 24/64 KiB, with redirects rejected.

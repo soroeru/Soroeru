@@ -15,7 +15,12 @@ import {
   parseGraphCliArgs,
 } from "../../scripts/project-issue-graph.mjs";
 import { FileCheckpointSaver, triageRunId } from "../../scripts/project-issue-graph-checkpointer.mjs";
-import { fallbackResult, parseTriageResponse, triageContext } from "../../scripts/project-issue-triage-contract.mjs";
+import {
+  fallbackResult,
+  normalizeTriageInput,
+  parseTriageResponse,
+  triageContext,
+} from "../../scripts/project-issue-triage-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -385,9 +390,10 @@ test("one stale Issue keeps another Issue's pending assignment intact", async ()
 test("a changed route evaluation before first dispatch invalidates shadow and requires manual assignment", async () => {
   let evidenceReads = 0;
   const evaluatedAt = new Date().toISOString();
+  // Valid under the real evidence contract, so only the evaluation change can invalidate it.
   const evaluation = (agent, model) => ({
-    agent, model, evaluatedAt, benchmarkVersion: "fake-bench-1",
-    tasks: [{ kind: "implementation", samples: 10 }],
+    agent, model, evaluatedAt, profileVersion: "fake-profile-1", benchmarkVersion: "fake-bench-1",
+    tasks: [{ kind: "local-code", samples: 10, passed: 8, medianDurationMs: 1000 }],
   });
   const deps = makeDeps({
     refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
@@ -404,6 +410,142 @@ test("a changed route evaluation before first dispatch invalidates shadow and re
   assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "stale-input");
   await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
   assert.equal(deps.dispatched.length, 1);
+});
+
+const providerErrorTriage = async (input) => ({
+  result: fallbackResult(triageContext(normalizeTriageInput(input)), "provider-error"),
+});
+
+test("shadow recommendations survive a worker pool that is not in sorted order", async () => {
+  // Discovery order puts Grok before Claude; the real runner sorts before hashing.
+  const capabilities = [parentRecord, workerRoute("Grok", "grok-4"), workerRoute("Claude", "sonnet")];
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(normalizeTriageInput(input)) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], capabilities, config: { triage: shadowConfig } }));
+  const state = await run.state();
+  assert.equal(state.triageByIssue[0].result.status, "recommended");
+  assert.equal(state.triageByIssue[0].requiresManualAssignment, false);
+  assert.equal(deps.dispatched.length, 1);
+});
+
+test("a triage fallback is never assigned implicitly when the resume omits it", async () => {
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: providerErrorTriage,
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  const again = await run.resume({ assignments: [] });
+  assert.equal(isInterrupted(again), true);
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(again.__interrupt__[0].value.lastEventError, "invalid-assignment:1:missing");
+});
+
+test("a manually assigned provider fallback dispatches through a continuing metadata outage", async () => {
+  let revisions = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => (++revisions === 1 ? revision : null),
+    triageEvidence: async () => [],
+    runTriage: providerErrorTriage,
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "provider-error");
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal(deps.dispatched.length, 1);
+  assert.equal((await run.state()).failureReason, undefined);
+});
+
+test("a route that fails exact verification is not offered again", async () => {
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(normalizeTriageInput(input)) }),
+    verifyTriageRoute: async (route) => ({ ok: route.model !== "sonnet" }),
+  });
+  const run = makeRun({ deps });
+  // autoAssign picks Claude first; its preflight verification fails.
+  const retry = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(retry), true);
+  assert.equal(deps.dispatched.length, 0);
+  const prompt = retry.__interrupt__[0].value.assign;
+  assert.equal(prompt.issues[0].shadowTriage.reason, "route-unavailable");
+  assert.deepEqual(prompt.workerRoutes, [{ agent: "Grok", model: "grok-4" }]);
+  await run.resume({ assignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
+  assert.equal(deps.dispatched.length, 1);
+  assert.equal(deps.dispatched[0].route.agent, "Grok");
+});
+
+test("exhausting every verified route in preflight fails closed without inventing one", async () => {
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(normalizeTriageInput(input)) }),
+    verifyTriageRoute: async () => ({ ok: false }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  await run.resume({ assignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
+  const state = await run.state();
+  assert.equal(deps.dispatched.length, 0);
+  assert.equal(state.failureReason, "no-worker-route-available");
+});
+
+test("a failing route-evidence provider becomes a closed fallback, not a graph error", async () => {
+  let requests = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => {
+      throw new Error("evidence-unavailable");
+    },
+    runTriage: async () => {
+      requests += 1;
+      throw new Error("unexpected-request");
+    },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(isInterrupted(paused), true);
+  assert.equal(requests, 0);
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "provider-error");
+});
+
+test("shadow handoff of an interrupted worker does not depend on a fresh route refresh", async () => {
+  let refreshes = 0;
+  const deps = makeDeps({
+    // Selection and preflight refresh succeed; any later refresh would fail.
+    refreshTriageRoutes: async () => {
+      if (++refreshes > 2) throw new Error("cli-unavailable");
+      return { capabilities: defaultCapabilities };
+    },
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input) => ({ result: shadowRecommendation(normalizeTriageInput(input)) }),
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(deps.dispatched[0].route.agent, "Claude");
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" });
+  const state = await run.state();
+  assert.equal(state.failureReason, undefined);
+  assert.equal(deps.dispatched.at(-1).route.agent, "Grok");
+  assert.equal(deps.dispatched.at(-1).skill, "handoff-issue");
 });
 
 test("Jev receives only freshly verified worker routes, never the parent runtime or unavailable models", async () => {

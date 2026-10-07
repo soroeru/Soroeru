@@ -52,7 +52,7 @@ import {
 } from "./project-issue-config.mjs";
 import { fetchProjectItems, fetchTriageRevision, githubGraphql } from "./project-issue-github.mjs";
 import { createTriageRunner, createTriageState } from "./project-issue-triage-client.mjs";
-import { TRIAGE_POLICY, normalizeTriageConfig, triageContext, fallbackResult, parseTriageResult } from "./project-issue-triage-contract.mjs";
+import { TRIAGE_POLICY, normalizeTriageConfig, normalizeTriageInput, triageContext, fallbackResult, parseTriageResult } from "./project-issue-triage-contract.mjs";
 import {
   applyMilestone,
   buildRunPlan,
@@ -445,8 +445,8 @@ export function buildSummary(state, runStatus) {
       ({ issue, result, evaluatedAt, budget }) => ({
         issue, result, evaluatedAt, budget,
         legacyMode: (state.plan?.runnable ?? []).find(({ number }) => number === issue)?.executionMode ?? null,
-        assignedRoute: (state.assignments ?? []).find(({ number }) => number === issue)
-          ? routeLabels((state.assignments ?? []).find(({ number }) => number === issue)) : null,
+        assignedRoute: ((assignment) => (assignment ? routeLabels(assignment) : null))(
+          (state.assignments ?? []).find(({ number }) => number === issue)),
       }),
     ) } : {}),
     runStatus,
@@ -557,8 +557,7 @@ function triageMode(state) {
 }
 
 async function refreshTriageRoutesNode(state, config) {
-  if (triageMode(state) === "off" ||
-      (!dispatchCandidates(state).length && !(state.pendingInterrupted ?? []).length)) return {};
+  if (triageMode(state) === "off" || !dispatchCandidates(state).length) return {};
   try {
     const refreshed = await getDeps(config).refreshTriageRoutes(state);
     const capabilities = refreshed.capabilities;
@@ -574,6 +573,25 @@ async function refreshTriageRoutesNode(state, config) {
   }
 }
 
+/**
+ * Builds the triage input exactly as the child normalizes it (sorted routes),
+ * so routeSetHash/evidenceVersion match the child's result. Null when the
+ * revision, the evidence provider, or the evidence shape is unusable.
+ */
+async function triageInputFor(deps, issue, revision, pool, model) {
+  if (!revision) return null;
+  try {
+    const routes = pool.map(routeLabels);
+    const input = normalizeTriageInput({
+      issue, issueUpdatedAt: revision.updatedAt, routes,
+      routeEvidence: await deps.triageEvidence(routes), policyVersion: TRIAGE_POLICY, model,
+    });
+    return { input, context: triageContext(input) };
+  } catch {
+    return null;
+  }
+}
+
 async function prepareTriageNode(state, config) {
   if (triageMode(state) === "off") return {};
   const deps = getDeps(config);
@@ -582,15 +600,10 @@ async function prepareTriageNode(state, config) {
   const triageByIssue = [];
   for (const item of candidates) {
     if (roleStateFor(state, item.number)) continue;
-    const routes = pool.map(routeLabels);
     const model = state.config.triage.model;
     const revision = await deps.fetchTriageRevision(item.number).catch(() => null);
     const previous = (state.triageByIssue ?? []).find(({ issue }) => issue === item.number);
-    const input = revision && {
-      issue: item.number, issueUpdatedAt: revision.updatedAt, routes,
-      routeEvidence: await deps.triageEvidence(routes), policyVersion: TRIAGE_POLICY, model,
-    };
-    const context = input && triageContext(input);
+    const { input, context } = (await triageInputFor(deps, item.number, revision, pool, model)) ?? {};
     if (previous && context && previous.result.issueUpdatedAt === revision.updatedAt &&
         previous.result.policyVersion === TRIAGE_POLICY && previous.inputModel === model &&
         previous.result.routeSetHash === context.routeSetHash &&
@@ -598,9 +611,12 @@ async function prepareTriageNode(state, config) {
     if (previous && !revision && previous.result.issueUpdatedAt === null &&
         previous.result.reason === "fetch-failed") continue;
     let result;
-    if (!revision || !context) {
+    if (!revision) {
       result = { issue: item.number, issueUpdatedAt: null, policyVersion: TRIAGE_POLICY,
         routeSetHash: null, evidenceVersion: "none", status: "fallback", reason: "fetch-failed" };
+    } else if (!context) {
+      result = { issue: item.number, issueUpdatedAt: revision.updatedAt, policyVersion: TRIAGE_POLICY,
+        routeSetHash: null, evidenceVersion: "none", status: "fallback", reason: "provider-error" };
     } else {
       try {
         const budget = deps.triageBudget?.();
@@ -741,8 +757,14 @@ function assignRoutesNode(state) {
     const roleState = roleStates.get(item.number);
     const role = roleState ? currentRole(roleState) : null;
     const proposal = proposals.get(item.number);
+    const manualOnly = (state.triageByIssue ?? []).find(({ issue }) => issue === item.number)
+      ?.requiresManualAssignment === true;
     let route;
-    if (proposal !== undefined) {
+    if (proposal === undefined && manualOnly) {
+      // A triage fallback is never assigned implicitly, even with autoAssign
+      // or a recorded role route.
+      return rejectProposal(`invalid-assignment:${item.number}:missing`);
+    } else if (proposal !== undefined) {
       route = resolveRoute(pool, proposal);
       if (!route)
         return rejectProposal(`invalid-assignment:${item.number}:${proposal.agent}:${proposal.model}`);
@@ -820,37 +842,41 @@ function assignRoutesNode(state) {
 async function preflightTriageDispatchNode(state, config) {
   if (triageMode(state) !== "shadow") return {};
   const deps = getDeps(config);
+  const freshPool = async (unavailableModels) => {
+    const refreshed = await deps.refreshTriageRoutes(state);
+    return {
+      capabilities: refreshed.capabilities,
+      pool: selectWorkerRoutes(refreshed.capabilities, {
+        parentAgent: state.config.parent.agent,
+        unavailableAgents: state.unavailableAgents,
+        unavailableModels,
+      }),
+    };
+  };
   for (const assignment of pendingDispatches(state)) {
     if (worktreeExists(state, assignment.number)) continue;
     const entry = (state.triageByIssue ?? []).find(({ issue }) => issue === assignment.number);
     const revision = await deps.fetchTriageRevision(assignment.number).catch(() => null);
-    // A fallback was already presented for explicit manual assignment. A
+    // A fallback was already presented for explicit manual assignment, so a
     // continuing metadata outage must not turn that approved route into a
     // repeated stale-input loop; exact CLI route verification still applies.
-    let reason = (!revision && entry?.result.status !== "fallback") || (entry?.result.issueUpdatedAt &&
-      revision?.updatedAt !== entry.result.issueUpdatedAt) ? "stale-input" : null;
+    let reason = null;
+    if (!revision) reason = entry?.result.status === "fallback" ? null : "stale-input";
+    else if (entry?.result.issueUpdatedAt && revision.updatedAt !== entry.result.issueUpdatedAt)
+      reason = "stale-input";
     let refreshed;
-    let pool;
     if (!reason) {
       try {
-        refreshed = await deps.refreshTriageRoutes(state);
-        pool = selectWorkerRoutes(refreshed.capabilities, {
-          parentAgent: state.config.parent.agent,
-          unavailableAgents: state.unavailableAgents,
-          unavailableModels: state.unavailableModels,
-        });
+        refreshed = await freshPool(state.unavailableModels);
       } catch {
         return { failureReason: "triage-route-refresh-failed" };
       }
-      if (!pool.length) return { failureReason: "no-worker-route-available" };
+      if (!refreshed.pool.length) return { failureReason: "no-worker-route-available" };
       if (entry?.result.status === "recommended") {
-        const routes = pool.map(routeLabels);
-        const current = triageContext({ issue: assignment.number,
-          issueUpdatedAt: revision.updatedAt, routes,
-          routeEvidence: await deps.triageEvidence(routes),
-          policyVersion: TRIAGE_POLICY, model: state.config.triage.model });
-        if (current.routeSetHash !== entry.result.routeSetHash ||
-            current.evidenceVersion !== entry.result.evidenceVersion) reason = "stale-input";
+        const current = await triageInputFor(deps, assignment.number, revision, refreshed.pool,
+          state.config.triage.model);
+        if (!current || current.context.routeSetHash !== entry.result.routeSetHash ||
+            current.context.evidenceVersion !== entry.result.evidenceVersion) reason = "stale-input";
       }
     }
     if (!reason) {
@@ -858,33 +884,35 @@ async function preflightTriageDispatchNode(state, config) {
       if (!verified?.ok) reason = "route-unavailable";
     }
     if (!reason) continue;
-    if ((entry?.preflightAttempts ?? 0) >= 1) return { failureReason: reason };
-    if (!refreshed) {
+    // Stale input re-prompts once; repeated edits fail the run closed. A
+    // failed route is excluded from the re-offered pool instead, which bounds
+    // its retries by the pool size.
+    const attempts = entry?.preflightAttempts ?? 0;
+    if (reason === "stale-input" && attempts >= 1) return { failureReason: reason };
+    const excludedModels = reason === "route-unavailable" ? [assignment.model] : [];
+    if (!refreshed || excludedModels.length) {
       try {
-        refreshed = await deps.refreshTriageRoutes(state);
-        pool = selectWorkerRoutes(refreshed.capabilities, {
-          parentAgent: state.config.parent.agent,
-          unavailableAgents: state.unavailableAgents,
-          unavailableModels: state.unavailableModels,
-        });
+        refreshed = await freshPool([...(state.unavailableModels ?? []), ...excludedModels]);
       } catch {
         return { failureReason: "triage-route-refresh-failed" };
       }
     }
-    if (!pool.length) return { failureReason: "no-worker-route-available" };
-    const context = entry?.result ?? {};
+    if (!refreshed.pool.length) return { failureReason: "no-worker-route-available" };
+    const previous = entry?.result ?? {};
     return {
       assignments: [{ number: assignment.number, remove: true }],
       capabilities: refreshed.capabilities,
-      workerRoutes: pool,
+      workerRoutes: refreshed.pool,
+      ...(excludedModels.length ? { unavailableModels: excludedModels } : {}),
       triagePreflightRetry: true,
       triageByIssue: [{ issue: assignment.number, inputModel: state.config.triage.model,
         evaluatedAt: deps.now(),
         budget: entry?.budget ?? state.triageBudget ?? null,
-        preflightAttempts: 1, requiresManualAssignment: true,
+        preflightAttempts: reason === "stale-input" ? attempts + 1 : attempts,
+        requiresManualAssignment: true,
         result: { issue: assignment.number, issueUpdatedAt: revision?.updatedAt ?? null,
-          policyVersion: TRIAGE_POLICY, routeSetHash: context.routeSetHash ?? null,
-          evidenceVersion: context.evidenceVersion ?? "none", status: "fallback", reason } }],
+          policyVersion: TRIAGE_POLICY, routeSetHash: previous.routeSetHash ?? null,
+          evidenceVersion: previous.evidenceVersion ?? "none", status: "fallback", reason } }],
     };
   }
   return {};
@@ -1310,8 +1338,6 @@ function summarizeRunNode(state) {
 /* ------------------------------------------------------------------ */
 
 const failOr = (next) => (state) => (state.failureReason ? "fail_run" : next);
-const refreshTriageRouter = (state) => state.failureReason ? "fail_run" :
-  (state.pendingInterrupted ?? []).length ? "select_handoff_route" : "prepare_triage";
 const assignmentRouter = (state) => state.failureReason ? "fail_run" :
   String(state.lastEventError ?? "").startsWith("invalid-assignment") && dispatchCandidates(state).length
     ? "assign_routes" : "preflight_triage_dispatch";
@@ -1347,8 +1373,9 @@ function dispatchRouter(state) {
 function waitRouter(state) {
   if (state.failureReason) return "fail_run";
   if (state.pendingGate) return "integration_gate";
-  if ((state.pendingInterrupted ?? []).length)
-    return triageMode(state) === "shadow" ? "refresh_triage_routes" : "select_handoff_route";
+  // A handoff keeps the legacy pool: shadow triage only observes new
+  // selections, so a refresh failure must not stop interrupted-work recovery.
+  if ((state.pendingInterrupted ?? []).length) return "select_handoff_route";
   // A finished role leaves the next role of the same Issue undispatched.
   // Only go back with free capacity, otherwise the run would ping-pong
   // between assign_routes and wait_for_events without pausing.
@@ -1400,8 +1427,9 @@ export function buildOrchestrationGraph({ checkpointer } = {}) {
     .addConditionalEdges("discover_capabilities", failOr("fetch_project_issues"))
     .addConditionalEdges("fetch_project_issues", failOr("validate_dependencies"))
     .addConditionalEdges("validate_dependencies", failOr("build_runnable_plan"))
-    .addConditionalEdges("build_runnable_plan", failOr("refresh_triage_routes"))
-    .addConditionalEdges("refresh_triage_routes", refreshTriageRouter)
+    .addConditionalEdges("build_runnable_plan", (state) =>
+      failOr(triageMode(state) === "off" ? "assign_routes" : "refresh_triage_routes")(state))
+    .addConditionalEdges("refresh_triage_routes", failOr("prepare_triage"))
     .addConditionalEdges("prepare_triage", failOr("resolve_triage"))
     .addConditionalEdges("resolve_triage", failOr("assign_routes"))
     .addConditionalEdges("assign_routes", assignmentRouter)

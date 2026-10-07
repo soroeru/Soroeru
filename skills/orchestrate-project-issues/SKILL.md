@@ -167,7 +167,9 @@ configured milestone, preserve worktrees on handoff) are enforced by the graph i
 The classic `project-issue-orchestrator.mjs` dry-run remains the default planning path.
 With `--triage shadow`, the graph refreshes each CLI model before building the Jev
 candidate pool. The assignment interrupt shows the recommendation and existing mode;
-it does not adopt Jev's risk, Size, mode, or route. A fallback requires manual route
+it does not adopt Jev's risk, Size, mode, or route. Before first dispatch, a changed Issue,
+pool, or unverifiable route withdraws the assignment for a manual re-prompt (a failed
+route's model is excluded for the run). A fallback requires manual route
 assignment even with `--auto-assign`. `--triage assisted` is unavailable until the
 separate adoption Issue. The classic dry-run never fetches Issue text or calls Jev.
 
