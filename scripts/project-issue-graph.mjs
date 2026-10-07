@@ -442,10 +442,10 @@ export function buildSummary(state, runStatus) {
     ),
     usage: buildUsageReport(state.usage ?? {}, issueNumbers),
     ...(triageMode(state) === "shadow" ? { shadowTriage: (state.triageByIssue ?? []).map(
-      ({ issue, result, evaluatedAt, budget }) => ({
+      ({ issue, result, evaluatedAt, budget, firstRoute }) => ({
         issue, result, evaluatedAt, budget,
         legacyMode: (state.plan?.runnable ?? []).find(({ number }) => number === issue)?.executionMode ?? null,
-        assignedRoute: ((assignment) => (assignment ? routeLabels(assignment) : null))(
+        assignedRoute: firstRoute ?? ((assignment) => (assignment ? routeLabels(assignment) : null))(
           (state.assignments ?? []).find(({ number }) => number === issue)),
       }),
     ) } : {}),
@@ -474,6 +474,8 @@ function loadConfigNode(state) {
     );
     if (!hasSelector) throw new Error("issue-filter-required");
     return {
+      // Later nodes read model/maxRequests, so keep the normalized defaults.
+      config: { ...config, triage },
       unavailableAgents: config.unavailableAgents ?? [],
       unavailableModels: config.unavailableModels ?? [],
     };
@@ -556,8 +558,17 @@ function triageMode(state) {
   return state.config?.triage?.mode ?? "off";
 }
 
+/** Issues in this selection batch that have not started a role program yet. */
+function triageCandidates(state) {
+  return dispatchCandidates(state)
+    .slice(0, Math.max(0, state.config.maxParallel - activeExecutions(state).length))
+    .filter(({ number }) => !roleStateFor(state, number));
+}
+
 async function refreshTriageRoutesNode(state, config) {
-  if (triageMode(state) === "off" || !dispatchCandidates(state).length) return {};
+  // A later role, fix cycle, or re-dispatch needs no triage, so it keeps the
+  // existing pool and cannot fail on a CLI refresh.
+  if (triageMode(state) === "off" || !triageCandidates(state).length) return {};
   try {
     const refreshed = await getDeps(config).refreshTriageRoutes(state);
     const capabilities = refreshed.capabilities;
@@ -596,10 +607,8 @@ async function prepareTriageNode(state, config) {
   if (triageMode(state) === "off") return {};
   const deps = getDeps(config);
   const pool = currentPool(state);
-  const candidates = dispatchCandidates(state).slice(0, Math.max(0, state.config.maxParallel - activeExecutions(state).length));
   const triageByIssue = [];
-  for (const item of candidates) {
-    if (roleStateFor(state, item.number)) continue;
+  for (const item of triageCandidates(state)) {
     const model = state.config.triage.model;
     const revision = await deps.fetchTriageRevision(item.number).catch(() => null);
     const previous = (state.triageByIssue ?? []).find(({ issue }) => issue === item.number);
@@ -853,6 +862,7 @@ async function preflightTriageDispatchNode(state, config) {
       }),
     };
   };
+  const passed = [];
   for (const assignment of pendingDispatches(state)) {
     if (worktreeExists(state, assignment.number)) continue;
     const entry = (state.triageByIssue ?? []).find(({ issue }) => issue === assignment.number);
@@ -883,7 +893,13 @@ async function preflightTriageDispatchNode(state, config) {
       const verified = await deps.verifyTriageRoute(assignment.route, state).catch(() => ({ ok: false }));
       if (!verified?.ok) reason = "route-unavailable";
     }
-    if (!reason) continue;
+    if (!reason) {
+      // The summary compares the recommendation with this first route, not a
+      // later reviewer, fix-cycle, or handoff assignment.
+      if (entry && !entry.firstRoute)
+        passed.push({ ...entry, firstRoute: { agent: assignment.agent, model: assignment.model } });
+      continue;
+    }
     // Stale input re-prompts once; repeated edits fail the run closed. A
     // failed route is excluded from the re-offered pool instead, which bounds
     // its retries by the pool size.
@@ -915,7 +931,7 @@ async function preflightTriageDispatchNode(state, config) {
           evidenceVersion: previous.evidenceVersion ?? "none", status: "fallback", reason } }],
     };
   }
-  return {};
+  return passed.length ? { triageByIssue: passed } : {};
 }
 
 async function dispatchWorkerNode(payload, config) {

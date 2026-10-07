@@ -61,8 +61,14 @@ export class FileCheckpointSaver extends MemorySaver {
       throw new Error("checkpoint-file-corrupt");
     }
     if (parsed?.format !== FILE_FORMAT) throw new Error("checkpoint-format-unsupported");
-    saver.#triageBudgets = parsed.triageBudgets ?? {};
-    saver.#triageAttempts = parsed.triageAttempts ?? {};
+    const plain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    const budgets = parsed.triageBudgets ?? {};
+    const attempts = parsed.triageAttempts ?? {};
+    if (!plain(budgets) || !Object.values(budgets).every(plain) || !plain(attempts) ||
+        !Object.values(attempts).every((list) => Array.isArray(list) && list.every((f) => typeof f === "string")))
+      throw new Error("checkpoint-file-corrupt");
+    saver.#triageBudgets = budgets;
+    saver.#triageAttempts = attempts;
     for (const [threadId, namespaces] of Object.entries(parsed.storage ?? {})) {
       saver.storage[threadId] = Object.create(null);
       for (const [namespace, checkpoints] of Object.entries(namespaces)) {

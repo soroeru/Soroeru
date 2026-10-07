@@ -1881,3 +1881,123 @@ test("a blocked run reports why in the summary", async () => {
     },
   ]);
 });
+
+/* ------------------------------------------------------------------ */
+/* Shadow triage fail-closed and role-program boundaries (#536)        */
+/* ------------------------------------------------------------------ */
+
+const recommendingTriage = async (input) => ({ result: shadowRecommendation(normalizeTriageInput(input)) });
+
+test("shadow reviewer dispatch keeps the pool when a later CLI refresh fails", async () => {
+  let refreshes = 0;
+  const deps = makeDeps({
+    // Only the first selection and its preflight may refresh.
+    refreshTriageRoutes: async () => {
+      if (++refreshes > 2) throw new Error("cli-unavailable");
+      return { capabilities: defaultCapabilities };
+    },
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: recommendingTriage,
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(roleInput([item(1)], { triage: shadowConfig }));
+  const implementer = deps.dispatched.at(-1);
+  assert.equal(implementer.role, "implementer");
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  const state = await run.state();
+  assert.equal(state.failureReason, undefined);
+  assert.equal(refreshes, 2);
+  assert.equal(deps.dispatched.at(-1).role, "reviewer");
+  // The comparison stays on the first dispatched route, not the reviewer's.
+  assert.deepEqual(buildSummary(state, "running").shadowTriage[0].assignedRoute, {
+    agent: implementer.route.agent,
+    model: implementer.route.model,
+  });
+});
+
+test("a failed CLI refresh for a new selection fails the shadow run closed", async () => {
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => {
+      throw new Error("cli-unavailable");
+    },
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: recommendingTriage,
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal((await run.state()).failureReason, "triage-route-refresh-failed");
+  assert.equal(deps.dispatched.length, 0);
+});
+
+test("a failed CLI refresh during dispatch preflight fails the shadow run closed", async () => {
+  let refreshes = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => {
+      if (++refreshes > 1) throw new Error("cli-unavailable");
+      return { capabilities: defaultCapabilities };
+    },
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: recommendingTriage,
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal((await run.state()).failureReason, "triage-route-refresh-failed");
+  assert.equal(deps.dispatched.length, 0);
+});
+
+test("an Issue edited again after a stale-input re-prompt fails the shadow run closed", async () => {
+  let edits = 0;
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => ({ updatedAt: `2026-07-21T00:00:0${++edits}.000Z` }),
+    triageEvidence: async () => [],
+    runTriage: recommendingTriage,
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  const paused = await run.invoke(makeInput({ items: [item(1)], config: { triage: shadowConfig } }));
+  assert.equal(paused.__interrupt__[0].value.assign.issues[0].shadowTriage.reason, "stale-input");
+  await run.resume({ assignments: [{ number: 1, agent: "Claude", model: "sonnet" }] });
+  assert.equal((await run.state()).failureReason, "stale-input");
+  assert.equal(deps.dispatched.length, 0);
+});
+
+test("a programmatic shadow config without model or budget uses the normalized defaults", async () => {
+  const sent = [];
+  const deps = makeDeps({
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    runTriage: async (input, triage) => {
+      sent.push({ model: input.model, maxRequests: triage.maxRequests });
+      return recommendingTriage(input);
+    },
+    verifyTriageRoute: async () => ({ ok: true }),
+  });
+  const run = makeRun({ deps });
+  await run.invoke(makeInput({ items: [item(1)], config: { triage: { mode: "shadow" } } }));
+  assert.deepEqual(sent, [{ model: "jev-1.13.0", maxRequests: 20 }]);
+  assert.equal((await run.state()).triageByIssue[0].result.status, "recommended");
+});
+
+test("the file checkpointer rejects malformed triage budget or attempt sections", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "graph-checkpoint-"));
+  try {
+    const format = "project-issue-graph-checkpoint/v1";
+    for (const [name, section] of [
+      ["attempts.json", { triageAttempts: { run: "not-a-list" } }],
+      ["budgets.json", { triageBudgets: { run: 3 } }],
+    ]) {
+      const file = path.join(directory, name);
+      await writeFile(file, JSON.stringify({ format, storage: {}, writes: {}, ...section }));
+      await assert.rejects(FileCheckpointSaver.load(file), /checkpoint-file-corrupt/);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

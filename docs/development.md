@@ -1082,7 +1082,7 @@ and withdraws the assignment for a manual re-prompt on a mismatch (`stale-input`
 `route-unavailable`, which also excludes that model for the run); and the run fails closed
 with `triage-route-refresh-failed`, `no-worker-route-available`, or a repeated
 `stale-input`. A fallback requires an explicit route assignment even with `--auto-assign`.
-Interrupted-worker handoff keeps the existing pool and does not depend on a refresh.
+Later roles, fix cycles, and interrupted-worker handoff keep the existing pool and do not depend on a refresh.
 `--triage assisted` fails with `triage-assisted-not-available` until #538. The configuration
 loader accepts the following optional section, and the plan CLI accepts `--triage off|shadow|assisted`. CLI mode overrides YAML while preserving
 the pinned model and budget. Defaults are off, `jev-1.13.0`, and 20 attempts.

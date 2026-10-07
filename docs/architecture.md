@@ -1039,18 +1039,24 @@ The runner serializes requests and reserves each attempt durably before starting
 Reservations are never refunded, including preflight failures; at most 20 attempts are
 allowed per run. A failed reservation prevents execution. Authentication or throttling
 failures disable the provider for that run. The caller owns one runner and its durable
-state. In graph shadow mode (#536), the file checkpoint saves a request fingerprint
-and reservation before the child starts; closed triage results and revision/pool hashes are checkpointed
-separately from the Issue body. The graph refreshes CLI routes per selection batch,
-compares metadata and pool state before first dispatch, and requires manual route
-assignment after fallback or a failed exact-route check. Shadow does not adopt Jev's
-risk, Size, mode, or route; handoff keeps the existing pool. Assisted
-adoption remains disabled pending #538. There are no retries; HTTP time
-is capped at five seconds and the child process tree at ten seconds. Request/response
-bodies are capped at 24/64 KiB, with redirects rejected.
+state. In graph shadow mode (#536), the file checkpoint saves a metadata-only request
+fingerprint and the reservation before the child starts. Only closed triage results,
+those fingerprints, and revision/pool hashes are checkpointed; the Issue body never
+enters the checkpoint. A resumed run that finds an existing claim records a local
+fallback and requires manual assignment; it never re-sends the request. The graph
+refreshes CLI routes for each new selection batch, compares metadata and pool state
+before first dispatch, and requires manual route assignment after a fallback or a
+failed exact-route check. Shadow does not adopt Jev's risk, Size, mode, or route; later
+roles and handoff keep the existing pool. Assisted adoption remains disabled pending
+#538. There are no retries; HTTP time is capped at five seconds and the child process
+tree at ten seconds. Request/response bodies are capped at 24/64 KiB, with redirects
+rejected.
 
 This opt-in boundary adds external processing of reviewed development text in exchange
-for cheaper classification experiments. Node's built-in fetch avoids an additional SDK;
+for cheaper classification experiments. Shadow mode also costs autonomy: its route-refresh
+and metadata-freshness checks can pause a run for manual assignment or fail it closed
+where off mode would continue, because a fallback means the Issue could not be classified
+safely and a person decides. Node's built-in fetch avoids an additional SDK;
 keeping deterministic orchestration as the default preserves offline operation. Revisit
 the choice if evaluation cannot meet the risk-recall/adoption gates, if API contracts or
 retention terms change, or if process isolation needs an OS sandbox. The provider does
