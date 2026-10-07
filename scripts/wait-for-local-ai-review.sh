@@ -126,22 +126,26 @@ IFS=','
 UNIT_LIST=($UNITS)
 IFS=$OLD_IFS
 
-# Finds this commit's confirmed output file for one unit, or returns 1.
+# Finds this commit's latest confirmed output file for one unit, or returns 1.
 # Printed to stdout on success so the caller can collect it.
+#
+# One commit can have several results for a unit (a re-review in a later
+# handoff epoch, or another reviewer). The glob expands in timestamp order, so
+# the last match is the newest result; --print must never show a stale one.
 #
 # The glob below matches by substring position, not by parsing the
 # documented <timestamp>-<reviewer>-<unit>-<pid> field layout. This is safe
 # only because reviewer names (claude/codex/grok) and unit names never contain
 # a dash; if either ever gained one, the glob could misroute matches.
 find_unit_output() {
-  local unit=$1 file
+  local unit=$1 file latest=""
   for file in "$STATE_DIR"/*-"$unit"-*.md; do
     if grep -qF -- "- commit: \`$COMMIT\`" "$file" 2>/dev/null; then
-      printf '%s' "$file"
-      return 0
+      latest=$file
     fi
   done
-  return 1
+  [ -n "$latest" ] || return 1
+  printf '%s' "$latest"
 }
 
 START=$(date +%s)

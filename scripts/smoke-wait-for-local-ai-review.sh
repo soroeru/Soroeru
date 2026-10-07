@@ -50,17 +50,36 @@ rm -f state/ai-reviews/*.md
 # --- 1b. --print emits each finished result; the default does not --------
 printf -- "- commit: \`%s\`\nVerdict: PASS (code)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-112.md"
 printf -- "- commit: \`%s\`\nVerdict: NIT_ONLY (design)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-design-113.md"
-OUT=$(run_wait --unit code,design --timeout 5)
+OUT=$(run_wait --unit code,design --timeout 5) || fail_msg "expected success without --print"
 printf '%s\n' "$OUT" | grep -q "Verdict:" \
   && fail_msg "expected no result body without --print, got: $OUT"
 OUT=$(run_wait --unit code,design --timeout 5 --print) || fail_msg "expected success with --print"
 printf '%s\n' "$OUT" | head -1 | grep -q "^wait-for-local-ai-review: done " \
   || fail_msg "expected the 'done' line first with --print, got: $OUT"
-for expected in "===== 20260101-000000-claude-code-112.md =====" "Verdict: PASS (code)" \
-  "===== 20260101-000000-claude-design-113.md =====" "Verdict: NIT_ONLY (design)"; do
-  printf '%s\n' "$OUT" | grep -qF -- "$expected" \
-    || fail_msg "expected '$expected' in --print output, got: $OUT"
-done
+# Each body must sit under its own header, in --unit order.
+EXPECTED_BODY=$(cat <<EOF
+
+===== 20260101-000000-claude-code-112.md =====
+- commit: \`$COMMIT\`
+Verdict: PASS (code)
+
+===== 20260101-000000-claude-design-113.md =====
+- commit: \`$COMMIT\`
+Verdict: NIT_ONLY (design)
+EOF
+)
+[ "$(printf '%s\n' "$OUT" | tail -n +2)" = "$EXPECTED_BODY" ] \
+  || fail_msg "expected headers and bodies in order with --print, got: $OUT"
+rm -f state/ai-reviews/*.md
+
+# --- 1d. several results for one unit and commit: --print shows the newest -
+printf -- "- commit: \`%s\`\nVerdict: PASS (old)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-115.md"
+printf -- "- commit: \`%s\`\nVerdict: NEEDS_CHANGES (new)\n" "$COMMIT" > "state/ai-reviews/20260102-000000-codex-code-116.md"
+OUT=$(run_wait --unit code --timeout 5 --print) || fail_msg "expected success with several results"
+printf '%s\n' "$OUT" | grep -qF "Verdict: NEEDS_CHANGES (new)" \
+  || fail_msg "expected the newest result with --print, got: $OUT"
+printf '%s\n' "$OUT" | grep -qF "PASS (old)" \
+  && fail_msg "expected the older result to be skipped, got: $OUT"
 rm -f state/ai-reviews/*.md
 
 # --- 1c. --print never prints while the review lock is held ---------------
