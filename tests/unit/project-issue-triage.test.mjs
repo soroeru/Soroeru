@@ -630,3 +630,73 @@ test("actual CLI applies triage mode override to effective run configuration", a
   );
   assert.deepEqual(JSON.parse(stdout).triage, { mode: "off", model: "jev-1.13.0", maxRequests: 3 });
 });
+
+test("classic dry-run with shadow triage fetches no Issue text and never contacts Jev", async (t) => {
+  const dir = await temporary(t);
+  const log = path.join(dir, "egress.log");
+  await writeFile(log, "");
+  await writeFile(path.join(dir, "git"), `#!${process.execPath}\nprocess.exit(0);\n`, { mode: 0o700 });
+  // Any GitHub CLI call (title/body fetch) is recorded and fails.
+  await writeFile(
+    path.join(dir, "gh"),
+    `#!${process.execPath}\nrequire("node:fs").appendFileSync(${JSON.stringify(log)}, "gh\\n");\nprocess.exit(1);\n`,
+    { mode: 0o700 },
+  );
+  // NODE_OPTIONS also reaches any triage child, so a Jev or GraphQL request is recorded too.
+  const recorder = path.join(dir, "record-fetch.mjs");
+  await writeFile(
+    recorder,
+    `import { appendFileSync } from "node:fs";\nglobalThis.fetch = async () => { appendFileSync(${JSON.stringify(log)}, "fetch\\n"); throw new Error("egress-disabled"); };\n`,
+  );
+  const configPath = path.join(dir, "config.yaml");
+  await writeFile(
+    configPath,
+    `project:\n  owner: soroeru\n  ownerType: organization\n  name: Fixture\nrun:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n`,
+  );
+  const inputPath = path.join(dir, "input.json");
+  const route = (agent, role) => ({
+    agent,
+    role,
+    model: "fixture",
+    selector: "fixture",
+    selectable: true,
+    verifiable: true,
+    timeoutMs: 1000,
+  });
+  await writeFile(
+    inputPath,
+    JSON.stringify({
+      items: [
+        {
+          number: 123,
+          title: "Fixture",
+          url: "https://example.invalid/issues/123",
+          status: "Ready",
+          priority: "P2",
+          dependencies: [],
+        },
+      ],
+      options: {
+        parent: { agent: "Codex", model: "fixture" },
+        capabilities: [route("Codex", "parent"), route("Claude", "worker")],
+      },
+    }),
+  );
+  const marker = "FAKE_TRIAGE_KEY_MARKER";
+  const script = new URL("../../scripts/project-issue-orchestrator.mjs", import.meta.url);
+  const { stdout, stderr } = await promisify(execFile)(
+    process.execPath,
+    [script.pathname, "--input", inputPath, "--issues", "123", "--config", configPath, "--triage", "shadow", "--dry-run"],
+    {
+      env: {
+        ...process.env,
+        PATH: dir,
+        NODE_OPTIONS: `--import ${new URL(`file://${recorder}`).href}`,
+        TYPESAFE_API_KEY: marker,
+      },
+    },
+  );
+  assert.equal(JSON.parse(stdout).triage.mode, "shadow");
+  assert.equal(await readFile(log, "utf8"), "");
+  assert.equal(`${stdout}${stderr}`.includes(marker), false);
+});
