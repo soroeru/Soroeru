@@ -72,7 +72,7 @@ EOF
   || fail_msg "expected headers and bodies in order with --print, got: $OUT"
 rm -f state/ai-reviews/*.md
 
-# --- 1d. several results for one unit and commit: --print shows the newest -
+# --- 1c. several results for one unit and commit: --print shows the newest -
 printf -- "- commit: \`%s\`\nVerdict: PASS (old)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-115.md"
 printf -- "- commit: \`%s\`\nVerdict: NEEDS_CHANGES (new)\n" "$COMMIT" > "state/ai-reviews/20260102-000000-codex-code-116.md"
 OUT=$(run_wait --unit code --timeout 5 --print) || fail_msg "expected success with several results"
@@ -80,9 +80,21 @@ printf '%s\n' "$OUT" | grep -qF "Verdict: NEEDS_CHANGES (new)" \
   || fail_msg "expected the newest result with --print, got: $OUT"
 printf '%s\n' "$OUT" | grep -qF "PASS (old)" \
   && fail_msg "expected the older result to be skipped, got: $OUT"
+printf '%s\n' "$OUT" | head -1 | grep -qF "20260102-000000-codex-code-116.md" \
+  || fail_msg "expected the newest path on the 'done' line, got: $OUT"
+printf '%s\n' "$OUT" | head -1 | grep -qF "20260101-000000-claude-code-115.md" \
+  && fail_msg "expected the older path off the 'done' line, got: $OUT"
+rm -f state/ai-reviews/*.md
+# A repeated local-time hour (DST) can give the newer result an earlier name.
+printf -- "- commit: \`%s\`\nVerdict: PASS (old)\n" "$COMMIT" > "state/ai-reviews/20260103-010000-claude-code-117.md"
+touch -t 202601030100 "state/ai-reviews/20260103-010000-claude-code-117.md"
+printf -- "- commit: \`%s\`\nVerdict: NEEDS_CHANGES (new)\n" "$COMMIT" > "state/ai-reviews/20260103-003000-claude-code-118.md"
+OUT=$(run_wait --unit code --timeout 5 --print) || fail_msg "expected success with a repeated hour"
+printf '%s\n' "$OUT" | grep -qF "Verdict: NEEDS_CHANGES (new)" \
+  || fail_msg "expected the most recently written result, got: $OUT"
 rm -f state/ai-reviews/*.md
 
-# --- 1c. --print never prints while the review lock is held ---------------
+# --- 1d. --print never prints while the review lock is held ---------------
 touch "state/ai-reviews/.lock"
 printf -- "- commit: \`%s\`\nVerdict: PASS\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-114.md"
 if run_wait --unit code --timeout 2 --print >"$TMP_DIR/locked.out" 2>&1; then

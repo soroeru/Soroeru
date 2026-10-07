@@ -130,8 +130,10 @@ IFS=$OLD_IFS
 # Printed to stdout on success so the caller can collect it.
 #
 # One commit can have several results for a unit (a re-review in a later
-# handoff epoch, or another reviewer). The glob expands in timestamp order, so
-# the last match is the newest result; --print must never show a stale one.
+# handoff epoch, or another reviewer). The newest by modification time wins,
+# since each result is written once when its review finishes; on a tie the
+# later name in glob (timestamp) order wins. File-name order alone is not
+# enough: the local-time timestamp can repeat or go back across a DST change.
 #
 # The glob below matches by substring position, not by parsing the
 # documented <timestamp>-<reviewer>-<unit>-<pid> field layout. This is safe
@@ -141,7 +143,9 @@ find_unit_output() {
   local unit=$1 file latest=""
   for file in "$STATE_DIR"/*-"$unit"-*.md; do
     if grep -qF -- "- commit: \`$COMMIT\`" "$file" 2>/dev/null; then
-      latest=$file
+      if [ -z "$latest" ] || [ ! "$latest" -nt "$file" ]; then
+        latest=$file
+      fi
     fi
   done
   [ -n "$latest" ] || return 1
@@ -155,6 +159,11 @@ while :; do
   ALL_FOUND=1
   MATCHED=""
   MATCHED_FILES=()
+  # A review may finish between the scan and the lock check below, leaving the
+  # scan with an older result; accept the scan only if the lock was absent
+  # both before and after it.
+  LOCK_FREE_BEFORE=1
+  [ -e "$LOCK_FILE" ] && LOCK_FREE_BEFORE=0
   # Bash 3.2 + set -u: empty "${arr[@]}" is unbound. --unit is required
   # and non-empty above, so UNIT_LIST should never be empty; guard for
   # the same class of EXIT-path bug as local-ai-review.sh cleanup_files.
@@ -168,7 +177,7 @@ while :; do
     fi
   done
 
-  if [ "$ALL_FOUND" -eq 1 ] && [ ! -e "$LOCK_FILE" ]; then
+  if [ "$ALL_FOUND" -eq 1 ] && [ "$LOCK_FREE_BEFORE" -eq 1 ] && [ ! -e "$LOCK_FILE" ]; then
     ELAPSED=$(($(date +%s) - START))
     printf 'wait-for-local-ai-review: done commit=%s units=%s elapsed=%ss ->%s\n' \
       "$SHORT_COMMIT" "$UNITS" "$ELAPSED" "$MATCHED"
