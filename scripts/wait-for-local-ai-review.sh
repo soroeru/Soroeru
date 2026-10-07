@@ -18,6 +18,12 @@
 # Usage:
 #   scripts/wait-for-local-ai-review.sh --unit <name>[,<name>...]
 #                                        [--commit <sha>] [--timeout <seconds>] [--poll <seconds>]
+#                                        [--print]
+#
+# --print writes each matched review result after the `done` line. It is the
+# supported way for an agent to read a finished review: the Claude Code
+# repository guard denies direct reads of state/ai-reviews/ so in-progress
+# artifacts are never polled.
 #
 # Exit codes: 0 success, 1 timeout, 2 usage error.
 
@@ -33,9 +39,10 @@ UNITS=""
 COMMIT=""
 TIMEOUT_SEC=540
 POLL_SEC=10
+PRINT=0
 
 usage() {
-  printf 'Usage: %s --unit <name>[,<name>...] [--commit <sha>] [--timeout <seconds>] [--poll <seconds>]\n' "$0" >&2
+  printf 'Usage: %s --unit <name>[,<name>...] [--commit <sha>] [--timeout <seconds>] [--poll <seconds>] [--print]\n' "$0" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -55,6 +62,10 @@ while [ $# -gt 0 ]; do
     --poll)
       POLL_SEC=${2:?--poll requires a value}
       shift 2
+      ;;
+    --print)
+      PRINT=1
+      shift
       ;;
     *)
       printf 'unknown argument: %s\n' "$1" >&2
@@ -115,22 +126,30 @@ IFS=','
 UNIT_LIST=($UNITS)
 IFS=$OLD_IFS
 
-# Finds this commit's confirmed output file for one unit, or returns 1.
+# Finds this commit's latest confirmed output file for one unit, or returns 1.
 # Printed to stdout on success so the caller can collect it.
+#
+# One commit can have several results for a unit (a re-review in a later
+# handoff epoch, or another reviewer). The newest by modification time wins,
+# since each result is written once when its review finishes; on a tie the
+# later name in glob (timestamp) order wins. File-name order alone is not
+# enough: the local-time timestamp can repeat or go back across a DST change.
 #
 # The glob below matches by substring position, not by parsing the
 # documented <timestamp>-<reviewer>-<unit>-<pid> field layout. This is safe
 # only because reviewer names (claude/codex/grok) and unit names never contain
 # a dash; if either ever gained one, the glob could misroute matches.
 find_unit_output() {
-  local unit=$1 file
+  local unit=$1 file latest=""
   for file in "$STATE_DIR"/*-"$unit"-*.md; do
     if grep -qF -- "- commit: \`$COMMIT\`" "$file" 2>/dev/null; then
-      printf '%s' "$file"
-      return 0
+      if [ -z "$latest" ] || [ ! "$latest" -nt "$file" ]; then
+        latest=$file
+      fi
     fi
   done
-  return 1
+  [ -n "$latest" ] || return 1
+  printf '%s' "$latest"
 }
 
 START=$(date +%s)
@@ -139,22 +158,35 @@ DEADLINE=$((START + TIMEOUT_SEC))
 while :; do
   ALL_FOUND=1
   MATCHED=""
+  MATCHED_FILES=()
+  # A review may finish between the scan and the lock check below, leaving the
+  # scan with an older result; accept the scan only if the lock was absent
+  # both before and after it.
+  LOCK_FREE_BEFORE=1
+  [ -e "$LOCK_FILE" ] && LOCK_FREE_BEFORE=0
   # Bash 3.2 + set -u: empty "${arr[@]}" is unbound. --unit is required
   # and non-empty above, so UNIT_LIST should never be empty; guard for
   # the same class of EXIT-path bug as local-ai-review.sh cleanup_files.
   for unit in ${UNIT_LIST[@]+"${UNIT_LIST[@]}"}; do
     if FOUND_FILE=$(find_unit_output "$unit"); then
       MATCHED="$MATCHED $FOUND_FILE"
+      MATCHED_FILES+=("$FOUND_FILE")
     else
       ALL_FOUND=0
       break
     fi
   done
 
-  if [ "$ALL_FOUND" -eq 1 ] && [ ! -e "$LOCK_FILE" ]; then
+  if [ "$ALL_FOUND" -eq 1 ] && [ "$LOCK_FREE_BEFORE" -eq 1 ] && [ ! -e "$LOCK_FILE" ]; then
     ELAPSED=$(($(date +%s) - START))
     printf 'wait-for-local-ai-review: done commit=%s units=%s elapsed=%ss ->%s\n' \
       "$SHORT_COMMIT" "$UNITS" "$ELAPSED" "$MATCHED"
+    if [ "$PRINT" -eq 1 ]; then
+      for file in ${MATCHED_FILES[@]+"${MATCHED_FILES[@]}"}; do
+        printf '\n===== %s =====\n' "${file##*/}"
+        cat -- "$file"
+      done
+    fi
     exit 0
   fi
 

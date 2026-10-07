@@ -161,8 +161,10 @@ confirming second review). If that second review still has actionable
 findings, commit one more fix pass *with* `LOCAL_AI_REVIEW_RUNNING=1` so the
 hook does not start a third review — the cap holds regardless of what the
 second review finds. If the first review already comes back with nothing
-actionable, no second review is needed. Record the review status, findings,
-and fixes in the PR body instead of extending the loop further.
+actionable, no second review is needed. Read each result with
+`scripts/wait-for-local-ai-review.sh --print` (§10), then record the review
+status, findings, and fixes in the PR body instead of extending the loop
+further.
 
 A successful handoff from a different session starts a new monotonically
 increasing epoch with a `0/2` budget, including same-agent recovery after a
@@ -302,7 +304,7 @@ Two things make this cheap to wait for correctly instead:
 
 ```bash
 scripts/wait-for-local-ai-review.sh --unit <name>[,<name>...] \
-  [--commit <sha>] [--timeout <seconds>] [--poll <seconds>]
+  [--commit <sha>] [--timeout <seconds>] [--poll <seconds>] [--print]
 ```
 
 - `--unit` (required): one or more of `code`, `requirements`, `architecture`,
@@ -315,6 +317,13 @@ scripts/wait-for-local-ai-review.sh --unit <name>[,<name>...] \
   explicitly for a commit that triggers several units, since they run
   sequentially under one lock.
 - `--poll` defaults to 10 seconds.
+- `--print` writes each matched result file after the `done` line, under a
+  `===== <file name> =====` header, only once the lock is gone. It is the
+  supported way for an agent to read a finished review's verdict and findings:
+  Claude Code's repository guard (`.claude/hooks/guard-repository.sh`) denies
+  direct `Read`/`Grep`/Bash access to `state/ai-reviews/`, so in-progress
+  artifacts are never polled. Running it again with `--commit` for an already
+  finished review returns immediately.
 
 Exit codes: `0` once every requested unit's commit-confirmed output exists and
 the lock is gone, `1` on timeout, `2` on a usage error.
