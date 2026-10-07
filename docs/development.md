@@ -1033,7 +1033,7 @@ unless the user explicitly changes it:
 3. Implement the Issue there; the primary clone remains human-only.
 4. After committing, check the commit command's own output for
    `[local-ai-review] queued ...`. If present, wait for that result by
-   running `scripts/wait-for-local-ai-review.sh` (see
+   running `scripts/wait-for-local-ai-review.sh --print` (see
    [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
    the review-count cap and follow-up policy) rather than polling
    `state/ai-reviews/` turn-by-turn. This workflow allows up to two local AI

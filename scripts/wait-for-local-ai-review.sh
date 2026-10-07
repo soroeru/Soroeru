@@ -18,6 +18,12 @@
 # Usage:
 #   scripts/wait-for-local-ai-review.sh --unit <name>[,<name>...]
 #                                        [--commit <sha>] [--timeout <seconds>] [--poll <seconds>]
+#                                        [--print]
+#
+# --print writes each matched review result after the `done` line. It is the
+# supported way for an agent to read a finished review: the Claude Code
+# repository guard denies direct reads of state/ai-reviews/ so in-progress
+# artifacts are never polled.
 #
 # Exit codes: 0 success, 1 timeout, 2 usage error.
 
@@ -33,9 +39,10 @@ UNITS=""
 COMMIT=""
 TIMEOUT_SEC=540
 POLL_SEC=10
+PRINT=0
 
 usage() {
-  printf 'Usage: %s --unit <name>[,<name>...] [--commit <sha>] [--timeout <seconds>] [--poll <seconds>]\n' "$0" >&2
+  printf 'Usage: %s --unit <name>[,<name>...] [--commit <sha>] [--timeout <seconds>] [--poll <seconds>] [--print]\n' "$0" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -55,6 +62,10 @@ while [ $# -gt 0 ]; do
     --poll)
       POLL_SEC=${2:?--poll requires a value}
       shift 2
+      ;;
+    --print)
+      PRINT=1
+      shift
       ;;
     *)
       printf 'unknown argument: %s\n' "$1" >&2
@@ -139,12 +150,14 @@ DEADLINE=$((START + TIMEOUT_SEC))
 while :; do
   ALL_FOUND=1
   MATCHED=""
+  MATCHED_FILES=()
   # Bash 3.2 + set -u: empty "${arr[@]}" is unbound. --unit is required
   # and non-empty above, so UNIT_LIST should never be empty; guard for
   # the same class of EXIT-path bug as local-ai-review.sh cleanup_files.
   for unit in ${UNIT_LIST[@]+"${UNIT_LIST[@]}"}; do
     if FOUND_FILE=$(find_unit_output "$unit"); then
       MATCHED="$MATCHED $FOUND_FILE"
+      MATCHED_FILES+=("$FOUND_FILE")
     else
       ALL_FOUND=0
       break
@@ -155,6 +168,12 @@ while :; do
     ELAPSED=$(($(date +%s) - START))
     printf 'wait-for-local-ai-review: done commit=%s units=%s elapsed=%ss ->%s\n' \
       "$SHORT_COMMIT" "$UNITS" "$ELAPSED" "$MATCHED"
+    if [ "$PRINT" -eq 1 ]; then
+      for file in ${MATCHED_FILES[@]+"${MATCHED_FILES[@]}"}; do
+        printf '\n===== %s =====\n' "${file##*/}"
+        cat -- "$file"
+      done
+    fi
     exit 0
   fi
 

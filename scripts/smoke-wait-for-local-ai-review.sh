@@ -47,6 +47,32 @@ printf '%s\n' "$OUT" | grep -qF "20260101-000000-claude-code-111.md" \
   || fail_msg "expected the matched file path in output, got: $OUT"
 rm -f state/ai-reviews/*.md
 
+# --- 1b. --print emits each finished result; the default does not --------
+printf -- "- commit: \`%s\`\nVerdict: PASS (code)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-112.md"
+printf -- "- commit: \`%s\`\nVerdict: NIT_ONLY (design)\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-design-113.md"
+OUT=$(run_wait --unit code,design --timeout 5)
+printf '%s\n' "$OUT" | grep -q "Verdict:" \
+  && fail_msg "expected no result body without --print, got: $OUT"
+OUT=$(run_wait --unit code,design --timeout 5 --print) || fail_msg "expected success with --print"
+printf '%s\n' "$OUT" | head -1 | grep -q "^wait-for-local-ai-review: done " \
+  || fail_msg "expected the 'done' line first with --print, got: $OUT"
+for expected in "===== 20260101-000000-claude-code-112.md =====" "Verdict: PASS (code)" \
+  "===== 20260101-000000-claude-design-113.md =====" "Verdict: NIT_ONLY (design)"; do
+  printf '%s\n' "$OUT" | grep -qF -- "$expected" \
+    || fail_msg "expected '$expected' in --print output, got: $OUT"
+done
+rm -f state/ai-reviews/*.md
+
+# --- 1c. --print never prints while the review lock is held ---------------
+touch "state/ai-reviews/.lock"
+printf -- "- commit: \`%s\`\nVerdict: PASS\n" "$COMMIT" > "state/ai-reviews/20260101-000000-claude-code-114.md"
+if run_wait --unit code --timeout 2 --print >"$TMP_DIR/locked.out" 2>&1; then
+  fail_msg "expected timeout while the lock is held"
+fi
+grep -q "Verdict:" "$TMP_DIR/locked.out" \
+  && fail_msg "expected no result body while the lock is held, got: $(cat "$TMP_DIR/locked.out")"
+rm -f "$TMP_DIR/locked.out" state/ai-reviews/.lock state/ai-reviews/*.md
+
 # --- 2. lock present, cleared by a background job along with the file ---
 # -> succeeds only once both clear
 touch "state/ai-reviews/.lock"
