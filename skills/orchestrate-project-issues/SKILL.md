@@ -34,7 +34,7 @@ GitHub deterministically.
 ## Start gate
 
 1. Discover worker runtimes automatically per [provider-routing.md](references/provider-routing.md). The normal path is `node scripts/project-issue-capabilities.mjs` (or omit `--capabilities-file` so the orchestrator discovers for you). Adapters run in fixed order Codex → Claude → Grok → Gemini; only verified routes become capability records `{agent, requestedModel, model, role, selector, selectable, verifiable, timeoutMs}`. Do not hand-limit the pool to Codex with a handmade capabilities file.
-2. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model>` (optional `--capabilities-file` only for tests / intentional overrides). The default YAML supplies the stable Project/run values. Issue bodies are never fetched by the planner — dependencies come from GitHub `blockedBy` relations and Priority/Size/Status from Project fields. A worker fetches its own Issue body and comments immediately before implementation.
+2. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model>` (optional `--capabilities-file` only for tests / intentional overrides). The default YAML supplies the stable Project/run values. The dry-run and Project planner never fetch Issue bodies — dependencies come from GitHub `blockedBy` relations and Priority/Size/Status from Project fields. In opt-in graph shadow mode, only the isolated Jev triage child fetches the currently dispatchable Issue's body; the parent graph receives closed, non-sensitive results. A worker fetches its own Issue body and comments immediately before implementation.
 3. Stop before any worktree mutation on unknown/cyclic `Blocked by` dependencies, open or unavailable dependency state, or an unverifiable parent route. Confirm the requested parent model can actually be selected; if exact selection cannot be verified, block that route and never relabel another model.
 4. The dry-run returns `plan.runnable` (ordered by Priority then Issue number) and `workerRoutes` (the run-scoped pool of verified worker routes after excluding the Parent agent runtime and applying `--unavailable-agent` / `--unavailable-model` exclusions). Every model and selector belonging to the Parent agent is excluded: if Codex is the Parent, no Codex route may be a worker. If Issues are runnable and the remaining pool is empty, the run stops with `no-worker-route-available`; otherwise the run may proceed with fewer workers than `maxParallel`.
 
@@ -165,6 +165,13 @@ assignment, worker events, and every integration-gate verdict, and resumes with
 above (choose only from `workerRoutes`, fail closed on exhaustion, release only on the
 configured milestone, preserve worktrees on handoff) are enforced by the graph itself.
 The classic `project-issue-orchestrator.mjs` dry-run remains the default planning path.
+With `--triage shadow`, the graph refreshes each CLI model before building the Jev
+candidate pool. The assignment interrupt shows the recommendation and existing mode;
+it does not adopt Jev's risk, Size, mode, or route. Before first dispatch, a changed Issue,
+pool, or unverifiable route withdraws the assignment for a manual re-prompt (a failed
+route's model is excluded for the run). A fallback requires manual route
+assignment even with `--auto-assign`. `--triage assisted` is unavailable until the
+separate adoption Issue. The classic dry-run never fetches Issue text or calls Jev.
 
 ## State and reporting
 

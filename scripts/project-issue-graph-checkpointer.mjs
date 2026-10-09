@@ -1,8 +1,14 @@
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import { MemorySaver } from "@langchain/langgraph-checkpoint";
 
 import { writeJsonAtomic } from "./project-issue-runtime-adapters/shared.mjs";
+
+/** Domain-separated, closed-alphabet key; avoids prototype names and arbitrary CLI IDs. */
+export function triageRunId(threadId) {
+  return `t-${createHash("sha256").update(String(threadId)).digest("hex")}`;
+}
 
 /**
  * File-backed LangGraph checkpoint saver for project-issue orchestration.
@@ -20,6 +26,8 @@ import { writeJsonAtomic } from "./project-issue-runtime-adapters/shared.mjs";
  */
 export class FileCheckpointSaver extends MemorySaver {
   #filePath;
+  #triageBudgets = {};
+  #triageAttempts = {};
 
   /**
    * Persistence is serialized through this chain: LangGraph issues
@@ -53,6 +61,14 @@ export class FileCheckpointSaver extends MemorySaver {
       throw new Error("checkpoint-file-corrupt");
     }
     if (parsed?.format !== FILE_FORMAT) throw new Error("checkpoint-format-unsupported");
+    const plain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    const budgets = parsed.triageBudgets ?? {};
+    const attempts = parsed.triageAttempts ?? {};
+    if (!plain(budgets) || !Object.values(budgets).every(plain) || !plain(attempts) ||
+        !Object.values(attempts).every((list) => Array.isArray(list) && list.every((f) => typeof f === "string")))
+      throw new Error("checkpoint-file-corrupt");
+    saver.#triageBudgets = budgets;
+    saver.#triageAttempts = attempts;
     for (const [threadId, namespaces] of Object.entries(parsed.storage ?? {})) {
       saver.storage[threadId] = Object.create(null);
       for (const [namespace, checkpoints] of Object.entries(namespaces)) {
@@ -99,7 +115,29 @@ export class FileCheckpointSaver extends MemorySaver {
       for (const [innerKey, [taskId, channel, value]] of Object.entries(innerWrites))
         writes[outerKey][innerKey] = { taskId, channel, value: asString(value) };
     }
-    await writeJsonAtomic(this.#filePath, { format: FILE_FORMAT, storage, writes });
+    await writeJsonAtomic(this.#filePath, { format: FILE_FORMAT, storage, writes,
+      triageBudgets: this.#triageBudgets, triageAttempts: this.#triageAttempts });
+  }
+
+  /** A reservation is durable before the triage child can make a paid request. */
+  triageBudget(runId) {
+    return this.#triageBudgets[runId] ?? null;
+  }
+
+  async reserveTriageBudget(snapshot) {
+    const previous = this.#triageBudgets[snapshot.runId];
+    if (previous && snapshot.reserved < previous.reserved) throw new Error("triage-budget-regression");
+    this.#triageBudgets[snapshot.runId] = { ...snapshot };
+    await this.#persist();
+  }
+
+  /** A replay after a crash falls back locally instead of sending the same request twice. */
+  async beginTriageAttempt(runId, fingerprint) {
+    this.#triageAttempts[runId] ??= [];
+    if (this.#triageAttempts[runId].includes(fingerprint)) return false;
+    this.#triageAttempts[runId].push(fingerprint);
+    await this.#persist();
+    return true;
   }
 
   async put(config, checkpoint, metadata, newVersions) {
@@ -115,6 +153,10 @@ export class FileCheckpointSaver extends MemorySaver {
 
   async deleteThread(threadId) {
     await super.deleteThread(threadId);
+    delete this.#triageBudgets[threadId];
+    delete this.#triageAttempts[threadId];
+    delete this.#triageBudgets[triageRunId(threadId)];
+    delete this.#triageAttempts[triageRunId(threadId)];
     await this.#persist();
   }
 }

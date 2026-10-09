@@ -328,8 +328,9 @@ the selected agent's catalog, probes only that exact model, and compares the
 fresh selector against the selected route. It never executes an input selector.
 It returns `{ok:true, route, probedAt}` or `{ok:false, reason}` with a closed
 reason; a missing/excluded route or selector drift is `model-not-selectable`.
-Callers must reselect on failure rather than dispatching the old route. These
-APIs are not yet wired into the execution graph; #536/#538 own that integration.
+Callers must reselect on failure rather than dispatching the old route.
+The graph's shadow triage path uses these APIs for fresh candidate discovery
+and exact-model preflight before initial dispatch; assisted adoption remains #538.
 CLI-reported model metadata can reveal substitutions; a CLI that reports no
 actual model still proves only that its exact selector completed the probe,
 not independent attestation of which backend served it.
@@ -410,7 +411,7 @@ is `project-issue-orchestrator.mjs`.
 
 `scripts/project-issue-graph.mjs` models the same orchestration as an explicit
 LangGraph `StateGraph` (config → capability discovery → Project fetch →
-dependency validation → plan → route assignment → `Send` fan-out dispatch →
+dependency validation → plan → optional shadow triage → route assignment → `Send` fan-out dispatch →
 event wait → integration gate → dependent release → summary), with
 checkpointing and `thread_id`-based resume. It calls the same planning,
 capability, milestone, and dispatch functions as the classic CLI — runtime
@@ -433,6 +434,7 @@ node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
   --issues 380,382 --max-parallel 2 --release-policy merged \
   --parent-agent Codex --parent-model gpt-5 --auto-assign
 # Add --single-worker to disable role programs (one worker owns the Issue).
+# Add --triage shadow for opt-in reference-only Jev triage. `assisted` is unavailable.
 # Resume the same thread with a worker event or a gate verdict:
 # node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
 #   --resume-json '{"type":"role-complete","issue":380,"role":"implementer"}'
@@ -1067,8 +1069,21 @@ single Issue to implement first.
 
 ### Jev triage provider terms and activation
 
-Issue #535 adds the isolated adapter and contracts; #536 connects them to the graph.
-No Jev request is made by the existing orchestration CLI in this stage. The configuration
+Issue #535 adds the isolated adapter and contracts; #536 connects shadow mode to the graph.
+The classic dry-run remains text-free and makes no Jev request. The graph's opt-in
+`--triage shadow` refreshes exact CLI model availability for each new selection batch,
+then asks the isolated child to triage only currently dispatchable Issues. It shows
+the closed risk, Size, and route recommendation beside the legacy execution mode in
+the assignment interrupt and run summary (also when auto-assignment skips that interrupt).
+Shadow never adopts Jev's risk, Size, role program, or route recommendation. It does
+change the run in three bounded ways: new selections use the freshly verified CLI pool;
+before first dispatch the graph re-checks Issue metadata, the pool, and the exact route,
+and withdraws the assignment for a manual re-prompt on a mismatch (`stale-input`, or
+`route-unavailable`, which also excludes that model for the run); and the run fails closed
+with `triage-route-refresh-failed`, `no-worker-route-available`, or a repeated
+`stale-input`. A fallback requires an explicit route assignment even with `--auto-assign`.
+Later roles, fix cycles, and interrupted-worker handoff keep the existing pool and do not depend on a refresh.
+`--triage assisted` fails with `triage-assisted-not-available` until #538. The configuration
 loader accepts the following optional section, and the plan CLI accepts `--triage off|shadow|assisted`. CLI mode overrides YAML while preserving
 the pinned model and budget. Defaults are off, `jev-1.13.0`, and 20 attempts.
 
@@ -1085,8 +1100,9 @@ callback and reload its `{runId, reserved, providerUnavailable}` snapshot when r
 The callback must finish saving before it resolves; save failure prevents the request.
 Reserve-before-send deliberately charges an attempt slot even when the child rejects
 input or the process is interrupted. Never recreate an empty counter under an existing
-run ID. The graph will own this persistence in #536. `assisted` currently returns
-`input-not-approved`; it cannot adopt decisions yet. `off` neither starts a child nor
+run ID. The graph's file checkpoint persists a non-sensitive request fingerprint and
+the reservation before a child request; restart uses the same thread ID and will not
+replay a claimed request. `off` neither starts a child nor
 uses a slot. `TYPESAFE_API_KEY` belongs in the process environment, never YAML, argv,
 Issue content, checkpoint, telemetry, or worker environments.
 
