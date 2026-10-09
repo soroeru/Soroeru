@@ -1062,3 +1062,10 @@ the choice if evaluation cannot meet the risk-recall/adoption gates, if API cont
 retention terms change, or if process isolation needs an OS sandbox. The provider does
 not have an assumed zero-retention guarantee: see the dated terms review in
 [development.md](development.md#jev-triage-provider-terms-and-activation).
+
+Evaluation (#537) reuses the same child boundary with injected fictional Issue text, so the
+tripwire, limits, and response validation are measured as they run. `RouteEvidence` comes
+from a fixed fictional task benchmark on freshly verified exact models and records only
+per-kind counts and median durations. Neither harness is a CI dependency on an external API;
+live runs are explicit opt-ins, and the assisted gate stays closed until a person confirms
+labels, reviews overrides, and records the Product Owner decision.

@@ -1132,3 +1132,45 @@ not a guarantee inferred from possessing an API key. Before enabling shadow mode
 operator must check the terms and retention arrangement that apply to their own account,
 and decide whether the reviewed public Issue text is suitable for that processing.
 No code accepts terms, purchases credits, or changes billing settings for the operator.
+
+### Jev triage evaluation and RouteEvidence
+
+Issue #537 adds the measurement harnesses that decide whether assisted triage (#538) may be
+enabled. Results, gate status, and the Product Owner decision are recorded in
+[`design/537-jev-triage-evaluation.md`](design/537-jev-triage-evaluation.md).
+
+`scripts/project-issue-triage-eval.mjs` runs the fictional labeled dataset
+`tests/fixtures/jev-triage-eval/dataset-v1.json` through the production `evaluateTriage`
+boundary. Fixture title/body text is injected in place of the GitHub fetch, so the same
+sensitive-input tripwire, size limits, fixed endpoint, and response validation apply.
+Records and reports contain only case ids, label enums, probabilities, and counts.
+
+```bash
+# Offline, deterministic: keyword/Size baseline (the design §11 comparison baseline). Never Jev quality.
+node scripts/project-issue-triage-eval.mjs --split holdout --now 2026-10-09T00:00:00Z
+node scripts/project-issue-triage-eval.mjs --split tune --format json
+# Opt-in, paid: live Jev. Refuses to start unless the budget covers the whole split.
+TYPESAFE_API_KEY=... node scripts/project-issue-triage-eval.mjs --transport live --split holdout --max-requests 80
+# Shadow vs. manual assignment from saved graph run summaries (stdout JSON of the graph run).
+node scripts/project-issue-triage-eval.mjs --compare-runs run-a.json --compare-runs run-b.json
+node --test tests/unit/project-issue-triage-eval.test.mjs
+```
+
+Do not tune rubric text or thresholds on the `holdout` split; use `tune`. The assisted gate
+never reports `met` by itself: label confirmation, override-cause review, and the Product
+Owner decision stay `pending` until recorded. A live run stops sending after 401/403/429/529.
+
+`scripts/project-issue-route-benchmark.mjs` produces `RouteEvidence`. Each freshly verified
+exact model runs the same 40 fictional tasks (10 each of docs, local-code, cross-component,
+security) in a throwaway sandbox; a fixed checker that the agent never sees decides pass/fail.
+Only `{kind, passed, durationMs}` leaves a task, and a CLI that reports a different model
+invalidates the whole route. It requires `--live` because it spends each CLI's quota, and
+it writes the validated array to `state/route-evidence.json` (gitignored) by default:
+
+```bash
+node scripts/project-issue-route-benchmark.mjs --live --only Claude,Codex --parent-agent Claude
+```
+
+Review that file before handing it to the graph's `triageEvidence` provider (#538). Evidence
+older than 30 days, from another `benchmarkVersion`, or for a model outside the current pool
+is ignored, and fewer than two comparable candidates or a tie yields `abstain`.
