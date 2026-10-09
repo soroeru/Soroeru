@@ -237,7 +237,7 @@ worktree_registered() {
 
 state_json() {
   require_state
-  local worktree branch head dirty operation lock upstream ahead behind stash_count cwd_in_use
+  local worktree branch head dirty operation lock upstream upstream_ref upstream_gone ahead behind stash_count cwd_in_use
   worktree=$(jq -r .worktree "$STATE_FILE")
   branch=$(jq -r .branch "$STATE_FILE")
   [ -d "$worktree" ] || die "registered Issue worktree directory is missing: $worktree"
@@ -248,7 +248,18 @@ state_json() {
   if [ -n "$(git -C "$worktree" status --porcelain)" ]; then dirty=true; else dirty=false; fi
   operation=$(git_operation "$worktree")
   if review_lock_present "$worktree"; then lock=true; else lock=false; fi
-  upstream=$(git -C "$worktree" rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || true)
+  # rev-parse echoes '@{upstream}' when the tracked ref was pruned, so read the
+  # configured upstream and treat a missing ref as gone (no upstream).
+  upstream_ref=$(git -C "$worktree" for-each-ref --format='%(upstream)' "refs/heads/$branch")
+  upstream=""
+  upstream_gone=false
+  if [ -n "$upstream_ref" ]; then
+    if git -C "$worktree" show-ref --verify --quiet "$upstream_ref"; then
+      upstream=$(git -C "$worktree" for-each-ref --format='%(upstream:short)' "refs/heads/$branch")
+    else
+      upstream_gone=true
+    fi
+  fi
   ahead=0
   behind=0
   stash_count=$(git -C "$worktree" stash list | wc -l | tr -d ' ')
@@ -258,15 +269,16 @@ state_json() {
     cwd_in_use=true
   fi
   if [ -n "$upstream" ]; then
-    ahead=$(git -C "$worktree" rev-list --count "$upstream..HEAD")
-    behind=$(git -C "$worktree" rev-list --count "HEAD..$upstream")
+    ahead=$(git -C "$worktree" rev-list --count "$upstream_ref..HEAD" 2>/dev/null) || ahead=0
+    behind=$(git -C "$worktree" rev-list --count "HEAD..$upstream_ref" 2>/dev/null) || behind=0
   fi
   jq -c \
     --arg head "$head" --arg operation "$operation" --arg upstream "$upstream" \
+    --argjson upstream_gone "$upstream_gone" \
     --argjson dirty "$dirty" --argjson review_lock "$lock" \
     --argjson ahead "$ahead" --argjson behind "$behind" --argjson stash_count "$stash_count" \
     --argjson cwd_in_use "$cwd_in_use" \
-    '. + {head:$head,dirty:$dirty,git_operation:$operation,review_lock:$review_lock,upstream:$upstream,ahead:$ahead,behind:$behind,stash_count:$stash_count,cwd_in_use:$cwd_in_use}' \
+    '. + {head:$head,dirty:$dirty,git_operation:$operation,review_lock:$review_lock,upstream:$upstream,upstream_gone:$upstream_gone,ahead:$ahead,behind:$behind,stash_count:$stash_count,cwd_in_use:$cwd_in_use}' \
     "$STATE_FILE"
 }
 
@@ -322,9 +334,9 @@ case "$COMMAND" in
   status)
     VALUE=$(state_json)
     if [ "$JSON" = "1" ]; then
-      printf '%s\n' "$VALUE" | jq '{issue,slug,branch,worktree,status,owner,handoff_epoch,review_budget_used:.review.used,review_pending:(.review.pending // 0),review_budget_limit:.review.limit,reviewer:.review.reviewer,head,dirty,git_operation,review_lock,upstream,ahead,behind,stash_count,cwd_in_use}'
+      printf '%s\n' "$VALUE" | jq '{issue,slug,branch,worktree,status,owner,handoff_epoch,review_budget_used:.review.used,review_pending:(.review.pending // 0),review_budget_limit:.review.limit,reviewer:.review.reviewer,head,dirty,git_operation,review_lock,upstream,upstream_gone,ahead,behind,stash_count,cwd_in_use}'
     else
-      printf '%s\n' "$VALUE" | jq -r '"Issue #\(.issue)  branch=\(.branch)  epoch=\(.handoff_epoch)  owner=\(.owner.agent)  dirty=\(.dirty)  review=\(.review.used)/\(.review.limit)\nworktree=\(.worktree)\nHEAD=\(.head) upstream=\(.upstream) ahead=\(.ahead) behind=\(.behind) operation=\(.git_operation) review_lock=\(.review_lock)"'
+      printf '%s\n' "$VALUE" | jq -r '"Issue #\(.issue)  branch=\(.branch)  epoch=\(.handoff_epoch)  owner=\(.owner.agent)  dirty=\(.dirty)  review=\(.review.used)/\(.review.limit)\nworktree=\(.worktree)\nHEAD=\(.head) upstream=\(.upstream) upstream_gone=\(.upstream_gone) ahead=\(.ahead) behind=\(.behind) operation=\(.git_operation) review_lock=\(.review_lock)"'
     fi
     ;;
 
