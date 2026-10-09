@@ -26,7 +26,7 @@ import {
   writeJsonAtomic,
 } from "./project-issue-runtime-adapters/shared.mjs";
 
-export const BENCHMARK_VERSION = "route-bench-1.0.0";
+export const BENCHMARK_VERSION = "route-bench-1.1.0";
 export const SAMPLES_PER_KIND = 10;
 export const DEFAULT_EVIDENCE_OUTPUT = "state/route-evidence.json";
 export const DEFAULT_TASK_TIMEOUT_MS = 600_000;
@@ -94,6 +94,22 @@ const LOCAL_CODE = [
     'padLeft("7", 3) === "  7" && padLeft("1234", 2) === "1234"',
   ],
 ];
+// Each instruction states every behavior its hidden check asserts, so the pass
+// rate measures the fix rather than luck at guessing the check.
+const LOCAL_CODE_SPECS = {
+  clamp: "clamp(v, lo, hi) must return v limited to the inclusive range [lo, hi].",
+  sum: "sum(xs) must return the sum of every number in xs, and 0 for an empty array.",
+  isEven: "isEven(n) must return true for even integers, including 0, and false for odd ones.",
+  capitalize:
+    "capitalize(s) must upper-case the first character and keep the rest unchanged; an empty string stays empty.",
+  range: "range(n) must return [0, 1, ..., n - 1]; range(0) returns an empty array.",
+  unique: "unique(xs) must remove duplicates while keeping the order of first occurrence.",
+  maxOf: "maxOf(xs) must return the largest number, or null for an empty array.",
+  reverseWords: "reverseWords(s) must reverse the order of the space-separated words, not the characters.",
+  countVowels: "countVowels(s) must count the vowels a, e, i, o and u in either case.",
+  padLeft:
+    "padLeft(s, n) must left-pad s with spaces to length n and return s unchanged when it is already at least n long.",
+};
 const CROSS = [
   ["timeoutMs", "requestTimeoutMs", 5000],
   ["retries", "maxRetries", 3],
@@ -133,7 +149,7 @@ export function buildBenchmarkTasks() {
       id: `local-code-${i + 1}`,
       kind: "local-code",
       files: { "lib.mjs": `${source}\n` },
-      instruction: `lib.mjs exports a buggy function \`${name}\`. Fix its implementation so it behaves as its name says. Keep the export name and signature.`,
+      instruction: `lib.mjs exports a buggy function \`${name}\`. Fix it: ${LOCAL_CODE_SPECS[name]} Keep the export name and signature.`,
       check: { type: "node-assert", script: assertScript(`import { ${name} } from "./lib.mjs";`, condition) },
     });
   });
@@ -253,9 +269,10 @@ export async function runBenchmarkTask(
     const durationMs = Math.max(0, Math.round(clock() - started));
     if (reportedModels(result).some((model) => model !== route.model))
       return { kind: task.kind, modelMismatch: true };
-    const passed =
-      !result.timedOut && result.code === 0 && (await checkBenchmarkTask(sandbox, task, { run }));
-    return { kind: task.kind, passed, durationMs };
+    // A non-zero exit or timeout is a CLI/quota/session failure, not a wrong fix:
+    // counting it as failed would rank the route low for reasons unrelated to quality.
+    if (result.timedOut || result.code !== 0) return { kind: task.kind, infrastructureFailure: true };
+    return { kind: task.kind, passed: await checkBenchmarkTask(sandbox, task, { run }), durationMs };
   } finally {
     await fs.rm(sandbox, { recursive: true, force: true }).catch(() => {});
   }
@@ -299,6 +316,8 @@ export async function benchmarkRoute(route, tasks, options = {}) {
     const result = await runBenchmarkTask(route, task, options);
     // A substituted model makes every sample unattributable; publish nothing.
     if (result.modelMismatch) return { status: "model-mismatch" };
+    // Likewise an interrupted route publishes nothing and must be rerun in full.
+    if (result.infrastructureFailure) return { status: "incomplete" };
     results.push(result);
   }
   return { status: "measured", results };

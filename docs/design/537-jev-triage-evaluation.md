@@ -32,6 +32,7 @@ Jev の性能を推定値で補わず、実測するまで未測定として扱�
 | 分類評価ハーネス、指標、assisted ゲート、shadow 比較 | `scripts/project-issue-triage-eval.mjs` |
 | route ベンチマークと RouteEvidence 生成 | `scripts/project-issue-route-benchmark.mjs` |
 | RouteEvidence の型検証 | `normalizeRouteEvidence`（`scripts/project-issue-triage-contract.mjs`） |
+| RouteEvidence の出力（実測後） | `state/route-evidence.json`（gitignore 済み。§5 のレビュー手順を経て D が読み込む） |
 | 計算と保存境界のテスト | `tests/unit/project-issue-triage-eval.test.mjs`（§6 の対応表） |
 | 実行手順 | [development.md の該当節](../development.md#jev-triage-evaluation-and-routeevidence) |
 
@@ -43,7 +44,7 @@ Jev の性能を推定値で補わず、実測するまで未測定として扱�
 | rubricVersion | `triage-rubric-524-v1`（設計 §4 の risk/Size rubric。子プロセスの質問文と同一） |
 | policyVersion | `triage-v1` |
 | model | `jev-1.13.0`（alias を使わない） |
-| benchmarkVersion | `route-bench-1.0.0`（タスク生成は決定的） |
+| benchmarkVersion | `route-bench-1.1.0`（タスク生成は決定的） |
 | ラベル状態 | `agent-proposed`（人間による確認待ち） |
 
 | 分割 | 件数 | 分類対象 | high/critical（分類対象） | 偽の秘密値 |
@@ -113,7 +114,7 @@ GitHub 取得の代わりに架空の title/body を注入するだけで、秘�
 | Brier score | 多クラス。各候補の確率と正解の one-hot の二乗誤差の和の平均 |
 | reliability bins | choice の確率で 5 区間に分け、件数、平均確率、正解率を出す |
 | high/critical 見逃し率 | ラベル high/critical のうち low/medium と判定した割合 |
-| direct-review 見逃し | ラベル high/critical で、採用可能（usable）な回答を採用すると `selectExecutionMode` が direct-review を選ぶ件数 |
+| direct-review 見逃し | ラベル high/critical で、採用可能（usable）な回答を採用すると `selectExecutionMode` が direct-review を選ぶ件数。推薦の risk と Size だけを入力とし、依存関係、`changeScopeCount`、既存の risk や Project Size がない Size 未設定の場合（設計 §6）を表す。D の `effectiveRisk`/`effectiveSize` は既存値との最大値なので、見逃しはこの値以下になる |
 | 未解決 high/critical | fallback または要確認で採用できず、従来の Size ベースの選択に戻る件数。ゲートには含めず残存リスクとして報告する |
 | 判定保留率 | 分類対象のうち usable 以外の割合 |
 | 模擬 override 率 | usable のうち risk か Size がラベルと異なる割合。原因を過小、過大、Size のみ、タグ、言語で集計する |
@@ -125,8 +126,17 @@ GitHub 取得の代わりに架空の title/body を注入するだけで、秘�
 route は RouteEvidence で評価する。
 ベンチマークは docs、local-code、cross-component、security の各 10 件の架空タスクを、CLI で都度検証した exact model ごとに一時ディレクトリで実行する。
 合否はエージェントから見えない固定の検査で決める。
+各タスクの指示文は、検査が確かめる振る舞いをすべて明記する（検査の推測を測らないため）。
 外へ出るのは `{kind, passed, durationMs}` だけで、プロンプト、CLI 出力、作業内容は保存しない。
 CLI が要求と異なるモデルを報告した場合はそのモデルの全結果を破棄する。
+CLI の非ゼロ終了や timeout は、利用枠切れ、セッション上限、認証、クラッシュなど品質以外の原因でも起こるため、不合格に数えない。
+1 件でも起きたモデルは `incomplete` として評価を出力せず、全タスクを再実行する。
+したがって常に時間切れになるモデルは評価が作られず、route 推薦では abstain に落ちる。
+
+実測した評価は `state/route-evidence.json` に書かれる。
+レビューでは、各記録がこの型だけを持つこと、対象モデルがその時点で CLI 検証済みであること、評価日と benchmarkVersion を確認し、ファイルの SHA-256 を §6 に記録する。
+D はレビュー済みのこのファイルを graph の `triageEvidence` に接続する（現在の本番依存は空配列を返す）。
+子プロセスに渡す前に `triageContext` が pool と鮮度で絞り、その集合の SHA-256 を `evidenceVersion` とする。
 比較は本番の `triageContext` と同じ除外条件（30 日超過、pool 外のモデル、benchmarkVersion の混在、10 件未満）を通し、合格率、同率なら所要時間の順に並べる。
 比較可能な候補が二つ未満、または同等なら abstain とする。
 
@@ -136,6 +146,10 @@ CLI が要求と異なるモデルを報告した場合はそのモデルの全�
 複数 kind の場合は要求した全 kind の評価を必須とし、kind ごとの合格率の平均、次に kind ごとの中央値所要時間の平均で比べる。
 「同等」は両方の平均が完全に一致する場合だけであり、合格率が同じなら 1 ms の差でも所要時間で推薦する。
 これは設計 §4 の文言どおりだが、所要時間の小差で route を決めるべきでないと判断した場合は、D の前に最小差を定義して benchmarkVersion を上げる。
+
+shadow の route 推薦には RouteEvidence が必要で、現在の graph は評価を渡さない（設計 §4 により A/B の shadow は route を棄権する）。
+そのため D で評価を接続するまで、shadow 実行の Issue はすべて abstain の層に入り、route と手動割当の比較はデータを持たない。
+D 以前の shadow 運用で観測できるのは risk/Size の推薦と legacy モードの差だけである。
 
 shadow は実行を変えないため、shadow 実行と off 実行の差は Issue の構成と時期の差であり、推薦の質を表さない。
 そこで比較の主指標は、shadow 実行の中で推薦 route と手動割当が一致した Issue と一致しなかった Issue の結果の差とする。
@@ -151,7 +165,7 @@ run summary は時期や障害の情報を持たないため、比較時に実�
 | --- | --- |
 | Jev の実測 | 未達 |
 | 実行が途中停止していない（`complete-run`） | 未測定 |
-| 固定 holdout での評価 | 達成（評価対象の分割） |
+| 固定 holdout での評価 | ハーネスの既定（Jev 実測時に再確認） |
 | ラベルの人間確認 | 保留 |
 | holdout の high/critical で usable な判定が 30 件以上 | 未測定 |
 | direct-review 見逃しゼロ | 未測定 |
@@ -175,7 +189,7 @@ fallback や要確認で採用されなかった high/critical（未解決）は
 | 漏えいと制約違反 | ベースライン実行の再現性、出力に title/body が出ないこと、偽の秘密値が送信されないこと |
 | 途中停止と予算 | 429 で以後を送信せず `complete-run` が未達になること、予算不足で開始しないこと |
 | ゲート | stand-in は未測定、実測扱いでも人間の判断が pending で `met` にならないこと、見逃しで未達 |
-| RouteEvidence | 各 kind 10 件と検査の判別、Jev 鍵を worker 環境から除くこと、モデル代替で破棄、契約による型検証、順位付けと abstain |
+| RouteEvidence | 各 kind 10 件と検査の判別、指示文が検査対象の振る舞いを明記すること、Jev 鍵を worker 環境から除くこと、モデル代替と CLI 失敗・timeout で破棄、契約による型検証、順位付けと abstain |
 | shadow 比較 | 一致・不一致・abstain・fallback の層別、少数標本の警告、allowlist 外フィールドの無視 |
 
 実 API の Jev 評価と実 CLI の route ベンチマークは手動でのみ実行し、CI の合格条件にしない。
@@ -188,7 +202,7 @@ fallback や要確認で採用されなかった high/critical（未解決）は
   1. 架空ラベル 134 件の確認と修正
   2. Jev の実評価の実施と費用（holdout 79 件、tune 47 件の要求）
   3. route ベンチマークの実施と対象モデル（1 モデルあたり 40 タスク、各 CLI の利用枠を消費）
-  4. shadow 運用の継続と、比較に必要な run summary の保存
+  4. shadow 運用の継続（D 以前は risk/Size の観測のみ。route 比較のデータは D で評価を接続した後にだけ得られる）
 
 判断を記録したら、本節に日付、判断、根拠を追記する。
 #537 は、この記録と §6 の実測値が揃った時点で閉じる。

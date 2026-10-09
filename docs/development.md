@@ -1166,14 +1166,17 @@ and is marked `complete: false`; rerun the whole split rather than using partial
 `scripts/project-issue-route-benchmark.mjs` produces `RouteEvidence`. Each freshly verified
 exact model runs the same 40 fictional tasks (10 each of docs, local-code, cross-component,
 security) in a throwaway sandbox; a fixed checker that the agent never sees decides pass/fail.
-Only `{kind, passed, durationMs}` leaves a task, and a CLI that reports a different model
-invalidates the whole route. It requires `--live` because it spends each CLI's quota, and
+Only `{kind, passed, durationMs}` leaves a task. A CLI that reports a different model, exits
+non-zero, or times out (quota, session limit, auth, crash) marks the route `model-mismatch`
+or `incomplete`, and its evidence is not written; rerun it in full. It requires `--live` because it spends each CLI's quota, and
 it writes the validated array to `state/route-evidence.json` (gitignored) by default:
 
 ```bash
 node scripts/project-issue-route-benchmark.mjs --live --only Claude,Codex --parent-agent Claude
 ```
 
-Review that file before handing it to the graph's `triageEvidence` provider (#538). Evidence
+Review that file (record shape, currently verified models, dates, `benchmarkVersion`) and
+record its SHA-256 in the evaluation report before #538 connects it to the graph's
+`triageEvidence` provider; until then shadow route answers always abstain. Evidence
 older than 30 days, from another `benchmarkVersion`, or for a model outside the current pool
 is ignored, and fewer than two comparable candidates or a tie yields `abstain`.

@@ -352,7 +352,7 @@ test("the benchmark has ten unique tasks per kind whose checkers separate fixed 
 
 const route = { agent: "Claude", model: "fixture-model", selector: "fixture-cli --model fixture-model" };
 /** Fake CLI: applies the reference fix in its cwd, like an agent would. */
-function fakeCli({ fix = true, stdout = "", seen = [] } = {}) {
+function fakeCli({ fix = true, stdout = "", seen = [], code = 0, timedOut = false } = {}) {
   return async (command, args, options) => {
     if (command === process.execPath) {
       const { runProcess } = await import("../../scripts/project-issue-runtime-adapters/shared.mjs");
@@ -363,7 +363,7 @@ function fakeCli({ fix = true, stdout = "", seen = [] } = {}) {
     if (fix)
       for (const [name, content] of Object.entries(referenceFix(task)))
         await fs.writeFile(path.join(options.cwd, name), content);
-    return { code: 0, timedOut: false, stdout, stderr: "" };
+    return { code, timedOut, stdout, stderr: "" };
   };
 }
 
@@ -389,6 +389,23 @@ test("a substituted model invalidates the whole route", async () => {
     run: fakeCli({ stdout: '{"model":"other-model"}\n' }),
   });
   assert.deepEqual(outcome, { status: "model-mismatch" });
+});
+
+test("CLI failures and timeouts abort the route instead of counting as failed tasks", async () => {
+  const tasks = buildBenchmarkTasks().slice(0, 3);
+  assert.deepEqual(await benchmarkRoute(route, tasks, { run: fakeCli({ code: 1 }) }), {
+    status: "incomplete",
+  });
+  assert.deepEqual(await benchmarkRoute(route, tasks, { run: fakeCli({ timedOut: true }) }), {
+    status: "incomplete",
+  });
+});
+
+test("local-code instructions state the behaviors their hidden checks assert", () => {
+  const byId = Object.fromEntries(buildBenchmarkTasks().map((t) => [t.id, t.instruction]));
+  assert.match(byId["local-code-6"], /order of first occurrence/);
+  assert.match(byId["local-code-7"], /null for an empty array/);
+  assert.match(byId["local-code-10"], /unchanged when it is already at least n long/);
 });
 
 test("RouteEvidence aggregates per kind and validates against the triage contract", () => {
