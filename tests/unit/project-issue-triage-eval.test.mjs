@@ -164,6 +164,11 @@ test("throttling stops every later request, and a short budget refuses to start"
     return new Response("", { status: 429 });
   });
   assert.equal(calls, 1);
+  assert.equal(run.complete, false);
+  assert.equal(
+    assessAssistedGate(run, computeTriageMetrics(run)).conditions.find((c) => c.id === "complete-run").status,
+    "not-met",
+  );
   const reasons = new Set(run.records.filter((r) => r.expectedOutcome === "classify").map((r) => r.reason));
   assert.deepEqual([...reasons].sort(), ["provider-unavailable", "rate-limited"]);
   await assert.rejects(
@@ -202,7 +207,7 @@ test("the assisted gate never reports met by itself and marks stand-ins unmeasur
   assert.equal(missed.overall, "not-met");
 });
 
-test("shadow comparison reads only allowlisted fields and flags small samples", () => {
+test("shadow comparison stratifies outcomes by recommendation agreement and flags small samples", () => {
   const routeMap = {
     r0: { agent: "Codex", model: "fixture-a" },
     r1: { agent: "Claude", model: "fixture-b" },
@@ -213,8 +218,10 @@ test("shadow comparison reads only allowlisted fields and flags small samples", 
     assignments: [
       { number: 1, agent: "Codex", model: "fixture-a" },
       { number: 2, agent: "Claude", model: "fixture-b" },
+      { number: 3, agent: "Codex", model: "fixture-a" },
+      { number: 4, agent: "Codex", model: "fixture-a" },
     ],
-    completed: [1],
+    completed: [1, 3],
     roles: [
       { issue: 1, reviewPasses: 2 },
       { issue: 2, reviewPasses: 1 },
@@ -234,13 +241,24 @@ test("shadow comparison reads only allowlisted fields and flags small samples", 
   };
   const manualRun = { assignments: [{ number: 5 }], completed: [5], roles: [], usage: { issues: [] } };
   const report = compareShadowRuns([shadowRun, manualRun]);
-  assert.deepEqual(report.routeAgreement, { agree: 1, disagree: 1, abstain: 1, fallback: 1 });
-  assert.equal(report.shadow.completionRate, 0.5);
-  assert.equal(report.shadow.reviewFixRate, 0.5);
-  assert.equal(report.shadow.medianWallClockMs, 100);
-  assert.equal(report.shadow.exactTokens, "unavailable");
-  assert.equal(report.shadow.sample, "insufficient-sample");
-  assert.equal(report.manual.completionRate, 1);
+  const { agree, disagree, abstain, fallback, unrecorded } = report.byAgreement;
+  assert.deepEqual(
+    [agree.issues, disagree.issues, abstain.issues, fallback.issues, unrecorded.issues],
+    [1, 1, 1, 1, 0],
+  );
+  assert.equal(agree.completionRate, 1);
+  assert.equal(agree.reviewFixRate, 1);
+  assert.equal(agree.medianWallClockMs, 100);
+  assert.equal(agree.exactTokens, 15);
+  assert.equal(disagree.completionRate, 0);
+  assert.equal(disagree.reviewFixRate, 0);
+  assert.equal(disagree.exactTokens, "unavailable");
+  assert.equal(abstain.completionRate, 1);
+  assert.equal(fallback.completionRate, 0);
+  assert.equal(agree.sample, "insufficient-sample");
+  assert.equal(report.context.shadow.completionRate, 0.5);
+  assert.equal(report.context.off.completionRate, 1);
+  assert.match(report.context.note, /confounded/);
   assert.ok(!JSON.stringify(report).includes("must be ignored"));
 });
 

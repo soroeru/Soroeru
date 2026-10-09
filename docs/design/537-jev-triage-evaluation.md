@@ -20,6 +20,10 @@
 ベースラインの数値は Jev の性能ではない。
 Jev の性能を推定値で補わず、実測するまで未測定として扱う。
 
+本 PR は #537 を閉じない（PR 本文は `Refs #537`）。
+#537 は、ラベルの人間確認、Jev の実測、RouteEvidence の実測と、§7 への Product Owner 判断の記録が揃うまで open のままとする。
+本 PR が渡すのは、それらを再現可能に実行するハーネス、データセット、ベースライン結果である。
+
 ## 2. 成果物
 
 | 成果物 | 場所 |
@@ -28,7 +32,7 @@ Jev の性能を推定値で補わず、実測するまで未測定として扱�
 | 分類評価ハーネス、指標、assisted ゲート、shadow 比較 | `scripts/project-issue-triage-eval.mjs` |
 | route ベンチマークと RouteEvidence 生成 | `scripts/project-issue-route-benchmark.mjs` |
 | RouteEvidence の型検証 | `normalizeRouteEvidence`（`scripts/project-issue-triage-contract.mjs`） |
-| 計算と保存境界のテスト | `tests/unit/project-issue-triage-eval.test.mjs` |
+| 計算と保存境界のテスト | `tests/unit/project-issue-triage-eval.test.mjs`（§6 の対応表） |
 | 実行手順 | [development.md の該当節](../development.md#jev-triage-evaluation-and-routeevidence) |
 
 ## 3. データセットと再現条件
@@ -98,6 +102,10 @@ Jev の実測では Brier score と bins が意味を持つ。
 GitHub 取得の代わりに架空の title/body を注入するだけで、秘密値検出、入力上限、固定 endpoint、redirect 拒否、応答検証は本番と同じである。
 送信は 1 件ずつ行い、401/403/429/529 の後は送信しない。
 実 API の評価は `--max-requests` が分割全体を賄えない場合に開始しない。
+途中で provider が停止した実行は `complete: false` となり、ゲートの `complete-run` を満たさない。
+残りのケースは provider の停止による fallback であって Jev の品質ではないため、部分結果を移行判断に使わず、分割全体を再実行する。
+実 API の結果は `--format json` で gitignore 済みの `state/triage-eval/` に保存し、ファイルの SHA-256 と評価日を §6 に記録する。
+この出力はケース ID、ラベル、確率、件数だけを含み、本文や応答原文を含まない。
 
 | 指標 | 定義 |
 | --- | --- |
@@ -122,9 +130,19 @@ CLI が要求と異なるモデルを報告した場合はそのモデルの全�
 比較は本番の `triageContext` と同じ除外条件（30 日超過、pool 外のモデル、benchmarkVersion の混在、10 件未満）を通し、合格率、同率なら所要時間の順に並べる。
 比較可能な候補が二つ未満、または同等なら abstain とする。
 
-shadow と手動割当の比較は、グラフの run summary の allowlist フィールドだけを読む。
-完了率、レビュー修正率（reviewPasses が 2 以上）、`wallClockMs` の中央値、正確な token 合計、推薦 route と実際の割当の一致を集計する。
-10 件未満は `insufficient-sample` とする。
+`rankRouteEvidence` はこの rubric を決定的に読んだ参照実装であり、報告と D の検証に使う。
+本番では Jev の rubric が Issue を kind に対応付けるが、参照実装では呼び出し側が kind を渡す。
+未知の kind は abstain とする。
+複数 kind の場合は要求した全 kind の評価を必須とし、kind ごとの合格率の平均、次に kind ごとの中央値所要時間の平均で比べる。
+「同等」は両方の平均が完全に一致する場合だけであり、合格率が同じなら 1 ms の差でも所要時間で推薦する。
+これは設計 §4 の文言どおりだが、所要時間の小差で route を決めるべきでないと判断した場合は、D の前に最小差を定義して benchmarkVersion を上げる。
+
+shadow は実行を変えないため、shadow 実行と off 実行の差は Issue の構成と時期の差であり、推薦の質を表さない。
+そこで比較の主指標は、shadow 実行の中で推薦 route と手動割当が一致した Issue と一致しなかった Issue の結果の差とする。
+abstain、fallback、推薦記録のない Issue は別の層として報告する。
+各層で完了率、レビュー修正率（reviewPasses が 2 以上）、`wallClockMs` の中央値、正確な token 合計を集計し、10 件未満は `insufficient-sample` とする。
+shadow 実行と off 実行の比較は、交絡を明記した参考値としてだけ出す。
+グラフの run summary の allowlist フィールドだけを読む。
 run summary は時期や障害の情報を持たないため、比較時に実行時期と既知の障害を別途併記する。
 
 ## 6. assisted 移行条件
@@ -132,6 +150,7 @@ run summary は時期や障害の情報を持たないため、比較時に実�
 | 条件 | 状態 |
 | --- | --- |
 | Jev の実測 | 未達 |
+| 実行が途中停止していない（`complete-run`） | 未測定 |
 | 固定 holdout での評価 | 達成（評価対象の分割） |
 | ラベルの人間確認 | 保留 |
 | holdout の high/critical で usable な判定が 30 件以上 | 未測定 |
@@ -143,8 +162,23 @@ run summary は時期や障害の情報を持たないため、比較時に実�
 
 ハーネスは人間の確認と判断を代行しないため、自力で `met` を返さない。
 usable を 30 件以上と求めるのは、要確認ばかり返すモデルが見逃しゼロを満たしてしまうことを防ぐためである。
-見逃しゼロを満たしても、41 件の標本で将来の見逃しがゼロとは言えない。
-標本でゼロの場合でも、真の見逃し率の 95% 上限は概ね 3/n（n=41 なら約 7%）である。
+見逃しゼロを満たしても、将来の見逃しがゼロとは言えない。
+見逃しは usable な high/critical の判定だけで数えるため、標本でゼロの場合の真の見逃し率の 95% 上限は概ね 3/n_usable である。
+ゲートの下限 n_usable=30 なら約 10%、holdout の全 41 件が usable なら約 7% となる。
+報告では実測した n_usable で上限を示す。
+fallback や要確認で採用されなかった high/critical（未解決）は従来の Size ベースの選択に戻り、この上限の対象外である。
+
+| ゲート条件・指標 | 自動テスト（`tests/unit/project-issue-triage-eval.test.mjs`） |
+| --- | --- |
+| データセットの件数、分割、タグ、偽の秘密値の検出 | 件数と網羅の下限、不正フィールド・重複・混入した秘密値・薄い holdout の拒否 |
+| 指標の計算 | ラベル一致の transport で正解率 1 と Brier の理論値、過小判定が direct-review 見逃しになること、要確認が見逃しでなく判定保留になること |
+| 漏えいと制約違反 | ベースライン実行の再現性、出力に title/body が出ないこと、偽の秘密値が送信されないこと |
+| 途中停止と予算 | 429 で以後を送信せず `complete-run` が未達になること、予算不足で開始しないこと |
+| ゲート | stand-in は未測定、実測扱いでも人間の判断が pending で `met` にならないこと、見逃しで未達 |
+| RouteEvidence | 各 kind 10 件と検査の判別、Jev 鍵を worker 環境から除くこと、モデル代替で破棄、契約による型検証、順位付けと abstain |
+| shadow 比較 | 一致・不一致・abstain・fallback の層別、少数標本の警告、allowlist 外フィールドの無視 |
+
+実 API の Jev 評価と実 CLI の route ベンチマークは手動でのみ実行し、CI の合格条件にしない。
 
 ## 7. Product Owner への提示と記録
 
@@ -157,6 +191,7 @@ usable を 30 件以上と求めるのは、要確認ばかり返すモデルが
   4. shadow 運用の継続と、比較に必要な run summary の保存
 
 判断を記録したら、本節に日付、判断、根拠を追記する。
+#537 は、この記録と §6 の実測値が揃った時点で閉じる。
 
 ## 8. 限界と残存リスク
 

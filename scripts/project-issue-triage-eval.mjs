@@ -327,6 +327,8 @@ export async function runTriageEvaluation(
     transportKind,
     split,
     evaluatedAt: new Date(now).toISOString(),
+    // A provider stop leaves later cases unmeasured; such a run is invalid for the gate.
+    complete: !providerUnavailable,
     records,
     audit: { ...audit, latenciesMs: [...audit.latenciesMs] },
   };
@@ -506,6 +508,7 @@ export function assessAssistedGate(run, metrics) {
   const measured = (ok) => (!live ? "unmeasured" : ok ? "met" : "not-met");
   const conditions = [
     { id: "live-jev-measurement", status: live ? "met" : "not-met" },
+    { id: "complete-run", status: run.complete ? "met" : "not-met" },
     { id: "holdout-split", status: run.split === "holdout" ? "met" : "not-met" },
     { id: "labels-human-confirmed", status: run.labeling.status === "human-confirmed" ? "met" : "pending" },
     {
@@ -545,18 +548,24 @@ const MIN_COMPARISON_SAMPLE = 10;
 const issueNumber = (value) => (Number.isSafeInteger(value) && value > 0 ? value : null);
 
 /**
- * Compare graph run summaries that ran with shadow triage against runs without it.
- * Reads only allowlisted summary fields; a summary carries no Issue text.
+ * Shadow mode never changes execution, so the useful signal is within shadow runs:
+ * outcomes of Issues whose manual route agreed with Jev's recommendation versus
+ * those that did not (abstain and fallback apart). Shadow-vs-off is context only —
+ * it differs by Issue mix and period, not by recommendation quality.
+ * Reads only allowlisted run-summary fields; a summary carries no Issue text.
  */
 export function compareShadowRuns(summaries) {
-  const groups = { shadow: [], manual: [] };
-  let routeAgreement = { agree: 0, disagree: 0, abstain: 0, fallback: 0 };
+  const strata = { agree: [], disagree: [], abstain: [], fallback: [], unrecorded: [] };
+  const context = { shadow: [], off: [] };
   for (const summary of summaries) {
     if (!summary || typeof summary !== "object") fail("summary");
     const shadow = Array.isArray(summary.shadowTriage);
     const completed = new Set((summary.completed ?? []).map(issueNumber));
     const usage = new Map(
       (summary.usage?.issues ?? []).map((entry) => [issueNumber(entry?.number), entry?.usage]),
+    );
+    const triage = new Map(
+      (shadow ? summary.shadowTriage : []).map((entry) => [issueNumber(entry?.issue), entry]),
     );
     for (const assignment of summary.assignments ?? []) {
       const number = issueNumber(assignment?.number);
@@ -565,7 +574,7 @@ export function compareShadowRuns(summaries) {
         .filter((role) => role?.issue === number && Number.isSafeInteger(role.reviewPasses))
         .map((role) => role.reviewPasses);
       const exact = usage.get(number);
-      groups[shadow ? "shadow" : "manual"].push({
+      const outcome = {
         completed: completed.has(number),
         reviewPasses: passes.length ? Math.max(...passes) : null,
         wallClockMs: Number.isSafeInteger(exact?.wallClockMs) ? exact.wallClockMs : null,
@@ -573,39 +582,45 @@ export function compareShadowRuns(summaries) {
           Number.isSafeInteger(exact?.inputTokens) && Number.isSafeInteger(exact?.outputTokens)
             ? exact.inputTokens + exact.outputTokens
             : null,
-      });
-    }
-    for (const entry of shadow ? summary.shadowTriage : []) {
-      const result = entry?.result;
-      if (result?.status !== "recommended") routeAgreement.fallback += 1;
-      else if (result.route?.choice === "abstain" || !result.routeMap?.[result.route?.choice])
-        routeAgreement.abstain += 1;
-      else {
-        const suggested = result.routeMap[result.route.choice];
-        const same =
-          suggested.agent === entry.assignedRoute?.agent && suggested.model === entry.assignedRoute?.model;
-        routeAgreement[same ? "agree" : "disagree"] += 1;
-      }
+      };
+      context[shadow ? "shadow" : "off"].push(outcome);
+      if (shadow) strata[agreementOf(triage.get(number))].push(outcome);
     }
   }
-  const describe = (items) => {
-    const reviewed = items.filter((i) => i.reviewPasses !== null);
-    const tokens = items.map((i) => i.tokens).filter((t) => t !== null);
-    return {
-      issues: items.length,
-      sample: items.length >= MIN_COMPARISON_SAMPLE ? "sufficient" : "insufficient-sample",
-      completionRate: ratio(items.filter((i) => i.completed).length, items.length),
-      reviewFixRate: ratio(reviewed.filter((i) => i.reviewPasses > 1).length, reviewed.length),
-      medianWallClockMs: median(items.map((i) => i.wallClockMs).filter((v) => v !== null)),
-      exactTokens:
-        tokens.length === items.length && tokens.length ? tokens.reduce((a, b) => a + b, 0) : "unavailable",
-    };
-  };
   return {
     runs: summaries.length,
-    shadow: describe(groups.shadow),
-    manual: describe(groups.manual),
-    routeAgreement,
+    byAgreement: Object.fromEntries(
+      Object.entries(strata).map(([key, items]) => [key, describeOutcomes(items)]),
+    ),
+    context: {
+      note: "confounded by Issue mix and period; not evidence of recommendation quality",
+      shadow: describeOutcomes(context.shadow),
+      off: describeOutcomes(context.off),
+    },
+  };
+}
+
+function agreementOf(entry) {
+  const result = entry?.result;
+  if (!entry) return "unrecorded";
+  if (result?.status !== "recommended") return "fallback";
+  const suggested = result.route?.choice === "abstain" ? null : result.routeMap?.[result.route?.choice];
+  if (!suggested) return "abstain";
+  const assigned = entry.assignedRoute;
+  return suggested.agent === assigned?.agent && suggested.model === assigned?.model ? "agree" : "disagree";
+}
+
+function describeOutcomes(items) {
+  const reviewed = items.filter((i) => i.reviewPasses !== null);
+  const tokens = items.map((i) => i.tokens).filter((t) => t !== null);
+  return {
+    issues: items.length,
+    sample: items.length >= MIN_COMPARISON_SAMPLE ? "sufficient" : "insufficient-sample",
+    completionRate: ratio(items.filter((i) => i.completed).length, items.length),
+    reviewFixRate: ratio(reviewed.filter((i) => i.reviewPasses > 1).length, reviewed.length),
+    medianWallClockMs: median(items.map((i) => i.wallClockMs).filter((v) => v !== null)),
+    exactTokens:
+      tokens.length === items.length && tokens.length ? tokens.reduce((a, b) => a + b, 0) : "unavailable",
   };
 }
 
@@ -629,7 +644,7 @@ export function formatTriageReport(run, metrics, gate) {
     `### Triage evaluation — ${run.split} (${run.transportKind})`,
     "",
     `- Dataset ${run.datasetVersion}, rubric ${run.rubricVersion}, policy ${run.policyVersion}, model ${run.model}`,
-    `- Labels: ${run.labeling.status}; evaluated ${run.evaluatedAt}`,
+    `- Labels: ${run.labeling.status}; evaluated ${run.evaluatedAt}; complete run: ${run.complete}`,
     `- Cases ${metrics.cases} (classifiable ${metrics.classifiable}); recommended ${metrics.outcomes.recommended}, usable ${metrics.outcomes.usable}, review-required ${metrics.outcomes.reviewRequired}, fallback ${JSON.stringify(metrics.outcomes.fallback)}`,
     "",
     "**Risk confusion matrix**",

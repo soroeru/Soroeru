@@ -1150,15 +1150,18 @@ Records and reports contain only case ids, label enums, probabilities, and count
 node scripts/project-issue-triage-eval.mjs --split holdout --now 2026-10-09T00:00:00Z
 node scripts/project-issue-triage-eval.mjs --split tune --format json
 # Opt-in, paid: live Jev. Refuses to start unless the budget covers the whole split.
-TYPESAFE_API_KEY=... node scripts/project-issue-triage-eval.mjs --transport live --split holdout --max-requests 80
-# Shadow vs. manual assignment from saved graph run summaries (stdout JSON of the graph run).
+mkdir -p state/triage-eval && TYPESAFE_API_KEY=... node scripts/project-issue-triage-eval.mjs \
+  --transport live --split holdout --max-requests 80 --format json > state/triage-eval/holdout.json
+# Within shadow runs, outcomes split by whether the manual route agreed with the recommendation
+# (input: saved stdout JSON of graph runs). Shadow-vs-off is context only: it is confounded.
 node scripts/project-issue-triage-eval.mjs --compare-runs run-a.json --compare-runs run-b.json
 node --test tests/unit/project-issue-triage-eval.test.mjs
 ```
 
 Do not tune rubric text or thresholds on the `holdout` split; use `tune`. The assisted gate
 never reports `met` by itself: label confirmation, override-cause review, and the Product
-Owner decision stay `pending` until recorded. A live run stops sending after 401/403/429/529.
+Owner decision stay `pending` until recorded. A live run stops sending after 401/403/429/529
+and is marked `complete: false`; rerun the whole split rather than using partial results.
 
 `scripts/project-issue-route-benchmark.mjs` produces `RouteEvidence`. Each freshly verified
 exact model runs the same 40 fictional tasks (10 each of docs, local-code, cross-component,
