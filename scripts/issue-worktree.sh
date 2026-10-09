@@ -269,8 +269,10 @@ state_json() {
     cwd_in_use=true
   fi
   if [ -n "$upstream" ]; then
-    ahead=$(git -C "$worktree" rev-list --count "$upstream_ref..HEAD" 2>/dev/null) || ahead=0
-    behind=$(git -C "$worktree" rev-list --count "HEAD..$upstream_ref" 2>/dev/null) || behind=0
+    ahead=$(git -C "$worktree" rev-list --count "$upstream_ref..HEAD" 2>/dev/null) \
+      || { note "warning: cannot count commits ahead of $upstream; reporting 0"; ahead=0; }
+    behind=$(git -C "$worktree" rev-list --count "HEAD..$upstream_ref" 2>/dev/null) \
+      || { note "warning: cannot count commits behind $upstream; reporting 0"; behind=0; }
   fi
   jq -c \
     --arg head "$head" --arg operation "$operation" --arg upstream "$upstream" \

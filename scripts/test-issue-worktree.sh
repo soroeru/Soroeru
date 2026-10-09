@@ -156,10 +156,15 @@ ISSUE_WORKTREE_SKIP_GITHUB=1 "$HELPER" create 368 upstream-gone --agent codex --
 GONE_WORKTREE="$REPO/.worktrees/issue-368-upstream-gone"
 git -C "$GONE_WORKTREE" commit --allow-empty -m change >/dev/null
 git -C "$GONE_WORKTREE" push -u origin HEAD:issue-368-upstream-gone >/dev/null 2>&1
+git -C "$GONE_WORKTREE" commit --allow-empty -m unpushed >/dev/null
 STATUS=$("$HELPER" status 368 --repo "$REPO" --json)
 assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream)" "origin/issue-368-upstream-gone"
 assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream_gone)" "false"
-git -C "$REPO" push origin --delete issue-368-upstream-gone >/dev/null 2>&1
+assert_eq "$(printf '%s' "$STATUS" | jq -r .ahead)" "1"
+# Delete on the remote side so only fetch --prune removes the tracking ref.
+git -C "$REMOTE" branch -D issue-368-upstream-gone >/dev/null
+git -C "$REPO" show-ref --verify --quiet refs/remotes/origin/issue-368-upstream-gone \
+  || fail "tracking ref should remain until fetch --prune"
 git -C "$REPO" fetch origin --prune >/dev/null 2>&1
 STATUS=$("$HELPER" status 368 --repo "$REPO" --json)
 assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream)" ""
