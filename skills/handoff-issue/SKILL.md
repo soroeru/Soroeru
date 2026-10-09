@@ -26,7 +26,7 @@ Use `issue-implementation` instead when the Issue worktree and branch have not b
    ```
 
 3. Stop if metadata, worktree, branch, or Issue identity is missing, corrupt, duplicated, or mismatched. Never create a replacement worktree in this skill.
-4. Inspect the reported HEAD, dirty state, upstream/ahead/behind, Git operation, review lock, owner, epoch, and review budget. Also inspect the Issue, PR state, diff, commits, CI, unresolved review threads, and saved local review results.
+4. Inspect the reported HEAD, dirty state, upstream/ahead/behind (`upstream_gone: true` means the tracked remote branch was deleted, for example after a merged PR), Git operation, review lock, owner, epoch, and review budget. Also inspect the Issue, PR state, diff, commits, CI, unresolved review threads, and saved local review results.
 5. Stop while merge, rebase, cherry-pick, bisect, or local AI review is active. An expired timestamp alone is not permission to discard or overwrite work.
 6. Preserve inherited files exactly. Do not stash, commit, reset, clean, switch branches, copy the WIP, or force-remove anything merely to make takeover convenient.
 7. Choose a stable session identifier available to the current runtime. It must distinguish a new session but must not contain credentials or personal data. Run:

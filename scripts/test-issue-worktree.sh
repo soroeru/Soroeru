@@ -150,4 +150,29 @@ ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 366 --pr 998 --repo "$REPO"
 ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 367 --pr 997 --repo "$REPO"
 [ ! -e "$LOCAL_MAIN_WORKTREE" ] || fail "local-main worktree still exists after cleanup"
 
+# After a merged PR deletes the remote branch and fetch --prune removes the
+# tracking ref, status/release/cleanup treat the branch as having no upstream.
+ISSUE_WORKTREE_SKIP_GITHUB=1 "$HELPER" create 368 upstream-gone --agent codex --session gone-session --repo "$REPO"
+GONE_WORKTREE="$REPO/.worktrees/issue-368-upstream-gone"
+git -C "$GONE_WORKTREE" commit --allow-empty -m change >/dev/null
+git -C "$GONE_WORKTREE" push -u origin HEAD:issue-368-upstream-gone >/dev/null 2>&1
+git -C "$GONE_WORKTREE" commit --allow-empty -m unpushed >/dev/null
+STATUS=$("$HELPER" status 368 --repo "$REPO" --json)
+assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream)" "origin/issue-368-upstream-gone"
+assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream_gone)" "false"
+assert_eq "$(printf '%s' "$STATUS" | jq -r .ahead)" "1"
+# Delete on the remote side so only fetch --prune removes the tracking ref.
+git -C "$REMOTE" branch -D issue-368-upstream-gone >/dev/null
+git -C "$REPO" show-ref --verify --quiet refs/remotes/origin/issue-368-upstream-gone \
+  || fail "tracking ref should remain until fetch --prune"
+git -C "$REPO" fetch origin --prune >/dev/null 2>&1
+STATUS=$("$HELPER" status 368 --repo "$REPO" --json)
+assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream)" ""
+assert_eq "$(printf '%s' "$STATUS" | jq -r .upstream_gone)" "true"
+assert_eq "$(printf '%s' "$STATUS" | jq -r .ahead)" "0"
+assert_eq "$(printf '%s' "$STATUS" | jq -r .behind)" "0"
+"$HELPER" release 368 --session gone-session --repo "$REPO" >/dev/null
+ISSUE_WORKTREE_PR_STATE=MERGED "$HELPER" cleanup 368 --pr 996 --repo "$REPO"
+[ ! -e "$GONE_WORKTREE" ] || fail "upstream-gone worktree still exists after cleanup"
+
 printf 'issue worktree lifecycle tests passed\n'
