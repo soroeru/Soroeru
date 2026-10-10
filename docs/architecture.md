@@ -132,8 +132,10 @@ Reference implementation:
   `src/renderer/components/`).
 - **Domain**: `src/domain/` (`domain-service.ts`, `entities.ts`, `csv-import.ts`,
   `ledger-insights.ts`, `normalize.ts`).
-- **Store**: `src/store/` (`vault-v2.ts`, `crypto.ts`, `recovery.ts`; `vault.ts` for legacy
-  v1 file-existence checks only).
+- **Store**: `src/store/` (`vault-v2.ts`, `crypto.ts`, `crypto-runtime.ts`, `recovery.ts`, and the
+  `VaultPersistence` contract in `vault-persistence.ts`, all free of `node:` imports and `Buffer`;
+  Node-only `file-vault-persistence.ts` / `atomic-write.ts` for the file backend; `vault.ts` for
+  legacy v1 file-existence checks only).
 - **Automation**: `src/automation/` (`page-driver.ts`, `extension-page-driver.ts`,
   `browser-engine.ts` during migration,
   `visibility-runner.ts`, `wall-detection.ts`, `disclosure-collector.ts`, `evidence.ts`,

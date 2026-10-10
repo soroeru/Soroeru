@@ -10,6 +10,7 @@ import type { CollectionObservation } from "../../src/automation/collection-obse
 import type { PageDriver } from "../../src/automation/page-driver.js";
 import type { FormField } from "../../src/types.js";
 import type { AiProvider } from "../../src/agent/ai/provider.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
@@ -161,7 +162,7 @@ test("GET and familiar label cannot authorize mutation controls", () => {
 test("runner uses real scoped authorization and typed encrypted persistence, hallucinations store no value", async () => {
   const dir = await mkdtemp(join(tmpdir(), "collection-517-"));
   try {
-    const path = join(dir, "vault.json"), vault = await VaultV2.open(path, "fake-passphrase");
+    const path = join(dir, "vault.json"), vault = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
     const domain = new DomainService(vault), site = domain.upsertSiteAccount({ domain: "example.test", url: siteUrl, displayName: "Fake" });
     const f = fixture();
     const runner = new VisibilityRunner({ domain, openSession: async () => ({ page: f.options.page, close: async () => {} }),
@@ -175,7 +176,7 @@ test("runner uses real scoped authorization and typed encrypted persistence, hal
     assert.equal(r.disclosures, 1); assert.equal(r.status, "collected");
     assert.equal(domain.listDisclosures()[0]?.collectionTier, "ai-driven");
     await vault.save(); assert.doesNotMatch(await readFile(path, "utf8"), /fake@example.test/);
-    const reopened = new DomainService(await VaultV2.open(path, "fake-passphrase"));
+    const reopened = new DomainService(await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase"));
     assert.equal(reopened.listDisclosures()[0]?.siteHeldValue, "fake@example.test");
     assert.doesNotMatch(JSON.stringify(domain.listConstraints()), /fake@example.test/);
   } finally { await rm(dir, { recursive: true, force: true }); }

@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { importPasswordCsv } from "../../src/domain/csv-import.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import { BrowserEngine } from "../../src/automation/browser-engine.js";
 import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
@@ -22,7 +23,7 @@ test("real-site Visibility collection from a local Google Passwords CSV", async 
   const stateRoot = resolve(process.env["SOROERU_E2E_STATE_ROOT"] ?? "state/soroeru-poc/e2e-real-visibility");
   await mkdir(stateRoot, { recursive: true });
 
-  const vault = await VaultV2.open(join(stateRoot, "vault.json"), PASSPHRASE);
+  const vault = await VaultV2.open(new FileVaultPersistence(join(stateRoot, "vault.json")), PASSPHRASE);
   const domain = new DomainService(vault);
   const csvBytes = new Uint8Array(await readFile(csvPath));
   const importSummary = importPasswordCsv(domain, { data: csvBytes });

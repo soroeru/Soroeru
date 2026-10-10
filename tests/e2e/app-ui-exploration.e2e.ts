@@ -19,6 +19,7 @@ import { test } from "node:test";
 import { _electron, type ElectronApplication } from "playwright";
 import { startPocServer } from "../../sites/server.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
 const PASSPHRASE = "app-ui-exploration-e2e-passphrase";
@@ -101,7 +102,7 @@ test("Electron app UI: multi-page exploration collects from profile/address/paym
   // 7. Reopen the vault fresh from disk: multi-page sourcing and card
   //    sanitization must have actually reached the vault, not just the UI.
   const vaultPath = join(stateRoot, "vault.json");
-  const reopened = await VaultV2.open(vaultPath, PASSPHRASE);
+  const reopened = await VaultV2.open(new FileVaultPersistence(vaultPath), PASSPHRASE);
   try {
     const domain = new DomainService(reopened);
     const sites = domain.listSiteAccounts();

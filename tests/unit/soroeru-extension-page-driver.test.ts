@@ -16,6 +16,7 @@ import {
 } from "../../src/automation/extension-page-driver.js";
 import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField, PageSnapshot } from "../../src/types.js";
 
@@ -102,7 +103,7 @@ class FakeBridgeTransport implements ChromeBridgeTransport {
 async function withDomain(run: (domain: DomainService) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-extension-driver-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     await run(new DomainService(vault));
   } finally {
     await rm(dir, { recursive: true, force: true });

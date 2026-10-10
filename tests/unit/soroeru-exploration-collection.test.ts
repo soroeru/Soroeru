@@ -17,6 +17,7 @@ import { PageExplorer } from "../../src/automation/page-explorer.js";
 import { RuleEngine } from "../../src/automation/rule-engine.js";
 import { WallDetectionService } from "../../src/automation/wall-detection.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField, PageLink, PageSnapshot } from "../../src/types.js";
 
@@ -93,7 +94,7 @@ function makeExplorer(): PageExplorer {
 async function withDomain(run: (domain: DomainService) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-exploration-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     await run(new DomainService(vault));
   } finally {
     await rm(dir, { recursive: true, force: true });

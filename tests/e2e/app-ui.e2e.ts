@@ -15,6 +15,7 @@ import { test } from "node:test";
 import { _electron, type ElectronApplication } from "playwright";
 import { startPocServer } from "../../sites/server.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
 const PASSPHRASE = "app-ui-e2e-passphrase";
@@ -81,7 +82,7 @@ test("Electron app UI: vault setup → CSV import → Visibility collection → 
   //    fresh from disk after the app exited — the collected disclosures must
   //    have been saved, and no raw credential may sit in the file as plaintext.
   const vaultPath = join(stateRoot, "vault.json");
-  const reopened = await VaultV2.open(vaultPath, PASSPHRASE);
+  const reopened = await VaultV2.open(new FileVaultPersistence(vaultPath), PASSPHRASE);
   try {
     const domain = new DomainService(reopened);
     const sites = domain.listSiteAccounts();

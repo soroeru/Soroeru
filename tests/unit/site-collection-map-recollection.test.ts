@@ -19,6 +19,7 @@ import { VisibilityRunner } from "../../src/automation/visibility-runner.js";
 import type { AiProvider } from "../../src/agent/ai/provider.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { isSiteCollectionMap } from "../../src/domain/site-collection-map.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField } from "../../src/types.js";
 
@@ -137,7 +138,7 @@ function harness(): Harness {
 async function setup(h: Harness) {
   const dir = await mkdtemp(join(tmpdir(), "collection-518-"));
   const path = join(dir, "vault.json");
-  const vault = await VaultV2.open(path, "fake-passphrase");
+  const vault = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
   const domain = new DomainService(vault);
   const site = domain.upsertSiteAccount({ domain: "example.test", url: siteUrl, displayName: "Fake" });
   let calls = 0;
@@ -172,7 +173,7 @@ test("an AI-driven run saves a valid, value-free SiteCollectionMap", async () =>
     assert.doesNotMatch(JSON.stringify(map), /fake@example|090-0000/);
     await s.vault.save();
     assert.doesNotMatch(await readFile(s.path, "utf8"), /example\.test\/profile|"f-1"/);
-    const reopened = new DomainService(await VaultV2.open(s.path, "fake-passphrase"));
+    const reopened = new DomainService(await VaultV2.open(new FileVaultPersistence(s.path), "fake-passphrase"));
     assert.deepEqual(reopened.getSiteCollectionMap(s.site.id), map);
   } finally { await rm(s.dir, { recursive: true, force: true }); }
 });

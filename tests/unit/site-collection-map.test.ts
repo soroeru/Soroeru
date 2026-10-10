@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type SiteCollectionMap } from "../../src/domain/entities.js";
 import { isSiteCollectionMap, SITE_COLLECTION_MAP_LIMITS } from "../../src/domain/site-collection-map.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 
@@ -83,7 +84,7 @@ test("maps and distinct AI authorization records roundtrip encrypted and maps fo
   const dir = await mkdtemp(join(tmpdir(), "soroeru-map-"));
   try {
     const path = join(dir, "vault.json");
-    const vault = await VaultV2.open(path, "fake-passphrase");
+    const vault = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
     const service = new DomainService(vault);
     service.upsertSiteAccount({ id: "site-1", domain: "example.test", displayName: "Fake" });
     assert.throws(
@@ -102,7 +103,7 @@ test("maps and distinct AI authorization records roundtrip encrypted and maps fo
     await vault.save();
     vault.lock();
     assert.equal((await readFile(path, "utf8")).includes("a".repeat(64)), false);
-    const reopened = await VaultV2.open(path, "fake-passphrase");
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
     assert.deepEqual(reopened.get("siteCollectionMap", "map-1"), fixture());
     assert.equal(reopened.get("mandate", "ai-mandate")?.operation, "ai-assisted-discovery");
     assert.equal(reopened.get("capability", "ai-capability")?.level, "L0");
@@ -118,7 +119,7 @@ test("maps and distinct AI authorization records roundtrip encrypted and maps fo
 test("map locators reject value-bearing selectors and page-provided IDs at the vault boundary", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-map-locator-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), "fake-passphrase");
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), "fake-passphrase");
     const selectors = [
       '[value="4111111111111234"]',
       "#user-example-test",
@@ -206,7 +207,7 @@ test("save and export reject map mutations through put/get/list and preserve the
   const dir = await mkdtemp(join(tmpdir(), "soroeru-map-mutation-"));
   try {
     const path = join(dir, "vault.json");
-    const vault = await VaultV2.open(path, "fake-passphrase");
+    const vault = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
     vault.put("siteCollectionMap", fixture());
     await vault.save();
     const original = await readFile(path, "utf8");
@@ -224,7 +225,7 @@ test("save and export reject map mutations through put/get/list and preserve the
     vault.put("siteCollectionMap", fixture()).id = "changed-id";
     await assert.rejects(() => vault.save(), /invalid site collection map/);
     vault.lock();
-    const reopened = await VaultV2.open(path, "fake-passphrase");
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
     assert.deepEqual(reopened.get("siteCollectionMap", "map-1"), fixture());
     reopened.lock();
   } finally {

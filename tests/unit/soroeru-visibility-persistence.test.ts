@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SoroeruSession } from "../../electron/session.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
 import type { FormField, PageSnapshot } from "../../src/types.js";
@@ -48,7 +49,7 @@ test("runVisibility persists collected disclosures to disk, not just in memory",
 
     // Re-open the vault fresh from disk (a separate instance from the
     // session's in-memory one): the collected disclosure must be there.
-    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     try {
       const domain = new DomainService(reopened);
       const disclosures = domain.listDisclosuresForSite(siteId);

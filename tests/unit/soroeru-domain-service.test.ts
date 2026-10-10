@@ -6,13 +6,14 @@ import { join } from "node:path";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { MOST_SENSITIVE_ATTRIBUTE_KEY } from "../../src/domain/entities.js";
 import { normalizedValueHash } from "../../src/domain/normalize.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
 const PASSPHRASE = "unit-test-passphrase";
 
 async function openService(): Promise<{ dir: string; service: DomainService; vault: VaultV2 }> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-domain-"));
-  const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+  const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
   return { dir, service: new DomainService(vault), vault };
 }
 
@@ -626,7 +627,7 @@ test("savePersistedSessionState round-trips through vault encryption and save/re
   const dir = await mkdtemp(join(tmpdir(), "soroeru-domain-"));
   const path = join(dir, "vault.json");
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const service = new DomainService(vault);
     const site = service.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
     service.setSessionPersistenceEnabled(site.id, true);
@@ -637,7 +638,7 @@ test("savePersistedSessionState round-trips through vault encryption and save/re
     await vault.save();
     vault.lock();
 
-    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const reopenedService = new DomainService(reopened);
     const state = reopenedService.getPersistedSessionState(site.id);
     assert.equal(state?.storageState, '{"cookies":[],"origins":[]}');
@@ -926,7 +927,7 @@ for (const collectionTier of [
       );
       await vault.save();
       vault.lock();
-      const reopened = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+      const reopened = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
       assert.equal(
         reopened.get("disclosure", row.id)?.siteHeldValue,
         allowed ? "123" : undefined,
@@ -968,7 +969,7 @@ test("full PAN comparisons survive reload, distinguish same suffix, and retain d
     );
     await vault.save();
     vault.lock();
-    const reopened = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const next = new DomainService(reopened);
     next.setPersonalAttribute({
       attributeKey: "card.number",

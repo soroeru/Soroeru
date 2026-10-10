@@ -6,8 +6,8 @@
 // a forgotten passphrase does not mean lost data, without any third-party
 // recovery path (zero-knowledge: nothing here is sent anywhere).
 
-import { createHash, randomBytes } from "node:crypto";
 import { importKeyRaw, type MasterKey } from "./crypto.js";
+import { randomBytes, webCryptoRuntime, type CryptoRuntime } from "./crypto-runtime.js";
 
 /** 256-bit recovery key: matches the AES-256 master key it wraps. */
 const RECOVERY_KEY_BYTES = 32;
@@ -46,8 +46,8 @@ function group(value: string): string {
  * function (see `PocStore.setupRecoveryKey`, which wraps the master key with
  * it and persists only the wrapped result).
  */
-export function generateRecoveryKey(): string {
-  return group(base32Encode(randomBytes(RECOVERY_KEY_BYTES)));
+export function generateRecoveryKey(runtime: CryptoRuntime = webCryptoRuntime): string {
+  return group(base32Encode(randomBytes(RECOVERY_KEY_BYTES, runtime)));
 }
 
 /** Strip formatting (hyphens, whitespace, case) so user-entered keys compare correctly. */
@@ -60,7 +60,10 @@ export function normalizeRecoveryKey(input: string): string {
  * carries 256 bits of entropy, so a single SHA-256 (not a slow,
  * memory-hard passphrase KDF) is sufficient and keeps recovery unlock fast.
  */
-export async function recoveryKeyToKek(recoveryKey: string): Promise<MasterKey> {
-  const digest = createHash("sha256").update(normalizeRecoveryKey(recoveryKey), "utf8").digest();
-  return importKeyRaw(digest, false);
+export async function recoveryKeyToKek(
+  recoveryKey: string,
+  runtime: CryptoRuntime = webCryptoRuntime,
+): Promise<MasterKey> {
+  const digest = await runtime.subtle.digest("SHA-256", new TextEncoder().encode(normalizeRecoveryKey(recoveryKey)));
+  return importKeyRaw(new Uint8Array(digest), false, runtime);
 }

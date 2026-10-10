@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { importSavedPage } from "../../src/automation/saved-page-importer.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { normalizedValueHash } from "../../src/domain/normalize.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
 const PASSPHRASE = "saved-page-importer-test-passphrase";
@@ -18,7 +19,7 @@ async function tmpVaultPath(): Promise<{ dir: string; path: string }> {
 test("saved page import ignores inline scripts before collecting values", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const siteAccount = domain.upsertSiteAccount({
       domain: "example.test",
@@ -55,7 +56,7 @@ test("saved page import ignores inline scripts before collecting values", async 
 test("saved page import saves a done checkpoint when only a dynamic-attribute candidate is found", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const siteAccount = domain.upsertSiteAccount({
       domain: "unknownfield.example.test",
@@ -89,7 +90,7 @@ test("saved page import saves a done checkpoint when only a dynamic-attribute ca
 test("saved page import collects disclosures from 住所_fixture.html", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const siteAccount = domain.upsertSiteAccount({
       domain: "yoyostorerewind.com",

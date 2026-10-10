@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { collectDisclosures } from "../../src/automation/disclosure-collector.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField, PageSnapshot } from "../../src/types.js";
 
@@ -13,7 +14,7 @@ const PASSPHRASE = "collector-test-passphrase";
 test("disclosure collector records manual-import disclosures and skips empty template fields", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "shop.example.test",
@@ -61,7 +62,7 @@ test("disclosure collector records manual-import disclosures and skips empty tem
 test("disclosure collector stores revealable values while reducing card numbers and excluding cvv", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "billing.example.test",
@@ -107,7 +108,7 @@ test("disclosure collector stores revealable values while reducing card numbers 
 test("disclosure collector creates a labeled dynamic attribute candidate for unknown required values", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "profile.example.test",
@@ -144,7 +145,7 @@ test("disclosure collector creates a labeled dynamic attribute candidate for unk
 test("disclosure collector derives the dynamic-attribute key from the label, not the unstable field id/name", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "profile.example.test",
@@ -184,7 +185,7 @@ test("disclosure collector derives the dynamic-attribute key from the label, not
 test("disclosure collector keeps distinct labels that share an ASCII gloss as separate candidates", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "profile.example.test",
@@ -220,7 +221,7 @@ test("disclosure collector keeps distinct labels that share an ASCII gloss as se
 test("disclosure collector reuses confirmed dynamic attributes on later collections", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
   try {
-    const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "profile.example.test",
