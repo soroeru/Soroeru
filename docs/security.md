@@ -11,18 +11,24 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
 - Keep all personal data local and **encrypted at rest**; the user owns it.
 - Network egress is limited to **(a) the target sites the user asks the agent to act on**
-  (the agent navigates, fills, and submits there), **(b) the user's configured AI
-  provider** (form structure / terms text only for every AI use except Visibility collection,
-  which sends raw personal values by design — Issue #514, §5), and **(c) the
-  Digital Agency's デジタル認証アプリ service via Soroeru's identity-auth BFF**, for My Number
-  (JPKI) verification only (see §14). Future user-owned cloud-storage sync may write only
-  encrypted vault bytes to a user-selected location. No telemetry, analytics, crash reporting,
-  or any other destination.
-- **Minimize disclosure to the AI model**: send form structure / terms text, not raw
-  personal values — except Visibility collection (Issue #514, §5), which is the one AI use
-  allowed to send raw personal values, including full card numbers, CVV, and site passwords, in
-  order to explore pages and extract disclosure values. Do not use provider stateful features
-  (prompt caching of PII, stored threads, memory) for any AI use, including this one.
+  (the agent navigates, fills, and submits there), **(b) Soroeru Cloud** (Cloud Run, which in
+  turn reaches Firestore, BigQuery, and Gemini on Vertex AI) under the data-class matrix in
+  §15 — target, Issue #554, **(c) the Digital Agency's デジタル認証アプリ service via
+  Soroeru's identity-auth BFF**, for My Number (JPKI) verification only (see §14), and, in the
+  current Electron build only, **(d) the user's configured AI provider** (form structure /
+  terms text only for every AI use except Visibility collection, which sends raw personal
+  values by design — Issue #514, §5). Future user-owned cloud-storage sync may write only
+  encrypted vault bytes to a user-selected location. No analytics, crash reporting, telemetry
+  containing personal data, or any other destination.
+- **Minimize disclosure to the AI model**: in the target, Gemini receives form structure only
+  (Tier 2); personal values reach it only through the consent-gated Tier 3 read, and secrets
+  (site passwords, CVV, OTP, tokens, keys) never do (§15). In the current Electron build,
+  Visibility collection (Issue #514, §5) is the one AI use allowed to send raw personal values
+  such as full card numbers. **In every build, site passwords, CVV, and other secrets are never
+  sent to any AI model** (Product Owner decision 2026-10-10; implementation Issue #572). Do not use provider stateful features
+  (prompt caching of PII, stored threads, memory, request/response logging) for any AI use.
+- **Passwords and CVV stay stored locally and never reach AI** (2026-10-10). They are
+  filled into forms only by deterministic local code (§3.1).
 - **Never bypass** CAPTCHA, MFA, bot detection, access controls, rate limits, or
   paywalls. Detect and hand off to the user.
 - Submit a registration only after the user approves the review-and-confirm gate; apply
@@ -37,8 +43,9 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
 | Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
-| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Issue #516 implements encrypted Disclosure storage for explicitly marked AI-driven collection writes; Issue #517 implements the exploration loop and captured-page corroboration that produce that tier (§3). Reveal remains refused (§4). Production authorization UI (collection gate, L0/L1) remains pending (`#519`). The deterministic fallback excludes both CVV value and hash. Canonical CVV remains most-sensitive and is decrypted only at fill time. |
-| Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | **Structure-only for every AI use except Visibility collection (Issue #514, §5):** that path sends raw values by design, to the user's own configured provider only, disclosed at the gate every run, with stateful provider features disabled and zero-retention/no-training options preferred. Every other AI use still sends structure only and fills values locally. |
+| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Storage policy unchanged (2026-10-10): Issue #516 keeps encrypted Disclosure storage for the AI-driven tier, but the CVV value is never sent to the model — the model sees a masked item and Soroeru reads the value locally (Issue #572). Reveal remains refused (§4). The deterministic fallback excludes both CVV value and hash. Canonical CVV stays stored as most-sensitive and is decrypted only at fill time by deterministic local code (§3.1). |
+| Soroeru handles a password/CVV during form entry | A fill path, log, or bug exposes the value; a compromised page reads what Soroeru typed. | Only deterministic local code fills a stored password or CVV, decrypting it at fill time; the value is never logged and never passed to an AI (§3.1, Issue #572). Write flows keep their review-and-confirm gate and payment guard. |
+| Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | **Structure-only for every AI use except Visibility collection (Issue #514, §5):** that path sends raw values other than secrets (no passwords, CVV, OTP, tokens) by design, to the user's own configured provider only, disclosed at the gate every run, with stateful provider features disabled and zero-retention/no-training options preferred. Every other AI use still sends structure only and fills values locally. |
 | AI-driven collection returns a hallucinated or manipulated-page-injected value | An untrusted page (or the model itself) causes a wrong value — e.g. a fabricated card number or CVV — to be written as if it were genuinely observed, silently poisoning the Disclosure ledger. | Local corroboration before write ([`architecture.md`](architecture.md) §5.2, Issue #514): the returned value must appear in the page content captured for that step before `DomainService.addDisclosure` accepts it; a non-corroborating value becomes `unknown`/a review task, never a stored Disclosure. |
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
 | Unintended payment obligation | Free trial silently becomes a paid subscription. | Payment-field stop; free-trial→subscription surfaced as high-risk; card filled only on approval. |
@@ -50,6 +57,12 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | MCP server overexposes local authority | External AI agents could inspect or act on sensitive account state beyond the user's intent. | Keep MCP disabled by default, local-only, permissioned, logged, and limited to summaries/planning/task creation; never expose raw values or bypass approval gates. |
 | DOM-based injection / unsafe rendering | Page-provided text affects the UI or is mis-mapped. | Treat page text as untrusted; render as text; validate before use. |
 | Real data committed in fixtures / logs | Sensitive data enters repository history. | Fake data only; keep local state Git-ignored. |
+| Personal values leak into shared schemas or telemetry (#554) | Cloud data that every user shares, or that operators query, contains another user's values. | Structural allowlists, not redaction: `StructureSanitizer` and `TelemetryBuilder` accept only typed structure/enums; the same validators run on Cloud Run; schema strings are rejected on personal-value-like matches; BigQuery has no free-text column (§15.3). |
+| Tier 3 content captured by cloud logs/traces (#554) | Consented page content persists in Cloud Logging, Trace, or Vertex AI logs beyond the single request. | Separate `soroeru-pii-fallback` service; handlers log only error codes; no body capture in tracing; Vertex AI request/response logging and context caching not enabled; its service account has no Firestore/BigQuery access (§15.4). |
+| Malicious page content / prompt injection (#554) | Page text steers Gemini to invent mappings, read other fields, or return fabricated values. | Gemini has no browser/vault tool; outputs are closed schemas referencing only supplied item IDs and requested keys; mappings are validated locally; Tier 3 values must corroborate against the sent item text; navigation/fill authority stays local and gated. |
+| Schema poisoning (#554) | An attacker submits feedback so a wrong mapping becomes active for everyone. | Candidate lifecycle with distinct-validator and success-rate thresholds; single observations never activate; schemas carry no authority and are revalidated per use; fills stay behind the confirmation gate (§15.5). |
+| Site membership inferred from cloud requests (#554) | Soroeru Cloud learns which services a client uses. | No client identifier on resolve or telemetry; schema feedback carries only a per-site token that cannot link sites (C7); site sent in POST bodies (not URL queries); IPs used only in memory for rate limiting and Cloud Run request logs excluded from Cloud Logging; telemetry time truncated to the hour; local schema cache encrypted. |
+| Public API abuse / cost exhaustion (#554) | Anyone can call the endpoints; Gemini spend or Firestore writes are abused. | `max-instances` caps, best-effort per-instance IP rate limits, payload size caps, a Firestore-backed daily Gemini budget (fail closed to hand-off when exhausted), short-lived signed Tier 3 tickets, billing alerts, closed schemas; no credentials in the extension. Cloud Armor / API Gateway quotas are the pre-production reconsideration (`architecture.md` §14.1). |
 
 ## 3. Sensitive Data Handling
 
@@ -66,13 +79,14 @@ Stored locally, **encrypted** (see [`architecture.md`](architecture.md) §3):
   references, and mandates;
 - local candidate definitions, because they reveal user activity and account-management
   intent even when they do not contain raw personal values;
-- **site-collected full card PAN and CVV, when collected via the AI-driven Visibility
-  collection path** (Issue #514, [`architecture.md`](architecture.md) §5.2): once the model has
-  read and classified these values from the page, they are stored as encrypted Disclosure
-  values like any other collected attribute. This supersedes the prior last-4/CVV-excluded
-  reduction for this path only; see the "Never stored" list below for the deterministic-only
-  fallback, which keeps the old reduction. **Domain storage is implemented in Issue #516; the
-  AI collection loop remains pending** — see the implementation status below;
+- **site-collected full card PAN, when collected via the AI-driven Visibility collection
+  path** (Issue #514, [`architecture.md`](architecture.md) §5.2): once the model has read and
+  classified it from the page, it is stored as an encrypted Disclosure value like any other
+  collected attribute. This supersedes the prior last-4 reduction for this path only; see the
+  "Never stored" list below for the deterministic-only fallback, which keeps it. Site-collected
+  CVV keeps the same encrypted storage on this path (Issue #516), but since 2026-10-10 the model
+  never sees it: CVV/password items are masked in the request, the model may only classify the
+  masked item by key, and Soroeru reads the value locally before storing it (Issue #572);
 - **opt-in persisted browser session state** (`SessionState.storageState`, Issue #294): an
   exported Playwright `storageState` (cookies + localStorage), only when the user has
   enabled persistence for that specific Site Account (default off). It is at least as
@@ -99,6 +113,11 @@ Never stored:
   the prompt or response text;
 - decrypted values in logs, error messages, or crash reports;
 - real personal data in tests, fixtures, docs, or screenshots (use fake values).
+
+> **Changed in part (2026-10-10, Issue #572):** CVV retention below is unchanged, but the
+> model-side read is replaced: password and CVV items are masked before the provider call, and
+> their values are read locally (not returned by the model) before storage. Until #572 lands,
+> the code still sends those items to the provider as described below.
 
 **Implementation status (Issue #516):** `AddDisclosureInput.collectionTier` explicitly selects
 `"ai-driven"` for the trusted AI collection caller. Only that tier retains CVV values/hashes
@@ -193,6 +212,19 @@ profile values are encrypted at rest and never appear in source, review
 artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
 `state/soroeru-poc/` are Git-ignored.
 
+### 3.1 Password and CVV handling
+
+Product Owner decisions (2026-10-10; `requirements.md` §8; implementation Issue #572):
+
+- **Storage is unchanged.** CSV-imported site passwords and the canonical CVV stay stored in
+  the encrypted vault; site-collected CVV keeps its §3 storage rule.
+- **Never to AI.** Password and CVV values are removed or masked before every AI request in
+  every build; an AI may only classify a masked item by key.
+- **Deterministic local fill.** Collection login and any later form entry that needs a stored
+  password or CVV are filled by Soroeru's deterministic local code, decrypting the value at
+  fill time; values are never logged. Write flows keep their review-and-confirm gates and the
+  payment guard.
+
 ## 4. Encryption (canonical)
 
 Per [`architecture.md`](architecture.md) §2 and §10. Use only widely vetted algorithms; do
@@ -225,14 +257,13 @@ hold a session key to avoid re-entry, trading convenience for relying on the OS 
 session — make the tradeoff explicit in settings.
 
 **CVV**: storing it is generally discouraged (it is the last factor protecting a stolen
-card number). This paragraph covers the **canonical** CVV (a Personal Attribute the user enters
-for later fill use): it is stored at the user's request but handled as the most sensitive field:
-encrypted, never sent to the model, decrypted only at fill time and immediately discarded, with
-an optional master-passphrase re-prompt (default on) for card operations. A **separate**,
-site-collected CVV Disclosure value may exist when AI-driven Visibility collection reads one off
-a site's billing page (Issue #514, §5) — that value is sent to the model as part of collecting
-it, encrypted at rest like the canonical value, and reveal is refused outright in the UI either
-way (§3).
+card number). This paragraph covers the **canonical** CVV (a Personal Attribute the user
+enters): it is stored at the user's request and handled as the most sensitive field —
+encrypted, never sent to any model, reveal refused, and decrypted only at fill time by
+deterministic local code (§3.1). A **separate**, site-collected CVV
+Disclosure value may exist from the AI-driven Visibility collection tier (Issue #516); since
+2026-10-10 the model never sees it (the item is masked and Soroeru reads the value locally,
+Issue #572). It is encrypted at rest like the canonical value, and reveal is refused either way.
 
 **Recovery (SEC-003 / #44)**: a zero-knowledge design means a forgotten passphrase loses
 all data unless the user set up a recovery key beforehand.
@@ -270,6 +301,12 @@ all data unless the user set up a recovery key beforehand.
 
 ## 5. AI Provider Disclosure Policy
 
+> **Target (Issue #554).** In the Chrome-extension target, the only AI is Gemini reached
+> through Soroeru Cloud, and its disclosure policy is §15: structure-only (Tier 2) by default;
+> personal values only through the per-fallback consent-gated read (Tier 3); secrets never.
+> The rest of this section is the policy of the current Electron build and its
+> user-configured providers, retained until the §2.3 migration in `architecture.md` retires it.
+
 **Default rule, every AI use except Visibility collection:** send the model **form structure
 and terms text**, not raw personal values. The model returns a mapping plan / high-risk
 findings; the automation layer fills values locally.
@@ -277,8 +314,10 @@ findings; the automation layer fills values locally.
 **Visibility collection exception (Issue #514):** once the user has configured an AI provider,
 AI-driven Visibility collection is the primary Collection strategy (see
 [`architecture.md`](architecture.md) §5.2), and it is exempt from the structure-only rule above.
-During that collection pass, the model receives full page content — including raw personal
-values such as full card numbers, CVV, and site passwords displayed on the page — and returns
+During that collection pass, the model receives page content — including raw personal values
+such as full card numbers displayed on the page, but **never site passwords, CVV, OTP codes, or
+other secrets**, which are removed or masked locally before the request (2026-10-10 decision,
+Issue #572) — and returns
 the values it identifies, classified by attribute key, for the automation/domain layer to write
 as Disclosure records. This is a deliberate, scoped exception; it does not weaken any other
 control in this document:
@@ -291,6 +330,8 @@ control in this document:
 - it does not grant the model a general browser-control or filesystem/vault tool — it can only
   propose the next same-site read-only navigation and report values found on the current page;
   every write still executes through the normal typed `DomainService`/`VaultService` API;
+- it never covers secrets: password, CVV, and one-time-code items (by element attributes, local
+  classification, or ambiguous secret-like shape) are dropped or masked before the provider call;
 - it does not apply to any other AI use (registration field mapping, terms analysis, Constraint
   findings) — those stay structure-only per the default rule above;
 - the Delegation Boundary gate names this exception explicitly, every run, at L0, and L1
@@ -320,8 +361,8 @@ control in this document:
 - The model itself does not learn from inference and the context window is per-request; the
   residual risk is provider-side request logging and any stateful feature you enable — this
   policy avoids the latter and minimizes the former. For Visibility collection specifically, the
-  residual risk also includes provider-side exposure of the raw values themselves (full card
-  numbers, CVV, site passwords) in the request; this is the accepted trade-off of Issue #514 and
+  residual risk also includes provider-side exposure of the raw values themselves (for example full
+  card numbers; never passwords, CVV, or other secrets) in the request; this is the accepted trade-off of Issue #514 and
   must be disclosed to the user at the collection gate, every run.
 - App-embedded terminals and CLI Provider integrations are not supported AI integration
   paths. They make output stability, cost control, permissions, and structured validation
@@ -333,9 +374,10 @@ Allowed external destinations are limited to: (a) the **target sites** the user 
 agent to register, update, or withdraw from (normal browser navigation and form
 submission), (b) the user's **configured AI provider** (form structure / terms text only for
 every AI use except Visibility collection, which sends raw personal values by design — Issue
-#514, §5), and (c) future user-owned storage locations that receive only encrypted vault bytes
-after an explicit design/implementation issue. No telemetry, analytics, crash reporting, hosted
-vault, or remote classification to any other service. Outside the Visibility collection
+#514, §5 — current Electron build only), (c) **Soroeru Cloud** under §15 (target, Issue
+#554), and (d) future user-owned storage locations that receive only encrypted vault bytes
+after an explicit design/implementation issue. No analytics, crash reporting, hosted personal-data
+vault, telemetry containing personal data, or remote classification to any other service. Outside the Visibility collection
 exception, the user's decrypted data store is never uploaded anywhere; within it, only what the
 AI-driven collection pass reads live from a page in order to build the Disclosure ledger is
 sent, never a bulk export of the vault itself. Adding any other destination requires an explicit
@@ -353,7 +395,9 @@ shadow state.
 `{src,run}/**/*.ts` for network-call sites and fails unless each one
 carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
 `package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
-Segment, Datadog, etc.). `sites/` (the local 127.0.0.1-only PoC
+Segment, Datadog, etc.). Issue #554 adds a `// egress: soroeru-cloud` class for the extension's
+Cloud Run client, extends the scan to `extension/` and `cloud/`, and allows Google Cloud SDKs
+only in `cloud/package.json`; the third-party telemetry denylist is unchanged. `sites/` (the local 127.0.0.1-only PoC
 test-site server) is out of scope — it is not external egress. A new, unannotated
 network destination — or a telemetry-shaped dependency — fails this check and must be
 reviewed against this section before it is annotated.
@@ -452,9 +496,12 @@ regarding automated read and update should be reviewed (see [`requirements.md`](
 
 ### 8.2 GDPR and Privacy Compliance Notes
 
-`Soroeru`'s local-first, no-hosted-vault, no-telemetry design aligns with core GDPR
-principles: data minimization, user ownership, and no third-party processing. However,
-formal GDPR compliance requires additional investigation:
+`Soroeru`'s local-first, no-hosted-vault design aligns with core GDPR principles: data
+minimization and user ownership. Issue #554 adds processing that needs its own review:
+value-free outcome telemetry (whether hour-truncated, identifier-free rows are personal data in
+combination with request metadata) and the consent-gated Tier 3 read, where Soroeru and Google
+process personal data on the user's explicit, per-request consent. Formal GDPR / APPI
+compliance requires additional investigation:
 
 - **Right to be Forgotten**: the local vault can be deleted, but a mechanism to confirm
   complete deletion (including backups and any exported data) should be documented.
@@ -481,6 +528,11 @@ medical, financial, employment, political, religious, or adult service. Therefor
 - strip user identifiers, raw values, account state, cookies, tokens, and screenshots
   before submission;
 - promote candidates to official shared definitions only after review and tests.
+
+In the Issue #554 target, sharing happens through Soroeru Cloud Form Schema feedback (§15.5):
+only value-free mappings from Tier 1/Tier 2 runs are sent, with only a per-site pseudonymous
+validator token (C7, §15.1) that cannot link one installation across sites, and the
+user's local candidates and schema cache stay encrypted in the vault.
 
 **Implementation (#80):** `validateCandidateDefinition` (`src/agent/definitions.ts`) runs
 a heuristic scan over every free-text/pattern string in a candidate for email-like,
@@ -900,3 +952,125 @@ on the user's smartphone, with QR cross-device linking from the desktop.
   remains deferred (Issue #218).
 - For regulated industries, Soroeru-mediated verification is **not** a recognized 犯収法 eKYC
   method; any future site-side claim must be designed to the applicable standard separately.
+
+## 15. Soroeru Cloud, Gemini Consent Boundary, And Telemetry (Issue #554)
+
+Requirement-level statements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-030.
+Architecture: [`architecture.md`](architecture.md) §14. Detailed design:
+[`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md).
+This section applies to the Chrome-extension target; the current Electron build keeps §5. The C0
+rule that secrets never reach any AI model, and the password/CVV entry rules (§3.1), apply
+to every build.
+
+### 15.1 Data classification
+
+| Class | Examples |
+| --- | --- |
+| C0 Secret | Site passwords, vault passphrase, master key, recovery key, OTP/MFA codes, cookies and session tokens, CVV (canonical or site-displayed), card PIN, My Number, API keys |
+| C1 Personal value | Name, address, phone, email, date of birth, card number/expiry/holder, site account IDs |
+| C2 Page content that may contain personal values | DOM text, field values, display values |
+| C3 Structure | Tags, input types, `autocomplete`, name/id tokens, pattern-redacted labels, structural fingerprints |
+| C4 Form Schema | Field anchor → canonical attribute key mappings, versions |
+| C5 Outcome metadata | Result, error category, confidence bucket, tier |
+| C6 Consent event | Tier 3 gate outcome (approved / declined / closed / timed out / failed), site hash, attribute keys, payload size/hash |
+| C7 Per-site validator token | `HMAC(validatorKey, site)` sent with schema feedback; the per-install `validatorKey` itself never leaves the vault |
+
+### 15.2 Egress matrix
+
+| Class | Local vault | Shared schema (Firestore) | Telemetry (BigQuery) | Gemini | Cloud logs / traces |
+| --- | --- | --- | --- | --- | --- |
+| C0 | Encrypted (My Number, card PIN never stored) | Never | Never | **Never, even with consent** | Never |
+| C1 | Encrypted | Never | Never | Tier 3 after per-fallback consent only | Never |
+| C2 | Transient in memory only | Never | Never | Tier 3 after per-fallback consent only, C0 masked | Never |
+| C3 | Yes | Yes | Fingerprint hash only | Yes (Tier 2) | Never as content; counts only |
+| C4 | Encrypted cache | Yes | Schema id/version | Yes | IDs only |
+| C5 | Optional encrypted audit | No | Yes, typed allowlist | No | Error codes only |
+| C6 | Encrypted Evidence | No | Aggregate count only, if ever needed | No | No |
+| C7 | Source key encrypted | Server-side HMAC of the token only | Never | No | Never |
+
+Enforcement is structural: the client only has builders whose inputs are typed C3–C5 values,
+and the server re-runs the same validators from `src/shared/cloud-contract.ts`. Developers do
+not "remember to redact" arbitrary objects; there is no API that accepts one.
+
+### 15.3 Telemetry allowlist
+
+Allowed fields: `siteId` (eTLD+1), `formId`, `schemaVersion`, `operationType`,
+`resolutionTier`, `result`, `errorCategory` (closed enum), `mappingConfidenceBucket`,
+`clientVersion`, `schemaFingerprint`, `occurredAt` (truncated to the hour). Anything else is
+rejected client-side and server-side; the BigQuery table has exactly these columns. No client
+identifier, IP address, URL path/query, label, value, DOM, page content, or free-text message.
+A user-visible control to disable telemetry (and cloud assistance) is required before
+production release (definition: `requirements.md` §8). **Production default decision:** not yet
+recorded — until the Product Owner records it here, the default is off and no production
+release may ship. The hackathon judging build may default to on only with the in-extension
+notice that `requirements.md` §8 requires.
+
+### 15.4 Gemini consent boundary and logging prohibition
+
+- Tier 2 (`/v1/agent/map-structure`) accepts only the C3 structure snapshot.
+- Tier 3 (`/v1/agent/read-with-consent`) is a **separate Cloud Run service** with its own
+  service account that can call Vertex AI and nothing else (no Firestore, no BigQuery). It
+  accepts only requests carrying a short-lived single-use ticket from `soroeru-api`, bound to
+  the site, consent ID, and payload hash (`architecture.md` §14.1). Consent itself is enforced
+  in the client: the server cannot see the user, so it enforces binding, single use, and budget.
+- The content script masks C0 before a Tier 3 region leaves the page; unmasked secrets never
+  cross extension messaging. The Side Panel re-checks and refuses to send on a miss. A wall,
+  navigation, or lease invalidation between approval and response discards the request and
+  response.
+- Tier 3 is read-only, starts only after Tiers 1–2 leave a required attribute unresolved and
+  no wall is present, and requires an explicit, unpre-selected, per-fallback consent in the
+  Side Panel. Decline, close, or timeout (default 5 minutes) sends nothing. Consent is never
+  stored as a standing grant, cannot be expanded at L1, and does not survive a resume.
+- Text items that look like a secret by nearby label or value shape but cannot be confidently
+  classified are dropped from the payload entirely (fail closed).
+- The client masks every C0 element as `[SECRET]` before building the payload, limits the
+  payload to the region for the unresolved attributes (≤16 KiB; larger regions hand off
+  instead), and lists the requested attribute keys shown at the gate.
+- Request and response bodies and extracted values are never written to application logs,
+  Cloud Trace spans, error reports, Firestore, BigQuery, or analytics. The fallback service's
+  logs and traces also omit the site name; the handler logs only an error code and latency.
+  (Outcome telemetry for a Tier 3 run still carries the §15.3 `siteId`, like every other row.)
+- An approved request that fails is not retried without new consent; the attributes stay
+  `unknown`, the user is offered a hand-off, and the failure is recorded as C6.
+- Secrets shown as plain text (not identifiable from element attributes) are masked by
+  nearby-label and value-shape rules, erring toward masking. Vertex AI request/response logging and context
+  caching are not enabled for either tier.
+- Returned values are accepted only for requested keys and only when they corroborate against
+  the sent item text (same normalization limits as §3's Issue #517 rules); otherwise they
+  become `unknown`. Accepted values go only to the local vault.
+- Consent to Gemini processing is not consent to retain data for improvement: Tier 3 outcomes
+  never feed schema learning, and telemetry for Tier 3 carries only the C5 fields.
+- Each gate outcome is recorded locally as encrypted Evidence (time, site hash, attribute keys,
+  outcome, payload byte length and hash) without duplicating the disclosed values.
+
+### 15.5 Schema poisoning and promotion controls
+
+- Schema records accept only value-free anchors (`architecture.md` §5.2 positional selectors or
+  scanner IDs) and are rejected if any string matches personal-value-like patterns (§9).
+- A schema becomes `active` only after the `architecture.md` §14.4 thresholds (default: ≥3
+  distinct validators, ≥90% success over the last 10 validations, <3 failures); one observation
+  never activates a schema. Failures after a site change retire it.
+- Distinct validators are counted per site from the C7 token (`HMAC(validatorKey, site)`),
+  stored only as a server-side HMAC; the per-install key never leaves the vault, the token
+  cannot link one installation across sites, and neither enters BigQuery.
+- Schemas grant no authority: the client revalidates every field against the live page, and
+  writes stay behind the review-and-confirm gate, so a poisoned mapping can at worst produce an
+  `unknown` or a reviewable wrong proposal, never an unreviewed submission.
+- Schemas mapping high-risk attribute keys (basic-4 identity attributes, card data) become
+  active only from maintainer-reviewed official seeds. Before production release, decide
+  whether sites in §8.1's sensitive categories also require maintainer review.
+- Accepted risk: Sybil validators can still activate a poisoned schema for other keys; the
+  automatic retire-on-failure rule and per-use local revalidation bound the impact.
+
+### 15.6 Release checklist additions
+
+- [ ] No Google Cloud credential, API key, or service-account material in the extension bundle.
+- [ ] Tier 3 service logs and traces contain no request/response bodies (manual check of Cloud
+  Logging and Trace after a demo run with fake data).
+- [ ] BigQuery table schema equals §15.3 exactly.
+- [ ] Unit tests prove C0/C1 fake values cannot pass `StructureSanitizer`, `TelemetryBuilder`,
+  schema feedback, or the Tier 3 builder's secret masking.
+- [ ] Declining Tier 3 consent results in zero calls to the fallback endpoint.
+- [ ] The deploy check confirms the Cloud Logging request-log exclusion for both services,
+  body-free application logging, and disabled Vertex AI request/response logging.
+- [ ] A reused or payload-mismatched Tier 3 ticket is rejected.
