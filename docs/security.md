@@ -57,8 +57,8 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Tier 3 content captured by cloud logs/traces (#554) | Consented page content persists in Cloud Logging, Trace, or Vertex AI logs beyond the single request. | Separate `soroeru-pii-fallback` service; handlers log only error codes; no body capture in tracing; Vertex AI request/response logging and context caching not enabled; its service account has no Firestore/BigQuery access (§15.4). |
 | Malicious page content / prompt injection (#554) | Page text steers Gemini to invent mappings, read other fields, or return fabricated values. | Gemini has no browser/vault tool; outputs are closed schemas referencing only supplied item IDs and requested keys; mappings are validated locally; Tier 3 values must corroborate against the sent item text; navigation/fill authority stays local and gated. |
 | Schema poisoning (#554) | An attacker submits feedback so a wrong mapping becomes active for everyone. | Candidate lifecycle with distinct-validator and success-rate thresholds; single observations never activate; schemas carry no authority and are revalidated per use; fills stay behind the confirmation gate (§15.5). |
-| Site membership inferred from cloud requests (#554) | Soroeru Cloud learns which services a client uses. | No client identifier on resolve or telemetry; schema feedback carries only a per-site token that cannot link sites (C7); site sent in POST bodies (not URL queries); IPs used only in memory for rate limiting; telemetry time truncated to the hour; local schema cache encrypted. |
-| Public API abuse / cost exhaustion (#554) | Anyone can call the endpoints; Gemini spend or Firestore writes are abused. | Per-IP rate limits, payload size caps, daily Gemini budget with alerting, closed schemas; no credentials in the extension. |
+| Site membership inferred from cloud requests (#554) | Soroeru Cloud learns which services a client uses. | No client identifier on resolve or telemetry; schema feedback carries only a per-site token that cannot link sites (C7); site sent in POST bodies (not URL queries); IPs used only in memory for rate limiting and Cloud Run request logs excluded from Cloud Logging; telemetry time truncated to the hour; local schema cache encrypted. |
+| Public API abuse / cost exhaustion (#554) | Anyone can call the endpoints; Gemini spend or Firestore writes are abused. | `max-instances` caps, best-effort per-instance IP rate limits, payload size caps, a Firestore-backed daily Gemini budget (fail closed to hand-off when exhausted), short-lived signed Tier 3 tickets, billing alerts, closed schemas; no credentials in the extension. Cloud Armor / API Gateway quotas are the pre-production reconsideration (`architecture.md` §14.1). |
 
 ## 3. Sensitive Data Handling
 
@@ -972,14 +972,22 @@ Allowed fields: `siteId` (eTLD+1), `formId`, `schemaVersion`, `operationType`,
 rejected client-side and server-side; the BigQuery table has exactly these columns. No client
 identifier, IP address, URL path/query, label, value, DOM, page content, or free-text message.
 A user-visible control to disable telemetry (and cloud assistance) is required before
-production release; the production default is a Product Owner decision recorded before
-release.
+production release (definition: `requirements.md` §8). **Production default decision:** not yet
+recorded — until the Product Owner records it here, the default is off and no production
+release may ship. The hackathon judging build may default to on only with the in-extension
+notice that `requirements.md` §8 requires.
 
 ### 15.4 Gemini consent boundary and logging prohibition
 
 - Tier 2 (`/v1/agent/map-structure`) accepts only the C3 structure snapshot.
 - Tier 3 (`/v1/agent/read-with-consent`) is a **separate Cloud Run service** with its own
-  service account that can call Vertex AI and nothing else (no Firestore, no BigQuery).
+  service account that can call Vertex AI and nothing else (no Firestore, no BigQuery). It
+  accepts only requests carrying a short-lived signed ticket issued by `soroeru-api` after
+  consent, so budget enforcement needs no state in the fallback service.
+- The content script masks C0 before a Tier 3 region leaves the page; unmasked secrets never
+  cross extension messaging. The Side Panel re-checks and refuses to send on a miss. A wall,
+  navigation, or lease invalidation between approval and response discards the request and
+  response.
 - Tier 3 is read-only, starts only after Tiers 1–2 leave a required attribute unresolved and
   no wall is present, and requires an explicit, unpre-selected, per-fallback consent in the
   Side Panel. Decline, close, or timeout (default 5 minutes) sends nothing. Consent is never

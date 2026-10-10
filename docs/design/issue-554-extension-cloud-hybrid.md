@@ -23,8 +23,13 @@ Soroeru の実行基盤を **Electron trusted core + Native Messaging + 薄い C
 - データ分類と送信先、ログ禁止、スキーマ汚染への対策
 - 移行順序と実装 Issue の分割（§12）
 
-範囲外（Issue #554 の non-goals と同じ）: Electron ファイルの全削除、複数ブラウザ対応、任意の
-クラウドストレージ対応、個人 vault のクラウド同期、ユーザーの生データによる学習、壁の自動突破。
+範囲外（Issue #554 の non-goals と同じ）: 複数ブラウザ対応、任意のクラウドストレージ対応、
+個人 vault のクラウド同期、ユーザーの生データによる学習、壁の自動突破。Electron ファイルの全削除は
+**ハッカソン範囲（P0）の対象外**であり、Issue #554 の P2 チェックリストどおり、同等性の確認後に
+P2-1（§12）で本番ビルドから外す。
+
+用語: Slice A〜D は [`requirements.md`](../requirements.md) §7 の順序（A Visibility、B 一括更新、
+C 退会、D 新規登録）を指す。
 
 ## 2. 現状と接続位置
 
@@ -76,12 +81,13 @@ Chrome
 │   ├── CloudClient（型付き API クライアント）
 │   ├── StructureSanitizer / TelemetryBuilder / Tier3PayloadBuilder
 │   └── UI: アンロック、台帳、レビュー、同意ゲート、ハンドオフ表示
-├── Service Worker（イベント中継、鍵と個人の値を持たない）
-│   ├── タブリース（tab / origin / epoch）
-│   ├── chrome.scripting によるコンテンツスクリプト注入
+├── Service Worker（リース発行とイベント中継、鍵と個人の値を持たない）
+│   ├── タブリース（tab / origin / epoch）の発行・無効化
+│   ├── chrome.scripting によるコンテンツスクリプト注入（リーストークンを渡す）
 │   └── タブ・ナビゲーションイベントの監視 → Side Panel へ通知
-├── Content Script（最小権限の DOM 操作）
+├── Content Script（最小権限の DOM 操作。Side Panel と直接通信）
 │   ├── 構造スキャン、値の読み取り、入力、クリック、遷移
+│   ├── Tier 3 用の領域読み取りでは、返す前に C0 を `[SECRET]` に置換
 │   └── 壁検出のシグナル収集
 └── IndexedDB（暗号文のみ）／ chrome.storage.session（リースのメタデータのみ）
 ```
@@ -106,26 +112,43 @@ MV3 の Service Worker はアイドル時に停止し、グローバル変数は
 
 ### 4.2 拡張内メッセージ契約
 
-Native Messaging の代わりに `chrome.runtime.connect` のポートを使う。既存の閉じたスキーマの
-検証（`src/shared/chrome-bridge.ts`）を引き継ぐ。
+Native Messaging の代わりに拡張内メッセージを使う。既存の閉じたスキーマの検証
+（`src/shared/chrome-bridge.ts`）を引き継ぐ。**ページ内容と値は Service Worker を通らない。**
+Service Worker はリースの発行・無効化だけを行い、ページ操作は Side Panel から Content Script へ
+`chrome.tabs.sendMessage` で直接送る。
 
 ```ts
+// Side Panel ⇔ Service Worker（chrome.runtime.connect のポート）
 type PanelToWorker =
   | { kind: "lease.open"; tabId: number; origin: string; nonce: string }
-  | { kind: "lease.release"; leaseId: string }
-  | { kind: "page.command"; leaseId: string; epoch: number; command: PageCommand };
+  | { kind: "lease.release"; leaseId: string };
 
 type WorkerToPanel =
-  | { kind: "lease.opened"; leaseId: string; epoch: number }
+  | { kind: "lease.opened"; leaseId: string; epoch: number; tabId: number }
   | { kind: "lease.invalidated"; leaseId: string; reason: LeaseInvalidReason }
+  | { kind: "page.event"; leaseId: string; event: "navigated" | "closed" };
+
+// Side Panel → Content Script（chrome.tabs.sendMessage、結果は sendResponse）
+type PanelToContent = { kind: "page.command"; leaseId: string; epoch: number; command: PageCommand };
+type ContentToPanel =
   | { kind: "page.result"; leaseId: string; epoch: number; result: PageCommandResult }
-  | { kind: "page.event"; leaseId: string; event: "navigated" | "closed" | "wall-signal" };
+  | { kind: "page.rejected"; reason: LeaseInvalidReason };
+
+type LeaseInvalidReason =
+  | "tab-closed" | "navigated-out-of-scope" | "origin-mismatch" | "epoch-mismatch"
+  | "permission-revoked" | "worker-restarted" | "vault-locked" | "panel-closed" | "released";
 ```
 
-`PageCommand` / `PageCommandResult` は現行の拡張コマンド（scan、read、fill、click、goto、
-captureCollectionObservation）をそのまま使う。ワーカーは毎回 lease・epoch・tab・origin を照合し、
-一致しなければ実行せずに `lease.invalidated` を返す。一つのタブ、台帳の Site Account の範囲、
-壁でのハンドオフ（#474、`security.md` §7）は変えない。
+- 注入時に Service Worker が Content Script へ `leaseId` と `epoch` を渡す。Content Script は
+  コマンドごとに `leaseId`・`epoch`・自分の origin を照合し、一致しなければ `page.rejected` を返す。
+- 無効化（タブを閉じる、範囲外への遷移、権限の取り消し、Service Worker 再起動の検知など）では、
+  Service Worker が Content Script に失効を通知し、Side Panel に `lease.invalidated` を送る。
+- `PageCommand` / `PageCommandResult` は現行の拡張コマンド（`extension/worker.ts` の
+  `EXTENSION_COMMANDS`: snapshot、waitForReady、goto、currentUrl、fillField、click、readValues、
+  readDisplayValues、captureCollectionObservation、checkCollectionObservation など）のページ操作分を
+  移し、Tier 3 用の `readRegionMasked`（§5.3）を加える。メッセージ枠の検証は
+  `src/shared/chrome-bridge.ts` の閉じたスキーマ検証を流用する。
+- 一つのタブ、台帳の Site Account の範囲、壁でのハンドオフ（#474、`security.md` §7）は変えない。
 
 ## 5. 解決パイプライン
 
@@ -153,16 +176,25 @@ start(op, siteAccount, page)
   └─ Tier 3: 同意付き Gemini（読み取りのみ）
        同意ゲート表示（自動実行は停止）
        ├─ 拒否 / 閉じる / タイムアウト ──> 未解決は unknown、手動ハンドオフ → done(declined)
-       └─ 承認 ──> 最小ペイロード → read-with-consent
-                    ├─ API エラー / 通信失敗 ──> 再送しない（再送には新しい同意が必要）
+       └─ 承認 ──> 壁・リースを再確認 → 最小ペイロード → read-with-consent
+                    ├─ 送信前に壁 / リース失効 / 遷移 ──> 送信せず unknown、ハンドオフ → done(handoff)
+                    ├─ API エラー / 通信失敗 / 予算超過 ──> 再送しない（再送には新しい同意が必要）
                     │                            unknown、ハンドオフ、C6 に失敗を記録 → done(failure)
-                    └─ 応答 ──> ローカル照合
-                         ├─ 照合 OK ──> 暗号化 vault に書き込み → done(gemini_pii_consent)
-                         └─ 照合 NG ──> unknown（推測で保存しない）
+                    └─ 応答 ──> リース・epoch・観測リビジョンが送信時と同じか確認
+                         ├─ 変化あり ──> 応答を破棄、unknown、ハンドオフ → done(handoff)
+                         └─ 同じ ──> ローカル照合
+                              ├─ 照合 OK ──> 暗号化 vault に書き込み
+                              │    ├─ 書き込み成功 ──> done(gemini_pii_consent)
+                              │    └─ 書き込み失敗 ──> 部分書き込みなし（1 回の save で全件か 0 件）、
+                              │                        応答を破棄、unknown、エラー表示 → done(failure)
+                              └─ 照合 NG ──> unknown（推測で保存しない）
 ```
 
-クラウド到達不可の判定は、resolve の失敗（通信エラー・5xx・タイムアウト 10 秒）で行う。到達不可の
-間は Tier 2・3 を呼ばない。
+- クラウド到達不可の判定は、resolve の失敗（通信エラー・5xx・タイムアウト 10 秒）で行う。到達不可の
+  間は Tier 2・3 を呼ばない。
+- Tier 2 の API エラーは、読み取り操作でも Tier 3 に進まない（意図的）。Tier 3 は「構造を見ても
+  解決できなかった」ときの例外であり、「構造を見られなかった」ときに生値の送信へ切り替えると、
+  障害が同意ゲートの頻度を押し上げ、同意の重みを下げるため。
 
 ### 5.1 Tier 1 — 共有スキーマとローカル実行
 
@@ -238,6 +270,9 @@ interface ConsentedReadRequest {
 }
 ```
 
+- C0 のマスクは **Content Script が `readRegionMasked` の結果を返す前に行う**。マスク前のテキストは
+  ページの外（拡張メッセージ）に出ない。Side Panel の `Tier3PayloadBuilder` は同じ規則で再検査し、
+  未マスクの C0 を見つけたら送信せずハンドオフにする。
 - 要素属性で判定できない秘密（dd・td などに平文で表示されたパスワード・CVV・ワンタイムコード）に
   備え、近接ラベル（「パスワード」「セキュリティコード」「CVV」「認証コード」など）と値の形
   （3〜4 桁の数字のみ、など）によるテキストのマスクも行う。判定が曖昧なら `[SECRET]` 側に倒す。
@@ -267,6 +302,19 @@ interface VaultPersistence {
   ドキュメント全体を置き換え、途中で失敗したら前の版が残る。
 - 読めない・壊れたデータは従来どおり fail closed にし、空の vault を黙って作らない。
 
+IndexedDB を唯一の保存先にする場合の耐久性:
+
+| 事象 | 設計 |
+| --- | --- |
+| 途中で中断した保存 | `save` は 1 つの `readwrite` トランザクションでドキュメント全体を置き換える。`oncomplete` までは成功を返さない。中断・失敗時は前の版が残る |
+| 容量超過 | `QuotaExceededError` は保存失敗として呼び出し側に返し、メモリ上の変更を「未保存」と表示する。manifest に `unlimitedStorage` を宣言し、起動時に `navigator.storage.persist()` を要求する |
+| 退避・消去（ブラウザによる退避、利用者の「サイトデータを削除」、拡張の削除） | 防げないため、vault 作成直後と変更の多い操作の後に暗号化エクスポートを促す。P0 では既存形式の暗号化エクスポート（ダウンロード）だけを提供し、UX の強化は P2-2 |
+| 破損 | ヘッダの形式バージョン検証と各レコードの AES-GCM 認証で検出し、fail closed。空の vault で上書きしない |
+| 同時書き込み（複数ウィンドウの Side Panel） | `navigator.locks.request("soroeru-vault", { mode: "exclusive" })` を保持した Side Panel だけがアンロックできる。ロックを取れない Side Panel は「別のウィンドウで使用中」と表示する |
+
+代替案: `chrome.storage.local` — 容量と大きな値の扱いで不利なため不採用。OPFS — 拡張ページでの
+利用は可能だが、トランザクションの原子性を自前で作る必要があるため不採用。
+
 ### 6.2 暗号処理の移植
 
 - `crypto.ts` を「エンベロープとKDFパラメータの論理」と「`CryptoRuntime`（`getRandomValues`、
@@ -282,6 +330,19 @@ interface VaultPersistence {
 
 どのサイトのスキーマを持っているかは、利用者の利用サイトを表す。キャッシュは暗号化 vault の
 新しいレコード種別 `formSchemaCache` に置く。オフライン時はこのキャッシュと決定的な経路だけで動く。
+
+### 6.4 追加・利用する vault レコード
+
+| レコード種別 | 内容 | 新規 / 既存 |
+| --- | --- | --- |
+| `formSchemaCache` | `FormSchema`（§7.3）と取得時刻 | 新規 |
+| `cloudSettings` | テレメトリ・クラウド支援の設定、`validatorKey`、未送信フィードバック・テレメトリのキュー（各項目に `idempotencyKey`、試行回数） | 新規 |
+| `workflowCheckpoint` | 既存の形に `resolutionStage`（`tier1` / `tier2` / `consent-pending` / `tier3`）と未解決属性キーを追加。値・ページ内容・同意状態は持たない | 既存（拡張） |
+| `evidence` | C6 の同意イベント（`kind: "tier3-consent"`、時刻、サイトのハッシュ、属性キー、結果、ペイロードのバイト数と SHA-256） | 既存（kind の追加） |
+
+レコード種別の追加は `ENTITY_KINDS` と各レコードの `schemaVersion` で表し、vault ファイル形式の
+版は上げない（エンベロープの形は変わらない）。既存レコードの形を変える `workflowCheckpoint` は
+`schemaVersion` を上げ、旧版を読めるようにする。
 
 ## 7. Google Cloud
 
@@ -299,9 +360,19 @@ interface VaultPersistence {
 - 拡張に Google Cloud の認証情報を埋め込まない。Cloud Run はサービスアカウントで Firestore・
   BigQuery・Vertex AI を呼ぶ。PII フォールバック用のサービスアカウントは Vertex AI の呼び出し
   権限だけを持ち、Firestore・BigQuery の権限を持たない。
-- 拡張に埋め込める値は公開値として扱う。API は匿名で呼べる前提で、IP 単位のレート制限、
-  ペイロードの上限、Gemini 呼び出しの全体予算（日次上限と予算アラート）で費用の濫用を抑える。
-  IP アドレスはレート制限のメモリ上だけで使い、保存しない。
+- 拡張に埋め込める値は公開値として扱う。API は匿名で呼べる前提で、次の仕組みで濫用を抑える。
+
+| 対策 | 仕組み | 限界 |
+| --- | --- | --- |
+| 同時実行の上限 | 両サービスに Cloud Run の `max-instances` と `concurrency` を設定 | 正規利用も詰まり得る |
+| IP 単位のレート制限 | 各インスタンス内のトークンバケット（IP はメモリ上のみ） | インスタンス数倍まで緩む。ベストエフォート |
+| Gemini の日次予算 | `soroeru-api` が Firestore の `budgets/{yyyy-mm-dd}` をトランザクションで加算し、上限超過で 429。Tier 3 は次の行のチケットで同じ予算を使う | 上限到達後は全利用者が Tier 2・3 を使えない（fail closed → ハンドオフ） |
+| Tier 3 のチケット | 拡張は承認後に `soroeru-api` の `POST /v1/agent/tier3-ticket` で予算を 1 件消費し、5 分有効の署名付きチケット（HMAC、Secret Manager の共有鍵、ワンタイムの nonce）を得る。`soroeru-pii-fallback` は署名と期限だけを検証する（永続化なし。nonce の再利用はインスタンス内でのみ拒否） | 期限内の同一インスタンス外での再利用は防げない。予算 1 件分に限られる |
+| 課金の上限 | Cloud Billing の予算アラート | 通知のみで停止はしない |
+| IP を残さない | 両サービスの Cloud Run リクエストログを Cloud Logging の除外フィルタで取り込まない。エラーはアプリの構造化ログ（IP なし）で見る | Google のインフラ側の一時的な処理は Soroeru の管理外 |
+
+  代替案: Cloud Armor や API Gateway のクォータ — 外部ロードバランサか API Gateway が必要で、
+  ハッカソン期間の構成としては重いため、本番前の再検討事項（§13）とする。
 
 ### 7.2 API 契約
 
@@ -313,12 +384,56 @@ interface VaultPersistence {
 | `POST /v1/schemas/resolve` | `{ site, pageFingerprint, clientVersion }` | `{ schema: FormSchema \| null, status: "active" \| "none" }` |
 | `POST /v1/schemas/feedback` | `{ schemaId?, site, pageFingerprint, mappings, outcome, siteValidatorToken, idempotencyKey }` | `{ accepted: boolean }` |
 | `POST /v1/agent/map-structure` | `StructureSnapshot` | `{ mappings, pagePurpose }` |
-| `POST /v1/agent/read-with-consent` | `ConsentedReadRequest` | `{ values }` |
+| `POST /v1/agent/tier3-ticket` | `{ consentId }` | `{ ticket, expiresAt }` または 429 |
+| `POST /v1/agent/read-with-consent`（`soroeru-pii-fallback`） | `ConsentedReadRequest` + `ticket` | `{ values }` |
 | `POST /v1/telemetry/outcome` | `OutcomeEvent`（§9） | `204` |
 
-型は `src/shared/cloud-contract.ts` に置き、拡張と Cloud Run の両方が同じ検証関数を使う。
-Cloud Run 側は `cloud/`（独立した npm パッケージ、Node 22、`node:http` と最小の Google Cloud
-SDK のみ）に置く。
+型は `src/shared/cloud-contract.ts`（P0-4 で新規作成）に置き、拡張と Cloud Run の両方が同じ検証
+関数を使う。Cloud Run 側は `cloud/`（P0-4 で新規作成。独立した npm パッケージ、Node 22、`node:http`
+と最小の Google Cloud SDK のみ）に置く。新しいパッケージと依存は Issue #554 の範囲
+（Cloud Run・Firestore・BigQuery・Vertex AI の採用）で承認されたものに限る。
+
+主要な型:
+
+```ts
+type AttributeKey = string;        // 既存の正規属性キー（src/domain の属性キー一覧）に限る
+type PositionalSelector = string;  // ":root" + " > *:nth-child(N)" の並び（#516 の制約）
+type ScannerId = `f-${number}` | `d-${number}`;
+
+interface FormSchema {
+  schemaId: string;
+  site: string;
+  formKey: string;                 // サーバが site + pagePurpose + 最初の pageFingerprint から決める
+  version: number;
+  pageFingerprints: string[];
+  fields: Array<{ anchor: PositionalSelector | ScannerId; attributeKey: AttributeKey; required: boolean }>;
+  confidence: number;
+  status: "candidate" | "active" | "retired";
+  provenance: "official" | "gemini_structure" | "feedback";
+}
+
+interface FeedbackRequest {
+  schemaId: string | null;         // null は新しい候補の提案（Tier 2 成功時）
+  site: string;
+  pageFingerprint: string;
+  pagePurpose: StructureSnapshot["purposeHint"];
+  mappings: Array<{ anchor: PositionalSelector | ScannerId; attributeKey: AttributeKey }>;
+  outcome: "validated" | "failed";
+  resolutionTier: "shared_schema" | "gemini_structure"; // Tier 3 は型で表せない
+  siteValidatorToken: string;      // 64 桁 hex
+  idempotencyKey: string;          // UUID
+}
+
+type ErrorCategory =
+  | "anchor-not-found" | "anchor-ambiguous" | "classifier-conflict" | "wall-detected"
+  | "lease-invalidated" | "cloud-unreachable" | "rate-limited" | "budget-exhausted"
+  | "ai-invalid-response" | "corroboration-failed" | "payload-too-large" | "consent-declined"
+  | "consent-timeout" | "vault-write-failed" | "unknown";
+```
+
+- アンカーは拡張がローカルで計算し（#518 の生成器と同じ方法）、サーバは文法と個人値らしさだけを検証する。
+- `schemaId: null` のフィードバックは、`(site, pagePurpose, pageFingerprint)` が同じ candidate を
+  探し、なければ新しい `candidate` を作る（同じ `mappings` でなければ別の候補として扱う）。
 
 `validatorKey` は拡張インストールごとのランダム値（256 bit、vault に暗号化保存、ユーザーが
 再生成可能）で、**送信しない**。拡張は `siteValidatorToken = HMAC-SHA-256(validatorKey, site)` を
@@ -343,8 +458,13 @@ formSchemas/{schemaId}
   status              // candidate | active | retired
   provenance          // official | gemini_structure | feedback
   createdAt / updatedAt
-schemaFeedback/{schemaId}/{hmac(serverSecret, siteValidatorToken)}  // 最新の結果だけ、上書き
+schemaFeedback/{schemaId}/validators/{hmac(serverSecret, siteValidatorToken)}  // 最新の結果だけ、上書き
+schemaFeedback/{schemaId}/recent/{seq}   // 直近の検証結果（成功/失敗と時刻）、最大 10 件
+budgets/{yyyy-mm-dd}                      // Gemini 呼び出し件数
 ```
+
+`schemaId: null` の提案は、まず `candidate` の `formSchemas` 文書を作ってからその `schemaId` に
+フィードバックを書くため、フィードバックの置き場所は常に存在する。
 
 アンカーは #516 の制限（`:root` + `*:nth-child(N)` の位置セレクタ、または `f-N` / `d-N`）だけを
 許す。テキスト・属性値・ID・クラスを含むセレクタは保存時に拒否する。すべての文字列フィールドに
@@ -369,11 +489,24 @@ active ──失敗率超過 or 新しい版が active──> retired
 official（保守者がレビューしたシード） ──取り込み──> active
 ```
 
-### 8.2 昇格条件（既定値、設定可能）
+### 8.2 昇格・退役の条件（既定値、すべて設定可能）
 
-- 検証が合計 5 件以上あり、そのうち異なる検証者（同じサイトの `siteValidatorToken`）から 3 件以上の成功。
-- 直近の最大 10 件（5〜10 件）の成功率 90% 以上、かつ累計の失敗 3 件未満。
-- 既存の active と同じ `formKey` のときは版を上げ、旧版を retired にする。
+| 定数 | 既定値 | 意味 |
+| --- | --- | --- |
+| `MIN_VALIDATIONS` | 5 | 昇格判定に必要な検証の最小件数 |
+| `MIN_DISTINCT_VALIDATORS` | 3 | 成功を報告した異なる検証者（同じサイトの `siteValidatorToken`）の最小数 |
+| `WINDOW` | 10 | 成功率を計算する直近の件数。件数が `WINDOW` 未満なら全件で計算する |
+| `PROMOTE_SUCCESS_RATE` | 0.9 | 昇格に必要な、直近 `WINDOW` 件の成功率 |
+| `RETIRE_FAILURE_RATE` | 0.3 | 直近 `WINDOW` 件の失敗率がこれを超えると退役（candidate・active 共通） |
+| `MAX_FAILURES_TO_PROMOTE` | 3 | 累計の失敗がこれ以上なら昇格しない |
+| `CANDIDATE_TTL_DAYS` | 30 | candidate が昇格せずにこの日数を過ぎたら退役 |
+
+- 昇格: 検証件数 ≥ `MIN_VALIDATIONS`、異なる成功検証者 ≥ `MIN_DISTINCT_VALIDATORS`、直近成功率 ≥
+  `PROMOTE_SUCCESS_RATE`、累計失敗 < `MAX_FAILURES_TO_PROMOTE`。
+- 判定はフィードバックの書き込みと同じ Firestore トランザクションで行う。同じ `formKey` の active
+  が既にあれば、同じトランザクション内で新しい版を `active`（`version` + 1）、旧版を `retired` に
+  する。2 つの候補が同時に昇格しようとした場合はトランザクションの競合で片方が再試行され、
+  後から確定した方が新しい版になる。
 
 1 件の観測では active にならない。Sybil（多数の validatorKey）による汚染は完全には防げないため、
 スキーマに操作権限を与えず、毎回ローカル検証してから使い、入力は確認ゲートを通す（§11.2）。
@@ -414,7 +547,10 @@ interface OutcomeEvent {
   本文・値・属性値は含まない。
 - 利用者がテレメトリを止める設定は、本番リリース前に必須とする（REQ-027）。「本番リリース」は、
   保守者の検証用ビルドとハッカソン審査用ビルド以外のあらゆる配布（Chrome Web Store を含む）を指す。
-  ハッカソン審査用ビルドの既定値はオンとし、本番の既定値は Product Owner がリリース前に決める。
+  ハッカソン審査用ビルドは、拡張内に「改善用データを Soroeru Cloud に送る」旨の表示があり、
+  審査員向け手順にも同じ記載があり、フェイクデータだけを使う場合に限り既定オンにできる。本番の
+  既定値は Product Owner が決めて `security.md` §15.3 に記録し、記録されるまでは既定オフとし、
+  本番リリースもしない。
 
 ## 10. 静的検査とテスト
 
@@ -433,7 +569,14 @@ interface OutcomeEvent {
 | 中断 | 実行中に Side Panel を閉じると、値と同意状態を含まないチェックポイントが保存され、鍵が破棄されること |
 | Tier 3 承認後の失敗 | API エラーで再送せず `unknown` + ハンドオフになり、C6 に失敗が記録されること |
 | E2E | 既存の E2E と同じ構成（`playwright` ライブラリ + `node --test`、開発専用。新しいテストランナーは追加しない）で拡張を読み込み、ローカルのフィクスチャサイトとモックの Cloud API で Tier 1 → 2 → 3（承認と拒否）を通す |
-| 手動 | 実際の Cloud Run と Gemini でデモシナリオを通し、Cloud Logging と BigQuery に本文・値がないことを目視確認（`manual-test.md` に追加） |
+| スキーマ汚染 | テキスト・属性値・ID・クラスを含むアンカー、個人値らしい文字列を含むスキーマ・フィードバックが保存時に拒否されること（REQ-029） |
+| リース | Side Panel ホストで、epoch・origin・tab の不一致や失効後のコマンドを Content Script が拒否すること、Service Worker 再起動でリースが失効し再バインドが必要になること |
+| Tier 3 の途中失効 | 承認後・送信前、または応答待ちの間に壁・遷移・リース失効が起きたら、送信しない／応答を破棄すること |
+| マスクの位置 | `readRegionMasked` の結果に未マスクの C0 フィクスチャ値が含まれないこと、Side Panel の再検査で未マスクを検出したら送信しないこと |
+| 予算・レート制限 | 予算超過・429 で Tier 2・3 がハンドオフになること、期限切れ・署名不正のチケットを fallback サービスが拒否すること |
+| vault の同時利用 | Web Lock を取れない 2 つ目の Side Panel がアンロックできないこと |
+| CSP と KDF | 拡張の CSP で `hash-wasm` の Argon2id が動くこと、拡張での KDF 所要時間を記録すること（手動） |
+| 手動 | 実際の Cloud Run と Gemini でデモシナリオを通し、Cloud Logging（リクエストログ除外の確認を含む）・Trace・BigQuery・Firestore に本文・値・IP がないことを目視確認。壁でのハンドオフも実ブラウザで確認（`manual-test.md` に追加） |
 
 ## 11. 主要な判断と代替案
 
@@ -460,7 +603,16 @@ interface OutcomeEvent {
 「入力は確認ゲート」で限定する。センシティブなカテゴリ（`security.md` §8.1）のサイトは、本番前に
 保守者レビューを必須にするかを再検討する。
 
-### 11.3 Cloud Run のフレームワーク
+### 11.3 Cloud Run の構成
+
+- **PII フォールバックを別サービスにする**: 1 つのサービスでルートごとにログ設定を変える案は、
+  ミドルウェアや依存ライブラリのログ・トレースが本文を拾う危険を設定だけで防ぐことになり、権限
+  （Firestore・BigQuery へのアクセス）も分けられないため不採用。
+- **`cloud/` を独立したパッケージにする**: ルートの `package.json` に Google Cloud SDK を入れる案は、
+  拡張・Electron のビルドとサプライチェーン検査の対象を広げるため不採用。npm workspaces は
+  ビルド構成の変更になるため採用せず、`cloud/` は自身の `package-lock.json` を持つ。
+
+### 11.4 Cloud Run のフレームワーク
 
 Express などを追加せず `node:http` と小さなルータにする。エンドポイントが 5 つで、依存を増やす
 理由が乏しいため。
@@ -484,7 +636,7 @@ P0 はハッカソン提出（2026-10-15）までの必須経路である。
 | P1-1 | #566 | スキーマのライフサイクル（candidate → active → retired）と検証の集計 | P0-5 |
 | P1-2 | #567 | オフライン動作とクラウド書き込みの再送・冪等性 | P0-5, P0-8 |
 | P1-3 | #568 | テレメトリ・クラウド支援の利用者設定 | P0-8 |
-| P2-1 | #569 | Electron 画面の Side Panel への移植と Electron / native host / `nativeMessaging` / 本番 Playwright の撤去 | P0-10 |
+| P2-1 | #569 | Electron 画面の Side Panel への移植と、本番ビルドからの Electron / native host / `nativeMessaging` / 本番 Playwright の撤去（ハッカソン後、同等性確認後） | P0-10 |
 | P2-2 | #570 | 利用者が選ぶ暗号化ストレージ（エクスポート・インポートの強化を含む） | P0-2 |
 
 ## 13. 未決事項
@@ -493,3 +645,8 @@ P0 はハッカソン提出（2026-10-15）までの必須経路である。
 - センシティブなカテゴリのサイトでスキーマの自動昇格を許すか（§11.2）。
 - Gemini のモデル ID。設定値とし、実装時に Vertex AI の提供状況で決める。
 - Electron 版 vault から拡張版への移行手順（暗号化エクスポートの取り込みを想定、P2-2 で決める）。
+- 本番前に、IP 単位のレート制限を Cloud Armor / API Gateway のクォータに置き換えるか（§7.1）。
+- Tier 1 の resolve とテレメトリにより、Soroeru Cloud は「ある IP からあるサイトのスキーマが
+  要求された」ことを一時的に知り得る。Issue #554 が許す範囲（構造とサイト識別）だが、利用サイトの
+  秘匿性を一部手放す判断である。緩和策はクラウド支援オフ（REQ-027 で本番前に必須）とリクエスト
+  ログの除外。

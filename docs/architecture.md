@@ -30,11 +30,12 @@ Chrome (desktop)
 │   │   → Tier 3 consent-gated Gemini read (§14.2)
 │   ├── CloudClient + StructureSanitizer + TelemetryBuilder + Tier3PayloadBuilder
 │   └── UI: unlock, ledger, review/confirm gates, consent gates, hand-off
-├── Service Worker — event router only (no key, no personal values)
-│   ├── tab lease (tab / origin / epoch), script injection
+├── Service Worker — lease issuer and event router only (no key, no page content)
+│   ├── tab lease (tab / origin / epoch) issue/revoke, script injection
 │   └── tab/navigation events → Side Panel
 ├── Content Script — least-authority DOM scan / read / fill / click / navigate,
-│   wall-signal collection
+│   wall-signal collection; talks to the Side Panel directly (not via the worker)
+│   and masks secrets before returning a Tier 3 region
 └── IndexedDB (vault ciphertext only) / chrome.storage.session (lease metadata only)
           │ HTTPS — no personal values by default
           ▼
@@ -61,7 +62,7 @@ migration from the current implementation is §2.3.
 ### 1.1 Current implementation (migration source)
 
 Until the §2.3 migration completes, the shipped build is a local **Electron** desktop app
-(macOS beta) with a trusted main process, a narrow typed IPC boundary, and an untrusted React
+(macOS MVP beta) with a trusted main process, a narrow typed IPC boundary, and an untrusted React
 renderer. The rest of this subsection, §2.2, §4, and the Electron-specific parts of §5–§10
 describe that build; they are retained because its domain, automation, and safety logic is
 the source being ported:
@@ -180,9 +181,9 @@ Electron build until §2.3 retires it.
 | AI provider abstraction *(current)* | **AI-driven-first once configured**; optional Anthropic/OpenAI adapters are stateless and user-configured. Visibility collection sends full page content (Issue #514, §5.2); every other AI use stays structure-only | Matches the deterministic-default requirement (REQ-013) for users without AI configured. For Visibility collection, raw values leave the local process to the user's own configured provider by design, so the model can read and classify them; every other AI use (terms summarization, registration field mapping, Constraint findings) keeps raw values local — AI proposes from structure, Policy/Delegation decides. |
 | Packaging *(target)* | **Chrome extension** (unpacked for the hackathon/developer path, Chrome Web Store before broader distribution) plus Cloud Run container images | No desktop installer or native helper on the primary path. |
 | Packaging *(current)* | **Unsigned macOS DMG** during invited development beta, via **Electron Forge `maker-dmg`**; Chrome extension through the Chrome Web Store before product cutover | The app bundles a self-contained native helper and registers it only after explicit user action. A stable store extension ID is allowlisted. Signing/notarization is required before distribution beyond invited beta; unpacked loading is development-only. |
-| Package manager | **npm** | The repo already has a lockfile; the dependency graph is not large enough to justify pnpm/Yarn. |
-| Renderer build | **Vite** | Most direct match for React + TypeScript in Electron; keeps the UI iteration loop fast. |
-| Main/preload build | **`tsc`** | Type-correctness first; add bundling only if packaging proves it necessary. |
+| Package manager *(both)* | **npm** (the planned `cloud/` package keeps its own lockfile) | The repo already has a lockfile; the dependency graph is not large enough to justify pnpm/Yarn. |
+| Renderer / extension build *(both)* | **Vite** | Most direct match for React + TypeScript in Electron; keeps the UI iteration loop fast. |
+| Main/preload build *(current)* | **`tsc`** | Type-correctness first; add bundling only if packaging proves it necessary. |
 | Unit tests | **Node built-in test runner** | Keeps the dependency surface small for domain/vault/service tests. |
 | Browser E2E | **Playwright Test, development-only** | Tests local fixtures, Electron UI, and extension behavior without making Playwright Library a supported production automation path. |
 | Formatting / linting | **Prettier + ESLint** | Standard, low-friction baseline once React/Electron source exists. |
@@ -202,7 +203,11 @@ known alternatives and concrete triggers for reconsideration:
   non-personal form knowledge and typed outcomes to the cloud. **Reconsider** if MV3 lifecycle
   limits make the Side Panel host unable to finish a single-site run, if a cloud-side incident
   shows personal values entering schemas/telemetry/logs, or if schema poisoning is observed
-  despite §14.4 controls.
+  despite §14.4 controls. **Trade-off accepted:** Tier 1 resolve and outcome telemetry let
+  Soroeru Cloud transiently learn that some caller asked about a given site, giving up part of
+  the privacy of the user's site set (which the local `formSchemaCache` otherwise protects) in
+  exchange for shared accuracy; the mitigations are no client identifiers, request-log
+  exclusion, and the cloud-assistance off switch required before production release (REQ-027).
 - **Electron desktop app (current build)**: lighter desktop shells (Tauri, native Swift/AppKit, or a
   browser-extension-only surface) were considered but not selected for the MVP because the
   trusted main process needs to own Vault v2, policy, workflow, typed IPC, Evidence, and
@@ -490,6 +495,21 @@ JSON summary (app/OS/runtime versions, recent sanitized diagnostic events, and o
 sanitized operational-log excerpts), written only to a user-selected destination and never
 uploaded automatically. The detailed security policy and release checklist are owned by
 [`security.md`](security.md) §12.2 and §13.
+
+### 3.6 Extension vault durability (target, #554)
+
+In the extension, IndexedDB is the vault's only on-device copy, so `IndexedDbVaultPersistence`
+must provide: (1) whole-document replacement in a single `readwrite` transaction that reports
+success only on `oncomplete`, leaving the previous version on any failure; (2) `unlimitedStorage`
+in the manifest plus a `navigator.storage.persist()` request, with `QuotaExceededError` surfaced
+as a failed save rather than swallowed; (3) fail-closed detection of corruption through the
+header format version and per-record AES-GCM authentication, never replacing it with an empty
+vault; (4) a single writer, enforced with an exclusive Web Lock held by the Side Panel that
+unlocked the vault (a second window shows "in use elsewhere"); and (5) because browser eviction
+or "clear site data" cannot be prevented, an encrypted export prompt after vault creation and
+after large changes — P0 ships the existing encrypted export as a download; richer UX is P2.
+Rejected: `chrome.storage.local` (size limits for large values) and OPFS (would need hand-built
+atomic replacement).
 
 ## 4. IPC And Trust Boundary
 
@@ -1191,20 +1211,32 @@ Requirements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-030. Se
 [`security.md`](security.md) §15. Detailed design, typed contracts, and test plan:
 [`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md).
 
+> `src/shared/cloud-contract.ts`, `cloud/`, and the extension components named here are
+> planned (§2.3 P0), not yet present in the repository.
+
 ### 14.1 Responsibilities
 
 | Component | Owns | Never holds |
 | --- | --- | --- |
 | Side Panel (trusted host) | Vault session and key, `DomainService`, Policy/Delegation, orchestration, consent gates, cloud client, sanitizers, telemetry builder | — |
-| Service worker | Tab lease, script injection, event relay | Key, decrypted records, personal values |
-| Content script | DOM scan/read/fill/click/navigate on the one leased tab, wall signals | Vault access, network access |
+| Service worker | Tab lease issue/revoke, script injection, event relay | Key, decrypted records, page content, personal values |
+| Content script | DOM scan/read/fill/click/navigate on the one leased tab, wall signals, secret masking of Tier 3 regions before return; validates lease/epoch/origin on every command from the Side Panel | Vault access, network access |
 | `soroeru-api` (Cloud Run) | Schema resolve/feedback, Tier 2 mapping, telemetry ingest, payload validation, rate limits | Personal values, request bodies in logs |
 | `soroeru-pii-fallback` (Cloud Run) | Tier 3 Gemini read only | Firestore/BigQuery permissions, body logging, any persistence |
 | Firestore / BigQuery | Form Schemas and feedback / fixed-schema outcome rows | Personal values, client identifiers in BigQuery |
 
 Google Cloud credentials never ship in the extension; anything embedded in the extension is
-public, so Cloud Run treats callers as anonymous and enforces per-IP rate limits (IP kept in
-memory only), payload size limits, and a daily Gemini budget.
+public, so Cloud Run treats callers as anonymous. Abuse controls and their limits:
+
+| Control | Mechanism | Limit |
+| --- | --- | --- |
+| Concurrency cap | Cloud Run `max-instances` / `concurrency` on both services | Can also throttle legitimate use |
+| Per-IP rate limit | In-instance token bucket; IP held in memory only | Best-effort; loosens by the instance count |
+| Daily Gemini budget | `soroeru-api` increments `budgets/{date}` in a Firestore transaction and returns 429 past the cap | When exhausted, Tiers 2–3 fail closed to hand-off for everyone |
+| Tier 3 ticket | After consent, the extension gets a 5-minute HMAC-signed one-time ticket from `soroeru-api` (`/v1/agent/tier3-ticket`, debits the budget); `soroeru-pii-fallback` verifies signature and expiry only, staying stateless | Replay across instances within 5 minutes is not prevented; bounded to one budget unit |
+| No stored IPs | Cloud Run request logs for both services are excluded via a Cloud Logging exclusion filter; app logs carry no IP | Google-side transient processing is outside Soroeru's control |
+
+Cloud Armor / API Gateway quotas are the reconsideration path before production.
 
 ### 14.2 Resolution tiers
 
@@ -1220,17 +1252,21 @@ memory only), payload size limits, and a daily Gemini budget.
    state, or display-value text. `/v1/agent/map-structure` returns a closed-schema mapping
    `{itemId, attributeKey, confidence}`; unknown IDs/keys, URLs, selectors, and free-form
    instructions are rejected; accepted proposals pass the same local validation as Tier 1.
-3. **Tier 3 — consent-gated read.** Read operations only; started only when a required
-   attribute remains unresolved and no wall is detected. The Side Panel stops and shows the
+3. **Tier 3 — consent-gated read.** Read operations only; started only when Tier 2 *ran* and
+   still left a required attribute unresolved (a Tier 2 outage hands off instead, so failures
+   never raise consent-gate frequency) and no wall is detected. The Side Panel stops and shows the
    consent gate (requirements §8). On approval, `Tier3PayloadBuilder` sends only the subtree
    region for the unresolved attributes (≤16 KiB, else hand-off), with every secret element
    (`type=password`, `autocomplete` of `current-password` / `new-password` / `one-time-code` /
-   `cc-csc`, or locally classified secret) replaced by `[SECRET]`, to
+   `cc-csc`, or locally classified secret) replaced by `[SECRET]` inside the content script
+   before the region leaves the page (the Side Panel re-checks and refuses to send on a miss), to
    `/v1/agent/read-with-consent`. Secrets displayed as plain text are also masked by nearby-label
    and value-shape rules, erring toward masking. Returned values pass §5.2's corroboration rules
    against the sent item text, are limited to the requested keys, and are written only to the
-   vault. A failed approved request is not retried without new consent; the attributes stay
-   `unknown` and the user is offered a hand-off.
+   vault in one save (all or none). A failed approved request is not retried without new
+   consent; a wall, navigation, or lease invalidation between approval and response discards
+   the request/response; in every such case the attributes stay `unknown` and the user is
+   offered a hand-off.
 
 Writes (Slices B–D) use Tiers 1–2 for mapping only and always pass the review-and-confirm
 gate; Tier 3 never fills, submits, or accepts terms.
@@ -1241,7 +1277,8 @@ Walls, a pending consent gate, Side Panel close, browser restart, and vault lock
 and store an encrypted `workflowCheckpoint` (stage, tier, unresolved attribute keys only).
 Resume requires unlock, tab rebind, and URL/scope/wall revalidation; a Tier 3 approval is never
 carried across a resume. With Soroeru Cloud unreachable or disabled, Tier 1 uses the encrypted
-`formSchemaCache`, Tiers 2–3 are unavailable, and unresolved fields become `unknown` or a
+`formSchemaCache` (active schemas fetched within the last 30 days; retired schemas are never
+used), Tiers 2–3 are unavailable, and unresolved fields become `unknown` or a
 hand-off. Feedback and telemetry writes carry an idempotency key, queue encrypted, and retry
 with exponential backoff up to three times before being dropped.
 

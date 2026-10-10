@@ -101,7 +101,7 @@ Form Schemas, §8) may be shared centrally so that every user's alignment gets e
 
 The primary metric is **not** "number of actions automated." Quantitative success metrics
 are computed only from local vault / Evidence events and shown only to the user; Soroeru
-does not send these usage or agency events to telemetry or external analytics (the
+does not send the local events behind these metrics to telemetry or external analytics (the
 form-resolution outcome telemetry in §8 is a separate, typed operational signal and is never
 used to compute these metrics). Goals that cannot be
 observed locally are excluded from this table rather than approximated. In particular,
@@ -328,9 +328,10 @@ registration (last).**
   Registry, BigQuery outcome telemetry, and Gemini on Vertex AI behind Cloud Run), under the
   data-class rules below; (3) the identity-auth BFF (§4.2); and (4), later, user-owned
   encrypted-vault cloud storage as encrypted bytes only. No other external destination, and
-  no analytics / crash reporting / third-party telemetry. During migration the existing
-  Electron build may still call the user's own configured AI provider (Issue #514 path below);
-  the Chrome-extension target does not.
+  no analytics / crash reporting / third-party telemetry. Until Issue #569 removes it from
+  production, the existing Electron build may still call the user's own configured AI provider,
+  including with raw page values during AI-driven Visibility collection (Issue #514 path below);
+  the Chrome-extension target never does.
 - **Data classes decide what may leave the device** (Issue #554; full matrix in
   [`security.md`](security.md) §15):
   - *Secrets* (site passwords, vault passphrase, master/recovery keys, OTP/MFA codes, cookies
@@ -352,11 +353,16 @@ registration (last).**
      validated locally before use, and values are still read or written locally.
   3. **Tier 3 — consent-gated Gemini read**: see the next item.
   If Soroeru Cloud is unreachable or the user has disabled cloud assistance, only locally
-  cached schemas and deterministic local resolution run; unresolved fields become `unknown` or
-  a hand-off, never a guess.
+  cached schemas (active schemas fetched within the last 30 days; retired ones are never used)
+  and deterministic local resolution (the existing scanner/classifier path) run; unresolved
+  fields become `unknown` or a hand-off, never a guess. A Tier 2 response that is malformed,
+  fails local validation, is rate-limited, or exceeds the budget leaves the field unresolved
+  and is handed off; it does not escalate to Tier 3, which runs only after Tier 2 actually
+  returned a validated result that still left a required attribute unresolved. A wall detected
+  at any point stops resolution and the wall hand-off applies.
 - **Consent-gated Gemini fallback (the only exception to local-only personal values).** Only
-  for **read** operations, and only when Tiers 1 and 2 leave a required attribute unresolved
-  and no wall is detected:
+  for **read** operations, and only when Tier 2 ran and still left a required attribute
+  unresolved and no wall is detected:
   - automatic execution stops and a consent gate names the site, the page kind, the attribute
     kinds requested, the destination (Gemini via Soroeru Cloud), that secrets are masked and
     not sent, and that the content is not retained for product improvement;
@@ -383,9 +389,13 @@ registration (last).**
     Evidence without duplicating the disclosed values.
 - **Shared Form Schemas** contain no personal values, are versioned, and cannot become active
   for all users from a single unvalidated observation; promotion requires repeated successful
-  validation from distinct clients ([`architecture.md`](architecture.md) §14). Distinct
-  clients are counted with a per-site pseudonymous token that cannot link one installation's
-  feedback across sites. A schema never
+  validation from distinct clients, using the fixed, testable thresholds in
+  [`architecture.md`](architecture.md) §14.4; a schema whose recent failure rate exceeds the
+  threshold there is retired and no longer served. Distinct clients are counted with a per-site
+  pseudonymous token (class C7 in [`security.md`](security.md) §15.1): it is the only
+  client-derived value Soroeru Cloud receives, is sent only with schema feedback, differs per
+  site so it cannot link one installation's feedback across sites, and is never included in
+  outcome telemetry. A schema never
   grants authority: it is validated against the live page on every use, and fills still pass
   the review-and-confirm gate.
 - **Outcome telemetry** is allowed only for improving shared form resolution. It accepts only a
@@ -393,17 +403,20 @@ registration (last).**
   error category, confidence bucket, client version, structural fingerprint, hour-truncated
   time) — no client identifier, no IP, no URL path, no labels, no values, no DOM or page
   content. A user-visible control to turn telemetry and cloud assistance off must exist before
-  production release; the production default is a Product Owner decision recorded before
-  release. *Production release* means any distribution other than maintainers' own test
-  builds and the hackathon judging build (Issue #555), including any Chrome Web Store
-  listing; the hackathon judging build ships with telemetry on and documents it.
+  production release. The production default is a Product Owner decision recorded in
+  [`security.md`](security.md) §15.3; until it is recorded the default is **off**, and no
+  production release may ship while it is unrecorded. *Production release* means any
+  distribution other than maintainers' own test builds and the hackathon judging build
+  (Issue #555), including any Chrome Web Store listing. The judging build may ship with
+  telemetry on only if it shows a visible in-extension notice naming outcome telemetry and the
+  Soroeru Cloud destination, and its judge instructions state the same and use fake data only.
 - Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
   derived key must never persist outside memory. A user-entered canonical CVV (fill use)
   remains the most sensitive field, requiring the strictest handling. Algorithm / KDF selection:
   see [`architecture.md`](architecture.md) §2 and §10.
 - **Superseded in the target by the consent-gated fallback above (Issue #554).** The following
   Issue #514 rules describe the current Electron implementation and stay in force only for that
-  build until the extension migration retires it; they are not ported to the Chrome-extension
+  build until Issue #569 removes it from production; they are not ported to the Chrome-extension
   target. Where they conflict with the Issue #554 rules above, the Issue #554 rules govern the
   target — in particular, site passwords and CVV are never sent to an AI model in the target,
   and raw values reach Gemini only after per-fallback consent.
