@@ -17,11 +17,17 @@ export class FileVaultPersistence implements VaultPersistence {
       if (isMissingFile(err)) return null;
       throw err;
     }
+    let parsed: unknown;
     try {
-      return JSON.parse(text) as EncryptedVaultData;
+      parsed = JSON.parse(text);
     } catch (err) {
       throw new VaultCorruptError(`vault file at ${this.filePath} is not valid JSON`, { cause: err });
     }
+    // `null` means "nothing stored"; a file holding JSON `null` (or any non-object) is corrupt.
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new VaultCorruptError(`vault file at ${this.filePath} is not a vault document`);
+    }
+    return parsed as EncryptedVaultData;
   }
 
   async save(data: EncryptedVaultData): Promise<void> {

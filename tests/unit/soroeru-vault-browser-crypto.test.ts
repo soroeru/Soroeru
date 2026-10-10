@@ -23,6 +23,11 @@ import {
 // dist/compiled/tests/unit/<this file> -> repo root is four levels up.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 
+test("REPO_ROOT resolves to the repository root (compiled test layout)", async () => {
+  await stat(join(REPO_ROOT, "package.json"));
+  await stat(join(REPO_ROOT, "src", "store", "vault-v2.ts"));
+});
+
 // Fake data only (docs/testing.md).
 const FIXTURE_PASSPHRASE = "fixture-passphrase-fake";
 const PASSPHRASE = "unit-test-passphrase";
@@ -137,6 +142,24 @@ test("fails closed on unreadable or tampered stored data", async () => {
   await assert.rejects(VaultV2.open(new MemoryVaultPersistence(JSON.stringify(badBase64)), FIXTURE_PASSPHRASE));
 });
 
+test("openWithRecoveryKey fails closed on unrecognized, newer, or legacy v1 data", async () => {
+  const fixture = await loadFixture("legacy-pbkdf2-sha512.json");
+  const key = fixture.fakeRecoveryKey;
+  const withData = (data: unknown) => new MemoryVaultPersistence(JSON.stringify(data));
+
+  await assert.rejects(
+    VaultV2.openWithRecoveryKey(withData({ ...fixture.vault, records: undefined }), key),
+    VaultFormatError,
+  );
+  await assert.rejects(
+    VaultV2.openWithRecoveryKey(withData({ ...fixture.vault, vaultVersion: 99 }), key),
+    VaultFormatError,
+  );
+  // A v1 store carries a recovery wrap but no vaultVersion: it must be migrated via open(), not here.
+  const v1 = { version: 1, kdf: fixture.vault.kdf, records: [], recovery: fixture.vault.recovery };
+  await assert.rejects(VaultV2.openWithRecoveryKey(withData(v1), key), VaultFormatError);
+});
+
 test("FileVaultPersistence: corrupt JSON and unreadable paths fail closed without overwriting", async () => {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-vault-file-"));
   try {
@@ -148,6 +171,14 @@ test("FileVaultPersistence: corrupt JSON and unreadable paths fail closed withou
       /refusing to overwrite/,
     );
     assert.equal(await readFile(path, "utf8"), "{not json");
+
+    // JSON `null` must not read as "no vault yet" (which would let save() overwrite it).
+    for (const contents of ["null", "[]", "42"]) {
+      await writeFile(path, contents);
+      await assert.rejects(new FileVaultPersistence(path).load(), VaultCorruptError);
+      await assert.rejects(VaultV2.open(new FileVaultPersistence(path), PASSPHRASE), VaultCorruptError);
+      assert.equal(await readFile(path, "utf8"), contents);
+    }
 
     // A path that exists but cannot be read as a file must not be treated as "no vault yet".
     const dirPath = join(dir, "is-a-directory");
@@ -230,6 +261,9 @@ const NODE_ONLY_STORE_MODULES = new Set([
   "vault.ts", // Electron vault path / existence helpers
 ]);
 
+// Heuristic, deliberately strict: it may flag a harmless `process.` or `Buffer`
+// token, and the comment stripper ignores string/template context. Both are
+// acceptable for this small, reviewed set of files.
 const NODE_API = /\bfrom\s+["']node:|\bimport\(\s*["']node:|\brequire\(\s*["']node:|\bBuffer\b|\bprocess\./;
 
 function stripComments(source: string): string {
