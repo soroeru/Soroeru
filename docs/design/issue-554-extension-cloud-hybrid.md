@@ -276,6 +276,9 @@ interface ConsentedReadRequest {
 - 要素属性で判定できない秘密（dd・td などに平文で表示されたパスワード・CVV・ワンタイムコード）に
   備え、近接ラベル（「パスワード」「セキュリティコード」「CVV」「認証コード」など）と値の形
   （3〜4 桁の数字のみ、など）によるテキストのマスクも行う。判定が曖昧なら `[SECRET]` 側に倒す。
+- **曖昧な項目は落とす（fail closed）**: 秘密らしいラベルが近くにある、または値の形が秘密に似ている
+  （3〜4 桁や 6〜8 桁の数字だけ、など）のに、秘密でないと確定できる要素・ラベルに結び付けられない
+  項目は、マスクではなく項目ごとペイロードから除く。ラベルのない単独の数字列（ワンタイムコード等）も同様。
 - 対象領域は、未解決の属性に対応しそうな section / form / dl / table の部分木に限る。ページ全体は送らない。
 - 上限 16 KiB。超える場合は Tier 3 を行わず、手動ハンドオフにする。
 - 応答 `{ values: Array<{ itemId; attributeKey; value }> }` は #517 と同じ規則でローカル照合する。
@@ -318,7 +321,8 @@ IndexedDB を唯一の保存先にする場合の耐久性:
 ### 6.2 暗号処理の移植
 
 - `crypto.ts` を「エンベロープとKDFパラメータの論理」と「`CryptoRuntime`（`getRandomValues`、
-  `subtle`、Argon2id）」に分ける。Node でも `globalThis.crypto` を使い、`Buffer` は使わない。
+  `subtle`、Argon2id）」に分ける。`crypto.ts`・`vault-v2.ts`（`randomUUID` を含む）とも、Node でも
+  `globalThis.crypto` を使い、`node:` の import と `Buffer` は使わない。
 - AES-256-GCM、Argon2id（`hash-wasm`）、PBKDF2-HMAC-SHA-512 のパラメータは変えない。既存の
   Vault v2 フィクスチャを拡張側の実装で復号できることをテストで確認する。
 - 拡張の CSP に WebAssembly 実行の許可（`wasm-unsafe-eval`）を追加する。`unsafe-eval` は追加しない。
@@ -367,7 +371,7 @@ IndexedDB を唯一の保存先にする場合の耐久性:
 | 同時実行の上限 | 両サービスに Cloud Run の `max-instances` と `concurrency` を設定 | 正規利用も詰まり得る |
 | IP 単位のレート制限 | 各インスタンス内のトークンバケット（IP はメモリ上のみ） | インスタンス数倍まで緩む。ベストエフォート |
 | Gemini の日次予算 | `soroeru-api` が Firestore の `budgets/{yyyy-mm-dd}` をトランザクションで加算し、上限超過で 429。Tier 3 は次の行のチケットで同じ予算を使う | 上限到達後は全利用者が Tier 2・3 を使えない（fail closed → ハンドオフ） |
-| Tier 3 のチケット | 拡張は承認後に `soroeru-api` の `POST /v1/agent/tier3-ticket` で予算を 1 件消費し、5 分有効の署名付きチケット（HMAC、Secret Manager の共有鍵、ワンタイムの nonce）を得る。`soroeru-pii-fallback` は署名と期限だけを検証する（永続化なし。nonce の再利用はインスタンス内でのみ拒否） | 期限内の同一インスタンス外での再利用は防げない。予算 1 件分に限られる |
+| Tier 3 のチケット | 拡張は承認後、ペイロードを確定してから `soroeru-api` の `POST /v1/agent/tier3-ticket` に `{ consentId, site, payloadSha256 }` を送り、予算を 1 件消費して 5 分有効の署名付きチケット（HMAC、Secret Manager の共有鍵、nonce 入り）を得る。`soroeru-pii-fallback` は署名・期限・site を検証し、受け取ったペイロードの SHA-256 を再計算して不一致を拒否する。`max-instances=1` とし、使用済み nonce を有効期限までメモリに保持して再利用を拒否する（1 回限り） | インスタンス再起動の直後 5 分以内は、同一ペイロードの再送を 1 回受け付け得る。同意そのものはクライアント側でしか確認できない（匿名の呼び出し元は、自分が既に持つ内容のチケットしか作れないため、新たな開示にはならない） |
 | 課金の上限 | Cloud Billing の予算アラート | 通知のみで停止はしない |
 | IP を残さない | 両サービスの Cloud Run リクエストログを Cloud Logging の除外フィルタで取り込まない。エラーはアプリの構造化ログ（IP なし）で見る | Google のインフラ側の一時的な処理は Soroeru の管理外 |
 
@@ -384,7 +388,7 @@ IndexedDB を唯一の保存先にする場合の耐久性:
 | `POST /v1/schemas/resolve` | `{ site, pageFingerprint, clientVersion }` | `{ schema: FormSchema \| null, status: "active" \| "none" }` |
 | `POST /v1/schemas/feedback` | `{ schemaId?, site, pageFingerprint, mappings, outcome, siteValidatorToken, idempotencyKey }` | `{ accepted: boolean }` |
 | `POST /v1/agent/map-structure` | `StructureSnapshot` | `{ mappings, pagePurpose }` |
-| `POST /v1/agent/tier3-ticket` | `{ consentId }` | `{ ticket, expiresAt }` または 429 |
+| `POST /v1/agent/tier3-ticket` | `{ consentId, site, payloadSha256 }` | `{ ticket, expiresAt }` または 429 |
 | `POST /v1/agent/read-with-consent`（`soroeru-pii-fallback`） | `ConsentedReadRequest` + `ticket` | `{ values }` |
 | `POST /v1/telemetry/outcome` | `OutcomeEvent`（§9） | `204` |
 
@@ -476,6 +480,9 @@ budgets/{yyyy-mm-dd}                      // Gemini 呼び出し件数
   （暗号化）に段階・Tier・未解決の属性キーだけを保存する。値、ページ内容、同意の承認状態は保存しない。
 - 再開には再アンロック、タブの再バインド、URL・範囲・壁状態の再検証が必要である。Tier 3 の承認は
   引き継がない。再開後に必要なら同意を取り直す。
+- チェックポイントの保存に失敗した場合（容量超過、ロック喪失）は破棄し、次回は Tier 1 から
+  やり直す。Tier 3 の承認と値の書き込み途中の状態はチェックポイントに入らないため、半端な承認や
+  半端な書き込みは残らない。
 
 ## 8. スキーマの学習ライフサイクル
 
@@ -503,6 +510,11 @@ official（保守者がレビューしたシード） ──取り込み──> 
 
 - 昇格: 検証件数 ≥ `MIN_VALIDATIONS`、異なる成功検証者 ≥ `MIN_DISTINCT_VALIDATORS`、直近成功率 ≥
   `PROMOTE_SUCCESS_RATE`、累計失敗 < `MAX_FAILURES_TO_PROMOTE`。
+- 境界の扱い: 検証が 5 件未満なら昇格も退役判定もしない（`CANDIDATE_TTL_DAYS` のみ適用）。
+  ちょうど 5 件で 5 件中 5 件成功・検証者 3 以上なら昇格。昇格後に失敗が届いた場合は退役条件
+  （直近 `WINDOW` 件の失敗率 > `RETIRE_FAILURE_RATE`）だけで判断する。
+- 高リスクの属性キー（基本 4 情報とカード情報）を含むスキーマは、フィードバックからは active に
+  ならず、保守者がレビューした `official` シードからのみ active になる。
 - 判定はフィードバックの書き込みと同じ Firestore トランザクションで行う。同じ `formKey` の active
   が既にあれば、同じトランザクション内で新しい版を `active`（`version` + 1）、旧版を `retired` に
   する。2 つの候補が同時に昇格しようとした場合はトランザクションの競合で片方が再試行され、
@@ -514,7 +526,7 @@ official（保守者がレビューしたシード） ──取り込み──> 
 ### 8.3 フィードバック
 
 - Tier 1・Tier 2 の結果だけを送る。Tier 3 の結果はスキーマに反映しない（同意は改善用保持の同意ではない）。
-- `idempotencyKey` で重複を除く。送信失敗は暗号化キューに入れ、指数バックオフで最大 3 回再送し、
+- `idempotencyKey` で重複を除く。送信失敗は暗号化キュー（最大 100 件、超えたら最古を破棄）に入れ、指数バックオフで最大 3 回再送し、
   それでも失敗したら捨てる。
 
 ## 9. 改善テレメトリ
@@ -571,6 +583,9 @@ interface OutcomeEvent {
 | E2E | 既存の E2E と同じ構成（`playwright` ライブラリ + `node --test`、開発専用。新しいテストランナーは追加しない）で拡張を読み込み、ローカルのフィクスチャサイトとモックの Cloud API で Tier 1 → 2 → 3（承認と拒否）を通す |
 | スキーマ汚染 | テキスト・属性値・ID・クラスを含むアンカー、個人値らしい文字列を含むスキーマ・フィードバックが保存時に拒否されること（REQ-029） |
 | リース | Side Panel ホストで、epoch・origin・tab の不一致や失効後のコマンドを Content Script が拒否すること、Service Worker 再起動でリースが失効し再バインドが必要になること |
+| 平文の秘密 | ラベルのない 6 桁の数字や、ラベル付きの平文パスワード・CVV を含むフィクスチャで、該当項目がペイロードから除かれるかマスクされること |
+| チケット | 同じチケットの再利用、ペイロードのハッシュ不一致、別サイトのチケットを fallback サービスが拒否すること |
+| チェックポイント保存失敗 | 保存失敗時にチェックポイントが残らず、次回 Tier 1 から始まること |
 | Tier 3 の途中失効 | 承認後・送信前、または応答待ちの間に壁・遷移・リース失効が起きたら、送信しない／応答を破棄すること |
 | マスクの位置 | `readRegionMasked` の結果に未マスクの C0 フィクスチャ値が含まれないこと、Side Panel の再検査で未マスクを検出したら送信しないこと |
 | 予算・レート制限 | 予算超過・429 で Tier 2・3 がハンドオフになること、期限切れ・署名不正のチケットを fallback サービスが拒否すること |
@@ -611,6 +626,10 @@ interface OutcomeEvent {
 - **`cloud/` を独立したパッケージにする**: ルートの `package.json` に Google Cloud SDK を入れる案は、
   拡張・Electron のビルドとサプライチェーン検査の対象を広げるため不採用。npm workspaces は
   ビルド構成の変更になるため採用せず、`cloud/` は自身の `package-lock.json` を持つ。
+
+- **Tier 3 チケット方式**: 利用者ごとの署名付きトークン（アカウント認証）は、Soroeru に利用者
+  アカウントがなく識別子を増やすため不採用。`soroeru-api` 経由で fallback へ中継する案は、PII が
+  ログ方針の異なるサービスを通るため不採用。ペイロードのハッシュに結び付けた 1 回限りのチケットを採用。
 
 ### 11.4 Cloud Run のフレームワーク
 

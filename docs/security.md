@@ -982,8 +982,9 @@ notice that `requirements.md` §8 requires.
 - Tier 2 (`/v1/agent/map-structure`) accepts only the C3 structure snapshot.
 - Tier 3 (`/v1/agent/read-with-consent`) is a **separate Cloud Run service** with its own
   service account that can call Vertex AI and nothing else (no Firestore, no BigQuery). It
-  accepts only requests carrying a short-lived signed ticket issued by `soroeru-api` after
-  consent, so budget enforcement needs no state in the fallback service.
+  accepts only requests carrying a short-lived single-use ticket from `soroeru-api`, bound to
+  the site, consent ID, and payload hash (`architecture.md` §14.1). Consent itself is enforced
+  in the client: the server cannot see the user, so it enforces binding, single use, and budget.
 - The content script masks C0 before a Tier 3 region leaves the page; unmasked secrets never
   cross extension messaging. The Side Panel re-checks and refuses to send on a miss. A wall,
   navigation, or lease invalidation between approval and response discards the request and
@@ -992,6 +993,8 @@ notice that `requirements.md` §8 requires.
   no wall is present, and requires an explicit, unpre-selected, per-fallback consent in the
   Side Panel. Decline, close, or timeout (default 5 minutes) sends nothing. Consent is never
   stored as a standing grant, cannot be expanded at L1, and does not survive a resume.
+- Text items that look like a secret by nearby label or value shape but cannot be confidently
+  classified are dropped from the payload entirely (fail closed).
 - The client masks every C0 element as `[SECRET]` before building the payload, limits the
   payload to the region for the unresolved attributes (≤16 KiB; larger regions hand off
   instead), and lists the requested attribute keys shown at the gate.
@@ -1025,8 +1028,11 @@ notice that `requirements.md` §8 requires.
 - Schemas grant no authority: the client revalidates every field against the live page, and
   writes stay behind the review-and-confirm gate, so a poisoned mapping can at worst produce an
   `unknown` or a reviewable wrong proposal, never an unreviewed submission.
-- Before production release, decide whether sites in §8.1's sensitive categories require
-  maintainer review before activation.
+- Schemas mapping high-risk attribute keys (basic-4 identity attributes, card data) become
+  active only from maintainer-reviewed official seeds. Before production release, decide
+  whether sites in §8.1's sensitive categories also require maintainer review.
+- Accepted risk: Sybil validators can still activate a poisoned schema for other keys; the
+  automatic retire-on-failure rule and per-use local revalidation bound the impact.
 
 ### 15.6 Release checklist additions
 
@@ -1037,3 +1043,6 @@ notice that `requirements.md` §8 requires.
 - [ ] Unit tests prove C0/C1 fake values cannot pass `StructureSanitizer`, `TelemetryBuilder`,
   schema feedback, or the Tier 3 builder's secret masking.
 - [ ] Declining Tier 3 consent results in zero calls to the fallback endpoint.
+- [ ] The deploy check confirms the Cloud Logging request-log exclusion for both services,
+  body-free application logging, and disabled Vertex AI request/response logging.
+- [ ] A reused or payload-mismatched Tier 3 ticket is rejected.

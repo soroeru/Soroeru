@@ -30,13 +30,15 @@ Chrome (desktop)
 │   │   → Tier 3 consent-gated Gemini read (§14.2)
 │   ├── CloudClient + StructureSanitizer + TelemetryBuilder + Tier3PayloadBuilder
 │   └── UI: unlock, ledger, review/confirm gates, consent gates, hand-off
-├── Service Worker — lease issuer and event router only (no key, no page content)
+├── Service Worker — lease issuer and event router only (no key, no page content;
+│   sees tab IDs, URLs, and navigation events)
 │   ├── tab lease (tab / origin / epoch) issue/revoke, script injection
 │   └── tab/navigation events → Side Panel
 ├── Content Script — least-authority DOM scan / read / fill / click / navigate,
 │   wall-signal collection; talks to the Side Panel directly (not via the worker)
 │   and masks secrets before returning a Tier 3 region
-└── IndexedDB (vault ciphertext only) / chrome.storage.session (lease metadata only)
+└── IndexedDB (vault ciphertext only) / chrome.storage.session (lease metadata only:
+    lease ID, tab ID, origin, epoch — no full URL)
           │ HTTPS — no personal values by default
           ▼
 Soroeru Cloud (Google Cloud, asia-northeast1)
@@ -203,7 +205,9 @@ known alternatives and concrete triggers for reconsideration:
   non-personal form knowledge and typed outcomes to the cloud. **Reconsider** if MV3 lifecycle
   limits make the Side Panel host unable to finish a single-site run, if a cloud-side incident
   shows personal values entering schemas/telemetry/logs, or if schema poisoning is observed
-  despite §14.4 controls. **Trade-off accepted:** Tier 1 resolve and outcome telemetry let
+  despite §14.4 controls (detection: a scheduled scan of the Form Schema Registry and the
+  telemetry table with the `security.md` §9 value patterns, planned with the schema lifecycle
+  work; until it exists, detection relies on the write-time rejection only). **Trade-off accepted:** Tier 1 resolve and outcome telemetry let
   Soroeru Cloud transiently learn that some caller asked about a given site, giving up part of
   the privacy of the user's site set (which the local `formSchemaCache` otherwise protects) in
   exchange for shared accuracy; the mitigations are no client identifiers, request-log
@@ -508,6 +512,11 @@ vault; (4) a single writer, enforced with an exclusive Web Lock held by the Side
 unlocked the vault (a second window shows "in use elsewhere"); and (5) because browser eviction
 or "clear site data" cannot be prevented, an encrypted export prompt after vault creation and
 after large changes — P0 ships the existing encrypted export as a download; richer UX is P2.
+If `persist()` is denied, Soroeru keeps working but shows a standing warning and repeats the
+export prompt. The Web Lock is released only when the holding Side Panel closes or crashes; a
+crash mid-save aborts the IndexedDB transaction, so the previous version remains and the next
+panel can take the lock. An Electron vault moves to the extension through the existing
+encrypted export/import format (no format conversion); the import UX is §2.3 P2.
 Rejected: `chrome.storage.local` (size limits for large values) and OPFS (would need hand-built
 atomic replacement).
 
@@ -1233,8 +1242,8 @@ public, so Cloud Run treats callers as anonymous. Abuse controls and their limit
 | Concurrency cap | Cloud Run `max-instances` / `concurrency` on both services | Can also throttle legitimate use |
 | Per-IP rate limit | In-instance token bucket; IP held in memory only | Best-effort; loosens by the instance count |
 | Daily Gemini budget | `soroeru-api` increments `budgets/{date}` in a Firestore transaction and returns 429 past the cap | When exhausted, Tiers 2–3 fail closed to hand-off for everyone |
-| Tier 3 ticket | After consent, the extension gets a 5-minute HMAC-signed one-time ticket from `soroeru-api` (`/v1/agent/tier3-ticket`, debits the budget); `soroeru-pii-fallback` verifies signature and expiry only, staying stateless | Replay across instances within 5 minutes is not prevented; bounded to one budget unit |
-| No stored IPs | Cloud Run request logs for both services are excluded via a Cloud Logging exclusion filter; app logs carry no IP | Google-side transient processing is outside Soroeru's control |
+| Tier 3 ticket | After consent, the extension gets a 5-minute HMAC-signed ticket from `soroeru-api` (`/v1/agent/tier3-ticket`, debits the budget) bound to the site, the `consentId`, and the SHA-256 of the exact payload; `soroeru-pii-fallback` recomputes the hash, rejects mismatches, and runs with `max-instances=1` and an in-memory denylist of used ticket nonces for their lifetime, so each ticket is single-use | An instance restart within 5 minutes could accept a replay of the *same* payload once more. Consent itself is necessarily client-enforced: an anonymous caller can mint a ticket for content it already holds, which discloses nothing new |
+| No stored IPs | Cloud Run request logs for both services are excluded via a Cloud Logging exclusion filter; app logs carry no IP. The deploy script asserts the exclusion filter, body-free log settings, and disabled Vertex AI request logging exist, and fails otherwise (release checklist, `security.md` §15.6) | Google-side transient processing is outside Soroeru's control |
 
 Cloud Armor / API Gateway quotas are the reconsideration path before production.
 
@@ -1279,8 +1288,11 @@ Resume requires unlock, tab rebind, and URL/scope/wall revalidation; a Tier 3 ap
 carried across a resume. With Soroeru Cloud unreachable or disabled, Tier 1 uses the encrypted
 `formSchemaCache` (active schemas fetched within the last 30 days; retired schemas are never
 used), Tiers 2–3 are unavailable, and unresolved fields become `unknown` or a
-hand-off. Feedback and telemetry writes carry an idempotency key, queue encrypted, and retry
-with exponential backoff up to three times before being dropped.
+hand-off. Feedback and telemetry writes carry an idempotency key, queue encrypted (at most 100 entries;
+the oldest is dropped at the cap), and retry with exponential backoff up to three times before
+being dropped. A checkpoint that fails to save (quota, lock loss) is discarded and the run
+restarts from Tier 1 next time; Tier 3 approvals and value writes never live in a checkpoint,
+so nothing half-approved or half-written survives.
 
 ### 14.4 Form Schema Registry and lifecycle
 
@@ -1304,7 +1316,12 @@ recent 5–10 validations, so at least 5 validations are required. Distinct vali
 counted per site: the client sends `siteValidatorToken = HMAC(validatorKey, site)`, where
 `validatorKey` is a per-install random key stored encrypted in the vault, never sent, and
 user-regenerable; the server stores only an HMAC (server secret) of that token, so one
-installation's feedback cannot be linked across sites. It never enters BigQuery. Only Tier 1/Tier 2 outcomes are fed back; Tier 3
+installation's feedback cannot be linked across sites. Neither the key nor the token enters
+BigQuery. **Accepted risk:** anyone can mint several validator keys and activate a poisoned
+candidate. Limits: schemas grant no authority (below); a newly activated schema whose failure
+rate crosses the retirement threshold is retired automatically; and schemas that map
+high-risk attribute keys (the basic-4 identity attributes and card data) become active only
+from a maintainer-reviewed `official` seed, never from feedback. Only Tier 1/Tier 2 outcomes are fed back; Tier 3
 outcomes never are. Because Sybil validators cannot be fully excluded, schemas grant no
 authority: they are revalidated on every use and fills stay behind the confirmation gate.
 

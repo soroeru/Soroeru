@@ -328,10 +328,12 @@ registration (last).**
   Registry, BigQuery outcome telemetry, and Gemini on Vertex AI behind Cloud Run), under the
   data-class rules below; (3) the identity-auth BFF (§4.2); and (4), later, user-owned
   encrypted-vault cloud storage as encrypted bytes only. No other external destination, and
-  no analytics / crash reporting / third-party telemetry. Until Issue #569 removes it from
-  production, the existing Electron build may still call the user's own configured AI provider,
-  including with raw page values during AI-driven Visibility collection (Issue #514 path below);
-  the Chrome-extension target never does.
+  no analytics / crash reporting / third-party telemetry. The existing Electron build may
+  call the user's own configured AI provider, including with raw page values during AI-driven
+  Visibility collection (Issue #514 path below), only while that Electron build is still the
+  build distributed to beta users; it does not adopt Tiers 1–3. Once the Chrome extension is the
+  distributed build (Issue #569), that path is disabled. The Chrome-extension target never calls
+  a user-configured AI provider.
 - **Data classes decide what may leave the device** (Issue #554; full matrix in
   [`security.md`](security.md) §15):
   - *Secrets* (site passwords, vault passphrase, master/recovery keys, OTP/MFA codes, cookies
@@ -353,13 +355,17 @@ registration (last).**
      validated locally before use, and values are still read or written locally.
   3. **Tier 3 — consent-gated Gemini read**: see the next item.
   If Soroeru Cloud is unreachable or the user has disabled cloud assistance, only locally
-  cached schemas (active schemas fetched within the last 30 days; retired ones are never used)
-  and deterministic local resolution (the existing scanner/classifier path) run; unresolved
-  fields become `unknown` or a hand-off, never a guess. A Tier 2 response that is malformed,
-  fails local validation, is rate-limited, or exceeds the budget leaves the field unresolved
-  and is handed off; it does not escalate to Tier 3, which runs only after Tier 2 actually
+  cached schemas and deterministic local resolution (the existing scanner/classifier path) run.
+  A cached schema is usable only if it was `active` when fetched and was fetched less than 30
+  days ago (constant owned by [`architecture.md`](architecture.md) §14.3); otherwise the field
+  falls to deterministic local resolution. Unresolved fields become `unknown` or a hand-off,
+  never a guess. A Tier 2 response that is malformed, fails local validation, is rate-limited,
+  exceeds the budget, or ends in a network error, timeout, or user cancellation leaves the
+  field unresolved, is handed off, and is recorded locally; it does not escalate to Tier 3, which runs only after Tier 2 actually
   returned a validated result that still left a required attribute unresolved. A wall detected
-  at any point stops resolution and the wall hand-off applies.
+  at any point stops resolution and the wall hand-off applies. Resolution is per field: fields
+  that did resolve may still be read (or, for writes, proposed at the review-and-confirm gate)
+  while the unresolved ones are handed off.
 - **Consent-gated Gemini fallback (the only exception to local-only personal values).** Only
   for **read** operations, and only when Tier 2 ran and still left a required attribute
   unresolved and no wall is detected:
@@ -367,8 +373,12 @@ registration (last).**
     kinds requested, the destination (Gemini via Soroeru Cloud), that secrets are masked and
     not sent, and that the content is not retained for product improvement;
   - nothing is pre-selected; the default action is "do not send"; one approval covers exactly
-    one fallback (one site, one page observation, the listed attribute keys). It cannot be
-    turned into a standing permission, including at L1;
+    one fallback (one site, one page observation, the listed attribute keys). A *page
+    observation* is the single region snapshot captured right after approval; the gate shows
+    that region's size and item count before sending. It cannot be turned into a standing
+    permission, including at L1;
+  - if the gate cannot be shown or completed (Side Panel closed, tab navigated, lease lost),
+    nothing is sent;
   - declining, closing, or timing out sends nothing, leaves the attributes `unknown`, and
     offers the local/manual path (hand-off or saved-page import);
   - if an approved request fails (network error, server error, rate limit, or budget
@@ -376,8 +386,10 @@ registration (last).**
     offers the same local/manual path, and records the failure locally;
   - write operations (update, withdrawal, registration) never use this fallback; an attribute
     still unresolved after Tier 2 for a write is handed off to the user;
-  - an approved request carries only the minimum page region needed, with secrets replaced by a
-    mask token, and goes only to the dedicated fallback endpoint;
+  - an approved request carries only the page region (form, section, list, or table subtree)
+    that contains the unresolved attributes, at most 16 KiB, with secrets replaced by a mask
+    token (items that look secret but cannot be confidently classified are dropped), and goes
+    only to the dedicated fallback endpoint;
   - a returned value is accepted only if it corroborates against the content that was sent for
     that item; otherwise it becomes `unknown`. Accepted values are written only to the local
     encrypted vault;
@@ -395,7 +407,9 @@ registration (last).**
   pseudonymous token (class C7 in [`security.md`](security.md) §15.1): it is the only
   client-derived value Soroeru Cloud receives, is sent only with schema feedback, differs per
   site so it cannot link one installation's feedback across sites, and is never included in
-  outcome telemetry. A schema never
+  outcome telemetry. Schema feedback is a separate channel from outcome telemetry, and the
+  user's telemetry-off control disables both. Personal-value-like strings are detected with the
+  pattern set owned by [`security.md`](security.md) §9. A schema never
   grants authority: it is validated against the live page on every use, and fills still pass
   the review-and-confirm gate.
 - **Outcome telemetry** is allowed only for improving shared form resolution. It accepts only a
@@ -407,9 +421,11 @@ registration (last).**
   [`security.md`](security.md) §15.3; until it is recorded the default is **off**, and no
   production release may ship while it is unrecorded. *Production release* means any
   distribution other than maintainers' own test builds and the hackathon judging build
-  (Issue #555), including any Chrome Web Store listing. The judging build may ship with
-  telemetry on only if it shows a visible in-extension notice naming outcome telemetry and the
-  Soroeru Cloud destination, and its judge instructions state the same and use fake data only.
+  (Issue #555), including any Chrome Web Store listing. The judging build may default
+  telemetry to on only if, on first launch and before anything is sent, it shows a notice
+  naming outcome telemetry, schema feedback, and the Soroeru Cloud destination with a "do not
+  send" choice (choosing it or dismissing the notice turns both off); the notice stays reachable
+  from settings; and its judge instructions state the same and use fake data only.
 - Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
   derived key must never persist outside memory. A user-entered canonical CVV (fill use)
   remains the most sensitive field, requiring the strictest handling. Algorithm / KDF selection:
@@ -466,7 +482,8 @@ registration (last).**
 - The imported CSV (which contains plaintext passwords) is encrypted immediately, never
   logged, and safely discarded after import. Collected PII is stored locally encrypted only and
   is never egressed except through the consent-gated Gemini fallback above (or the Issue #514
-  path of the current Electron build). Validate the CSV's size and row count before processing (reject
+  path of the current Electron build). Site passwords and other secrets are never included in
+  that fallback. Validate the CSV's size and row count before processing (reject
   unreasonably large or malformed files rather than parsing them blindly). After a
   successful import, prompt the user to delete the original exported CSV file, but never
   silently delete a user-selected file outside Soroeru's own vault.
@@ -560,7 +577,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
 | REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | — | Won't (MVP) |
 | REQ-020 | Run the デジタル認証アプリ integration through a minimal, OSS, zero-retention identity-auth BFF: registered relying party (client ID, redirect / back-channel logout URIs, private_key_jwt), egress to the Digital Agency only, basic-4 forwarded encrypted to the user's device and never persisted server-side. Narrowly-scoped exception to the no-backend principle, identity layer only. | A | Must |
-| REQ-021 | (Current Electron build; superseded in the target by REQ-025, REQ-026, and REQ-028 — Issue #554. The bounded navigation, budget, same-site, and wall rules below still apply to the target's read exploration.) AI-driven Visibility collection (primary once AI is configured, Issue #514) uses a bounded observe/propose loop: every navigation proposal is schema-validated and locally executed (same-registrable-site, budgets, wall hand-off), but — unlike the rest of this loop's proposals — the values it returns are the raw personal values read from the current page, not schema-validated references to a local read; the automation/domain layer still performs every write. Maps are encrypted local candidates; stale maps fall back per entry; regeneration is explicit rather than silent. This requirement previously described a fully structure-only/local-values loop; §8's Visibility collection exception and `architecture.md` §5.2 supersede that for the value-reading step specifically. | A | Must |
+| REQ-021 | (Current Electron build; superseded in the target by REQ-025, REQ-026, and REQ-028 — Issue #554. The bounded navigation, budget, same-site, and wall rules below still apply to the target's read exploration, under REQ-028.) AI-driven Visibility collection (primary once AI is configured, Issue #514) uses a bounded observe/propose loop: every navigation proposal is schema-validated and locally executed (same-registrable-site, budgets, wall hand-off), but — unlike the rest of this loop's proposals — the values it returns are the raw personal values read from the current page, not schema-validated references to a local read; the automation/domain layer still performs every write. Maps are encrypted local candidates; stale maps fall back per entry; regeneration is explicit rather than silent. This requirement previously described a fully structure-only/local-values loop; §8's Visibility collection exception and `architecture.md` §5.2 supersede that for the value-reading step specifically. | A | Must |
 | REQ-022 | Record an observed unconfigured security item and show it as a non-blocking, dismissible review task; Soroeru neither recommends nor changes the setting automatically. | A | Must |
 | REQ-023 | Run the primary user path (vault unlock, ledger, review/consent gates, browser operation) from the Soroeru Chrome extension without Electron, the native helper, or Native Messaging (Issue #554). Keep the one-leased-tab, ledger-scope, and wall hand-off rules (REQ-003, §8). | A | Must |
 | REQ-024 | Store the extension's vault as ciphertext only in extension-local storage, with the same encryption/KDF semantics as the existing vault and versioned migrations; hold the unlocked key only in memory of the extension page that shows the vault, and lock when that page closes, the browser restarts, or the user locks. Unreadable data fails closed. | A | Must |
@@ -568,7 +585,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-026 | Tier 2: when no valid schema resolves a required field, send only a sanitized structure snapshot (no values, pattern-redacted labels) to Gemini through Soroeru Cloud; accept only closed-schema mappings that reference items in the snapshot and pass local validation. | A–D | Must |
 | REQ-027 | Send outcome telemetry only through the fixed typed allowlist in §8; reject any other field on both client and server. Provide a user-visible control to disable telemetry and cloud assistance before production release. | A–D | Must |
 | REQ-028 | Tier 3: for read operations only, after Tiers 1–2 leave a required attribute unresolved, stop and ask for explicit per-fallback consent before sending any personal value to Gemini; send nothing on decline/close/timeout; never retry a failed approved request without new consent (attributes stay `unknown`, hand-off offered); mask secrets; send only the minimum region to the dedicated endpoint; accept only corroborated values; record the gate outcome locally (§8). | A | Must |
-| REQ-029 | Version shared Form Schemas with a candidate → active → retired lifecycle; never activate a schema from a single unvalidated observation; never let Tier 3 results feed schema learning; reject schema records containing personal-value-like strings. | A–D | Must |
+| REQ-029 | Version shared Form Schemas with a candidate → active → retired lifecycle; never activate a schema from a single unvalidated observation; never let Tier 3 results feed schema learning; reject schema records containing personal-value-like strings (pattern set in `security.md` §9). | A–D | Must |
 | REQ-030 | Never send secrets (site passwords, CVV, OTP/MFA codes, cookies/tokens, keys, passphrases, My Number, card PIN) to Soroeru Cloud or Gemini; never write Tier 3 request/response content or extracted values to Firestore, BigQuery, cloud application logs, traces, or analytics. | A–D | Must |
 
 ## 11. Glossary
