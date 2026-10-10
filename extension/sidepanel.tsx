@@ -12,6 +12,8 @@ const persistence = new IndexedDbVaultPersistence();
 const session = new VaultSession({ persistence, lockManager: webLockManager(navigator.locks) });
 // Started once outside React so a re-mounted component never races for the Web Lock.
 const started = session.start();
+// VaultPanel reports the failure; this keeps an early rejection from being unhandled.
+started.catch(() => undefined);
 const persistGranted = navigator.storage.persist().catch(() => false);
 
 // Closing the panel, reloading it, or quitting the browser drops the key and the Web Lock.

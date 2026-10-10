@@ -13,6 +13,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { vaultErrorMessage } from "../../extension/sidepanel-messages.js";
+import { DomainService } from "../../src/domain/domain-service.js";
 import { exportKeyRaw } from "../../src/store/crypto.js";
 import { IndexedDbVaultPersistence } from "../../src/store/indexeddb-vault-persistence.js";
 import {
@@ -30,7 +31,9 @@ import {
   VaultCorruptError,
   VaultFormatError,
   VaultLockedError,
+  VaultNoRecoveryKeyError,
   VaultStorageQuotaError,
+  VaultUnlockError,
   VaultV2,
   type EncryptedVaultData,
 } from "../../src/store/vault-v2.js";
@@ -439,6 +442,39 @@ test("VaultSession: closing while unlock is deriving the key leaves no unlocked 
   assert.throws(() => session.vault, VaultLockedError);
 });
 
+test("VaultSession: closing while create is deriving the key writes nothing and leaves no unlocked vault", async () => {
+  const factory = new FakeIdbFactory();
+  const locks = new FakeLockManager();
+  const persistence = idb(factory);
+  let session: VaultSession | undefined;
+  let loads = 0;
+  // The 3rd load is VaultV2.open's own read inside create(), i.e. just before the KDF:
+  // close the panel there so the guards after the KDF/recovery setup must catch it.
+  const original = persistence.load.bind(persistence);
+  persistence.load = async () => {
+    if (++loads === 3) session?.close();
+    return original();
+  };
+  session = new VaultSession({ persistence, lockManager: locks, kdfAlgo: "pbkdf2-sha512" });
+  await session.start();
+  let saves = 0;
+  const originalSave = persistence.save.bind(persistence);
+  persistence.save = async (data) => {
+    saves++;
+    return originalSave(data);
+  };
+  await assert.rejects(session.create(PASSPHRASE), VaultSessionStateError);
+  assert.equal(loads, 3);
+  assert.equal(saves, 0);
+  assert.equal(session.state, "closed");
+  assert.throws(() => session.vault, VaultLockedError);
+  assert.equal(factory.stored(), undefined, "no vault is written after the Web Lock was released");
+
+  // The next panel finds no vault and can create one.
+  const next = newSession(factory, locks);
+  assert.equal(await next.start(), "absent");
+});
+
 test("VaultSession: refuses to create over data that appeared after start", async () => {
   const factory = new FakeIdbFactory();
   const session = newSession(factory);
@@ -483,6 +519,24 @@ test("VaultSession: export is recommended after creation and again after many sa
   assert.equal(session.exportRecommended, true);
 });
 
+test("DomainService.saveCheckpoint stores resolution stage and a copy of unresolved keys", async () => {
+  const vault = await VaultV2.open(idb(new FakeIdbFactory()), PASSPHRASE, "pbkdf2-sha512");
+  const domain = new DomainService(vault);
+  const keys = ["phone.full"];
+  domain.saveCheckpoint({
+    workflow: "visibility",
+    siteAccountId: "acct-1",
+    step: "collect",
+    status: "handoff",
+    resolutionStage: "tier2",
+    unresolvedAttributeKeys: keys,
+  });
+  keys.push("email");
+  const stored = domain.getCheckpoint("visibility", "acct-1");
+  assert.equal(stored?.resolutionStage, "tier2");
+  assert.deepEqual(stored?.unresolvedAttributeKeys, ["phone.full"]);
+});
+
 // --- Web Lock adapter ---
 
 test("webLockManager holds the exclusive lock until release and reports a busy lock as null", async () => {
@@ -518,7 +572,13 @@ test("side panel error messages never echo error text", async () => {
   const vault = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
   await vault.save();
   const wrong = await VaultV2.open(persistence, "wrong-passphrase-fake").catch((err: unknown) => err);
+  assert.ok(wrong instanceof VaultUnlockError);
   assert.equal(vaultErrorMessage(wrong), "パスフレーズまたはリカバリーキーが正しくありません。");
+  const noRecovery = await VaultV2.openWithRecoveryKey(persistence, "AAAA-BBBB").catch((err: unknown) => err);
+  assert.ok(noRecovery instanceof VaultNoRecoveryKeyError);
+  assert.match(vaultErrorMessage(noRecovery), /リカバリーキーが設定されていません/);
+  // A record that fails AES-GCM (tampering) is not reported as merely a wrong passphrase.
+  assert.match(vaultErrorMessage(new DOMException("fake", "OperationError")), /破損/);
   assert.match(vaultErrorMessage(new VaultCorruptError("fake-secret-detail")), /読み取れません/);
   assert.doesNotMatch(vaultErrorMessage(new Error("fake-secret-detail")), /fake-secret-detail/);
   assert.match(vaultErrorMessage(new PassphraseTooShortError()), /8文字以上/);
@@ -544,7 +604,7 @@ test("extension CSP allows WebAssembly for Argon2id but never unsafe-eval; Side 
   assert.match(html, /<link rel="stylesheet" href="sidepanel\.css">/);
   assert.doesNotMatch(html, /<script>(?!<)/, "no inline scripts");
   const config = await readFile(join(REPO_ROOT, "extension", "vite.config.mjs"), "utf8");
-  assert.match(config, /sidepanel\.ts/);
+  assert.match(config, /sidepanel\.tsx/);
   const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.match(pkg.scripts["build:extension"] ?? "", /extension\/sidepanel\.html/);
 });

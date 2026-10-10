@@ -56,7 +56,10 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
   );
 
   const retry = useCallback(() => {
-    session.start().catch((err: unknown) => setFatalError(vaultErrorMessage(err)));
+    session.start().then(
+      () => setFatalError(undefined),
+      (err: unknown) => setFatalError(vaultErrorMessage(err)),
+    );
   }, [session]);
 
   const downloadExport = useCallback(async () => {

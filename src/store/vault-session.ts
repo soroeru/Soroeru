@@ -128,21 +128,22 @@ export class VaultSession {
     this.requireState("absent", "create a vault");
     if (passphrase.length < MIN_PASSPHRASE_LENGTH) throw new PassphraseTooShortError();
     // Never overwrite stored data that appeared since start() (fail closed).
-    if ((await this.options.persistence.load()) !== null) {
+    const existing = await this.options.persistence.load();
+    this.requireState("absent", "create a vault");
+    if (existing !== null) {
       this.setState("locked");
       throw new VaultSessionStateError("locked", "create a vault");
     }
-    const vault = await VaultV2.open(
-      this.options.persistence,
-      passphrase,
-      this.options.kdfAlgo ?? "argon2id",
-      {
-        extractableKey: false,
-      },
-    );
+    const vault = await VaultV2.open(this.options.persistence, passphrase, this.options.kdfAlgo ?? "argon2id", {
+      extractableKey: false,
+    });
     try {
       const recoveryKey = await vault.setupRecoveryKey(passphrase);
+      // close() may have run during the KDF: never write after the Web Lock is released.
+      this.requireState("absent", "create a vault");
       await vault.save();
+      // ...or during the save: never resurrect a key on a closed panel.
+      this.requireState("absent", "create a vault");
       this.vaultValue = vault;
       this.exportDue = true;
       this.savesSinceExport = 0;

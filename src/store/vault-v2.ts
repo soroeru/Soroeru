@@ -37,7 +37,13 @@ import {
 import { webCryptoRuntime } from "./crypto-runtime.js";
 import { base64ToBytes, bytesEqual, bytesToBase64 } from "./encoding.js";
 import { generateRecoveryKey, recoveryKeyToKek } from "./recovery.js";
-import { VaultCorruptError, VaultFormatError, VaultLockedError } from "./vault-errors.js";
+import {
+  VaultCorruptError,
+  VaultFormatError,
+  VaultLockedError,
+  VaultNoRecoveryKeyError,
+  VaultUnlockError,
+} from "./vault-errors.js";
 import type {
   EncryptedVaultData,
   VaultMetadata,
@@ -45,7 +51,14 @@ import type {
   VaultRecordEnvelope,
 } from "./vault-persistence.js";
 
-export { VaultCorruptError, VaultFormatError, VaultLockedError, VaultStorageQuotaError } from "./vault-errors.js";
+export {
+  VaultCorruptError,
+  VaultFormatError,
+  VaultLockedError,
+  VaultNoRecoveryKeyError,
+  VaultStorageQuotaError,
+  VaultUnlockError,
+} from "./vault-errors.js";
 export type {
   EncryptedVaultData,
   VaultMetadata,
@@ -175,7 +188,12 @@ export class VaultV2 {
   private static async assertPassphraseVerifier(key: MasterKey, verifier: EncryptedRecord): Promise<void> {
     // A wrong passphrase fails GCM auth here (decryptRecord throws). A successful
     // decrypt that does not match the token means a corrupt/foreign verifier.
-    const token = await decryptRecord(key, verifier);
+    let token: string;
+    try {
+      token = await decryptRecord(key, verifier);
+    } catch (err) {
+      throw new VaultUnlockError("passphrase does not open this vault", { cause: err });
+    }
     if (token !== PASSPHRASE_VERIFIER_TOKEN) {
       throw new VaultCorruptError("vault passphrase verifier did not match");
     }
@@ -189,13 +207,19 @@ export class VaultV2 {
   ): Promise<VaultV2> {
     const extractable = options.extractableKey ?? true;
     const file = (await VaultV2.loadRaw(persistence)) as VaultFileV2 | undefined;
-    if (!file?.recovery) throw new Error("no recovery key is configured for this vault");
+    if (!file?.recovery) throw new VaultNoRecoveryKeyError();
     if (file.vaultVersion === undefined || !Array.isArray(file.records)) {
       throw new VaultFormatError("stored vault data is not a recognized Soroeru vault");
     }
     VaultV2.validateV2Version(file);
     const kek = await recoveryKeyToKek(recoveryKey);
-    const rawKey = base64ToBytes(await decryptRecord(kek, file.recovery));
+    let wrapped: string;
+    try {
+      wrapped = await decryptRecord(kek, file.recovery);
+    } catch (err) {
+      throw new VaultUnlockError("recovery key does not open this vault", { cause: err });
+    }
+    const rawKey = base64ToBytes(wrapped);
     let key: MasterKey;
     try {
       key = await importKeyRaw(rawKey, extractable);

@@ -2,7 +2,13 @@
 // Messages never echo error text, which could carry stored or typed values.
 
 import { MIN_PASSPHRASE_LENGTH } from "../electron/ipc/contract.js";
-import { VaultCorruptError, VaultFormatError, VaultStorageQuotaError } from "../src/store/vault-errors.js";
+import {
+  VaultCorruptError,
+  VaultFormatError,
+  VaultNoRecoveryKeyError,
+  VaultStorageQuotaError,
+  VaultUnlockError,
+} from "../src/store/vault-errors.js";
 import { PassphraseTooShortError, VaultSessionStateError } from "../src/store/vault-session.js";
 
 export function vaultErrorMessage(err: unknown): string {
@@ -20,10 +26,11 @@ export function vaultErrorMessage(err: unknown): string {
       ? "サイドパネルが閉じられたため、操作を中止しました。"
       : "vault の状態が変わりました。画面を開き直してください。";
   }
-  // A wrong passphrase or recovery key fails AES-GCM authentication (OperationError).
-  if (isNamed(err, "OperationError")) return "パスフレーズまたはリカバリーキーが正しくありません。";
-  if (err instanceof Error && err.message === "no recovery key is configured for this vault") {
-    return "この vault にはリカバリーキーが設定されていません。";
+  if (err instanceof VaultUnlockError) return "パスフレーズまたはリカバリーキーが正しくありません。";
+  if (err instanceof VaultNoRecoveryKeyError) return "この vault にはリカバリーキーが設定されていません。";
+  // Record AES-GCM failure: a wrong passphrase on a vault without a verifier, or tampered data.
+  if (isNamed(err, "OperationError")) {
+    return "解錠できませんでした。パスフレーズが正しくないか、保存データが破損しています。破損している場合は暗号化エクスポートの控えから復元してください。";
   }
   return "処理に失敗しました。もう一度お試しください。";
 }
