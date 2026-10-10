@@ -53,7 +53,9 @@ The choice exists on paper, but not in practice. Soroeru's job is to convert thi
 **Soroeru（揃える）** means "to bring into alignment / to arrange." The aspiration: as users
 worldwide use Soroeru, their scattered personal information becomes "揃う" (aligned). This is
 realized as **the sum of each user aligning their own scattered data locally** — there is no
-central aggregation (consistent with local-first / no hosted vault / no telemetry).
+central aggregation of users' personal information (consistent with local-first / no hosted
+vault / no raw-personal-data telemetry). Non-personal knowledge about sites and forms (shared
+Form Schemas, §8) may be shared centrally so that every user's alignment gets easier.
 
 - Scope cue: **A Visibility = arrange / see; B Bulk Update = align (old → current)**.
 - Tagline: **「あなたの情報を、あなたの手に。」** ("Your information, in your hands.")
@@ -75,7 +77,9 @@ central aggregation (consistent with local-first / no hosted vault / no telemetr
   concise, low-frequency, repeated suggestions the user comes to understand each option's
   meaning naturally and chooses it deliberately.
 - **Local-first and user-owned.** Personal data is stored locally and encrypted; the user
-  owns it. No hosted vault, no telemetry.
+  owns it. No hosted vault and no telemetry containing personal data. Shared, non-personal
+  form knowledge and typed operational telemetry exist only to make form resolution more
+  accurate for everyone (§8, Issue #554).
 - **Restore sovereignty, don't break in.** What Soroeru sets out to break is the asymmetry
   that keeps personal data out of the user's reach — enclosing ToS, dark patterns, and the
   friction of cancellation / deletion / cross-site reconciliation. It does this from **inside
@@ -97,7 +101,9 @@ central aggregation (consistent with local-first / no hosted vault / no telemetr
 
 The primary metric is **not** "number of actions automated." Quantitative success metrics
 are computed only from local vault / Evidence events and shown only to the user; Soroeru
-does not send usage events to telemetry or external analytics. Goals that cannot be
+does not send these usage or agency events to telemetry or external analytics (the
+form-resolution outcome telemetry in §8 is a separate, typed operational signal and is never
+used to compute these metrics). Goals that cannot be
 observed locally are excluded from this table rather than approximated. In particular,
 Soroeru does not infer "subjective agency" or "approval without understanding" as automated
 metrics. Unless a row states otherwise, counts and rates are evaluated per local user over
@@ -314,17 +320,95 @@ registration (last).**
 
 ## 8. Non-Negotiable Requirements (Security / Privacy / Safety)
 
-- Local-first / locally encrypted, user-owned / no hosted vault / no telemetry.
-- **Network egress is limited to**: (1) the target sites the user acts on, (2) the user's
-  own configured AI provider, and (3), later, user-owned encrypted-vault cloud storage as
-  encrypted bytes only. No other external destination, and no telemetry / analytics / crash
-  reporting.
+- Local-first / locally encrypted, user-owned / no hosted personal-data vault / no telemetry
+  that contains personal data. Personal values are stored only in the user's local encrypted
+  vault; Soroeru-operated cloud services never store them (Issue #554).
+- **Network egress is limited to**: (1) the target sites the user acts on; (2) **Soroeru
+  Cloud** — Soroeru's own Google Cloud services (Cloud Run API, Firestore Form Schema
+  Registry, BigQuery outcome telemetry, and Gemini on Vertex AI behind Cloud Run), under the
+  data-class rules below; (3) the identity-auth BFF (§4.2); and (4), later, user-owned
+  encrypted-vault cloud storage as encrypted bytes only. No other external destination, and
+  no analytics / crash reporting / third-party telemetry. During migration the existing
+  Electron build may still call the user's own configured AI provider (Issue #514 path below);
+  the Chrome-extension target does not.
+- **Data classes decide what may leave the device** (Issue #554; full matrix in
+  [`security.md`](security.md) §15):
+  - *Secrets* (site passwords, vault passphrase, master/recovery keys, OTP/MFA codes, cookies
+    and session tokens, CVV, card PIN, My Number, API keys) never leave the device — not to
+    Soroeru Cloud, not to Gemini, not even with consent.
+  - *Personal values* and *page content that may contain them* never enter shared Form
+    Schemas, telemetry, or cloud logs. They reach Gemini only through the consent-gated
+    fallback below.
+  - *Form structure* (sanitized labels, element types, structural fingerprints), *Form
+    Schemas* (field → canonical attribute mappings), and *typed outcome metadata* may be sent
+    to Soroeru Cloud.
+- **Resolution order (Issue #554).** Reading or filling a form resolves fields in this order,
+  and each step runs only when the previous one cannot resolve every required field:
+  1. **Tier 1 — shared Form Schema**: a versioned schema fetched from Soroeru Cloud maps page
+     fields to canonical attribute keys; the extension validates it against the live page and
+     reads or writes the actual values locally. No personal value leaves Chrome.
+  2. **Tier 2 — structure-only Gemini mapping**: a sanitized structure snapshot (no values,
+     pattern-redacted labels) is sent to Gemini through Soroeru Cloud; the returned mapping is
+     validated locally before use, and values are still read or written locally.
+  3. **Tier 3 — consent-gated Gemini read**: see the next item.
+  If Soroeru Cloud is unreachable or the user has disabled cloud assistance, only locally
+  cached schemas and deterministic local resolution run; unresolved fields become `unknown` or
+  a hand-off, never a guess.
+- **Consent-gated Gemini fallback (the only exception to local-only personal values).** Only
+  for **read** operations, and only when Tiers 1 and 2 leave a required attribute unresolved
+  and no wall is detected:
+  - automatic execution stops and a consent gate names the site, the page kind, the attribute
+    kinds requested, the destination (Gemini via Soroeru Cloud), that secrets are masked and
+    not sent, and that the content is not retained for product improvement;
+  - nothing is pre-selected; the default action is "do not send"; one approval covers exactly
+    one fallback (one site, one page observation, the listed attribute keys). It cannot be
+    turned into a standing permission, including at L1;
+  - declining, closing, or timing out sends nothing, leaves the attributes `unknown`, and
+    offers the local/manual path (hand-off or saved-page import);
+  - if an approved request fails (network error, server error, rate limit, or budget
+    exhaustion), Soroeru does not retry without new consent, leaves the attributes `unknown`,
+    offers the same local/manual path, and records the failure locally;
+  - write operations (update, withdrawal, registration) never use this fallback; an attribute
+    still unresolved after Tier 2 for a write is handed off to the user;
+  - an approved request carries only the minimum page region needed, with secrets replaced by a
+    mask token, and goes only to the dedicated fallback endpoint;
+  - a returned value is accepted only if it corroborates against the content that was sent for
+    that item; otherwise it becomes `unknown`. Accepted values are written only to the local
+    encrypted vault;
+  - the raw request, raw response, and extracted values are never written to shared schemas,
+    telemetry, cloud application logs, traces, or analytics, and Tier 3 results never feed
+    schema learning. **Consent to Gemini processing is not consent to retain data for product
+    improvement**;
+  - every gate outcome (approved / declined / closed / timed out) is recorded locally as
+    Evidence without duplicating the disclosed values.
+- **Shared Form Schemas** contain no personal values, are versioned, and cannot become active
+  for all users from a single unvalidated observation; promotion requires repeated successful
+  validation from distinct clients ([`architecture.md`](architecture.md) §14). Distinct
+  clients are counted with a per-site pseudonymous token that cannot link one installation's
+  feedback across sites. A schema never
+  grants authority: it is validated against the live page on every use, and fills still pass
+  the review-and-confirm gate.
+- **Outcome telemetry** is allowed only for improving shared form resolution. It accepts only a
+  fixed, typed allowlist (site, schema id/version, operation type, resolution tier, result,
+  error category, confidence bucket, client version, structural fingerprint, hour-truncated
+  time) — no client identifier, no IP, no URL path, no labels, no values, no DOM or page
+  content. A user-visible control to turn telemetry and cloud assistance off must exist before
+  production release; the production default is a Product Owner decision recorded before
+  release. *Production release* means any distribution other than maintainers' own test
+  builds and the hackathon judging build (Issue #555), including any Chrome Web Store
+  listing; the hackathon judging build ships with telemetry on and documents it.
 - Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
   derived key must never persist outside memory. A user-entered canonical CVV (fill use)
   remains the most sensitive field, requiring the strictest handling. Algorithm / KDF selection:
   see [`architecture.md`](architecture.md) §2 and §10.
-- **Visibility collection exception (Issue #514):** AI-driven Visibility collection is the one AI
-  use allowed to receive and act on raw personal values — including full card numbers, CVV, and
+- **Superseded in the target by the consent-gated fallback above (Issue #554).** The following
+  Issue #514 rules describe the current Electron implementation and stay in force only for that
+  build until the extension migration retires it; they are not ported to the Chrome-extension
+  target. Where they conflict with the Issue #554 rules above, the Issue #554 rules govern the
+  target — in particular, site passwords and CVV are never sent to an AI model in the target,
+  and raw values reach Gemini only after per-fallback consent.
+- **Visibility collection exception (Issue #514, current Electron build only):** AI-driven
+  Visibility collection is the one AI use allowed to receive and act on raw personal values — including full card numbers, CVV, and
   site passwords read from a site — in order to explore pages and extract disclosure values into
   the ledger; see [`architecture.md`](architecture.md) §5.2. Every other AI use (terms analysis,
   registration field mapping, non-collection discovery, etc.) stays structure-only: never send
@@ -367,8 +451,9 @@ registration (last).**
   deleting data inside Soroeru is always confirmed).
 - No payment (free-trial→subscription exception only, on explicit approval).
 - The imported CSV (which contains plaintext passwords) is encrypted immediately, never
-  logged, and safely discarded after import. Collected PII is never egressed and is stored
-  locally encrypted only. Validate the CSV's size and row count before processing (reject
+  logged, and safely discarded after import. Collected PII is stored locally encrypted only and
+  is never egressed except through the consent-gated Gemini fallback above (or the Issue #514
+  path of the current Electron build). Validate the CSV's size and row count before processing (reject
   unreasonably large or malformed files rather than parsing them blindly). After a
   successful import, prompt the user to delete the original exported CSV file, but never
   silently delete a user-selected file outside Soroeru's own vault.
@@ -418,11 +503,14 @@ registration (last).**
 
 - L2 full automation (MVP); multi-locale; checkout / purchase / payment (except the approved
   free-trial→subscription card case); **bypassing actively-enforced technical access
-  controls** (see §8); collecting other people's data; hosted vaults,
-  backend API servers (**exception**: a minimal, OSS, zero-retention identity-auth BFF for
-  デジタル認証アプリ verification only — §4.2 / [`security.md`](security.md) §14), telemetry,
-  analytics, crash reporting; mobile apps and non-macOS
-  platforms (for now); **site-side verifiable-credential (VC) issuance and any
+  controls** (see §8); collecting other people's data; hosted personal-data vaults and
+  uploading or synchronizing the user's vault to Soroeru-managed storage; backend API servers
+  (**exceptions**: a minimal, OSS, zero-retention identity-auth BFF for デジタル認証アプリ
+  verification only — §4.2 / [`security.md`](security.md) §14; and Soroeru Cloud for shared
+  Form Schemas, Gemini mediation, and typed outcome telemetry — §8, Issue #554); telemetry
+  containing personal data, third-party analytics, crash reporting; training or fine-tuning a
+  model on users' personal values; browsers other than desktop Chrome, and mobile apps (for
+  now; the current Electron build also remains macOS-only); **site-side verifiable-credential (VC) issuance and any
   trust-registry / relying-party integration for "Soroeru-verified" sign-up (future
   direction, Issue #218); identity onboarding for users without a My Number Card or outside
   Japan (v1 is Japan-resident, card-holder only).** MCP server support in the MVP: a strictly
@@ -442,7 +530,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; a user-entered canonical CVV (fill use) is treated as most sensitive. Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
 | REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. If login fails because credentials are rejected, the login flow is unrecognized, or the site returns an error, stop after at most two login attempts for that site/credential set, do not enter same-site retry loops, and record the Site Account as `login failed / not collected` until the user explicitly updates credentials or retries later. | A | Must |
-| REQ-004 | Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic collection (`architecture.md` §5.2) as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers and CVV are stored in full via the AI-driven path, per target policy (Issue #514 supersedes the earlier last-4/CVV-exclusion rule for that path only; the deterministic fallback keeps the last-4/CVV-exclusion rule); domain CVV storage is implemented in Issue #516, while the AI exploration loop and its gates remain pending — `security.md` §3 implementation status. | A | Must |
+| REQ-004 | (Target, Issue #554: collection resolves pages and fields through Tiers 1–3 — REQ-025, REQ-026, REQ-028 — and the rest of this row describes the current Electron build.) Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic collection (`architecture.md` §5.2) as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers and CVV are stored in full via the AI-driven path, per target policy (Issue #514 supersedes the earlier last-4/CVV-exclusion rule for that path only; the deterministic fallback keeps the last-4/CVV-exclusion rule); domain CVV storage is implemented in Issue #516, while the AI exploration loop and its gates remain pending — `security.md` §3 implementation status. | A | Must |
 | REQ-005 | Present the per-site view by composing Site Account + its Disclosures, showing normal-sensitivity values (name, address, phone, account id, etc.) plainly and immediately, masking only sensitive/most-sensitive values (card data, the site password) with reveal gated behind passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall, credential failure, site error, or unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
@@ -451,7 +539,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-010 | Bulk-update selected sites by diffing Disclosures against canonical Personal Attributes (cross-site by attribute). | B | Must |
 | REQ-011 | Withdrawal cleanup: stop newsletters, cancel unused subscriptions, withdraw from unused services; the withdrawal flow may execute within the delegated range but its final, irreversible confirmation step is always gated (absolute boundary, §5), regardless of ToS-automation stance; deletion of Soroeru's own data is always confirmed. | C | Should |
 | REQ-012 | Autonomous new registration with the review-and-confirm gate and three guards; high-risk-clause surfacing tuned to cultivate the user's own discovery. | D | Should |
-| REQ-013 | Work without AI by default (deterministic); AI mode optional, user-configured provider only. Visibility collection (A) discloses raw personal values to the provider when AI-driven (Issue #514); every other AI use (B–D) stays structure-only disclosure. | A–D | Must |
+| REQ-013 | Work without AI by default (deterministic); AI mode optional. Target (Issue #554): AI is Gemini through Soroeru Cloud, structure-only (Tier 2) except the consent-gated read fallback (Tier 3, REQ-028); local cached schemas and deterministic resolution keep working offline or with cloud assistance disabled. Current Electron build: user-configured provider only, and Visibility collection (A) discloses raw personal values to it when AI-driven (Issue #514); every other AI use (B–D) stays structure-only disclosure. | A–D | Must |
 | REQ-014 | Treat a detected automation-prohibiting ToS clause as a surfaced Constraint for the user to decide; never silently block, never bypass active controls. | A | Must |
 | REQ-015 | Require My Number Card verification at first launch — via the Digital Agency デジタル認証アプリ (認証 API; smartphone card read, QR cross-device from desktop) — before any use; take basic-4 attributes (name, residence address, DOB, sex) from the authentication result only, non-editable; update address only by re-reading an updated card. | A | Must |
 | REQ-016 | Never store the 12-digit My Number or the card PIN (the PIN is entered in the Digital Agency app, never seen by Soroeru); store only basic-4 attributes, the PPID, and verification Evidence (Digital Agency reference + timestamp). | A | Must |
@@ -459,8 +547,16 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-018 | Require OTP ownership verification to add/change a phone number or email; store at most 3 of each; removing a verified contact is the fourth absolute boundary (always confirmed). | A | Must |
 | REQ-019 | Limit identity scope to user-side verified-data management (Japan-resident card-holders); site-side verifiable-credential issuance / relying-party trust is out of scope (future, Issue #218). | — | Won't (MVP) |
 | REQ-020 | Run the デジタル認証アプリ integration through a minimal, OSS, zero-retention identity-auth BFF: registered relying party (client ID, redirect / back-channel logout URIs, private_key_jwt), egress to the Digital Agency only, basic-4 forwarded encrypted to the user's device and never persisted server-side. Narrowly-scoped exception to the no-backend principle, identity layer only. | A | Must |
-| REQ-021 | AI-driven Visibility collection (primary once AI is configured, Issue #514) uses a bounded observe/propose loop: every navigation proposal is schema-validated and locally executed (same-registrable-site, budgets, wall hand-off), but — unlike the rest of this loop's proposals — the values it returns are the raw personal values read from the current page, not schema-validated references to a local read; the automation/domain layer still performs every write. Maps are encrypted local candidates; stale maps fall back per entry; regeneration is explicit rather than silent. This requirement previously described a fully structure-only/local-values loop; §8's Visibility collection exception and `architecture.md` §5.2 supersede that for the value-reading step specifically. | A | Must |
+| REQ-021 | (Current Electron build; superseded in the target by REQ-025, REQ-026, and REQ-028 — Issue #554. The bounded navigation, budget, same-site, and wall rules below still apply to the target's read exploration.) AI-driven Visibility collection (primary once AI is configured, Issue #514) uses a bounded observe/propose loop: every navigation proposal is schema-validated and locally executed (same-registrable-site, budgets, wall hand-off), but — unlike the rest of this loop's proposals — the values it returns are the raw personal values read from the current page, not schema-validated references to a local read; the automation/domain layer still performs every write. Maps are encrypted local candidates; stale maps fall back per entry; regeneration is explicit rather than silent. This requirement previously described a fully structure-only/local-values loop; §8's Visibility collection exception and `architecture.md` §5.2 supersede that for the value-reading step specifically. | A | Must |
 | REQ-022 | Record an observed unconfigured security item and show it as a non-blocking, dismissible review task; Soroeru neither recommends nor changes the setting automatically. | A | Must |
+| REQ-023 | Run the primary user path (vault unlock, ledger, review/consent gates, browser operation) from the Soroeru Chrome extension without Electron, the native helper, or Native Messaging (Issue #554). Keep the one-leased-tab, ledger-scope, and wall hand-off rules (REQ-003, §8). | A | Must |
+| REQ-024 | Store the extension's vault as ciphertext only in extension-local storage, with the same encryption/KDF semantics as the existing vault and versioned migrations; hold the unlocked key only in memory of the extension page that shows the vault, and lock when that page closes, the browser restarts, or the user locks. Unreadable data fails closed. | A | Must |
+| REQ-025 | Tier 1: resolve a known form from a versioned shared Form Schema in Soroeru Cloud, validate it against the live page per field, and read/fill values locally; send no personal value to Soroeru Cloud. A field that fails validation falls to Tier 2 alone. | A–D | Must |
+| REQ-026 | Tier 2: when no valid schema resolves a required field, send only a sanitized structure snapshot (no values, pattern-redacted labels) to Gemini through Soroeru Cloud; accept only closed-schema mappings that reference items in the snapshot and pass local validation. | A–D | Must |
+| REQ-027 | Send outcome telemetry only through the fixed typed allowlist in §8; reject any other field on both client and server. Provide a user-visible control to disable telemetry and cloud assistance before production release. | A–D | Must |
+| REQ-028 | Tier 3: for read operations only, after Tiers 1–2 leave a required attribute unresolved, stop and ask for explicit per-fallback consent before sending any personal value to Gemini; send nothing on decline/close/timeout; never retry a failed approved request without new consent (attributes stay `unknown`, hand-off offered); mask secrets; send only the minimum region to the dedicated endpoint; accept only corroborated values; record the gate outcome locally (§8). | A | Must |
+| REQ-029 | Version shared Form Schemas with a candidate → active → retired lifecycle; never activate a schema from a single unvalidated observation; never let Tier 3 results feed schema learning; reject schema records containing personal-value-like strings. | A–D | Must |
+| REQ-030 | Never send secrets (site passwords, CVV, OTP/MFA codes, cookies/tokens, keys, passphrases, My Number, card PIN) to Soroeru Cloud or Gemini; never write Tier 3 request/response content or extracted values to Firestore, BigQuery, cloud application logs, traces, or analytics. | A–D | Must |
 
 ## 11. Glossary
 
@@ -481,4 +577,9 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | Mandate | A record of what the user authorized (collection or action). |
 | Three guards | High-risk-clause escalation, payment stop (free-trial exception), no auto-attestation. |
 | Wall | A step that must not be automated: CAPTCHA, MFA, identity / email / SMS verification. |
+| Soroeru Cloud | Soroeru's own Google Cloud services (Cloud Run API, Firestore Form Schema Registry, BigQuery outcome telemetry, Gemini on Vertex AI behind Cloud Run). It holds non-personal form knowledge and typed outcome metadata, never the user's vault or personal values. |
+| Form Schema | A versioned, shared, value-free record mapping a site's page/form structure to canonical attribute keys; lifecycle `candidate` → `active` → `retired`. |
+| Resolution tier | The ordered way a field is resolved: Tier 1 shared Form Schema, Tier 2 structure-only Gemini mapping, Tier 3 consent-gated Gemini read. |
+| Consent-gated fallback | Tier 3: a single, explicitly approved read where minimum page content (secrets masked) is sent to Gemini; never a standing permission and never retained for improvement. |
+| Outcome telemetry | Typed, allowlisted, value-free records of how form resolution went, used only to improve shared Form Schemas. |
 | Site Collection Map | An encrypted per-site local-candidate record that maps normalized account pages to typed item locators; after discovery it is executed deterministically without an AI call and is stale when mapped page structure or item resolution no longer matches. |

@@ -1,9 +1,10 @@
 # Application Architecture
 
 This document owns **`Soroeru` application architecture and technology selection**: the
-Electron process/layer boundaries, the technology decisions and their rationale, the
-domain model and its encrypted persistence mapping, the IPC trust boundary, the Slice A
-(Visibility) design, wall hand-off, and the security/privacy mapping.
+Chrome-extension and Soroeru Cloud boundaries (target, Issue #554), the Electron
+process/layer boundaries of the current implementation, the technology decisions and their
+rationale, the domain model and its encrypted persistence mapping, the trust boundaries, the
+Slice A (Visibility) design, wall hand-off, and the security/privacy mapping.
 
 Canonical product direction is [`requirements.md`](requirements.md). This document is the
 **canonical target architecture**.
@@ -14,8 +15,56 @@ rationale (see [`security.md`](security.md)).
 
 ## 1. Architecture Overview
 
-`Soroeru` is a local **Electron** desktop app (macOS MVP) with a trusted main process, a
-narrow typed IPC boundary, and an untrusted React renderer:
+**Target architecture (Issue #554).** `Soroeru` is a **Chrome-extension-first client** with a
+local encrypted vault, plus **Soroeru Cloud** on Google Cloud as a shared, non-personal *form
+intelligence* layer. The extension, not the cloud, owns the user's personal-data authority:
+the cloud may say "field X → canonical attribute `address.postalCode`", but the value is
+resolved and read or written locally.
+
+```text
+Chrome (desktop)
+├── Side Panel — trusted runtime host (React)
+│   ├── VaultSession: non-extractable CryptoKey in memory; lock on panel close
+│   ├── DomainService / Policy / Delegation Boundary / Evidence
+│   ├── ResolutionOrchestrator: Tier 1 schema → Tier 2 structure-only Gemini
+│   │   → Tier 3 consent-gated Gemini read (§14.2)
+│   ├── CloudClient + StructureSanitizer + TelemetryBuilder + Tier3PayloadBuilder
+│   └── UI: unlock, ledger, review/confirm gates, consent gates, hand-off
+├── Service Worker — event router only (no key, no personal values)
+│   ├── tab lease (tab / origin / epoch), script injection
+│   └── tab/navigation events → Side Panel
+├── Content Script — least-authority DOM scan / read / fill / click / navigate,
+│   wall-signal collection
+└── IndexedDB (vault ciphertext only) / chrome.storage.session (lease metadata only)
+          │ HTTPS — no personal values by default
+          ▼
+Soroeru Cloud (Google Cloud, asia-northeast1)
+├── Cloud Run `soroeru-api`: schemas/resolve, schemas/feedback,
+│   agent/map-structure (Tier 2), telemetry/outcome
+├── Cloud Run `soroeru-pii-fallback`: agent/read-with-consent (Tier 3 only,
+│   body-free logging, Vertex AI-only service account)
+├── Firestore: versioned Form Schema Registry (no personal values)
+├── BigQuery: fixed-schema outcome telemetry (no personal values)
+└── Gemini on Vertex AI (structure interpretation; consent-gated read)
+```
+
+**Why the Side Panel hosts the runtime.** MV3 service workers are suspended when idle and lose
+globals, so they cannot hold the unlocked key or a run in progress. Keeping the key as a
+non-extractable `CryptoKey` in the Side Panel ties the key's lifetime to the surface that shows
+consent and hand-off gates; storing raw key bytes in `chrome.storage.session` (serializable,
+readable by other extension contexts) and an Offscreen Document (cannot show gates) were
+rejected. Details: [`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md) §4.
+
+The cloud components, data classes, API contracts, and schema lifecycle are in §14. The
+migration from the current implementation is §2.3.
+
+### 1.1 Current implementation (migration source)
+
+Until the §2.3 migration completes, the shipped build is a local **Electron** desktop app
+(macOS beta) with a trusted main process, a narrow typed IPC boundary, and an untrusted React
+renderer. The rest of this subsection, §2.2, §4, and the Electron-specific parts of §5–§10
+describe that build; they are retained because its domain, automation, and safety logic is
+the source being ported:
 
 ```text
 Soroeru.app (Electron)
@@ -95,8 +144,9 @@ Keep shared logic — field classification, wall detection, the store/crypto bou
 the provider abstraction — isolated so it can be tested outside a live browser and outside
 Electron.
 
-The MVP packaging target is a downloadable, unsigned macOS DMG for a small group of
-invited beta users plus a Soroeru-owned Chrome extension. Chrome Web Store distribution,
+For the current build, the packaging target is a downloadable, unsigned macOS DMG for a small group of
+invited beta users plus a Soroeru-owned Chrome extension. In the target (Issue #554) the
+extension alone is the product client and the DMG/native helper are retired (§2.3). Chrome Web Store distribution,
 a self-contained native helper, and signing/notarization are release gates for promoting
 the extension path beyond developer validation. Windows, Linux, mobile, and additional
 browser adapters are later (see [`requirements.md`](requirements.md) §9).
@@ -109,18 +159,27 @@ Star (agency acquisition, not delegation of will); slice order A→B→C→D; De
 Boundary (L0 default, L1 in-policy, L2 out of MVP); the hard safety line (never bypass
 CAPTCHA / MFA / bot detection / rate limits / access controls); the ToS stance
 (automation-prohibiting terms are a surfaced Constraint, never a silent block, never a
-bypass); and local-first (no hosted vault, telemetry, analytics, or crash reporting).
+bypass); and local-first (no hosted personal-data vault, no telemetry containing personal data,
+no analytics or crash reporting; shared non-personal form knowledge and typed outcome telemetry
+are allowed per Issue #554).
+
+Rows marked *(target)* are the Issue #554 decisions; rows marked *(current)* describe the
+Electron build until §2.3 retires it.
 
 | Layer | Decision | Why |
 | --- | --- | --- |
-| Runtime / language | **Node.js + TypeScript + Electron** | Electron main owns the vault, policy, browser-session orchestration, and provider SDKs. TypeScript keeps page snapshots, the Disclosure ledger, Policy, IPC, and browser-transport contracts shared and typed end to end. |
-| UI | **React + Vite + TypeScript** in the Electron renderer, with `contextIsolation`, `sandbox`, and `nodeIntegration: false`; all privileged operations go through typed preload IPC | Soroeru's UI is mostly ledger tables, filters, forms, confirmation gates, policy settings, and reflection surfaces — React's ecosystem is strongest for accessible primitives, form validation, and virtualized tables. |
-| Browser automation | **Soroeru-owned Chrome extension + Native Messaging**, behind the browser-neutral `PageDriver` seam | The production front door operates one explicitly selected tab in the user's real browser/profile. Electron remains the trusted core; the extension and native helper are thin adapters. Playwright Library is retained only behind a temporary developer rollback flag until parity evidence exists, then removed from production. There is never a silent Playwright fallback. |
+| Runtime / language *(target)* | **TypeScript in a Chrome MV3 extension**: Side Panel as trusted runtime host, service worker as event router, content script for DOM | Moves the vault, policy, and orchestration into the user's real browser so the primary path needs no desktop app or native helper (REQ-023). Domain/automation code stays browser-neutral TypeScript. |
+| Runtime / language *(current)* | **Node.js + TypeScript + Electron** | Electron main owns the vault, policy, browser-session orchestration, and provider SDKs. TypeScript keeps page snapshots, the Disclosure ledger, Policy, IPC, and browser-transport contracts shared and typed end to end. |
+| UI | **React + Vite + TypeScript** — in the extension Side Panel *(target)*; in the Electron renderer with `contextIsolation`, `sandbox`, and `nodeIntegration: false` and typed preload IPC *(current)* | Soroeru's UI is mostly ledger tables, filters, forms, confirmation gates, policy settings, and reflection surfaces — React's ecosystem is strongest for accessible primitives, form validation, and virtualized tables. Existing renderer components are ported, not rewritten. |
+| Browser automation | **Soroeru-owned Chrome extension**, behind the browser-neutral `PageDriver` seam; commands travel over extension-internal ports *(target)* or Native Messaging from Electron *(current)* | The production front door operates one explicitly selected tab in the user's real browser/profile. Playwright Library is retained only behind a temporary developer rollback flag until parity evidence exists, then removed from production. There is never a silent Playwright fallback. |
+| Cloud backend *(target)* | **Soroeru Cloud on Google Cloud**: Cloud Run (TypeScript, Node 22, `node:http`, no web framework) in a separate `cloud/` package; Firestore Form Schema Registry; BigQuery outcome telemetry; Gemini on Vertex AI | Shared non-personal form knowledge raises resolution accuracy for every user; Cloud Run is the policy boundary that validates payloads, isolates the Tier 3 endpoint, keeps Google credentials out of the extension, and rate-limits (§14). |
 | Browser session policy | **Explicit, in-memory lease of one user-selected tab**; the browser owns authentication/session state | A lease is bound to a browser instance, tab, site scope, permission, and execution epoch. Release never closes the user's tab. Soroeru never exports cookies, local storage, history, a profile, or `storageState`; encrypted workflow checkpoints contain only safe workflow/map/Evidence references. Restart, disconnect, tab close, permission revocation, vault lock, or out-of-scope navigation invalidates the lease and requires explicit rebind plus local revalidation. |
 | Browser adapters | Chrome first; **`PageDriver` + browser-neutral session/transport contracts** are the multi-browser seam | Chrome/Edge can share a WebExtension family; Firefox needs a capability-verified adapter; Safari needs a separate Safari Web Extension/App Extension feasibility RFC. Portable semantics are commands, lifecycle, capability negotiation, and errors—not Chrome tab IDs or Native Messaging framing. |
-| Local encrypted storage | **Vault v2**: a versioned encrypted record vault (§3), not a plaintext SQLite database or a single encrypted JSON blob | Matches the AES-256-GCM + Argon2id requirement, avoids native DB dependencies, and supports entity-by-entity migration and audit records. SQLCipher SQLite may be revisited later if ledger scale, query performance, or concurrent access becomes a real constraint. |
-| AI provider abstraction | **AI-driven-first once configured**; optional Anthropic/OpenAI adapters are stateless and user-configured. Visibility collection sends full page content (Issue #514, §5.2); every other AI use stays structure-only | Matches the deterministic-default requirement (REQ-013) for users without AI configured. For Visibility collection, raw values leave the local process to the user's own configured provider by design, so the model can read and classify them; every other AI use (terms summarization, registration field mapping, Constraint findings) keeps raw values local — AI proposes from structure, Policy/Delegation decides. |
-| Packaging | **Unsigned macOS DMG** during invited development beta, via **Electron Forge `maker-dmg`**; Chrome extension through the Chrome Web Store before product cutover | The app bundles a self-contained native helper and registers it only after explicit user action. A stable store extension ID is allowlisted. Signing/notarization is required before distribution beyond invited beta; unpacked loading is development-only. |
+| Local encrypted storage | **Vault v2**: a versioned encrypted record vault (§3), not a plaintext SQLite database or a single encrypted JSON blob. Persistence sits behind `VaultPersistence` (`load` / `save` / `clear`): IndexedDB ciphertext in the extension *(target)*, atomic file replacement *(current)* | Matches the AES-256-GCM + Argon2id requirement, avoids native DB dependencies, and supports entity-by-entity migration and audit records. The same envelope format in both backends keeps encrypted export/import portable. SQLCipher SQLite may be revisited later if ledger scale, query performance, or concurrent access becomes a real constraint. |
+| AI provider *(target)* | **Gemini on Vertex AI, reachable only through Soroeru Cloud**; Tier 2 structure-only, Tier 3 consent-gated read (§14.2) | Keeps Google credentials server-side, lets Cloud Run enforce payload schemas and body-free logging, and separates the personal-data path by service. User-configured Anthropic/OpenAI adapters are not ported to the extension. |
+| AI provider abstraction *(current)* | **AI-driven-first once configured**; optional Anthropic/OpenAI adapters are stateless and user-configured. Visibility collection sends full page content (Issue #514, §5.2); every other AI use stays structure-only | Matches the deterministic-default requirement (REQ-013) for users without AI configured. For Visibility collection, raw values leave the local process to the user's own configured provider by design, so the model can read and classify them; every other AI use (terms summarization, registration field mapping, Constraint findings) keeps raw values local — AI proposes from structure, Policy/Delegation decides. |
+| Packaging *(target)* | **Chrome extension** (unpacked for the hackathon/developer path, Chrome Web Store before broader distribution) plus Cloud Run container images | No desktop installer or native helper on the primary path. |
+| Packaging *(current)* | **Unsigned macOS DMG** during invited development beta, via **Electron Forge `maker-dmg`**; Chrome extension through the Chrome Web Store before product cutover | The app bundles a self-contained native helper and registers it only after explicit user action. A stable store extension ID is allowlisted. Signing/notarization is required before distribution beyond invited beta; unpacked loading is development-only. |
 | Package manager | **npm** | The repo already has a lockfile; the dependency graph is not large enough to justify pnpm/Yarn. |
 | Renderer build | **Vite** | Most direct match for React + TypeScript in Electron; keeps the UI iteration loop fast. |
 | Main/preload build | **`tsc`** | Type-correctness first; add bundling only if packaging proves it necessary. |
@@ -133,7 +192,18 @@ bypass); and local-first (no hosted vault, telemetry, analytics, or crash report
 The table above records the current target stack. The following load-bearing decisions have
 known alternatives and concrete triggers for reconsideration:
 
-- **Electron desktop app**: lighter desktop shells (Tauri, native Swift/AppKit, or a
+- **Chrome extension + Soroeru Cloud hybrid (Issue #554, supersedes the Electron decision
+  below for the target)**: alternatives were (a) keep Electron as the trusted core with a thin
+  extension — rejected because the primary path would keep depending on a desktop installer,
+  native helper, and Native Messaging that the real-browser front door (#391) no longer needs;
+  (b) extension-only with no cloud — rejected because every user would rediscover every form
+  alone and AI mapping could not improve across users; (c) a hosted vault — rejected outright
+  by the local-first requirement. The chosen split keeps personal values local and moves only
+  non-personal form knowledge and typed outcomes to the cloud. **Reconsider** if MV3 lifecycle
+  limits make the Side Panel host unable to finish a single-site run, if a cloud-side incident
+  shows personal values entering schemas/telemetry/logs, or if schema poisoning is observed
+  despite §14.4 controls.
+- **Electron desktop app (current build)**: lighter desktop shells (Tauri, native Swift/AppKit, or a
   browser-extension-only surface) were considered but not selected for the MVP because the
   trusted main process needs to own Vault v2, policy, workflow, typed IPC, Evidence, and
   provider SDK integration in one inspectable Node/TypeScript runtime. Reconsider if the
@@ -190,7 +260,9 @@ known alternatives and concrete triggers for reconsideration:
   release infrastructure that is not yet required. Reconsider when distribution moves beyond
   invited beta users, when manual upgrade friction blocks validation, or when Developer ID
   signing/notarization credentials become available for a release issue.
-- **AI-driven Visibility collection may read raw personal values (Issue #514)**: this reverses
+- **AI-driven Visibility collection may read raw personal values (Issue #514; current build
+  only — superseded in the target by §14.2's Tier 3, which requires per-fallback consent and
+  never sends site passwords or CVV)**: this reverses
   the prior "agent layer never sees raw values" invariant, but only for Visibility collection.
   Alternatives considered: (a) keep collection structure-only and improve deterministic
   discovery's page/field coverage instead (rejected — Issue #381's own field trial showed
@@ -217,6 +289,10 @@ known alternatives and concrete triggers for reconsideration:
   `security.md` §5.
 
 ### 2.2 Extension-primary migration and implementation split
+
+> Items 3–4 and 9 (Electron acceptance UX, native helper packaging, Node 24 for the DMG) are
+> superseded by §2.3 once the extension hosts the runtime; items 1, 2, 5, 8, and 10 still apply
+> to the extension path.
 
 The migration is fail-closed and dependency ordered. “Default” changes only after the
 extension capability proof passes; production Playwright removal happens only after the
@@ -255,6 +331,25 @@ recorded extension reachability, #381 invariant parity, wall hand-off/resume, di
    permission revocation, cross-origin SSO hand-off/return, helper cleanup, and package/install
    Evidence.
 
+### 2.3 Extension + Soroeru Cloud migration (Issue #554)
+
+Each item is its own Issue; dependencies are in the design doc §12. P0 is the hackathon
+critical path; Electron files may remain in the repository, but the primary demo path must not
+depend on them.
+
+- **P0**: browser-neutral crypto and `VaultPersistence`; IndexedDB persistence and Side Panel
+  vault session; Side Panel runtime host and extension-internal message contract (Native
+  Messaging off the primary path); shared cloud contract and Cloud Run base; Firestore Form
+  Schema Registry and Tier 1; Tier 2 structure-only Gemini; Tier 3 consent gate and dedicated
+  endpoint; typed outcome telemetry and BigQuery; egress/privacy static checks for the
+  `soroeru-cloud` class; Tier 1 → 2 → 3 E2E and manual checks.
+- **P1**: schema lifecycle and validation aggregation; offline behavior and idempotent cloud
+  writes; telemetry / cloud-assistance controls before production release.
+- **P2**: port remaining Electron surfaces to the Side Panel, then remove Electron/native-host
+  packaging, the `nativeMessaging` permission, Electron IPC contracts, the native bridge, and
+  production Playwright (Playwright Test stays development-only); user-selected encrypted
+  storage or a robust encrypted export/import workflow.
+
 ## 3. Domain Model And Persistence Mapping
 
 ### 3.1 Entities and encrypted payload kinds
@@ -281,6 +376,8 @@ key (PBKDF2-HMAC-SHA-512 as the Web-Crypto-only fallback), keyed by `entityKind`
 | Local definition | `localDefinition` | Encrypted local candidate site/field definitions (§7). |
 | Site Collection Map | `siteCollectionMap` | Versioned per-site pages, typed item locators, fingerprints, provenance, and generation status (§5.2). A separate entity kind from the Slices B–D `localDefinition` shape. |
 | Diagnostic | `diagnostic` | Support-bundle diagnostics, redacted. |
+| Form Schema cache *(target, #554)* | `formSchemaCache` | Cached shared Form Schemas for offline Tier 1. Encrypted because the set of cached sites reveals which services the user uses. |
+| Cloud client settings *(target, #554)* | `cloudSettings` | Telemetry / cloud-assistance toggles, the pseudonymous `validatorKey` (§14.4), and the pending-feedback retry queue. |
 
 Vault v2 file layout:
 
@@ -365,8 +462,9 @@ renderer.
 
 ### 3.5 Local diagnostics and support bundles
 
-Soroeru has no telemetry, analytics, or crash-reporting service, so failure investigation
-is local and user-controlled. The durable diagnostic model is the encrypted `diagnostic`
+Soroeru has no analytics or crash-reporting service, and its only telemetry is the typed,
+value-free outcome telemetry for form resolution (§14.5), which carries no diagnostics.
+Failure investigation is therefore local and user-controlled. The durable diagnostic model is the encrypted `diagnostic`
 entity (§3.1), not a remote event stream and not a plaintext shadow copy of the vault.
 Diagnostics may record app version, OS/runtime versions, component names, operation ids,
 state transitions, error categories, wall hand-off categories, counts, timestamps, and
@@ -394,6 +492,12 @@ uploaded automatically. The detailed security policy and release checklist are o
 [`security.md`](security.md) §12.2 and §13.
 
 ## 4. IPC And Trust Boundary
+
+> This section describes the current Electron build. In the target, the Side Panel is the
+> trusted host and talks to the service worker over typed `chrome.runtime` ports that reuse
+> the closed-schema validation in `src/shared/chrome-bridge.ts`; the worker checks lease,
+> epoch, tab, and origin on every command (design doc §4.2). Electron IPC contracts are
+> removed in §2.3 P2.
 
 The renderer and main process share exactly one typed contract:
 `electron/ipc/contract.ts`. It declares:
@@ -478,6 +582,13 @@ uses a feature-flagged numeric-tab extension bridge until §2.2's cutover gates 
    not-fully-checked findings without turning them into pressure to approve blindly.
 
 ### 5.2 Collection strategy
+
+> **Target (Issue #554).** In the extension, collection resolves each page through §14.2's
+> tiers: shared Form Schema → structure-only Gemini mapping → consent-gated Gemini read, with
+> values always read locally in Tiers 1–2 and corroborated locally in Tier 3. Same-site
+> navigation, budgets, read-only destination rules, wall hand-off, corroboration-before-write,
+> and the `SiteCollectionMap` value-free coordinate rules below carry over unchanged. The
+> Issue #514 raw-page-to-provider policy below describes the current Electron build only.
 
 **Policy (Issue #514, supersedes the earlier "deterministic-first, AI optional/structure-only"
 design):** once the user has an AI provider configured, **AI-driven page exploration and value
@@ -761,7 +872,10 @@ compiles, that field-rule profile keys are known/custom, and — per
 (email, card-number-like, or phone-number-like). Candidates are stored in the encrypted
 vault (`localDefinition`, §3.1) alongside profile data, site records, and mandates.
 
-The sanitized opt-in submission and official-promotion steps remain future and opt-in.
+The sanitized opt-in submission and official-promotion steps remain future and opt-in for
+these Slices B–D local candidates. In the target, the shared official tier becomes the Soroeru
+Cloud Form Schema Registry (§14.4): checked-in official definitions are imported as `active`
+seeds, and Tier 2 mappings become shared `candidate` schemas only through value-free feedback.
 
 ## 8. Slices B-D: Bulk Update, Withdrawal, New Registration (design direction)
 
@@ -823,12 +937,16 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 
 | Requirement | Architecture decision |
 | --- | --- |
-| Local encrypted vault | Vault v2 encrypted records (§3); no hosted service. |
+| Local encrypted vault | Vault v2 encrypted records (§3); no hosted personal-data service. Target: IndexedDB ciphertext behind `VaultPersistence`, key as a non-extractable `CryptoKey` in the Side Panel. |
+| Personal values stay local by default (#554) | Tier 1 / Tier 2 send only sanitized structure, fingerprints, and site identity; values are read/filled by the content script and written by the Side Panel (§14.2). |
+| Consent-gated Gemini read (#554) | Tier 3 only, read-only, per-fallback consent in the Side Panel, secrets masked locally, ≤16 KiB region, separate `soroeru-pii-fallback` service with body-free logging, local corroboration before write (§14.2–§14.3). |
+| Telemetry without personal data (#554) | Single `TelemetryBuilder` that accepts only enums/numbers/known IDs; same validator on Cloud Run; fixed BigQuery schema; no client id/IP/URL path (§14.5). |
+| Shared schemas cannot be poisoned by one observation (#554) | Candidate lifecycle with distinct-validator thresholds; value-free anchor rules; personal-value-like string rejection; schemas grant no authority (§14.4). |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
 | CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), fill requires a dedicated accessor. Issue #516 adds encrypted site-collected CVV Disclosure storage only for explicit `collectionTier: "ai-driven"`; omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. Issue #517 implements the exploration loop and local corroboration that produce this tier; production authorization UI gates (L0/L1) remain pending (§5.2, `#519`). |
 | Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. |
-| Egress limited | Architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
+| Egress limited | Target adds the `soroeru-cloud` egress class (Cloud Run endpoints only; Google Cloud SDKs only inside `cloud/`) and drops `ai-provider` from the extension once §2.3 completes. Current architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
 | Local diagnosability without telemetry | Encrypted `diagnostic` records plus sanitized rotating operational logs and user-initiated support-bundle export (§3.5); no automatic upload. |
 | No active-control bypass | Wall detection (§6) is separate from classification; detected walls stop or hand off. |
@@ -837,6 +955,10 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | No raw browser profile at rest | The browser owns its profile/session; the tab lease is memory-only and Soroeru never exports cookies, local storage, history, profile bytes, or `storageState` (§2). |
 
 ## 11. Field Detection And Measurement
+
+> Target (#554): shared outcome telemetry (§14.5) adds cross-user success / failure /
+> hand-off rates per schema version; the local fixture measurement below remains the
+> pre-merge check, and neither ever records values.
 
 Soroeru keeps the deterministic-vs-AI comparison because it directly protects agency:
 wrong mapping makes the user choose over false information.
@@ -1062,3 +1184,101 @@ the choice if evaluation cannot meet the risk-recall/adoption gates, if API cont
 retention terms change, or if process isolation needs an OS sandbox. The provider does
 not have an assumed zero-retention guarantee: see the dated terms review in
 [development.md](development.md#jev-triage-provider-terms-and-activation).
+
+## 14. Soroeru Cloud: Shared Form Intelligence (Issue #554)
+
+Requirements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-030. Security policy:
+[`security.md`](security.md) §15. Detailed design, typed contracts, and test plan:
+[`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md).
+
+### 14.1 Responsibilities
+
+| Component | Owns | Never holds |
+| --- | --- | --- |
+| Side Panel (trusted host) | Vault session and key, `DomainService`, Policy/Delegation, orchestration, consent gates, cloud client, sanitizers, telemetry builder | — |
+| Service worker | Tab lease, script injection, event relay | Key, decrypted records, personal values |
+| Content script | DOM scan/read/fill/click/navigate on the one leased tab, wall signals | Vault access, network access |
+| `soroeru-api` (Cloud Run) | Schema resolve/feedback, Tier 2 mapping, telemetry ingest, payload validation, rate limits | Personal values, request bodies in logs |
+| `soroeru-pii-fallback` (Cloud Run) | Tier 3 Gemini read only | Firestore/BigQuery permissions, body logging, any persistence |
+| Firestore / BigQuery | Form Schemas and feedback / fixed-schema outcome rows | Personal values, client identifiers in BigQuery |
+
+Google Cloud credentials never ship in the extension; anything embedded in the extension is
+public, so Cloud Run treats callers as anonymous and enforces per-IP rate limits (IP kept in
+memory only), payload size limits, and a daily Gemini budget.
+
+### 14.2 Resolution tiers
+
+1. **Tier 1 — shared schema.** The content script computes the §5.2 structural fingerprint;
+   the Side Panel `POST`s `{site (eTLD+1), pageFingerprint}` to `/v1/schemas/resolve` (POST so
+   the site is not logged as a query string). An `active` schema is validated per field
+   against the live page (each anchor resolves to exactly one element; the local classifier
+   does not contradict the attribute key). Valid fields are read/filled locally; invalid ones
+   alone fall to Tier 2.
+2. **Tier 2 — structure-only Gemini.** `StructureSanitizer` builds a snapshot of opaque item
+   IDs, tags, types, `autocomplete`, name/id tokens, pattern-redacted labels/headings (≤64
+   chars), and value *shape* only (length, character class) — never values, checked/selected
+   state, or display-value text. `/v1/agent/map-structure` returns a closed-schema mapping
+   `{itemId, attributeKey, confidence}`; unknown IDs/keys, URLs, selectors, and free-form
+   instructions are rejected; accepted proposals pass the same local validation as Tier 1.
+3. **Tier 3 — consent-gated read.** Read operations only; started only when a required
+   attribute remains unresolved and no wall is detected. The Side Panel stops and shows the
+   consent gate (requirements §8). On approval, `Tier3PayloadBuilder` sends only the subtree
+   region for the unresolved attributes (≤16 KiB, else hand-off), with every secret element
+   (`type=password`, `autocomplete` of `current-password` / `new-password` / `one-time-code` /
+   `cc-csc`, or locally classified secret) replaced by `[SECRET]`, to
+   `/v1/agent/read-with-consent`. Secrets displayed as plain text are also masked by nearby-label
+   and value-shape rules, erring toward masking. Returned values pass §5.2's corroboration rules
+   against the sent item text, are limited to the requested keys, and are written only to the
+   vault. A failed approved request is not retried without new consent; the attributes stay
+   `unknown` and the user is offered a hand-off.
+
+Writes (Slices B–D) use Tiers 1–2 for mapping only and always pass the review-and-confirm
+gate; Tier 3 never fills, submits, or accepts terms.
+
+### 14.3 Interruption and offline behavior
+
+Walls, a pending consent gate, Side Panel close, browser restart, and vault lock stop the run
+and store an encrypted `workflowCheckpoint` (stage, tier, unresolved attribute keys only).
+Resume requires unlock, tab rebind, and URL/scope/wall revalidation; a Tier 3 approval is never
+carried across a resume. With Soroeru Cloud unreachable or disabled, Tier 1 uses the encrypted
+`formSchemaCache`, Tiers 2–3 are unavailable, and unresolved fields become `unknown` or a
+hand-off. Feedback and telemetry writes carry an idempotency key, queue encrypted, and retry
+with exponential backoff up to three times before being dropped.
+
+### 14.4 Form Schema Registry and lifecycle
+
+A Form Schema record holds: site, form key, monotonic version, page fingerprints, field
+anchors (only §5.2's positional selectors or scanner IDs) with attribute keys, confidence,
+validation/failure counts, distinct validator count, status (`candidate` | `active` |
+`retired`), provenance (`official` | `gemini_structure` | `feedback`), and timestamps. Every
+string is checked for personal-value-like content (§7.1's candidate validation rules) and
+rejected on match.
+
+```text
+(none) --Tier 2 success feedback--> candidate
+candidate --≥3 distinct validators, ≥90% success over last 10, <3 failures--> active
+candidate --30 days below threshold or failure rate exceeded--> retired
+active --failure rate exceeded or newer version active--> retired
+official seed (maintainer-reviewed) --import--> active
+```
+
+Thresholds are configuration with these defaults; the success rate is judged over the most
+recent 5–10 validations, so at least 5 validations are required. Distinct validators are
+counted per site: the client sends `siteValidatorToken = HMAC(validatorKey, site)`, where
+`validatorKey` is a per-install random key stored encrypted in the vault, never sent, and
+user-regenerable; the server stores only an HMAC (server secret) of that token, so one
+installation's feedback cannot be linked across sites. It never enters BigQuery. Only Tier 1/Tier 2 outcomes are fed back; Tier 3
+outcomes never are. Because Sybil validators cannot be fully excluded, schemas grant no
+authority: they are revalidated on every use and fills stay behind the confirmation gate.
+
+### 14.5 Outcome telemetry
+
+`OutcomeEvent` fields are fixed: `siteId`, `formId`, `schemaVersion`, `operationType`,
+`resolutionTier` (`shared_schema` | `gemini_structure` | `gemini_pii_consent` | `local_only`),
+`result` (`success` | `failure` | `handoff` | `declined`), `errorCategory` (closed enum),
+`mappingConfidenceBucket`, `clientVersion`, `schemaFingerprint` (the §5.2 structural page
+fingerprint the schema was matched against — the same value as `pageFingerprint`), and
+hour-truncated `occurredAt`. Only `TelemetryBuilder` constructs events, from enums/numbers/known IDs; Cloud
+Run revalidates with the shared validator from `src/shared/cloud-contract.ts` and rejects
+unknown keys; the BigQuery table has no free-text column. A user-facing off switch is required
+before production release (REQ-027).

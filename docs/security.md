@@ -11,18 +11,21 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 
 - Keep all personal data local and **encrypted at rest**; the user owns it.
 - Network egress is limited to **(a) the target sites the user asks the agent to act on**
-  (the agent navigates, fills, and submits there), **(b) the user's configured AI
-  provider** (form structure / terms text only for every AI use except Visibility collection,
-  which sends raw personal values by design — Issue #514, §5), and **(c) the
-  Digital Agency's デジタル認証アプリ service via Soroeru's identity-auth BFF**, for My Number
-  (JPKI) verification only (see §14). Future user-owned cloud-storage sync may write only
-  encrypted vault bytes to a user-selected location. No telemetry, analytics, crash reporting,
-  or any other destination.
-- **Minimize disclosure to the AI model**: send form structure / terms text, not raw
-  personal values — except Visibility collection (Issue #514, §5), which is the one AI use
-  allowed to send raw personal values, including full card numbers, CVV, and site passwords, in
-  order to explore pages and extract disclosure values. Do not use provider stateful features
-  (prompt caching of PII, stored threads, memory) for any AI use, including this one.
+  (the agent navigates, fills, and submits there), **(b) Soroeru Cloud** (Cloud Run, which in
+  turn reaches Firestore, BigQuery, and Gemini on Vertex AI) under the data-class matrix in
+  §15 — target, Issue #554, **(c) the Digital Agency's デジタル認証アプリ service via
+  Soroeru's identity-auth BFF**, for My Number (JPKI) verification only (see §14), and, in the
+  current Electron build only, **(d) the user's configured AI provider** (form structure /
+  terms text only for every AI use except Visibility collection, which sends raw personal
+  values by design — Issue #514, §5). Future user-owned cloud-storage sync may write only
+  encrypted vault bytes to a user-selected location. No analytics, crash reporting, telemetry
+  containing personal data, or any other destination.
+- **Minimize disclosure to the AI model**: in the target, Gemini receives form structure only
+  (Tier 2); personal values reach it only through the consent-gated Tier 3 read, and secrets
+  (site passwords, CVV, OTP, tokens, keys) never do (§15). In the current Electron build,
+  Visibility collection (Issue #514, §5) is the one AI use allowed to send raw personal values,
+  including full card numbers, CVV, and site passwords. Do not use provider stateful features
+  (prompt caching of PII, stored threads, memory, request/response logging) for any AI use.
 - **Never bypass** CAPTCHA, MFA, bot detection, access controls, rate limits, or
   paywalls. Detect and hand off to the user.
 - Submit a registration only after the user approves the review-and-confirm gate; apply
@@ -50,6 +53,12 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | MCP server overexposes local authority | External AI agents could inspect or act on sensitive account state beyond the user's intent. | Keep MCP disabled by default, local-only, permissioned, logged, and limited to summaries/planning/task creation; never expose raw values or bypass approval gates. |
 | DOM-based injection / unsafe rendering | Page-provided text affects the UI or is mis-mapped. | Treat page text as untrusted; render as text; validate before use. |
 | Real data committed in fixtures / logs | Sensitive data enters repository history. | Fake data only; keep local state Git-ignored. |
+| Personal values leak into shared schemas or telemetry (#554) | Cloud data that every user shares, or that operators query, contains another user's values. | Structural allowlists, not redaction: `StructureSanitizer` and `TelemetryBuilder` accept only typed structure/enums; the same validators run on Cloud Run; schema strings are rejected on personal-value-like matches; BigQuery has no free-text column (§15.3). |
+| Tier 3 content captured by cloud logs/traces (#554) | Consented page content persists in Cloud Logging, Trace, or Vertex AI logs beyond the single request. | Separate `soroeru-pii-fallback` service; handlers log only error codes; no body capture in tracing; Vertex AI request/response logging and context caching not enabled; its service account has no Firestore/BigQuery access (§15.4). |
+| Malicious page content / prompt injection (#554) | Page text steers Gemini to invent mappings, read other fields, or return fabricated values. | Gemini has no browser/vault tool; outputs are closed schemas referencing only supplied item IDs and requested keys; mappings are validated locally; Tier 3 values must corroborate against the sent item text; navigation/fill authority stays local and gated. |
+| Schema poisoning (#554) | An attacker submits feedback so a wrong mapping becomes active for everyone. | Candidate lifecycle with distinct-validator and success-rate thresholds; single observations never activate; schemas carry no authority and are revalidated per use; fills stay behind the confirmation gate (§15.5). |
+| Site membership inferred from cloud requests (#554) | Soroeru Cloud learns which services a client uses. | No client identifier on resolve or telemetry; schema feedback carries only a per-site token that cannot link sites (C7); site sent in POST bodies (not URL queries); IPs used only in memory for rate limiting; telemetry time truncated to the hour; local schema cache encrypted. |
+| Public API abuse / cost exhaustion (#554) | Anyone can call the endpoints; Gemini spend or Firestore writes are abused. | Per-IP rate limits, payload size caps, daily Gemini budget with alerting, closed schemas; no credentials in the extension. |
 
 ## 3. Sensitive Data Handling
 
@@ -270,6 +279,12 @@ all data unless the user set up a recovery key beforehand.
 
 ## 5. AI Provider Disclosure Policy
 
+> **Target (Issue #554).** In the Chrome-extension target, the only AI is Gemini reached
+> through Soroeru Cloud, and its disclosure policy is §15: structure-only (Tier 2) by default;
+> personal values only through the per-fallback consent-gated read (Tier 3); secrets never.
+> The rest of this section is the policy of the current Electron build and its
+> user-configured providers, retained until the §2.3 migration in `architecture.md` retires it.
+
 **Default rule, every AI use except Visibility collection:** send the model **form structure
 and terms text**, not raw personal values. The model returns a mapping plan / high-risk
 findings; the automation layer fills values locally.
@@ -333,9 +348,10 @@ Allowed external destinations are limited to: (a) the **target sites** the user 
 agent to register, update, or withdraw from (normal browser navigation and form
 submission), (b) the user's **configured AI provider** (form structure / terms text only for
 every AI use except Visibility collection, which sends raw personal values by design — Issue
-#514, §5), and (c) future user-owned storage locations that receive only encrypted vault bytes
-after an explicit design/implementation issue. No telemetry, analytics, crash reporting, hosted
-vault, or remote classification to any other service. Outside the Visibility collection
+#514, §5 — current Electron build only), (c) **Soroeru Cloud** under §15 (target, Issue
+#554), and (d) future user-owned storage locations that receive only encrypted vault bytes
+after an explicit design/implementation issue. No analytics, crash reporting, hosted personal-data
+vault, telemetry containing personal data, or remote classification to any other service. Outside the Visibility collection
 exception, the user's decrypted data store is never uploaded anywhere; within it, only what the
 AI-driven collection pass reads live from a page in order to build the Disclosure ledger is
 sent, never a bulk export of the vault itself. Adding any other destination requires an explicit
@@ -353,7 +369,9 @@ shadow state.
 `{src,run}/**/*.ts` for network-call sites and fails unless each one
 carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
 `package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
-Segment, Datadog, etc.). `sites/` (the local 127.0.0.1-only PoC
+Segment, Datadog, etc.). Issue #554 adds a `// egress: soroeru-cloud` class for the extension's
+Cloud Run client, extends the scan to `extension/` and `cloud/`, and allows Google Cloud SDKs
+only in `cloud/package.json`; the third-party telemetry denylist is unchanged. `sites/` (the local 127.0.0.1-only PoC
 test-site server) is out of scope — it is not external egress. A new, unannotated
 network destination — or a telemetry-shaped dependency — fails this check and must be
 reviewed against this section before it is annotated.
@@ -452,9 +470,12 @@ regarding automated read and update should be reviewed (see [`requirements.md`](
 
 ### 8.2 GDPR and Privacy Compliance Notes
 
-`Soroeru`'s local-first, no-hosted-vault, no-telemetry design aligns with core GDPR
-principles: data minimization, user ownership, and no third-party processing. However,
-formal GDPR compliance requires additional investigation:
+`Soroeru`'s local-first, no-hosted-vault design aligns with core GDPR principles: data
+minimization and user ownership. Issue #554 adds processing that needs its own review:
+value-free outcome telemetry (whether hour-truncated, identifier-free rows are personal data in
+combination with request metadata) and the consent-gated Tier 3 read, where Soroeru and Google
+process personal data on the user's explicit, per-request consent. Formal GDPR / APPI
+compliance requires additional investigation:
 
 - **Right to be Forgotten**: the local vault can be deleted, but a mechanism to confirm
   complete deletion (including backups and any exported data) should be documented.
@@ -481,6 +502,11 @@ medical, financial, employment, political, religious, or adult service. Therefor
 - strip user identifiers, raw values, account state, cookies, tokens, and screenshots
   before submission;
 - promote candidates to official shared definitions only after review and tests.
+
+In the Issue #554 target, sharing happens through Soroeru Cloud Form Schema feedback (§15.5):
+only value-free mappings from Tier 1/Tier 2 runs are sent, with only a per-site pseudonymous
+validator token (C7, §15.1) that cannot link one installation across sites, and the
+user's local candidates and schema cache stay encrypted in the vault.
 
 **Implementation (#80):** `validateCandidateDefinition` (`src/agent/definitions.ts`) runs
 a heuristic scan over every free-text/pattern string in a candidate for email-like,
@@ -900,3 +926,106 @@ on the user's smartphone, with QR cross-device linking from the desktop.
   remains deferred (Issue #218).
 - For regulated industries, Soroeru-mediated verification is **not** a recognized 犯収法 eKYC
   method; any future site-side claim must be designed to the applicable standard separately.
+
+## 15. Soroeru Cloud, Gemini Consent Boundary, And Telemetry (Issue #554)
+
+Requirement-level statements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-030.
+Architecture: [`architecture.md`](architecture.md) §14. Detailed design:
+[`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md).
+This section applies to the Chrome-extension target; the current Electron build keeps §5.
+
+### 15.1 Data classification
+
+| Class | Examples |
+| --- | --- |
+| C0 Secret | Site passwords, vault passphrase, master key, recovery key, OTP/MFA codes, cookies and session tokens, CVV (canonical or site-displayed), card PIN, My Number, API keys |
+| C1 Personal value | Name, address, phone, email, date of birth, card number/expiry/holder, site account IDs |
+| C2 Page content that may contain personal values | DOM text, field values, display values |
+| C3 Structure | Tags, input types, `autocomplete`, name/id tokens, pattern-redacted labels, structural fingerprints |
+| C4 Form Schema | Field anchor → canonical attribute key mappings, versions |
+| C5 Outcome metadata | Result, error category, confidence bucket, tier |
+| C6 Consent event | Tier 3 gate outcome (approved / declined / closed / timed out / failed), site hash, attribute keys, payload size/hash |
+| C7 Per-site validator token | `HMAC(validatorKey, site)` sent with schema feedback; the per-install `validatorKey` itself never leaves the vault |
+
+### 15.2 Egress matrix
+
+| Class | Local vault | Shared schema (Firestore) | Telemetry (BigQuery) | Gemini | Cloud logs / traces |
+| --- | --- | --- | --- | --- | --- |
+| C0 | Encrypted (My Number, card PIN never stored) | Never | Never | **Never, even with consent** | Never |
+| C1 | Encrypted | Never | Never | Tier 3 after per-fallback consent only | Never |
+| C2 | Transient in memory only | Never | Never | Tier 3 after per-fallback consent only, C0 masked | Never |
+| C3 | Yes | Yes | Fingerprint hash only | Yes (Tier 2) | Never as content; counts only |
+| C4 | Encrypted cache | Yes | Schema id/version | Yes | IDs only |
+| C5 | Optional encrypted audit | No | Yes, typed allowlist | No | Error codes only |
+| C6 | Encrypted Evidence | No | Aggregate count only, if ever needed | No | No |
+| C7 | Source key encrypted | Server-side HMAC of the token only | Never | No | Never |
+
+Enforcement is structural: the client only has builders whose inputs are typed C3–C5 values,
+and the server re-runs the same validators from `src/shared/cloud-contract.ts`. Developers do
+not "remember to redact" arbitrary objects; there is no API that accepts one.
+
+### 15.3 Telemetry allowlist
+
+Allowed fields: `siteId` (eTLD+1), `formId`, `schemaVersion`, `operationType`,
+`resolutionTier`, `result`, `errorCategory` (closed enum), `mappingConfidenceBucket`,
+`clientVersion`, `schemaFingerprint`, `occurredAt` (truncated to the hour). Anything else is
+rejected client-side and server-side; the BigQuery table has exactly these columns. No client
+identifier, IP address, URL path/query, label, value, DOM, page content, or free-text message.
+A user-visible control to disable telemetry (and cloud assistance) is required before
+production release; the production default is a Product Owner decision recorded before
+release.
+
+### 15.4 Gemini consent boundary and logging prohibition
+
+- Tier 2 (`/v1/agent/map-structure`) accepts only the C3 structure snapshot.
+- Tier 3 (`/v1/agent/read-with-consent`) is a **separate Cloud Run service** with its own
+  service account that can call Vertex AI and nothing else (no Firestore, no BigQuery).
+- Tier 3 is read-only, starts only after Tiers 1–2 leave a required attribute unresolved and
+  no wall is present, and requires an explicit, unpre-selected, per-fallback consent in the
+  Side Panel. Decline, close, or timeout (default 5 minutes) sends nothing. Consent is never
+  stored as a standing grant, cannot be expanded at L1, and does not survive a resume.
+- The client masks every C0 element as `[SECRET]` before building the payload, limits the
+  payload to the region for the unresolved attributes (≤16 KiB; larger regions hand off
+  instead), and lists the requested attribute keys shown at the gate.
+- Request and response bodies and extracted values are never written to application logs,
+  Cloud Trace spans, error reports, Firestore, BigQuery, or analytics. The fallback service's
+  logs and traces also omit the site name; the handler logs only an error code and latency.
+  (Outcome telemetry for a Tier 3 run still carries the §15.3 `siteId`, like every other row.)
+- An approved request that fails is not retried without new consent; the attributes stay
+  `unknown`, the user is offered a hand-off, and the failure is recorded as C6.
+- Secrets shown as plain text (not identifiable from element attributes) are masked by
+  nearby-label and value-shape rules, erring toward masking. Vertex AI request/response logging and context
+  caching are not enabled for either tier.
+- Returned values are accepted only for requested keys and only when they corroborate against
+  the sent item text (same normalization limits as §3's Issue #517 rules); otherwise they
+  become `unknown`. Accepted values go only to the local vault.
+- Consent to Gemini processing is not consent to retain data for improvement: Tier 3 outcomes
+  never feed schema learning, and telemetry for Tier 3 carries only the C5 fields.
+- Each gate outcome is recorded locally as encrypted Evidence (time, site hash, attribute keys,
+  outcome, payload byte length and hash) without duplicating the disclosed values.
+
+### 15.5 Schema poisoning and promotion controls
+
+- Schema records accept only value-free anchors (`architecture.md` §5.2 positional selectors or
+  scanner IDs) and are rejected if any string matches personal-value-like patterns (§9).
+- A schema becomes `active` only after the `architecture.md` §14.4 thresholds (default: ≥3
+  distinct validators, ≥90% success over the last 10 validations, <3 failures); one observation
+  never activates a schema. Failures after a site change retire it.
+- Distinct validators are counted per site from the C7 token (`HMAC(validatorKey, site)`),
+  stored only as a server-side HMAC; the per-install key never leaves the vault, the token
+  cannot link one installation across sites, and neither enters BigQuery.
+- Schemas grant no authority: the client revalidates every field against the live page, and
+  writes stay behind the review-and-confirm gate, so a poisoned mapping can at worst produce an
+  `unknown` or a reviewable wrong proposal, never an unreviewed submission.
+- Before production release, decide whether sites in §8.1's sensitive categories require
+  maintainer review before activation.
+
+### 15.6 Release checklist additions
+
+- [ ] No Google Cloud credential, API key, or service-account material in the extension bundle.
+- [ ] Tier 3 service logs and traces contain no request/response bodies (manual check of Cloud
+  Logging and Trace after a demo run with fake data).
+- [ ] BigQuery table schema equals §15.3 exactly.
+- [ ] Unit tests prove C0/C1 fake values cannot pass `StructureSanitizer`, `TelemetryBuilder`,
+  schema feedback, or the Tier 3 builder's secret masking.
+- [ ] Declining Tier 3 consent results in zero calls to the fallback endpoint.

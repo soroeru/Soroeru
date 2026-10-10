@@ -29,12 +29,14 @@ report residual risk honestly.
   deletion of Soroeru-held data.
 - Surface automation-prohibiting terms as a Constraint for the user to decide; never silently
   proceed and never circumvent an actively enforced control.
-- Keep personal data local and encrypted. Never add telemetry, a hosted vault, or another
-  non-approved egress path. Never log decrypted values. Visibility collection (Issue #514) is the
-  one AI use allowed to send raw personal values — including full card numbers, CVV, and site
-  passwords — to the user's configured AI provider, for exploring pages and extracting disclosure
-  values into the ledger. Every other AI use (terms analysis, registration field mapping, etc.)
-  stays structure-only; never send those raw values to a model.
+- Keep personal data local and encrypted. Never add a hosted vault, telemetry containing
+  personal data, or another non-approved egress path. Never log decrypted values. Target
+  (Issue #554): Soroeru Cloud receives only structure, value-free Form Schemas, and typed
+  allowlisted outcome telemetry; Gemini receives structure only, except the per-fallback
+  consent-gated read, and never secrets (passwords, CVV, OTP, tokens, keys). Never write Tier 3
+  request/response content to cloud schemas, telemetry, logs, or traces. Current Electron build
+  only: Visibility collection (Issue #514) may send raw page values to the user's configured AI
+  provider; every other AI use stays structure-only.
 - Never store the 12-digit My Number or the card PIN. A CVV collected from a site during
   Visibility collection may be stored (Issue #514); a user-entered canonical CVV used for fill
   remains most-sensitive per `docs/security.md`. Follow `docs/security.md` for identity,
@@ -43,14 +45,14 @@ report residual risk honestly.
 
 ## Architecture constraints
 
-- Follow `docs/architecture.md`: Electron, TypeScript/Node.js, React/Vite, a Soroeru Chrome
-  extension plus Native Messaging behind the browser-neutral `PageDriver` seam, and an encrypted
-  versioned local vault. Playwright is development-only after the staged cutover.
-- Deterministic mode is the default usable experience for users without AI configured. For
-  Visibility collection, AI-driven page exploration and value extraction is the primary path once
-  AI is configured (Issue #514); it may receive raw personal values for that purpose. Every other
-  AI use (terms analysis, registration field mapping, etc.) still receives sanitized structure
-  only, never raw values.
+- Follow `docs/architecture.md`: the target is a Chrome MV3 extension (Side Panel runtime host,
+  service-worker router, content script) with an encrypted versioned local vault, plus Soroeru
+  Cloud (Cloud Run, Firestore, BigQuery, Gemini on Vertex AI) for shared non-personal form
+  intelligence (Issue #554). The Electron + Native Messaging build is the migration source.
+  Playwright is development-only after the staged cutover.
+- Deterministic/local resolution must keep working offline or with cloud assistance off.
+  Resolution order is shared Form Schema → structure-only Gemini → consent-gated Gemini read;
+  values are read and written locally in the first two tiers.
 - Do not add frameworks, build tools, package managers, test runners, dependencies, backend
   services, AI providers, or cloud sync without explicit scope and the required Issue/RFC.
 - Keep storage, domain policy, definition/analysis, automation, and UI responsibilities separate.
