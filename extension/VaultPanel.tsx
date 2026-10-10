@@ -20,6 +20,10 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
   const [exportRecommended, setExportRecommended] = useState(session.exportRecommended);
   const [exportError, setExportError] = useState<string | undefined>();
+  // True from submitting setup until the recovery key is in state, so the
+  // unlocked view never renders before the one-time recovery key is shown.
+  const [creating, setCreating] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(
     () =>
@@ -39,9 +43,14 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
     async ({ kind, secret }) => {
       try {
         if (kind === "setup") {
-          const key = await session.create(secret);
-          setRecoveryKey(key);
-          setExportRecommended(session.exportRecommended);
+          setCreating(true);
+          try {
+            const key = await session.create(secret);
+            setRecoveryKey(key);
+            setExportRecommended(session.exportRecommended);
+          } finally {
+            setCreating(false);
+          }
         } else if (kind === "recovery") {
           await session.unlockWithRecoveryKey(secret);
         } else {
@@ -56,10 +65,14 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
   );
 
   const retry = useCallback(() => {
-    session.start().then(
-      () => setFatalError(undefined),
-      (err: unknown) => setFatalError(vaultErrorMessage(err)),
-    );
+    setRetrying(true);
+    session
+      .start()
+      .then(
+        () => setFatalError(undefined),
+        (err: unknown) => setFatalError(vaultErrorMessage(err)),
+      )
+      .finally(() => setRetrying(false));
   }, [session]);
 
   const downloadExport = useCallback(async () => {
@@ -73,6 +86,7 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
       anchor.download = `soroeru-vault-${new Date().toISOString().slice(0, 10)}.json`;
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
+      session.markExported();
     } catch (err) {
       setExportError(vaultErrorMessage(err));
     } finally {
@@ -81,6 +95,7 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
   }, [session]);
 
   const showRecoveryKey = state === "unlocked" && recoveryKey !== null;
+  const showUnlocked = state === "unlocked" && !showRecoveryKey && !creating;
 
   return (
     <main className="flex min-h-screen flex-col gap-4 p-4 text-sm">
@@ -114,7 +129,8 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
           <button
             type="button"
             onClick={retry}
-            className="self-start rounded border border-neutral-300 px-3 py-1"
+            disabled={retrying}
+            className="self-start rounded border border-neutral-300 px-3 py-1 disabled:opacity-50"
           >
             再試行
           </button>
@@ -145,7 +161,7 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
         </div>
       )}
 
-      {state === "unlocked" && !showRecoveryKey && (
+      {showUnlocked && (
         <div className="flex flex-col gap-3">
           {(exportRecommended || persistDenied) && (
             <p className="rounded bg-amber-100 p-2 text-xs text-amber-900">

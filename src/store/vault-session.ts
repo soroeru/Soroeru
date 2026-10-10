@@ -74,6 +74,7 @@ export class VaultSession {
   private vaultValue: VaultV2 | null = null;
   private lockHandle: VaultLockHandle | null = null;
   private savesSinceExport = 0;
+  private starting: Promise<VaultSessionState> | null = null;
   private exportDue = false;
   private readonly listeners = new Set<(state: VaultSessionState) => void>();
 
@@ -104,20 +105,43 @@ export class VaultSession {
    * `in-use-elsewhere` to retry. Unreadable stored data rejects (fail closed)
    * and leaves the session unusable rather than offering to create a new vault.
    */
-  async start(): Promise<VaultSessionState> {
+  start(): Promise<VaultSessionState> {
+    // Concurrent callers (e.g. a double-clicked retry) share one attempt, so a
+    // second tryAcquire can never overwrite and leak the held lock handle.
+    if (!this.starting) {
+      this.starting = this.runStart().finally(() => {
+        this.starting = null;
+      });
+    }
+    return this.starting;
+  }
+
+  private async runStart(): Promise<VaultSessionState> {
     if (this.stateValue !== "starting" && this.stateValue !== "in-use-elsewhere") {
       throw new VaultSessionStateError(this.stateValue, "start");
     }
     if (!this.lockHandle) {
-      this.lockHandle = await this.options.lockManager.tryAcquire();
-      if (!this.lockHandle) {
+      const handle = await this.options.lockManager.tryAcquire();
+      if (this.state === "closed") {
+        handle?.release();
+        throw new VaultSessionStateError("closed", "start");
+      }
+      if (!handle) {
         this.setState("in-use-elsewhere");
         return this.stateValue;
       }
+      this.lockHandle = handle;
     }
     const stored = await this.options.persistence.load();
+    this.requireStartable();
     this.setState(stored === null ? "absent" : "locked");
     return this.stateValue;
+  }
+
+  private requireStartable(): void {
+    if (this.stateValue !== "starting" && this.stateValue !== "in-use-elsewhere") {
+      throw new VaultSessionStateError(this.stateValue, "start");
+    }
   }
 
   /**
@@ -134,6 +158,9 @@ export class VaultSession {
       this.setState("locked");
       throw new VaultSessionStateError("locked", "create a vault");
     }
+    // Intentionally two KDF runs: open() derives the non-extractable session key,
+    // and setupRecoveryKey() derives a short-lived extractable copy to wrap
+    // (design #554 §6.2). Do not "optimize" this into one extractable key.
     const vault = await VaultV2.open(this.options.persistence, passphrase, this.options.kdfAlgo ?? "argon2id", {
       extractableKey: false,
     });
@@ -178,12 +205,19 @@ export class VaultSession {
     if (this.savesSinceExport >= EXPORT_REMINDER_SAVE_COUNT) this.exportDue = true;
   }
 
-  /** Encrypted export (same shape as the stored document) for the user to keep elsewhere. */
+  /**
+   * Encrypted export (same shape as the stored document) for the user to keep
+   * elsewhere. Call `markExported()` once the file has actually been handed to
+   * the user; until then the export reminder stays on.
+   */
   async exportEncrypted(): Promise<string> {
-    const exported = await this.vault.exportEncrypted();
+    return this.vault.exportEncrypted();
+  }
+
+  /** Record that an encrypted export reached the user (clears the export reminder). */
+  markExported(): void {
     this.exportDue = false;
     this.savesSinceExport = 0;
-    return exported;
   }
 
   /** Drop the key and decrypted records. The Web Lock stays held so this panel can unlock again. */

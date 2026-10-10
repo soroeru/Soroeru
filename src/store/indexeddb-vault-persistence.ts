@@ -111,8 +111,12 @@ export class IndexedDbVaultPersistence implements VaultPersistence {
         };
         request.onsuccess = () => {
           const db = request.result;
-          // Another context upgrading the schema must not hang on this connection.
-          db.onversionchange = () => db.close();
+          // Another context upgrading or deleting the database must not hang on
+          // this connection; drop it so the next call reopens lazily.
+          db.onversionchange = () => {
+            db.close();
+            if (this.db === opening) this.db = null;
+          };
           resolve(db);
         };
         request.onerror = () => reject(request.error ?? new Error("cannot open the vault database"));

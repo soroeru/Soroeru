@@ -162,12 +162,16 @@ class FakeIdbFactory {
   readonly data = new Map<string, Map<string, Map<string, unknown>>>();
   /** Fail the next readwrite commit with this error (the transaction aborts). */
   nextCommitFailure: DOMException | null = null;
+  /** Connections handed out, to simulate another context's version change. */
+  readonly connections: FakeDatabase[] = [];
   open(name: string): FakeRequest {
     const request = new FakeRequest();
     queueMicrotask(() => {
       const isNew = !this.data.has(name);
       if (isNew) this.data.set(name, new Map());
-      request.result = new FakeDatabase(this, name);
+      const db = new FakeDatabase(this, name);
+      this.connections.push(db);
+      request.result = db;
       if (isNew) request.onupgradeneeded?.({});
       request.onsuccess?.({});
     });
@@ -511,6 +515,8 @@ test("VaultSession: export is recommended after creation and again after many sa
   const exported = JSON.parse(await session.exportEncrypted()) as EncryptedVaultData;
   assert.equal(exported.vaultVersion, 2);
   assert.ok(exported.recovery, "the export carries the recovery wrap");
+  assert.equal(session.exportRecommended, true, "producing the export alone does not clear the reminder");
+  session.markExported();
   assert.equal(session.exportRecommended, false);
 
   for (let i = 1; i < EXPORT_REMINDER_SAVE_COUNT; i++) await session.save();
@@ -535,6 +541,48 @@ test("DomainService.saveCheckpoint stores resolution stage and a copy of unresol
   const stored = domain.getCheckpoint("visibility", "acct-1");
   assert.equal(stored?.resolutionStage, "tier2");
   assert.deepEqual(stored?.unresolvedAttributeKeys, ["phone.full"]);
+});
+
+test("VaultSession: concurrent start() calls share one lock attempt and close() releases it", async () => {
+  const factory = new FakeIdbFactory();
+  const locks = new FakeLockManager();
+  let attempts = 0;
+  const counting: VaultLockManager = {
+    tryAcquire: () => {
+      attempts++;
+      return locks.tryAcquire();
+    },
+  };
+  const session = newSession(factory, counting);
+  const [a, b] = await Promise.all([session.start(), session.start()]);
+  assert.equal(a, "absent");
+  assert.equal(b, "absent");
+  assert.equal(attempts, 1);
+  session.close();
+  assert.equal(locks.held, false, "the only handle was released");
+});
+
+test("VaultSession: closing while the Web Lock is being acquired releases it", async () => {
+  const locks = new FakeLockManager();
+  const session = newSession(new FakeIdbFactory(), locks);
+  const starting = session.start();
+  session.close();
+  await assert.rejects(starting, VaultSessionStateError);
+  assert.equal(locks.held, false);
+});
+
+test("IndexedDB: a version change from another context drops the connection and the next call reopens", async () => {
+  const factory = new FakeIdbFactory();
+  const persistence = idb(factory);
+  assert.equal(await persistence.load(), null);
+  const first = factory.connections[0];
+  assert.ok(first);
+  first.onversionchange?.({});
+  assert.equal(first.closed, true);
+  const vault = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
+  await vault.save();
+  assert.equal(factory.connections.length, 2, "reopened lazily");
+  assert.equal(typeof factory.stored(), "string");
 });
 
 // --- Web Lock adapter ---
