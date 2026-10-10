@@ -300,17 +300,6 @@ known alternatives and concrete triggers for reconsideration:
   masked before the provider call; the model may only classify a masked item by key, and the
   value is read locally. Storage of passwords and CVV is unchanged. General PII such as full
   card numbers stays in scope for this path.
-- **Password and CVV entry (2026-10-10, Issue #572)**: collection login keeps deterministic
-  local fill of the stored password, because Visibility must log in to many sites and a
-  per-login hand-off would make collection unattended-impossible. Every other password/CVV entry
-  (update, registration, the approved free-trial card entry) is a same-tab hand-off to Chrome's
-  own autofill or manual entry. Alternatives: (a) deterministic fill everywhere — rejected for
-  non-login forms, because those are rarer, user-attended steps where the browser's own
-  credential/payment stores can supply the value without Soroeru typing it; (b) programmatic
-  triggering of Chrome autofill — not possible from an extension and would automate the
-  browser's own user-presence check. Storage of passwords and CVV is unchanged. **Reconsider**
-  if Chrome exposes a user-approved credential API that keeps values out of Soroeru.
-
 ### 2.2 Extension-primary migration and implementation split
 
 > Items 3–4 and 9 (Electron acceptance UX, native helper packaging, Node 24 for the DMG) are
@@ -830,15 +819,6 @@ renderer then calls `resumeVisibility` (continue) or `abortVisibility` (stop; ne
 bypasses). Detection is conservative and never attempts to solve, bypass, outsource, or
 obscure a wall; see [`security.md`](security.md) §7.
 
-**Password / CVV entry hand-off (Issue #572).** Collection login is filled by the
-deterministic login code (`login-handler.ts`) from the stored credential, as today. Any other
-form step that needs a site password or CVV uses the wall's pause/resume shape: Soroeru fills
-only non-secret fields, focuses the password or CVV field, and emits a `handoff` asking the user
-to pick Chrome's password-manager or payment-method autofill suggestion, or to type the value.
-On resume it checks only that the field is non-empty, never its value, and may then submit
-within the approved scope; an empty field or abort ends as a hand-off without retry. The
-developer-only Playwright path has no Chrome autofill, so the hand-off asks for manual entry.
-
 Resume is valid only while the same live tab lease, site scope, permission, and execution epoch
 remain valid. Browser/extension/app restart, tab close, vault lock, permission removal,
 out-of-scope navigation, or bridge disconnect invalidates the lease. The encrypted workflow
@@ -999,8 +979,8 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Shared schemas cannot be poisoned by one observation (#554) | Candidate lifecycle with distinct-validator thresholds; value-free anchor rules; personal-value-like string rejection; schemas grant no authority (§14.4). |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
-| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), never sent to AI, and entered into forms only through the Chrome-autofill hand-off (§6, Issue #572). Issue #516 keeps encrypted site-collected CVV Disclosure storage for explicit `collectionTier: "ai-driven"`; after Issue #572 the model never sees the value (masked item, local read). Omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. |
-| Passwords/CVV never to AI | Password and CVV values are masked before every AI request in every build; collection login fills the stored password with deterministic local code; other password/CVV entry is a same-tab Chrome-autofill hand-off (§6, Issue #572). |
+| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), never sent to AI, decrypted only at fill time by deterministic local code. Issue #516 keeps encrypted site-collected CVV Disclosure storage for explicit `collectionTier: "ai-driven"`; after Issue #572 the model never sees the value (masked item, local read). Omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. |
+| Passwords/CVV never to AI | Password and CVV values are masked before every AI request in every build; forms are filled only by deterministic local code (Issue #572). |
 | Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. Secrets (site passwords, CVV, one-time codes) are removed or masked before every provider call in every build (Issue #572). |
 | Egress limited | Target adds the `soroeru-cloud` egress class (Cloud Run endpoints only; Google Cloud SDKs only inside `cloud/`) and drops `ai-provider` from the extension once §2.3 completes. Current architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
@@ -1250,7 +1230,7 @@ labels, reviews overrides, and records the Product Owner decision.
 
 ## 14. Soroeru Cloud: Shared Form Intelligence (Issue #554)
 
-Requirements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-031. Security policy:
+Requirements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-030. Security policy:
 [`security.md`](security.md) §15. Detailed design, typed contracts, and test plan:
 [`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md).
 

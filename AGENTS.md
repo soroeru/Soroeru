@@ -38,9 +38,8 @@ report residual risk honestly.
   only: Visibility collection (Issue #514) may send raw page values other than secrets to the
   user's configured AI provider; every other AI use stays structure-only. In every build, never
   send site passwords, CVV, or other secrets to any AI model.
-- Passwords and CVV stay stored in the local encrypted vault. Collection login fills the stored
-  password with deterministic local code; every other password/CVV entry is a same-tab
-  Chrome-autofill (or manual) hand-off; never trigger autofill programmatically (Issue #572).
+- Passwords and CVV stay stored in the local encrypted vault and are filled into forms only by
+  deterministic local code (Issue #572).
 - Never store the 12-digit My Number or the card PIN. A site-collected CVV may be stored
   (Issue #516) but is read locally, never by a model; the canonical CVV remains most-sensitive
   per `docs/security.md`.

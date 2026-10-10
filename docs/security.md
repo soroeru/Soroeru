@@ -27,10 +27,8 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
   such as full card numbers. **In every build, site passwords, CVV, and other secrets are never
   sent to any AI model** (Product Owner decision 2026-10-10; implementation Issue #572). Do not use provider stateful features
   (prompt caching of PII, stored threads, memory, request/response logging) for any AI use.
-- **Passwords and CVV stay stored locally and never reach AI** (2026-10-10). Collection login
-  fills the stored password with deterministic local code; other password/CVV entry uses
-  Chrome's own password-manager / payment-method autofill (or manual entry) in a same-tab
-  hand-off (§3.1).
+- **Passwords and CVV stay stored locally and never reach AI** (2026-10-10). They are
+  filled into forms only by deterministic local code (§3.1).
 - **Never bypass** CAPTCHA, MFA, bot detection, access controls, rate limits, or
   paywalls. Detect and hand off to the user.
 - Submit a registration only after the user approves the review-and-confirm gate; apply
@@ -45,8 +43,8 @@ Requirement-level statements live in [`requirements.md`](requirements.md) §8.
 | Threat | Impact | Mitigation |
 | --- | --- | --- |
 | Local store of full PII + card + credentials is exfiltrated | High-impact loss of all the user's data and accounts. | Encrypt at rest (AES-256-GCM, master-passphrase-derived key, key in memory only). Never log decrypted values. |
-| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Storage policy unchanged (2026-10-10): Issue #516 keeps encrypted Disclosure storage for the AI-driven tier, but the CVV value is never sent to the model — the model sees a masked item and Soroeru reads the value locally (Issue #572). Reveal remains refused (§4). The deterministic fallback excludes both CVV value and hash. Canonical CVV stays stored as most-sensitive and is entered into forms only through the Chrome-autofill hand-off (§3.1). |
-| Soroeru handles a password/CVV during form entry | A fill path, log, or bug exposes the value; a compromised page reads what Soroeru typed. | Only the deterministic collection-login code fills a stored password (decrypted at fill time, never logged, never sent to AI). Every other password/CVV entry is done by Chrome's autofill or the user in a same-tab hand-off; Soroeru checks only emptiness (§3.1, Issue #572). |
+| CVV stored from site collection | The "last factor" protecting a stolen card number is copied from a site into Soroeru. | Storage policy unchanged (2026-10-10): Issue #516 keeps encrypted Disclosure storage for the AI-driven tier, but the CVV value is never sent to the model — the model sees a masked item and Soroeru reads the value locally (Issue #572). Reveal remains refused (§4). The deterministic fallback excludes both CVV value and hash. Canonical CVV stays stored as most-sensitive and is decrypted only at fill time by deterministic local code (§3.1). |
+| Soroeru handles a password/CVV during form entry | A fill path, log, or bug exposes the value; a compromised page reads what Soroeru typed. | Only deterministic local code fills a stored password or CVV, decrypting it at fill time; the value is never logged and never passed to an AI (§3.1, Issue #572). Write flows keep their review-and-confirm gate and payment guard. |
 | Raw personal values sent to the AI model | Data leaves the machine; provider may log it. | **Structure-only for every AI use except Visibility collection (Issue #514, §5):** that path sends raw values other than secrets (no passwords, CVV, OTP, tokens) by design, to the user's own configured provider only, disclosed at the gate every run, with stateful provider features disabled and zero-retention/no-training options preferred. Every other AI use still sends structure only and fills values locally. |
 | AI-driven collection returns a hallucinated or manipulated-page-injected value | An untrusted page (or the model itself) causes a wrong value — e.g. a fabricated card number or CVV — to be written as if it were genuinely observed, silently poisoning the Disclosure ledger. | Local corroboration before write ([`architecture.md`](architecture.md) §5.2, Issue #514): the returned value must appear in the page content captured for that step before `DomainService.addDisclosure` accepts it; a non-corroborating value becomes `unknown`/a review task, never a stored Disclosure. |
 | Wrong auto-submit / wrong terms accepted | User is bound to a contract or a wrong account is created. | Post-analysis review-and-confirm gate; three guards; authorization record (mandate). |
@@ -214,27 +212,18 @@ profile values are encrypted at rest and never appear in source, review
 artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
 `state/soroeru-poc/` are Git-ignored.
 
-### 3.1 Password and CVV entry
+### 3.1 Password and CVV handling
 
-Product Owner decisions (2026-10-10; `requirements.md` §8 / REQ-003 / REQ-031; implementation
-Issue #572):
+Product Owner decisions (2026-10-10; `requirements.md` §8; implementation Issue #572):
 
 - **Storage is unchanged.** CSV-imported site passwords and the canonical CVV stay stored in
   the encrypted vault; site-collected CVV keeps its §3 storage rule.
 - **Never to AI.** Password and CVV values are removed or masked before every AI request in
-  every build; only local deterministic code reads or writes them.
-- **Collection login** is filled by Soroeru's deterministic login code: the stored username and
-  password are decrypted at fill time, typed into the site's login form, never logged, and never
-  passed to an AI.
-- **Every other password or CVV entry** (password fields during update or registration, CVV
-  during the approved free-trial card entry) is a same-tab hand-off (the same pause/resume
-  shape as a wall): Soroeru focuses the field and asks the user to pick Chrome's own
-  password-manager or payment-method autofill suggestion, or to type the value. Soroeru never
-  triggers or selects an autofill suggestion programmatically. After the user continues,
-  Soroeru checks only whether the field is empty and may then submit within the
-  already-approved scope; an empty field or a stop ends the step as a hand-off with no retry.
-  Evidence records that the hand-off happened, never the value. In the developer-only
-  Playwright path, where Chrome autofill is unavailable, the hand-off asks for manual entry.
+  every build; an AI may only classify a masked item by key.
+- **Deterministic local fill.** Collection login and any later form entry that needs a stored
+  password or CVV are filled by Soroeru's deterministic local code, decrypting the value at
+  fill time; values are never logged. Write flows keep their review-and-confirm gates and the
+  payment guard.
 
 ## 4. Encryption (canonical)
 
@@ -270,8 +259,8 @@ session — make the tradeoff explicit in settings.
 **CVV**: storing it is generally discouraged (it is the last factor protecting a stolen
 card number). This paragraph covers the **canonical** CVV (a Personal Attribute the user
 enters): it is stored at the user's request and handled as the most sensitive field —
-encrypted, never sent to any model, reveal refused, and entered into forms only through the
-Chrome-autofill hand-off (§3.1), not filled by Soroeru. A **separate**, site-collected CVV
+encrypted, never sent to any model, reveal refused, and decrypted only at fill time by
+deterministic local code (§3.1). A **separate**, site-collected CVV
 Disclosure value may exist from the AI-driven Visibility collection tier (Issue #516); since
 2026-10-10 the model never sees it (the item is masked and Soroeru reads the value locally,
 Issue #572). It is encrypted at rest like the canonical value, and reveal is refused either way.
@@ -966,7 +955,7 @@ on the user's smartphone, with QR cross-device linking from the desktop.
 
 ## 15. Soroeru Cloud, Gemini Consent Boundary, And Telemetry (Issue #554)
 
-Requirement-level statements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-031.
+Requirement-level statements: [`requirements.md`](requirements.md) §8 and REQ-023–REQ-030.
 Architecture: [`architecture.md`](architecture.md) §14. Detailed design:
 [`design/issue-554-extension-cloud-hybrid.md`](design/issue-554-extension-cloud-hybrid.md).
 This section applies to the Chrome-extension target; the current Electron build keeps §5. The C0
