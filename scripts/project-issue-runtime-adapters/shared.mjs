@@ -224,7 +224,7 @@ export async function runHeadlessExecProbe({
 }
 
 /** Read explicit CLI model metadata only; never return or persist raw output. */
-function reportedModels(result) {
+export function reportedModels(result) {
   const models = [];
   for (const output of [result.stdout, result.stderr]) {
     for (const line of String(output ?? "").split(/\r?\n/)) {
