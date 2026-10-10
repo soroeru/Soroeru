@@ -14,11 +14,16 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Decode standard base64. Malformed input throws instead of decoding partially (fail closed). */
+/**
+ * Decode canonical standard base64 (padded, no whitespace) — the only form the
+ * vault writes. Anything else throws (fail closed) rather than being decoded
+ * leniently the way `atob` alone would accept whitespace or missing padding.
+ */
 export function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  if (bytesToBase64(bytes) !== value) throw new SyntaxError("base64 input is not canonical");
   return bytes;
 }
 

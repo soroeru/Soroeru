@@ -221,6 +221,8 @@ test("base64 helpers match the previous Buffer encoding byte for byte", () => {
     assert.deepEqual(base64ToBytes(encoded), new Uint8Array(bytes));
   }
   assert.throws(() => base64ToBytes("not base64!"));
+  assert.throws(() => base64ToBytes("AQID BA=="), "whitespace is rejected");
+  assert.throws(() => base64ToBytes("AQIDBA"), "missing padding is rejected");
   assert.equal(bytesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2])), true);
   assert.equal(bytesEqual(new Uint8Array([1, 2]), new Uint8Array([1, 3])), false);
   assert.equal(bytesEqual(new Uint8Array([1]), new Uint8Array([1, 0])), false);
@@ -264,6 +266,10 @@ const NODE_ONLY_STORE_MODULES = new Set([
 // Heuristic, deliberately strict: it may flag a harmless `process.` or `Buffer`
 // token, and the comment stripper ignores string/template context. Both are
 // acceptable for this small, reviewed set of files.
+// Import/export-from lines are also checked on the raw source, so comment
+// stripping can never hide a real `node:` import.
+const RAW_NODE_IMPORT = /^\s*(?:import|export)\b[^\n]*["']node:/m;
+
 const NODE_API = /\bfrom\s+["']node:|\bimport\(\s*["']node:|\brequire\(\s*["']node:|\bBuffer\b|\bprocess\./;
 
 function stripComments(source: string): string {
@@ -275,8 +281,8 @@ test("src/store: only the listed Node-only modules use node: imports or Buffer",
   const offenders: string[] = [];
   for (const name of await readdir(storeDir)) {
     if (!name.endsWith(".ts") || NODE_ONLY_STORE_MODULES.has(name)) continue;
-    const source = stripComments(await readFile(join(storeDir, name), "utf8"));
-    if (NODE_API.test(source)) offenders.push(name);
+    const raw = await readFile(join(storeDir, name), "utf8");
+    if (RAW_NODE_IMPORT.test(raw) || NODE_API.test(stripComments(raw))) offenders.push(name);
   }
   assert.deepEqual(offenders, []);
 });
@@ -289,8 +295,9 @@ test("VaultV2 and everything it imports are free of node: imports and Buffer", a
     const file = queue.pop() as string;
     if (seen.has(file)) continue;
     seen.add(file);
-    const source = stripComments(await readFile(file, "utf8"));
-    if (NODE_API.test(source)) offenders.push(file.slice(REPO_ROOT.length + 1));
+    const raw = await readFile(file, "utf8");
+    const source = stripComments(raw);
+    if (RAW_NODE_IMPORT.test(raw) || NODE_API.test(source)) offenders.push(file.slice(REPO_ROOT.length + 1));
     for (const match of source.matchAll(/\bfrom\s+["'](\.{1,2}\/[^"']+)\.js["']/g)) {
       queue.push(resolve(dirname(file), `${match[1]}.ts`));
     }

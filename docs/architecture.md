@@ -132,11 +132,13 @@ Reference implementation:
   `src/renderer/components/`).
 - **Domain**: `src/domain/` (`domain-service.ts`, `entities.ts`, `csv-import.ts`,
   `ledger-insights.ts`, `normalize.ts`).
-- **Store**: `src/store/` (`vault-v2.ts`, `crypto.ts`, `crypto-runtime.ts`, `recovery.ts`,
-  `encoding.ts`, `vault-errors.ts`, and the `VaultPersistence` contract in `vault-persistence.ts`,
-  all free of `node:` imports and `Buffer` so the extension can reuse them (Issue #556); Node-only
-  `file-vault-persistence.ts` / `atomic-write.ts` for the file backend, `store.ts` for the legacy v1
-  store, and `vault.ts` for legacy v1 file-existence checks only).
+- **Store**: `src/store/`. Portable modules, free of `node:` imports and `Buffer` so the extension
+  can reuse them (Issue #556): `vault-v2.ts`, `crypto.ts`, `crypto-runtime.ts`, `recovery.ts`,
+  `encoding.ts`, `vault-errors.ts`, and the `VaultPersistence` contract in `vault-persistence.ts`.
+  Node-only modules: `file-vault-persistence.ts` / `atomic-write.ts` (file backend), `store.ts`
+  (legacy v1 store), and `vault.ts` (legacy v1 file-existence checks). The unit test
+  `soroeru-vault-browser-crypto` enforces the split: any other `src/store/` module, and everything
+  `vault-v2.ts` imports, must stay portable.
 - **Automation**: `src/automation/` (`page-driver.ts`, `extension-page-driver.ts`,
   `browser-engine.ts` during migration,
   `visibility-runner.ts`, `wall-detection.ts`, `disclosure-collector.ts`, `evidence.ts`,
