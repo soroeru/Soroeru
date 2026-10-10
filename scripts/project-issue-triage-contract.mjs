@@ -23,7 +23,7 @@ export const FALLBACK_REASONS = [
   "insufficient-context",
 ];
 const AGENTS = ["Codex", "Claude", "Grok", "Gemini"];
-const KINDS = ["docs", "local-code", "cross-component", "security"];
+export const TASK_KINDS = ["docs", "local-code", "cross-component", "security"];
 const label = (value) => typeof value === "string" && /^[\w .()+-]{1,100}$/.test(value);
 const object = (value) => value && typeof value === "object" && !Array.isArray(value);
 export const validTimestamp = (value) =>
@@ -52,7 +52,8 @@ export function normalizeTriageConfig(raw = {}) {
   );
   return config;
 }
-function evidence(value) {
+/** Closed RouteEvidence projection (design §4); rejects raw text and unknown fields. */
+export function normalizeRouteEvidence(value) {
   keys(value, ["agent", "model", "profileVersion", "benchmarkVersion", "evaluatedAt", "tasks"]);
   const identity = route({ agent: value.agent, model: value.model });
   requireValue(
@@ -62,7 +63,7 @@ function evidence(value) {
   const seen = new Set();
   const tasks = value.tasks.map((task) => {
     keys(task, ["kind", "samples", "passed", "medianDurationMs"]);
-    requireValue(KINDS.includes(task.kind) && !seen.has(task.kind));
+    requireValue(TASK_KINDS.includes(task.kind) && !seen.has(task.kind));
     seen.add(task.kind);
     requireValue(
       Number.isSafeInteger(task.samples) &&
@@ -99,7 +100,7 @@ export function normalizeTriageInput(raw) {
     .sort((a, b) => `${a.agent}:${a.model}`.localeCompare(`${b.agent}:${b.model}`, "en"));
   requireValue(new Set(routes.map((r) => `${r.agent}:${r.model}`)).size === routes.length);
   requireValue(Array.isArray(raw.routeEvidence) && raw.routeEvidence.length <= 256);
-  const routeEvidence = raw.routeEvidence.map(evidence);
+  const routeEvidence = raw.routeEvidence.map(normalizeRouteEvidence);
   requireValue(new Set(routeEvidence.map((r) => `${r.agent}:${r.model}`)).size === routeEvidence.length);
   return {
     issue: raw.issue,
