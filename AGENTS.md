@@ -35,12 +35,14 @@ report residual risk honestly.
   allowlisted outcome telemetry; Gemini receives structure only, except the per-fallback
   consent-gated read, and never secrets (passwords, CVV, OTP, tokens, keys). Never write Tier 3
   request/response content to cloud schemas, telemetry, logs, or traces. Current Electron build
-  only: Visibility collection (Issue #514) may send raw page values to the user's configured AI
-  provider; every other AI use stays structure-only.
-- Never store the 12-digit My Number or the card PIN. A CVV collected from a site during
-  Visibility collection may be stored (Issue #514); a user-entered canonical CVV used for fill
-  remains most-sensitive per `docs/security.md`. Follow `docs/security.md` for identity,
-  credential, card, encryption, and AI-provider handling.
+  only: Visibility collection (Issue #514) may send raw page values other than secrets to the
+  user's configured AI provider; every other AI use stays structure-only. In every build, never
+  send site passwords, CVV, or other secrets to any AI model.
+- Never type or read a site password or CVV. Entry uses Chrome's own autofill (or manual entry)
+  in a same-tab hand-off (Issue #572); never trigger autofill programmatically.
+- Never store the 12-digit My Number or the card PIN. Never collect or store a CVV read from a
+  site; a user-entered canonical CVV, if kept, remains most-sensitive per `docs/security.md`.
+  Follow `docs/security.md` for identity, credential, card, encryption, and AI-provider handling.
 - Use fake data only in tests, fixtures, screenshots, and documentation.
 
 ## Architecture constraints
