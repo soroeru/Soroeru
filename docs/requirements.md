@@ -337,25 +337,34 @@ registration (last).**
 - **Data classes decide what may leave the device** (Issue #554; full matrix in
   [`security.md`](security.md) §15):
   - *Secrets* (site passwords, vault passphrase, master/recovery keys, OTP/MFA codes, cookies
-    and session tokens, CVV, card PIN, My Number, API keys) never leave the device — not to
-    Soroeru Cloud, not to Gemini or any other AI provider, not even with consent, and in every
+    and session tokens, CVV, card PIN, My Number, API keys) never leave the device except to
+    the site they belong to when entered there — not to Soroeru Cloud, not to Gemini or any
+    other AI provider, not even with consent, and in every
     build including the current Electron build (Product Owner decision, 2026-10-10).
-- **Password and CVV entry uses Chrome autofill (every build, Issue #572).** Soroeru never types
-  a site password or a CVV into a form itself and never reads a password or CVV field's value.
-  When a form needs one (login during collection, update, registration, or the approved
-  free-trial card entry), Soroeru stops in the same tab with a hand-off: it focuses the field
-  and asks the user to pick Chrome's own password-manager or payment-method autofill
-  suggestion, or to type the value. It resumes only after the user continues; it may check
-  only whether the field is empty, and it may then submit within the already-approved scope.
-  If the user stops or the field stays empty, the step ends as a hand-off with no retry. In the
-  developer-only Playwright path, where Chrome autofill is unavailable, the same hand-off asks
-  for manual entry. Soroeru never triggers or selects an autofill suggestion programmatically.
   - *Personal values* and *page content that may contain them* never enter shared Form
     Schemas, telemetry, or cloud logs. They reach Gemini only through the consent-gated
     fallback below.
   - *Form structure* (sanitized labels, element types, structural fingerprints), *Form
     Schemas* (field → canonical attribute mappings), and *typed outcome metadata* may be sent
     to Soroeru Cloud.
+- **Password and CVV handling (Product Owner decisions 2026-10-10, every build, Issue #572).**
+  - *Storage is unchanged*: CSV-imported site passwords and the user-entered canonical CVV
+    stay stored in the local encrypted vault, and site-collected CVV keeps its existing
+    encrypted storage rule (REQ-004).
+  - *Never to AI*: per the secrets rule above, password and CVV values are removed or masked
+    before every AI request. An AI may classify a masked item by key from its label; the value
+    itself is read or written only by local deterministic code.
+  - *Login during collection*: Soroeru's deterministic login code fills the stored username and
+    password from the vault (REQ-003). No AI is involved.
+  - *Other password / CVV entry* (password fields during update or registration, and CVV during
+    the approved free-trial card entry): Soroeru does not type the value. It stops in the same
+    tab with a hand-off, focuses the field, and asks the user to pick Chrome's own
+    password-manager or payment-method autofill suggestion, or to type the value. It resumes
+    only after the user continues, may check only whether the field is empty, and may then
+    submit within the already-approved scope. A stop or an empty field ends the step as a
+    hand-off with no retry. In the developer-only Playwright path, where Chrome autofill is
+    unavailable, the hand-off asks for manual entry. Soroeru never triggers or selects an
+    autofill suggestion programmatically.
 - **Resolution order (Issue #554).** Reading or filling a form resolves fields in this order,
   and each step runs only when the previous one cannot resolve every required field:
   1. **Tier 1 — shared Form Schema**: a versioned schema fetched from Soroeru Cloud maps page
@@ -438,9 +447,9 @@ registration (last).**
   send" choice (choosing it or dismissing the notice turns both off); the notice stays reachable
   from settings; and its judge instructions state the same and use fake data only.
 - Encrypt all stored personal data at rest under a memory-hard key-derivation scheme; the
-  derived key must never persist outside memory. A user-entered canonical CVV, if stored, remains
-  the most sensitive field, requiring the strictest handling; Soroeru never fills it (CVV entry
-  uses Chrome autofill, above), and whether to keep storing it is open in Issue #572. Algorithm / KDF selection:
+  derived key must never persist outside memory. A user-entered canonical CVV is stored and remains
+  the most sensitive field, requiring the strictest handling; it is never sent to AI, and CVV
+  entry into a form uses the Chrome-autofill hand-off above. Algorithm / KDF selection:
   see [`architecture.md`](architecture.md) §2 and §10.
 - **Superseded in the target by the consent-gated fallback above (Issue #554).** The following
   Issue #514 rules describe the current Electron implementation and stay in force only for that
@@ -571,10 +580,10 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 
 | ID | Requirement | Slice | Priority |
 | --- | --- | --- | --- |
-| REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; a user-entered canonical CVV, if stored, is treated as most sensitive and is never filled by Soroeru (CVV entry uses Chrome autofill, §8; whether to keep it is open in Issue #572). Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
+| REQ-001 | Store Personal Attributes (canonical values) locally, encrypted at rest; a user-entered canonical CVV is stored and treated as most sensitive; it is never sent to AI, and CVV entry into a form uses the Chrome-autofill hand-off (§8). Basic-4 identity attributes (name, address, DOB, sex) are JPKI-sourced and **non-editable** (REQ-015); other attributes are user-editable. | A | Must |
 | REQ-002 | Import a Google/Chrome Password Manager CSV; encrypt taken values, discard the raw CSV after processing, never re-export plaintext. | A | Must |
-| REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. The password itself is entered through the Chrome-autofill hand-off in §8 (Issue #572); Soroeru fills only the username. If login fails because credentials are rejected, the login flow is unrecognized, or the site returns an error, stop after at most two login attempts for that site/credential set, do not enter same-site retry loops, and record the Site Account as `login failed / not collected` until the user explicitly updates credentials or retries later. | A | Must |
-| REQ-004 | (Target, Issue #554: collection resolves pages and fields through Tiers 1–3 — REQ-025, REQ-026, REQ-028 — and the rest of this row describes the current Electron build.) Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic collection (`architecture.md` §5.2) as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers are stored in full via the AI-driven path (Issue #514; the deterministic fallback keeps the last-4 rule). Site-collected CVV and site passwords are never collected or stored by any path, because they are never sent to an AI model (§8, Issue #572 removes the Issue #516 CVV retention) — `security.md` §3 implementation status. | A | Must |
+| REQ-003 | Auto-log in to each imported site using stored credentials; detect MFA/CAPTCHA walls and hand off / resume in the same session; never bypass. The stored username and password are filled by deterministic local code, never by or through an AI (§8, Issue #572). If login fails because credentials are rejected, the login flow is unrecognized, or the site returns an error, stop after at most two login attempts for that site/credential set, do not enter same-site retry loops, and record the Site Account as `login failed / not collected` until the user explicitly updates credentials or retries later. | A | Must |
+| REQ-004 | (Target, Issue #554: collection resolves pages and fields through Tiers 1–3 — REQ-025, REQ-026, REQ-028 — and the rest of this row describes the current Electron build.) Collect registered personal information per site — via AI-driven page exploration and extraction as the primary path once AI is configured, deterministic collection (`architecture.md` §5.2) as fallback (Issue #514) — and build the Disclosure ledger with encrypted site-held values plus normalized hashes; Evidence / audit records remain reference+hash only. Site-collected card numbers are stored in full via the AI-driven path (Issue #514; the deterministic fallback keeps the last-4 rule). Site-collected CVV keeps its encrypted storage via the AI-driven tier (Issue #516), but the value is never sent to the model: the model sees only a masked item, and Soroeru reads the value locally before storing it (§8, Issue #572) — `security.md` §3 implementation status. | A | Must |
 | REQ-005 | Present the per-site view by composing Site Account + its Disclosures, showing normal-sensitivity values (name, address, phone, account id, etc.) plainly and immediately, masking only sensitive/most-sensitive values (card data, the site password) with reveal gated behind passphrase re-authentication, and flagging stale values (Disclosure ≠ canonical). | A | Must |
 | REQ-006 | Track Account Relationship (newsletter / recurring billing or free-trial conversion / last-used) and provide, at minimum, filtered lists for: active newsletter subscriptions, active recurring billing, stale phone/address/card values, and sites not fully checked because a wall, credential failure, site error, or unknown flow stopped collection. | A | Must |
 | REQ-007 | Record two-layer Reflection (initial footprint + post-action change). | A | Must |
@@ -601,7 +610,7 @@ Tier reflects the slice order (A first). Status is `Planned`; target architectur
 | REQ-028 | Tier 3: for read operations only, after Tiers 1–2 leave a required attribute unresolved, stop and ask for explicit per-fallback consent before sending any personal value to Gemini; send nothing on decline/close/timeout; never retry a failed approved request without new consent (attributes stay `unknown`, hand-off offered); mask secrets; send only the minimum region to the dedicated endpoint; accept only corroborated values; record the gate outcome locally (§8). | A | Must |
 | REQ-029 | Version shared Form Schemas with a candidate → active → retired lifecycle; never activate a schema from a single unvalidated observation; never let Tier 3 results feed schema learning; reject schema records containing personal-value-like strings (pattern set in `security.md` §9). | A–D | Must |
 | REQ-030 | Never send secrets (site passwords, CVV, OTP/MFA codes, cookies/tokens, keys, passphrases, My Number, card PIN) to Soroeru Cloud, Gemini, or any AI provider in any build, including the current Electron build; never write Tier 3 request/response content or extracted values to Firestore, BigQuery, cloud application logs, traces, or analytics. | A–D | Must |
-| REQ-031 | Enter site passwords and CVVs only through Chrome's own autofill (or manual entry) in a same-tab hand-off; Soroeru never types or reads those values, never triggers autofill programmatically, and treats a stopped or empty hand-off as a hand-off result without retry (Issue #572). | A–D | Must |
+| REQ-031 | Except for collection login (REQ-003, deterministic local fill), enter site passwords and CVVs only through Chrome's own autofill (or manual entry) in a same-tab hand-off; Soroeru never types those values in that hand-off, never triggers autofill programmatically, and treats a stopped or empty hand-off as a hand-off result without retry. Password and CVV storage is unchanged (§8, Issue #572). | A–D | Must |
 
 ## 11. Glossary
 

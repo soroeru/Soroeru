@@ -297,17 +297,19 @@ known alternatives and concrete triggers for reconsideration:
   other invariant this reverses only for this one path is listed in §5.2, §10, and
   `security.md` §5. **Re-narrowed (Product Owner decision 2026-10-10, Issue #572):** in every
   build, including this Electron path, site passwords, CVV, and other secrets are removed or
-  masked before the provider call and are never collected; general PII such as full card
-  numbers stays in scope for this path.
-- **Password and CVV entry through Chrome autofill (2026-10-10, Issue #572)**: Soroeru never
-  types or reads a password or CVV. Alternatives: (a) keep filling from the encrypted vault —
-  rejected, because Soroeru would hold and handle the values the browser's own credential and
-  payment stores already protect, and every fill path widens exposure; (b) programmatically
-  trigger Chrome autofill — not possible from an extension and would amount to automating the
-  browser's own user-presence check. The chosen same-tab hand-off (§6) costs one user action
-  per password/CVV entry, so an L1 collection run is no longer fully unattended when a login is
-  needed. **Reconsider** if Chrome exposes a user-approved credential API that keeps values out
-  of Soroeru.
+  masked before the provider call; the model may only classify a masked item by key, and the
+  value is read locally. Storage of passwords and CVV is unchanged. General PII such as full
+  card numbers stays in scope for this path.
+- **Password and CVV entry (2026-10-10, Issue #572)**: collection login keeps deterministic
+  local fill of the stored password, because Visibility must log in to many sites and a
+  per-login hand-off would make collection unattended-impossible. Every other password/CVV entry
+  (update, registration, the approved free-trial card entry) is a same-tab hand-off to Chrome's
+  own autofill or manual entry. Alternatives: (a) deterministic fill everywhere — rejected for
+  non-login forms, because those are rarer, user-attended steps where the browser's own
+  credential/payment stores can supply the value without Soroeru typing it; (b) programmatic
+  triggering of Chrome autofill — not possible from an extension and would automate the
+  browser's own user-presence check. Storage of passwords and CVV is unchanged. **Reconsider**
+  if Chrome exposes a user-approved credential API that keeps values out of Soroeru.
 
 ### 2.2 Extension-primary migration and implementation split
 
@@ -638,8 +640,9 @@ during the logged-in session — not only a sanitized structure snapshot — and
 which reachable page to visit next, and (b) identifies and returns the personal-information values
 present on the page, classified by attribute key (name, address, phone, email, card number, account id,
 notification/security setting state, etc.). **Never site passwords, CVV, or one-time codes:**
-those items are removed or masked locally before the provider call and are not collected
-(2026-10-10 decision; Issue #572 implements it). The automation/domain layer
+those items are masked locally before the provider call; the model may only classify a masked
+item by key, and Soroeru reads the value locally before storing it, so the storage rules below
+are unchanged (2026-10-10 decision; Issue #572 implements it). The automation/domain layer
 writes what the model returns as Disclosure records, Account Relationship facts, and minimized
 Evidence, through the normal typed `DomainService`/`VaultService` API — the model has no direct
 filesystem or vault access, but the *content* of the write, including a full card number read from the
@@ -652,7 +655,7 @@ for the non-negotiable-requirements wording, and `security.md` for the full thre
 `Capability.operationType` and `Mandate.operation` include `ai-assisted-discovery`, and
 `siteCollectionMap` has a versioned record type with validation on vault write/read and immediately before serialization.
 `DomainService.addDisclosure` accepts an explicit `collectionTier: "ai-driven"` from a trusted
-collection caller to retain full PAN (and, until Issue #572 removes it, CVV); the persisted tier also selects full-value stale-state
+collection caller to retain CVV/full PAN (after Issue #572, the CVV value is read locally from a masked item rather than returned by the model); the persisted tier also selects full-value stale-state
 comparison. An absent tier retains deterministic last-4/CVV-exclusion behavior. This marker is
 not authorization by itself — `DomainService.permitsAiCollection` additionally checks a live,
 run-scoped `ai-assisted-discovery` Mandate/Capability pair before any collector action.
@@ -827,9 +830,10 @@ renderer then calls `resumeVisibility` (continue) or `abortVisibility` (stop; ne
 bypasses). Detection is conservative and never attempts to solve, bypass, outsource, or
 obscure a wall; see [`security.md`](security.md) §7.
 
-**Password / CVV entry hand-off (Issue #572).** Login and any form step that needs a site
-password or CVV use the same pause/resume shape: Soroeru fills only non-secret fields (for
-login, the username), focuses the password or CVV field, and emits a `handoff` asking the user
+**Password / CVV entry hand-off (Issue #572).** Collection login is filled by the
+deterministic login code (`login-handler.ts`) from the stored credential, as today. Any other
+form step that needs a site password or CVV uses the wall's pause/resume shape: Soroeru fills
+only non-secret fields, focuses the password or CVV field, and emits a `handoff` asking the user
 to pick Chrome's password-manager or payment-method autofill suggestion, or to type the value.
 On resume it checks only that the field is non-empty, never its value, and may then submit
 within the approved scope; an empty field or abort ends as a hand-off without retry. The
@@ -995,8 +999,8 @@ review-and-confirm gate) are owned by [`requirements.md`](requirements.md) §9.
 | Shared schemas cannot be poisoned by one observation (#554) | Candidate lifecycle with distinct-validator thresholds; value-free anchor rules; personal-value-like string rejection; schemas grant no authority (§14.4). |
 | Memory-hard KDF | Argon2id primary; PBKDF2-HMAC-SHA-512 fallback only where required. |
 | Derived key in memory only | `VaultV2` / `SoroeruSession` own the unlock/lock lifecycle; the renderer never receives the key. |
-| CVV most sensitive | Canonical CVV, if kept: stored encrypted, reveal refused outright (§4), never filled by Soroeru — CVV entry is the Chrome-autofill hand-off (§6, Issue #572). Site-collected CVV is never collected by any path (2026-10-10); the Issue #516 `collectionTier: "ai-driven"` CVV retention is removed by Issue #572. Full-PAN stale comparison uses the persisted tier. |
-| No password/CVV handling by Soroeru | Password and CVV entry uses Chrome's own autofill or manual entry in a same-tab hand-off; Soroeru never types or reads those values (§6, Issue #572). |
+| CVV most sensitive | Canonical CVV: stored encrypted, reveal refused outright (§4), never sent to AI, and entered into forms only through the Chrome-autofill hand-off (§6, Issue #572). Issue #516 keeps encrypted site-collected CVV Disclosure storage for explicit `collectionTier: "ai-driven"`; after Issue #572 the model never sees the value (masked item, local read). Omitted/deterministic tier excludes both value and hash. Full-PAN stale comparison uses the persisted tier. |
+| Passwords/CVV never to AI | Password and CVV values are masked before every AI request in every build; collection login fills the stored password with deterministic local code; other password/CVV entry is a same-tab Chrome-autofill hand-off (§6, Issue #572). |
 | Raw PII to AI | **Structure-only** for every AI use except Visibility collection: the agent/AI layer accepts structure-only requests and provider adapters validate redaction (the pre-#514 structural sanitizer component for the old discovery pass is retired — §5.2 no longer routes Visibility collection through it, and no other AI use needs one, since they already never receive page content). **Visibility collection is the one exception** (Issue #514, §5.2): its AI-driven exploration pass receives full page content, including raw personal values, from the user's configured provider — every other safeguard (same-site navigation, budgets, wall hand-off, no general browser-control tool, and the local corroboration-before-write check) still applies. Secrets (site passwords, CVV, one-time codes) are removed or masked before every provider call in every build (Issue #572). |
 | Egress limited | Target adds the `soroeru-cloud` egress class (Cloud Run endpoints only; Google Cloud SDKs only inside `cloud/`) and drops `ai-provider` from the extension once §2.3 completes. Current architectural egress classes are target-site, ai-provider, and the identity-auth broker route to the Digital Agency (§9); the current static checker covers the implemented target-site / ai-provider classes and must add an identity-auth-broker category before broker code lands. No telemetry dependencies. |
 | CSV contains plaintext passwords | Import buffer is local, encrypted immediately, never logged, discarded after processing (§3.4). |
