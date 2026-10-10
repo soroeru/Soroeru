@@ -12,6 +12,7 @@ import { aiProviderFromEnv, type AiProvider } from "../src/agent/ai/provider.js"
 import type { AiEngine } from "../src/automation/decision-engine.js";
 import { DomainService } from "../src/domain/domain-service.js";
 import { FIXED_ATTRIBUTE_LABELS, displayLabelWithAttributeKey } from "../src/domain/attribute-labels.js";
+import { FileVaultPersistence } from "../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
 import { vaultExists } from "../src/store/vault.js";
 import { importPasswordCsv, CsvImportError } from "../src/domain/csv-import.js";
@@ -624,7 +625,7 @@ export class SoroeruSession {
       this.logger.warn("vault", "setup rejected", { reason: "vault-already-exists" });
       return { ok: false, locked: true, error: "vault-already-exists" };
     }
-    this.vault = await VaultV2.open(this.vaultPath, passphrase);
+    this.vault = await VaultV2.open(new FileVaultPersistence(this.vaultPath), passphrase);
     this.domain = new DomainService(this.vault);
     this.visibility.setDomain(this.domain);
     this.refreshAiEngine();
@@ -640,7 +641,7 @@ export class SoroeruSession {
       return { ok: false, locked: true, error: "vault-not-found" };
     }
     try {
-      this.vault = await VaultV2.open(this.vaultPath, passphrase);
+      this.vault = await VaultV2.open(new FileVaultPersistence(this.vaultPath), passphrase);
       this.domain = new DomainService(this.vault);
       if (this.domain.ensureSiteAccountSortOrders()) await this.vault.save();
       this.visibility.setDomain(this.domain);
@@ -663,7 +664,7 @@ export class SoroeruSession {
       return { ok: false, locked: true, error: "vault-not-found" };
     }
     try {
-      this.vault = await VaultV2.openWithRecoveryKey(this.vaultPath, recoveryKey);
+      this.vault = await VaultV2.openWithRecoveryKey(new FileVaultPersistence(this.vaultPath), recoveryKey);
       this.domain = new DomainService(this.vault);
       if (this.domain.ensureSiteAccountSortOrders()) await this.vault.save();
       this.visibility.setDomain(this.domain);

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteEncryptedStoreFile } from "../../src/store/atomic-write.js";
 import { PocStore } from "../../src/store/store.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import {
   RECORD_SCHEMA_VERSION,
   VAULT_FORMAT_VERSION,
@@ -25,7 +26,7 @@ async function tmpVaultPath(): Promise<{ dir: string; path: string }> {
 test("create, persist, and reopen a v2 record vault", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     vault.put("siteAccount", {
       id: "acct-1",
       domain: "example.com",
@@ -48,7 +49,7 @@ test("create, persist, and reopen a v2 record vault", async () => {
     assert.equal(file.vaultVersion, VAULT_FORMAT_VERSION);
     assert.equal(file.records.length, 2);
 
-    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     assert.equal(reopened.get("siteAccount", "acct-1")?.domain, "example.com");
     assert.equal(reopened.get("personalAttribute", "email")?.value, "user@example.test");
     assert.equal(reopened.list("siteAccount").length, 1);
@@ -85,7 +86,7 @@ test("corrupt partial vault JSON is reported instead of opening an empty vault",
   const { dir, path } = await tmpVaultPath();
   try {
     await writeFile(path, '{"vaultVersion":2,"records":[', "utf8");
-    await assert.rejects(() => VaultV2.open(path, PASSPHRASE), VaultCorruptError);
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), PASSPHRASE), VaultCorruptError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -94,10 +95,10 @@ test("corrupt partial vault JSON is reported instead of opening an empty vault",
 test("wrong passphrase fails GCM authentication", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     vault.put("diagnostic", { id: "d1", at: Date.now(), type: "app", message: "ok", severity: "info" });
     await vault.save();
-    await assert.rejects(() => VaultV2.open(path, "wrong-passphrase"));
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), "wrong-passphrase"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -108,11 +109,11 @@ test("wrong passphrase is rejected even on an empty saved vault (verifier)", asy
   try {
     // No records: previously there was no ciphertext for a wrong key to fail
     // GCM auth on. The passphrase verifier closes that gap.
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     await vault.save();
-    await assert.rejects(() => VaultV2.open(path, "wrong-passphrase"));
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), "wrong-passphrase"));
     // The correct passphrase still opens it cleanly.
-    assert.equal((await VaultV2.open(path, PASSPHRASE)).isLocked, false);
+    assert.equal((await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE)).isLocked, false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -121,7 +122,7 @@ test("wrong passphrase is rejected even on an empty saved vault (verifier)", asy
 test("lock clears decrypted records and blocks access", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     vault.put("policy", { id: "p1", key: "k", value: "v", source: "default", updatedAt: Date.now() });
     vault.lock();
     assert.equal(vault.isLocked, true);
@@ -135,13 +136,13 @@ test("lock clears decrypted records and blocks access", async () => {
 test("put preserves createdAt and bumps updatedAt; delete removes", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     vault.put("siteAccount", { id: "a", domain: "d", displayName: "D", createdAt: 1, updatedAt: 1 });
     await vault.save();
-    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     reopened.put("siteAccount", { id: "a", domain: "d2", displayName: "D2", createdAt: 999, updatedAt: 999 });
     await reopened.save();
-    const again = await VaultV2.open(path, PASSPHRASE);
+    const again = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     assert.equal(again.get("siteAccount", "a")?.domain, "d2");
     assert.equal(again.delete("siteAccount", "a"), true);
     assert.equal(again.delete("siteAccount", "a"), false);
@@ -153,7 +154,7 @@ test("put preserves createdAt and bumps updatedAt; delete removes", async () => 
 test("recovery key unlocks the vault without the passphrase", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const recoveryKey = await vault.setupRecoveryKey();
     vault.put("personalAttribute", {
       id: "phone.full",
@@ -167,7 +168,7 @@ test("recovery key unlocks the vault without the passphrase", async () => {
     await vault.save();
     assert.equal(vault.hasRecoveryKey, true);
 
-    const recovered = await VaultV2.openWithRecoveryKey(path, recoveryKey);
+    const recovered = await VaultV2.openWithRecoveryKey(new FileVaultPersistence(path), recoveryKey);
     assert.equal(recovered.get("personalAttribute", "phone.full")?.value, "090-1234-5678");
     assert.equal(await recovered.verifyRecoveryKey(recoveryKey), true);
     assert.equal(await recovered.verifyRecoveryKey("WRONG-KEY-2345"), false);
@@ -179,7 +180,7 @@ test("recovery key unlocks the vault without the passphrase", async () => {
 test("rekey clears the recovery wrap", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     await vault.setupRecoveryKey();
     assert.equal(vault.hasRecoveryKey, true);
     // A record must exist for a wrong-passphrase open to fail GCM auth.
@@ -188,8 +189,8 @@ test("rekey clears the recovery wrap", async () => {
     assert.equal(vault.hasRecoveryKey, false);
     await vault.save();
     // The new passphrase opens it; the old one no longer does.
-    assert.equal((await VaultV2.open(path, "new-passphrase")).isLocked, false);
-    await assert.rejects(() => VaultV2.open(path, PASSPHRASE));
+    assert.equal((await VaultV2.open(new FileVaultPersistence(path), "new-passphrase")).isLocked, false);
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), PASSPHRASE));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -203,11 +204,11 @@ test("migrating a v1 vault carries its recovery wrapper into v2", async () => {
     legacy.setProfileValue("email", "メール", "legacy@example.test");
     await legacy.save();
 
-    const migrated = await VaultV2.open(path, PASSPHRASE);
+    const migrated = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     assert.equal(migrated.hasRecoveryKey, true);
     await migrated.save();
 
-    const recovered = await VaultV2.openWithRecoveryKey(path, recoveryKey);
+    const recovered = await VaultV2.openWithRecoveryKey(new FileVaultPersistence(path), recoveryKey);
     assert.equal(recovered.get("personalAttribute", "email")?.value, "legacy@example.test");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -218,7 +219,7 @@ test("rejects a JSON file that is neither v1 nor a tagged v2 vault", async () =>
   const { dir, path } = await tmpVaultPath();
   try {
     await writeFile(path, JSON.stringify({ hello: "world" }), "utf8");
-    await assert.rejects(() => VaultV2.open(path, PASSPHRASE), VaultFormatError);
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), PASSPHRASE), VaultFormatError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -227,17 +228,17 @@ test("rejects a JSON file that is neither v1 nor a tagged v2 vault", async () =>
 test("encrypted export/import round-trips and refuses to clobber", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     vault.put("siteAccount", { id: "x", domain: "ex.com", displayName: "Ex", createdAt: 1, updatedAt: 1 });
     await vault.save();
     const exported = await vault.exportEncrypted();
 
     const target = join(dir, "restored.json");
-    const restored = await VaultV2.importEncrypted(target, exported, PASSPHRASE);
+    const restored = await VaultV2.importEncrypted(new FileVaultPersistence(target), exported, PASSPHRASE);
     assert.equal(restored.get("siteAccount", "x")?.domain, "ex.com");
 
-    await assert.rejects(() => VaultV2.importEncrypted(target, exported, PASSPHRASE));
-    const overwritten = await VaultV2.importEncrypted(target, exported, PASSPHRASE, { overwrite: true });
+    await assert.rejects(() => VaultV2.importEncrypted(new FileVaultPersistence(target), exported, PASSPHRASE));
+    const overwritten = await VaultV2.importEncrypted(new FileVaultPersistence(target), exported, PASSPHRASE, { overwrite: true });
     assert.equal(overwritten.get("siteAccount", "x")?.domain, "ex.com");
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -247,12 +248,12 @@ test("encrypted export/import round-trips and refuses to clobber", async () => {
 test("rejects a vault format version newer than supported", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const seed = await VaultV2.open(path, PASSPHRASE);
+    const seed = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     await seed.save();
     const file = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
     file.vaultVersion = VAULT_FORMAT_VERSION + 1;
     await writeFile(path, JSON.stringify(file), "utf8");
-    await assert.rejects(() => VaultV2.open(path, PASSPHRASE), VaultFormatError);
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), PASSPHRASE), VaultFormatError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -261,7 +262,7 @@ test("rejects a vault format version newer than supported", async () => {
 test("rejects an unknown entity kind in a record envelope", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const seed = await VaultV2.open(path, PASSPHRASE);
+    const seed = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     await seed.save();
     const file = JSON.parse(await readFile(path, "utf8")) as { records: unknown[] };
     file.records.push({
@@ -274,7 +275,7 @@ test("rejects an unknown entity kind in a record envelope", async () => {
       updatedAt: 1,
     });
     await writeFile(path, JSON.stringify(file), "utf8");
-    await assert.rejects(() => VaultV2.open(path, PASSPHRASE), VaultCorruptError);
+    await assert.rejects(() => VaultV2.open(new FileVaultPersistence(path), PASSPHRASE), VaultCorruptError);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -293,7 +294,7 @@ test("migrates a v1 store into a v2 record vault", async () => {
     assert.equal(onDisk.vaultVersion, undefined);
 
     // Opening with VaultV2 should migrate it in memory.
-    const migrated = await VaultV2.open(path, PASSPHRASE);
+    const migrated = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     assert.equal(migrated.get("personalAttribute", "email")?.value, "legacy@example.test");
     assert.equal(migrated.get("providerSettings", "provider")?.model, "claude-x");
 
@@ -301,7 +302,7 @@ test("migrates a v1 store into a v2 record vault", async () => {
     await migrated.save();
     const afterSave = JSON.parse(await readFile(path, "utf8")) as { vaultVersion: number };
     assert.equal(afterSave.vaultVersion, VAULT_FORMAT_VERSION);
-    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     assert.equal(reopened.get("personalAttribute", "email")?.value, "legacy@example.test");
   } finally {
     await rm(dir, { recursive: true, force: true });

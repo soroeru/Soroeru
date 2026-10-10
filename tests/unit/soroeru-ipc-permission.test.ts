@@ -16,6 +16,7 @@ import { createIpcBridge } from "../../electron/ipc/bridge.js";
 import { normalizeChromePermissionOrigin, SoroeruSession } from "../../electron/session.js";
 import { nativeHostIsRegistered } from "../../native-host/registration.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
 // Fake data only (docs/testing.md). Verifies RFC-002 §8.2 IPC permission rules:
@@ -594,7 +595,7 @@ test("the domain summary is sanitized: masked previews, no raw values leak", asy
   const { dir, path } = await tmpVaultPath();
   try {
     // Seed canonical attributes (incl. the most-sensitive CVV) then lock.
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     domain.setPersonalAttribute({ attributeKey: "email", label: "メール", value: "user@example.test" });
     // Distinctive canary (not a 3-digit value) so the no-leak substring check
@@ -854,7 +855,7 @@ test("saved page fallback refuses to open non-web URLs in the default browser", 
   const { dir, path } = await tmpVaultPath();
   const opened: string[] = [];
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "example.test",
@@ -972,7 +973,7 @@ test("saved page fallback skip records a manual-check constraint without marking
 test("the session-persistence channels coerce the request shape and route through to the session", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({ domain: "example.test", displayName: "Example" });
     await vault.save();

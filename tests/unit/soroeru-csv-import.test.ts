@@ -10,6 +10,7 @@ import {
   MAX_CSV_ROWS,
   importPasswordCsv,
 } from "../../src/domain/csv-import.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 
 // Fake data only (docs/testing.md). Verifies RFC-002 §4.4 / §8.2 import safety.
@@ -24,7 +25,7 @@ async function tmpVaultPath(): Promise<{ dir: string; path: string }> {
 async function withDomain(fn: (d: DomainService, v: VaultV2, path: string) => Promise<void>): Promise<void> {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     await fn(new DomainService(vault), vault, path);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -83,7 +84,7 @@ test("credentials are encrypted at rest (no plaintext password on disk)", async 
     assert.equal(onDisk.includes("carol"), false);
 
     // Reopening decrypts the seeded credential.
-    const reopened = await VaultV2.open(path, PASSPHRASE);
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const d2 = new DomainService(reopened);
     const site = d2.listSiteAccounts().find((s) => s.domain === "mail.example.test");
     assert.ok(site);

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { computeLedgerInsights } from "../../src/domain/ledger-insights.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { LedgerFilterKey } from "../../src/domain/insights-types.js";
 
@@ -16,7 +17,7 @@ const PASSPHRASE = "insights-test-passphrase";
 
 async function openService(): Promise<{ dir: string; domain: DomainService }> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-insights-"));
-  const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+  const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
   return { dir, domain: new DomainService(vault) };
 }
 

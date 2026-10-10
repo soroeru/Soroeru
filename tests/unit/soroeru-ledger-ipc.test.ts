@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { SoroeruSession } from "../../electron/session.js";
 import type { SessionEngine } from "../../electron/session.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { PageDriver, SiteSession } from "../../src/automation/page-driver.js";
 import type { PageSnapshot } from "../../src/types.js";
@@ -36,7 +37,7 @@ async function seedLedger(
   addressDisclosureId: string;
   cvvDisclosureId: string;
 }> {
-  const vault = await VaultV2.open(path, PASSPHRASE);
+  const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
   const domain = new DomainService(vault);
 
   const site = domain.upsertSiteAccount({
@@ -270,7 +271,7 @@ test("ledgerSiteDetails returns every site's full detail in one call, matching l
   try {
     const { siteId } = await seedLedger(path);
 
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     // A second site with a different (heterogeneous) attribute set, per Issue
     // #301's spreadsheet-style ledger view, which unions columns across sites.
@@ -310,7 +311,7 @@ test("ledgerSiteDetails returns every site's full detail in one call, matching l
 test("ledger detail labels prefer canonical, dynamic, fixed, then raw keys with display-key formatting", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "labels.test",
@@ -388,7 +389,7 @@ test("ledgerSiteDetails returns an empty list while locked", async () => {
 test("a sensitive disclosure (card number) still masks its preview and requires reveal", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "shop.test",
@@ -555,7 +556,7 @@ test("updateSiteCredential persists a new password, uses it on listCredentials, 
     await reopened.unlock(PASSPHRASE);
     // Access via a temporary domain-side check through visibility: password must be the new one.
     // Session does not expose raw credentials; re-open vault directly for the domain assertion.
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const creds = domain.listCredentialsForSite(siteId);
     assert.equal(creds[0]?.password, "rotated-secret-pass");
@@ -663,7 +664,7 @@ test("confirming a pending dynamic-attribute candidate removes it from the site'
 test("two sites independently observing the same unmapped field both keep it pending until confirmed", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const siteA = domain.upsertSiteAccount({
       domain: "a.example.test",
@@ -734,7 +735,7 @@ test("two sites independently observing the same unmapped field both keep it pen
 test("two sites observing the same candidate under different labels both keep their label in matchTerms", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const siteA = domain.upsertSiteAccount({
       domain: "a.example.test",
@@ -777,7 +778,7 @@ test("two sites observing the same candidate under different labels both keep th
 test("a candidate persisted under the pre-siteAccountIds shape still appears in the site's pending list", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "legacy.example.test",
@@ -820,7 +821,7 @@ test("a candidate persisted under the pre-siteAccountIds shape still appears in 
 test("session persistence: set/clear toggles the ledger detail view and enforces immediate clear-on-disable", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "example.test",
@@ -848,7 +849,7 @@ test("session persistence: set/clear toggles the ledger detail view and enforces
 
 /** Seed a site with an opted-in, already-persisted session (as if a prior Visibility run exported one). */
 async function seedPersistedSession(path: string): Promise<{ siteId: string }> {
-  const vault = await VaultV2.open(path, PASSPHRASE);
+  const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
   const domain = new DomainService(vault);
   const site = domain.upsertSiteAccount({
     domain: "example.test",
@@ -960,7 +961,7 @@ class NoDataPageDriver implements PageDriver {
 test("session persistence: a real run passes the persisted storageState into the engine and re-saves it on close (Issue #294)", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "example.test",
@@ -1020,7 +1021,7 @@ test("session persistence: a real run passes the persisted storageState into the
 test("session persistence: disabling the toggle mid-run still skips the export on close (fresh re-check, not the stale opened-with value)", async () => {
   const { dir, path } = await tmpVaultPath();
   try {
-    const vault = await VaultV2.open(path, PASSPHRASE);
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const domain = new DomainService(vault);
     const site = domain.upsertSiteAccount({
       domain: "example.test",

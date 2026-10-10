@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { DomainService } from "../../src/domain/domain-service.js";
 import type { SiteAccount } from "../../src/domain/entities.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../../src/store/vault-v2.js";
 import type { FormField, PageSnapshot } from "../../src/types.js";
 import type { AiEngine, DecisionKind } from "../../src/automation/decision-engine.js";
@@ -17,7 +18,7 @@ const PASSPHRASE = "unit-test-passphrase";
 
 async function openService(): Promise<{ dir: string; service: DomainService }> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-visibility-"));
-  const vault = await VaultV2.open(join(dir, "vault.json"), PASSPHRASE);
+  const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
   return { dir, service: new DomainService(vault) };
 }
 

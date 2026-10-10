@@ -1,0 +1,47 @@
+{
+  "note": "Fake data only. Written by the pre-#556 Node implementation (node:crypto + Buffer) with passphrase \"fixture-passphrase-fake\"; the recovery key below is fake and wraps this fixture only.",
+  "fakeRecoveryKey": "DG3O-CLJ3-YODE-3J4A-6CD4-AQAZ-4TJU-5RQR-JAGZ-XTNY-H3EH-U4SE-NOJQ",
+  "vault": {
+    "vaultVersion": 2,
+    "kdf": {
+      "algo": "argon2id",
+      "iterations": 3,
+      "memorySizeKiB": 65536,
+      "parallelism": 1,
+      "salt": "scu19Ew6o2wXnpS+dQPaTw=="
+    },
+    "metadata": {
+      "createdAt": 1791618709846,
+      "updatedAt": 1791618709850,
+      "appName": "Soroeru"
+    },
+    "verifier": {
+      "iv": "oznTg4dSaSQMPCuL",
+      "ct": "PhkcFoq/VjmKF6NcXFiiIQXq7+EnlRByHiZ62B5w/S88WQkXX1jg3wL3iwem5UeE0ORleQ=="
+    },
+    "records": [
+      {
+        "recordId": "email",
+        "entityKind": "personalAttribute",
+        "schemaVersion": 1,
+        "iv": "N99DnLpexONbinYm",
+        "ciphertext": "25sFx4PdPfg7YtnTbOk/rNUHUvGG6mLHel5XLQV2JMpTBQQJkYPGckIlUQEyHsA+tIyu39r+G+imZM4fMqKffzSQBdy+QktRR3YZN5wvZpCwRMku88n2AD+LnuzKlW2yp6u712OCxpz1gEVKbGGlP/Zo0KeO1PIs7BlJogYxSWD1fkss9Dkexp7qV8h7a0EUsqHPXJZ7vF7IJnUEsrPVCoEEy2tfp883S1FVS0pAa24TFg==",
+        "createdAt": 1791618709847,
+        "updatedAt": 1791618709847
+      },
+      {
+        "recordId": "acct-fixture",
+        "entityKind": "siteAccount",
+        "schemaVersion": 1,
+        "iv": "bvhyideXmQuRFV8a",
+        "ciphertext": "Cu1Ph6NpchrMQUyCDFCHpQKRlezr5HtOuGe8aXnufvW5xA9Oh4Z4NNRbYAgOSUjhOJj4TVPlWa6T4hF5e6ewKONPHOCpvE9Xw51R8iB+Wv9OLAmxo/hRQBujnpevjLzHnSOhsYYtjsi/iJTLCjM7wAO5eiPKbZLJ1sUS5Kn1+apF5aTKlRMmeozaAb5ARsStMGgJkWjOhqE=",
+        "createdAt": 1791618709847,
+        "updatedAt": 1791618709847
+      }
+    ],
+    "recovery": {
+      "iv": "o6eRTGrETUL0Q/T0",
+      "ct": "rDq38n0UqAxHWyDldWz+n1/vxo+GVUWGmM3w6j1C+r77SbPGe6ZaCaJBKyXJAY5usjYTHKrNSie60Mld"
+    }
+  }
+}

@@ -10,17 +10,18 @@
 // All raw values live inside encrypted payloads. Anything readable before
 // unlock (the file header: version, KDF params, metadata, optional recovery
 // wrapper) is non-sensitive by design.
+//
+// Storage is injected as a `VaultPersistence` (Issue #556): this module never
+// touches the file system and uses only `globalThis.crypto`, so it runs
+// unchanged in Node, Electron, and the Chrome extension.
 
 import { isSiteCollectionMap } from "../domain/site-collection-map.js";
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import {
   ENTITY_KINDS,
   type DomainRecord,
   type EntityKind,
   type EntityPayloadMap,
 } from "../domain/entities.js";
-import { atomicWriteEncryptedStoreFile } from "./atomic-write.js";
 import {
   decryptRecord,
   deriveKey,
@@ -33,7 +34,24 @@ import {
   type KdfParams,
   type MasterKey,
 } from "./crypto.js";
+import { webCryptoRuntime } from "./crypto-runtime.js";
+import { base64ToBytes, bytesEqual, bytesToBase64 } from "./encoding.js";
 import { generateRecoveryKey, recoveryKeyToKek } from "./recovery.js";
+import { VaultCorruptError, VaultFormatError, VaultLockedError } from "./vault-errors.js";
+import type {
+  EncryptedVaultData,
+  VaultMetadata,
+  VaultPersistence,
+  VaultRecordEnvelope,
+} from "./vault-persistence.js";
+
+export { VaultCorruptError, VaultFormatError, VaultLockedError } from "./vault-errors.js";
+export type {
+  EncryptedVaultData,
+  VaultMetadata,
+  VaultPersistence,
+  VaultRecordEnvelope,
+} from "./vault-persistence.js";
 
 /** On-disk vault format version. v2 is the first versioned record vault. */
 export const VAULT_FORMAT_VERSION = 2 as const;
@@ -51,45 +69,7 @@ const ENTITY_KIND_SET = new Set<string>(ENTITY_KINDS);
  */
 const PASSPHRASE_VERIFIER_TOKEN = "soroeru-vault-passphrase-verifier-v1";
 
-/**
- * Encrypted record envelope (RFC-002 §4). AES-GCM appends its 16-byte auth tag
- * to the ciphertext (Web Crypto behavior), so `ciphertext` holds ciphertext +
- * tag and no separate `tag` field is needed for round-tripping.
- */
-export interface VaultRecordEnvelope {
-  recordId: string;
-  entityKind: EntityKind;
-  schemaVersion: number;
-  /** base64, 96-bit random IV, fresh per record per save. */
-  iv: string;
-  /** base64 ciphertext + GCM auth tag. */
-  ciphertext: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface VaultMetadata {
-  createdAt: number;
-  updatedAt: number;
-  appName: string;
-}
-
-interface VaultFileV2 {
-  vaultVersion: number;
-  kdf: KdfParams;
-  metadata: VaultMetadata;
-  /** Present iff a recovery key is configured: master key wrapped under the recovery KEK. */
-  recovery?: EncryptedRecord;
-  /**
-   * Known token encrypted under the master key, for passphrase verification.
-   * Optional for forward-compat: a vault written before this field existed has
-   * none, so `open` only enforces the check when present. Vault v2 is
-   * pre-release (introduced in the immediately preceding commit), so no such
-   * legacy vault actually exists — every `save()` now writes a verifier.
-   */
-  verifier?: EncryptedRecord;
-  records: VaultRecordEnvelope[];
-}
+type VaultFileV2 = EncryptedVaultData;
 
 /** In-memory record: the decrypted payload plus its envelope bookkeeping. */
 interface StoredRecord {
@@ -97,27 +77,6 @@ interface StoredRecord {
   schemaVersion: number;
   createdAt: number;
   updatedAt: number;
-}
-
-export class VaultLockedError extends Error {
-  constructor() {
-    super("vault is locked");
-    this.name = "VaultLockedError";
-  }
-}
-
-export class VaultFormatError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "VaultFormatError";
-  }
-}
-
-export class VaultCorruptError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = "VaultCorruptError";
-  }
 }
 
 /** Legacy v1 file shape, for migration only (mirrors `./store.ts` StoreFile). */
@@ -138,18 +97,18 @@ export class VaultV2 {
   private kdf: KdfParams;
   private recovery: EncryptedRecord | undefined;
   private metadata: VaultMetadata;
-  private readonly filePath: string;
+  private readonly persistence: VaultPersistence;
   /** entityKind -> (recordId -> stored record). Cleared on lock. */
   private readonly records = new Map<EntityKind, Map<string, StoredRecord>>();
 
   private constructor(
-    filePath: string,
+    persistence: VaultPersistence,
     key: MasterKey,
     kdf: KdfParams,
     metadata: VaultMetadata,
     recovery?: EncryptedRecord,
   ) {
-    this.filePath = filePath;
+    this.persistence = persistence;
     this.key = key;
     this.kdf = kdf;
     this.metadata = metadata;
@@ -160,16 +119,20 @@ export class VaultV2 {
   // --- Opening / creating ---
 
   /** Open (or create) the vault. A wrong passphrase fails GCM auth and throws. */
-  static async open(filePath: string, passphrase: string, kdfAlgo: KdfAlgo = "argon2id"): Promise<VaultV2> {
-    const raw = await VaultV2.readRawFile(filePath);
+  static async open(
+    persistence: VaultPersistence,
+    passphrase: string,
+    kdfAlgo: KdfAlgo = "argon2id",
+  ): Promise<VaultV2> {
+    const raw = await VaultV2.loadRaw(persistence);
     if (raw && VaultV2.looksLikeV1(raw)) {
-      return VaultV2.migrateFromV1(filePath, raw as unknown as LegacyV1File, passphrase);
+      return VaultV2.migrateFromV1(persistence, raw as unknown as LegacyV1File, passphrase);
     }
     const file = raw as VaultFileV2 | undefined;
-    if (file && file.vaultVersion === undefined) {
+    if (file && (file.vaultVersion === undefined || !Array.isArray(file.records))) {
       // Neither a v1 store nor a tagged v2 file: fail cleanly instead of
       // crashing later on `file.records` being undefined.
-      throw new VaultFormatError(`vault file at ${filePath} is not a recognized Soroeru vault`);
+      throw new VaultFormatError("stored vault data is not a recognized Soroeru vault");
     }
     if (file) VaultV2.validateV2Version(file);
     const kdf = file?.kdf ?? newKdfParams(kdfAlgo);
@@ -178,7 +141,7 @@ export class VaultV2 {
     const metadata = file?.metadata ?? { createdAt: now, updatedAt: now, appName: APP_NAME };
     // Reject a wrong passphrase up front, independent of record count.
     if (file?.verifier) await VaultV2.assertPassphraseVerifier(key, file.verifier);
-    const vault = new VaultV2(filePath, key, kdf, metadata, file?.recovery);
+    const vault = new VaultV2(persistence, key, kdf, metadata, file?.recovery);
     if (file) await vault.loadRecords(file.records, key);
     return vault;
   }
@@ -194,29 +157,29 @@ export class VaultV2 {
   }
 
   /** Open the vault using a recovery key instead of the passphrase (RFC-002 §6). */
-  static async openWithRecoveryKey(filePath: string, recoveryKey: string): Promise<VaultV2> {
-    const file = (await VaultV2.readRawFile(filePath)) as VaultFileV2 | undefined;
+  static async openWithRecoveryKey(persistence: VaultPersistence, recoveryKey: string): Promise<VaultV2> {
+    const file = (await VaultV2.loadRaw(persistence)) as VaultFileV2 | undefined;
     if (!file?.recovery) throw new Error("no recovery key is configured for this vault");
+    if (file.vaultVersion === undefined || !Array.isArray(file.records)) {
+      throw new VaultFormatError("stored vault data is not a recognized Soroeru vault");
+    }
+    VaultV2.validateV2Version(file);
     const kek = await recoveryKeyToKek(recoveryKey);
-    const rawKey = Buffer.from(await decryptRecord(kek, file.recovery), "base64");
+    const rawKey = base64ToBytes(await decryptRecord(kek, file.recovery));
     const key = await importKeyRaw(rawKey);
-    const vault = new VaultV2(filePath, key, file.kdf, file.metadata, file.recovery);
+    const vault = new VaultV2(persistence, key, file.kdf, file.metadata, file.recovery);
     await vault.loadRecords(file.records, key);
     return vault;
   }
 
-  private static async readRawFile(filePath: string): Promise<Record<string, unknown> | undefined> {
-    let text: string;
-    try {
-      text = await readFile(filePath, "utf8");
-    } catch {
-      return undefined;
+  /** Load the stored document; anything other than a JSON object is corrupt (fail closed). */
+  private static async loadRaw(persistence: VaultPersistence): Promise<Record<string, unknown> | undefined> {
+    const raw: unknown = await persistence.load();
+    if (raw === null) return undefined;
+    if (typeof raw !== "object" || Array.isArray(raw)) {
+      throw new VaultCorruptError("stored vault data is not a JSON object");
     }
-    try {
-      return JSON.parse(text) as Record<string, unknown>;
-    } catch (err) {
-      throw new VaultCorruptError(`vault file at ${filePath} is not valid JSON`, { cause: err });
-    }
+    return raw as Record<string, unknown>;
   }
 
   private static looksLikeV1(raw: Record<string, unknown>): boolean {
@@ -334,7 +297,7 @@ export class VaultV2 {
     const recoveryKey = generateRecoveryKey();
     const kek = await recoveryKeyToKek(recoveryKey);
     const raw = await exportKeyRaw(key);
-    this.recovery = await encryptRecord(kek, Buffer.from(raw).toString("base64"));
+    this.recovery = await encryptRecord(kek, bytesToBase64(raw));
     return recoveryKey;
   }
 
@@ -359,7 +322,7 @@ export class VaultV2 {
     const key = this.requireKey();
     const candidateKey = await deriveKey(candidate, this.kdf);
     const [a, b] = await Promise.all([exportKeyRaw(key), exportKeyRaw(candidateKey)]);
-    return Buffer.from(a).equals(Buffer.from(b));
+    return bytesEqual(a, b);
   }
 
   /** Re-key under a fresh salt. Invalidates any recovery wrap (it wraps the old key). */
@@ -373,7 +336,7 @@ export class VaultV2 {
 
   // --- Persistence ---
 
-  /** Build the on-disk file shape; every record gets a fresh random IV. */
+  /** Build the stored document shape; every record gets a fresh random IV. */
   private async serialize(): Promise<VaultFileV2> {
     const key = this.requireKey();
     const now = Date.now();
@@ -414,24 +377,21 @@ export class VaultV2 {
 
   /** Persist everything; every record gets a fresh random IV. */
   async save(): Promise<void> {
-    const file = await this.serialize();
-    // Owner-only perms: contents are encrypted, but a PII-bearing state file should not be world-readable.
-    // persist: encrypted-store — AES-256-GCM encrypted record vault only (docs/security.md §4)
-    await atomicWriteEncryptedStoreFile(this.filePath, JSON.stringify(file), { mode: 0o600 });
+    await this.persistence.save(await this.serialize());
   }
 
-  /** Same encrypted JSON shape as on disk, for the user to copy elsewhere as a backup. */
+  /** Same encrypted JSON shape as the stored document, for the user to copy elsewhere as a backup. */
   async exportEncrypted(): Promise<string> {
     return JSON.stringify(await this.serialize());
   }
 
   /**
-   * Restore an encrypted export to `filePath` and open it. Validates the vault
-   * format version before writing anything and refuses to overwrite an existing
-   * file unless `options.overwrite` is set.
+   * Restore an encrypted export into `persistence` and open it. Validates the
+   * vault format version before writing anything and refuses to overwrite
+   * existing (or unreadable) stored data unless `options.overwrite` is set.
    */
   static async importEncrypted(
-    filePath: string,
+    persistence: VaultPersistence,
     exported: string,
     passphrase: string,
     options?: { overwrite?: boolean },
@@ -442,24 +402,27 @@ export class VaultV2 {
     } catch (err) {
       throw new VaultCorruptError("encrypted export is not valid JSON", { cause: err });
     }
-    if (parsed.vaultVersion === undefined) {
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      parsed.vaultVersion === undefined ||
+      !Array.isArray(parsed.records)
+    ) {
       throw new VaultFormatError("encrypted export is not a Vault v2 file");
     }
     VaultV2.validateV2Version(parsed);
     if (!options?.overwrite) {
-      const exists = await readFile(filePath).then(
+      // Corrupt stored data counts as existing: never replace it implicitly.
+      const exists = await persistence.load().then(
+        (data) => data !== null,
         () => true,
-        () => false,
       );
       if (exists) {
-        throw new Error(
-          `refusing to overwrite existing vault at ${filePath} (pass { overwrite: true } to replace it)`,
-        );
+        throw new Error("refusing to overwrite an existing vault (pass { overwrite: true } to replace it)");
       }
     }
-    // persist: encrypted-store — restoring an encrypted export writes the same encrypted shape (§4)
-    await atomicWriteEncryptedStoreFile(filePath, JSON.stringify(parsed), { mode: 0o600 });
-    return VaultV2.open(filePath, passphrase);
+    await persistence.save(parsed);
+    return VaultV2.open(persistence, passphrase);
   }
 
   // --- Migration from v1 (RFC-002 §2.4) ---
@@ -467,17 +430,17 @@ export class VaultV2 {
   /**
    * Migrate a v1 single-document store into a v2 record vault, in memory. The
    * caller still controls persistence: the migrated vault is saved on the next
-   * save(), which writes the v2 shape over `filePath`.
+   * save(), which writes the v2 shape through `persistence`.
    */
   private static async migrateFromV1(
-    filePath: string,
+    persistence: VaultPersistence,
     file: LegacyV1File,
     passphrase: string,
   ): Promise<VaultV2> {
     const key = await deriveKey(passphrase, file.kdf);
     const now = Date.now();
     const vault = new VaultV2(
-      filePath,
+      persistence,
       key,
       file.kdf,
       { createdAt: now, updatedAt: now, appName: APP_NAME },
@@ -496,7 +459,7 @@ export class VaultV2 {
         const d = payload.data;
         const attributeKey = String(d.key ?? "");
         this.put("personalAttribute", {
-          id: attributeKey || randomUUID(),
+          id: attributeKey || webCryptoRuntime.randomUUID(),
           attributeKey,
           label: String(d.label ?? attributeKey),
           value: String(d.value ?? ""),
@@ -511,7 +474,7 @@ export class VaultV2 {
         const d = payload.data;
         const origin = String(d.origin ?? "");
         const siteAccount: EntityPayloadMap["siteAccount"] = {
-          id: String(d.siteId ?? randomUUID()),
+          id: String(d.siteId ?? webCryptoRuntime.randomUUID()),
           domain: safeHost(origin),
           displayName: String(d.serviceName ?? safeHost(origin)),
           createdAt: typeof d.registeredAt === "number" ? d.registeredAt : now,
@@ -536,7 +499,7 @@ export class VaultV2 {
       case "candidate": {
         const d = payload.data;
         this.put("localDefinition", {
-          id: String(d.id ?? randomUUID()),
+          id: String(d.id ?? webCryptoRuntime.randomUUID()),
           serviceName: String(d.serviceName ?? ""),
           source: d.source === "user" || d.source === "observation" ? d.source : "ai",
           status: "candidate",
@@ -549,7 +512,7 @@ export class VaultV2 {
       case "diagnostic": {
         const d = payload.data;
         const diagnostic: EntityPayloadMap["diagnostic"] = {
-          id: String(d.id ?? randomUUID()),
+          id: String(d.id ?? webCryptoRuntime.randomUUID()),
           at: typeof d.at === "number" ? d.at : now,
           type: legacyDiagType(d.type),
           message: String(d.message ?? ""),
@@ -564,7 +527,7 @@ export class VaultV2 {
       case "mandate": {
         const d = payload.data;
         const mandate: EntityPayloadMap["mandate"] = {
-          id: randomUUID(),
+          id: webCryptoRuntime.randomUUID(),
           operation: "registration",
           authorizedAt: typeof d.authorizedAt === "number" ? d.authorizedAt : now,
         };
@@ -578,7 +541,7 @@ export class VaultV2 {
         // (the vault is the user's source of truth — no silent data loss).
         const unknownKind = (payload as { kind?: unknown }).kind;
         this.put("diagnostic", {
-          id: randomUUID(),
+          id: webCryptoRuntime.randomUUID(),
           at: now,
           type: "error",
           message: `unmigrated legacy record kind: ${String(unknownKind)}`,
