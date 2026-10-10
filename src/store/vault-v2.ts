@@ -45,7 +45,7 @@ import type {
   VaultRecordEnvelope,
 } from "./vault-persistence.js";
 
-export { VaultCorruptError, VaultFormatError, VaultLockedError } from "./vault-errors.js";
+export { VaultCorruptError, VaultFormatError, VaultLockedError, VaultStorageQuotaError } from "./vault-errors.js";
 export type {
   EncryptedVaultData,
   VaultMetadata,
@@ -56,8 +56,28 @@ export type {
 /** On-disk vault format version. v2 is the first versioned record vault. */
 export const VAULT_FORMAT_VERSION = 2 as const;
 
-/** Current schema version stamped on every written record envelope. */
+/** Default schema version stamped on written record envelopes. */
 export const RECORD_SCHEMA_VERSION = 1 as const;
+
+/**
+ * Per-kind record schema versions, for kinds whose payload shape changed
+ * (design #554 §6.4). Adding a kind or an optional field does not bump the
+ * vault format version; older records stay readable and are re-stamped on the
+ * next write. A record newer than this build understands fails closed.
+ */
+export const RECORD_SCHEMA_VERSIONS: Readonly<Record<EntityKind, number>> = Object.fromEntries(
+  ENTITY_KINDS.map((kind) => [kind, kind === "workflowCheckpoint" ? 2 : RECORD_SCHEMA_VERSION]),
+) as Record<EntityKind, number>;
+
+/**
+ * Key handling for an opened vault. `extractableKey: false` keeps the master key
+ * as a non-extractable `CryptoKey` (the extension Side Panel session, design
+ * #554 §6.2); recovery-key setup then needs the passphrase to derive a
+ * short-lived extractable copy. Defaults to `true` (current Electron build).
+ */
+export interface VaultKeyOptions {
+  extractableKey?: boolean;
+}
 
 const APP_NAME = "Soroeru";
 const ENTITY_KIND_SET = new Set<string>(ENTITY_KINDS);
@@ -98,6 +118,7 @@ export class VaultV2 {
   private recovery: EncryptedRecord | undefined;
   private metadata: VaultMetadata;
   private readonly persistence: VaultPersistence;
+  private readonly extractableKey: boolean;
   /** entityKind -> (recordId -> stored record). Cleared on lock. */
   private readonly records = new Map<EntityKind, Map<string, StoredRecord>>();
 
@@ -106,9 +127,11 @@ export class VaultV2 {
     key: MasterKey,
     kdf: KdfParams,
     metadata: VaultMetadata,
-    recovery?: EncryptedRecord,
+    recovery: EncryptedRecord | undefined,
+    extractableKey: boolean,
   ) {
     this.persistence = persistence;
+    this.extractableKey = extractableKey;
     this.key = key;
     this.kdf = kdf;
     this.metadata = metadata;
@@ -123,10 +146,12 @@ export class VaultV2 {
     persistence: VaultPersistence,
     passphrase: string,
     kdfAlgo: KdfAlgo = "argon2id",
+    options: VaultKeyOptions = {},
   ): Promise<VaultV2> {
+    const extractable = options.extractableKey ?? true;
     const raw = await VaultV2.loadRaw(persistence);
     if (raw && VaultV2.looksLikeV1(raw)) {
-      return VaultV2.migrateFromV1(persistence, raw as unknown as LegacyV1File, passphrase);
+      return VaultV2.migrateFromV1(persistence, raw as unknown as LegacyV1File, passphrase, extractable);
     }
     const file = raw as VaultFileV2 | undefined;
     if (file && (file.vaultVersion === undefined || !Array.isArray(file.records))) {
@@ -136,12 +161,12 @@ export class VaultV2 {
     }
     if (file) VaultV2.validateV2Version(file);
     const kdf = file?.kdf ?? newKdfParams(kdfAlgo);
-    const key = await deriveKey(passphrase, kdf);
+    const key = await deriveKey(passphrase, kdf, webCryptoRuntime, extractable);
     const now = Date.now();
     const metadata = file?.metadata ?? { createdAt: now, updatedAt: now, appName: APP_NAME };
     // Reject a wrong passphrase up front, independent of record count.
     if (file?.verifier) await VaultV2.assertPassphraseVerifier(key, file.verifier);
-    const vault = new VaultV2(persistence, key, kdf, metadata, file?.recovery);
+    const vault = new VaultV2(persistence, key, kdf, metadata, file?.recovery, extractable);
     if (file) await vault.loadRecords(file.records, key);
     return vault;
   }
@@ -157,7 +182,12 @@ export class VaultV2 {
   }
 
   /** Open the vault using a recovery key instead of the passphrase (RFC-002 §6). */
-  static async openWithRecoveryKey(persistence: VaultPersistence, recoveryKey: string): Promise<VaultV2> {
+  static async openWithRecoveryKey(
+    persistence: VaultPersistence,
+    recoveryKey: string,
+    options: VaultKeyOptions = {},
+  ): Promise<VaultV2> {
+    const extractable = options.extractableKey ?? true;
     const file = (await VaultV2.loadRaw(persistence)) as VaultFileV2 | undefined;
     if (!file?.recovery) throw new Error("no recovery key is configured for this vault");
     if (file.vaultVersion === undefined || !Array.isArray(file.records)) {
@@ -166,8 +196,13 @@ export class VaultV2 {
     VaultV2.validateV2Version(file);
     const kek = await recoveryKeyToKek(recoveryKey);
     const rawKey = base64ToBytes(await decryptRecord(kek, file.recovery));
-    const key = await importKeyRaw(rawKey);
-    const vault = new VaultV2(persistence, key, file.kdf, file.metadata, file.recovery);
+    let key: MasterKey;
+    try {
+      key = await importKeyRaw(rawKey, extractable);
+    } finally {
+      rawKey.fill(0);
+    }
+    const vault = new VaultV2(persistence, key, file.kdf, file.metadata, file.recovery, extractable);
     await vault.loadRecords(file.records, key);
     return vault;
   }
@@ -200,6 +235,15 @@ export class VaultV2 {
       if (!ENTITY_KIND_SET.has(env.entityKind)) {
         throw new VaultCorruptError(
           `unknown entity kind "${env.entityKind}" in vault record ${env.recordId}`,
+        );
+      }
+      if (
+        !Number.isInteger(env.schemaVersion) ||
+        env.schemaVersion < 1 ||
+        env.schemaVersion > RECORD_SCHEMA_VERSIONS[env.entityKind]
+      ) {
+        throw new VaultFormatError(
+          `vault record ${env.recordId} has unsupported ${env.entityKind} schema version ${String(env.schemaVersion)}`,
         );
       }
       const plaintext = await decryptRecord(key, { iv: env.iv, ct: env.ciphertext });
@@ -258,7 +302,7 @@ export class VaultV2 {
     const existing = this.bucket(kind).get(payload.id);
     this.bucket(kind).set(payload.id, {
       payload,
-      schemaVersion: RECORD_SCHEMA_VERSION,
+      schemaVersion: RECORD_SCHEMA_VERSIONS[kind],
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
@@ -291,13 +335,29 @@ export class VaultV2 {
    * Generate a recovery key, wrap the master key under it, and stage the wrap
    * for the next save(). Returns the recovery key for one-time display; the
    * caller must show it immediately and never log or persist the plaintext.
+   *
+   * A vault opened with a non-extractable key needs `passphrase`: it derives a
+   * short-lived extractable copy of the same key, wraps it, and drops it
+   * (design #554 §6.2). A passphrase that derives a different key is rejected.
    */
-  async setupRecoveryKey(): Promise<string> {
+  async setupRecoveryKey(passphrase?: string): Promise<string> {
     const key = this.requireKey();
+    let wrappable = key;
+    if (!this.extractableKey) {
+      if (passphrase === undefined) {
+        throw new Error("recovery key setup on a non-extractable vault key requires the passphrase");
+      }
+      wrappable = await deriveKey(passphrase, this.kdf, webCryptoRuntime, true);
+      if (!(await sameAesKey(key, wrappable))) throw new Error("passphrase does not match this vault");
+    }
     const recoveryKey = generateRecoveryKey();
     const kek = await recoveryKeyToKek(recoveryKey);
-    const raw = await exportKeyRaw(key);
-    this.recovery = await encryptRecord(kek, bytesToBase64(raw));
+    const raw = await exportKeyRaw(wrappable);
+    try {
+      this.recovery = await encryptRecord(kek, bytesToBase64(raw));
+    } finally {
+      raw.fill(0);
+    }
     return recoveryKey;
   }
 
@@ -320,6 +380,9 @@ export class VaultV2 {
   /** Check whether `candidate` re-derives the same master key, without changing state. */
   async verifyPassphrase(candidate: string): Promise<boolean> {
     const key = this.requireKey();
+    if (!this.extractableKey) {
+      return sameAesKey(key, await deriveKey(candidate, this.kdf, webCryptoRuntime, false));
+    }
     const candidateKey = await deriveKey(candidate, this.kdf);
     const [a, b] = await Promise.all([exportKeyRaw(key), exportKeyRaw(candidateKey)]);
     return bytesEqual(a, b);
@@ -329,7 +392,7 @@ export class VaultV2 {
   async rekey(newPassphrase: string, kdfAlgo: KdfAlgo = "argon2id"): Promise<void> {
     this.requireKey();
     const newKdf = newKdfParams(kdfAlgo);
-    this.key = await deriveKey(newPassphrase, newKdf);
+    this.key = await deriveKey(newPassphrase, newKdf, webCryptoRuntime, this.extractableKey);
     this.kdf = newKdf;
     this.recovery = undefined;
   }
@@ -394,7 +457,7 @@ export class VaultV2 {
     persistence: VaultPersistence,
     exported: string,
     passphrase: string,
-    options?: { overwrite?: boolean },
+    options?: { overwrite?: boolean } & VaultKeyOptions,
   ): Promise<VaultV2> {
     let parsed: VaultFileV2;
     try {
@@ -422,7 +485,7 @@ export class VaultV2 {
       }
     }
     await persistence.save(parsed);
-    return VaultV2.open(persistence, passphrase);
+    return VaultV2.open(persistence, passphrase, "argon2id", { extractableKey: options?.extractableKey ?? true });
   }
 
   // --- Migration from v1 (RFC-002 §2.4) ---
@@ -436,8 +499,9 @@ export class VaultV2 {
     persistence: VaultPersistence,
     file: LegacyV1File,
     passphrase: string,
+    extractable: boolean,
   ): Promise<VaultV2> {
-    const key = await deriveKey(passphrase, file.kdf);
+    const key = await deriveKey(passphrase, file.kdf, webCryptoRuntime, extractable);
     const now = Date.now();
     const vault = new VaultV2(
       persistence,
@@ -445,6 +509,7 @@ export class VaultV2 {
       file.kdf,
       { createdAt: now, updatedAt: now, appName: APP_NAME },
       file.recovery,
+      extractable,
     );
     for (const record of file.records) {
       const payload = JSON.parse(await decryptRecord(key, record)) as LegacyV1Payload;
@@ -550,6 +615,19 @@ export class VaultV2 {
         return;
       }
     }
+  }
+}
+
+/**
+ * True when two AES-GCM keys hold the same bytes, without exporting either:
+ * a token sealed under `a` authenticates under `b` only if the keys match.
+ */
+async function sameAesKey(a: MasterKey, b: MasterKey): Promise<boolean> {
+  const probe = await encryptRecord(a, PASSPHRASE_VERIFIER_TOKEN);
+  try {
+    return (await decryptRecord(b, probe)) === PASSPHRASE_VERIFIER_TOKEN;
+  } catch {
+    return false;
   }
 }
 

@@ -96,3 +96,26 @@ test("ignores sites/ (the local 127.0.0.1 PoC test-site server)", async () => {
     assert.equal(result.scannedFiles, 0);
   });
 });
+
+test("flags unannotated extension IndexedDB writes and downloads (Issue #557)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "extension"), { recursive: true });
+    await writeFile(
+      join(root, "extension/bad.ts"),
+      [
+        "export function save(store: IDBObjectStore, a: HTMLAnchorElement) {",
+        "  store.put(\"x\", \"k\");",
+        "  a.download = \"vault.json\";",
+        "  // persist: encrypted-store — ciphertext only",
+        "  store.put(\"y\", \"k\");",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const result = checkLocalPersistence(root);
+    assert.equal(result.violations.length, 2);
+    assert.match(result.violations[0]!, /bad\.ts:2:/);
+    assert.match(result.violations[1]!, /bad\.ts:3:/);
+  });
+});

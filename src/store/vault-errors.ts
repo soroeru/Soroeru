@@ -20,3 +20,11 @@ export class VaultCorruptError extends Error {
     this.name = "VaultCorruptError";
   }
 }
+
+/** A save failed because browser storage is full; the previous stored version remains. */
+export class VaultStorageQuotaError extends Error {
+  constructor(options?: { cause?: unknown }) {
+    super("vault save failed: storage quota exceeded", options);
+    this.name = "VaultStorageQuotaError";
+  }
+}

@@ -20,12 +20,19 @@ import {
   type ChromeBridgeTransport,
 } from "../../src/automation/extension-page-driver.js";
 
-test("MV3 manifest requests only the bridge permissions and optional HTTPS hosts", async () => {
+test("MV3 manifest requests only the bridge, Side Panel, and vault storage permissions and optional HTTPS hosts", async () => {
   const manifest = JSON.parse(
     await readFile(join(process.cwd(), "extension", "manifest.json"), "utf8"),
   ) as Record<string, unknown>;
 
-  assert.deepEqual(manifest.permissions, ["nativeMessaging", "scripting", "activeTab", "storage"]);
+  assert.deepEqual(manifest.permissions, [
+    "nativeMessaging",
+    "scripting",
+    "activeTab",
+    "storage",
+    "sidePanel",
+    "unlimitedStorage",
+  ]);
   assert.deepEqual(manifest.optional_host_permissions, ["https://*/*"]);
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.content_scripts, undefined);

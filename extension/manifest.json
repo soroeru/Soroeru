@@ -3,8 +3,12 @@
   "name": "Soroeru Chrome Bridge (developer prototype)",
   "version": "0.1.0",
   "description": "Developer-only Soroeru bridge; visibly operates one user-selected tab.",
-  "permissions": ["nativeMessaging", "scripting", "activeTab", "storage"],
+  "permissions": ["nativeMessaging", "scripting", "activeTab", "storage", "sidePanel", "unlimitedStorage"],
   "optional_host_permissions": ["https://*/*"],
   "background": { "service_worker": "worker.js", "type": "module" },
-  "action": { "default_title": "Soroeru", "default_popup": "popup.html" }
+  "action": { "default_title": "Soroeru", "default_popup": "popup.html" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
 }
