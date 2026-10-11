@@ -38,7 +38,10 @@ export interface VisibilityServiceOptions {
   decideCollectionTos?: VisibilityRunnerOptions["decideCollectionTos"];
   /** Plain-text diagnostics sink passed through to the runner (Issue #314); defaults to a no-op. */
   logger?: Logger;
-  /** Optional hook awaited after a run finishes, before `run-finished` is emitted (e.g. vault persistence). */
+  /**
+   * Optional hook awaited at each pause point (wall hand-off) and after a run finishes, before
+   * `run-finished` is emitted (e.g. vault persistence). A rejection discards the checkpoint.
+   */
   persist?: () => Promise<void>;
   /** Optional hook awaited before a wall hand-off resumes (e.g. re-verify the lease). */
   beforeResume?: () => Promise<void>;
@@ -141,7 +144,7 @@ export class VisibilityService {
       });
       this.emit({ type: "run-started", siteAccountId });
       const view = toView(await runner.runSite(siteAccountId, runOptions));
-      await this.options.persist?.();
+      await this.persistCheckpoint(siteAccountId);
       this.emit({ type: "run-finished", result: view });
       return view;
     } finally {
@@ -211,7 +214,25 @@ export class VisibilityService {
     return session;
   }
 
-  private onHandoff(input: {
+  /**
+   * Persist the vault at a checkpoint boundary. If saving fails the in-memory checkpoint is
+   * discarded so the next run starts fresh instead of resuming from state that never reached disk.
+   */
+  private async persistCheckpoint(siteAccountId: string): Promise<void> {
+    if (!this.options.persist) return;
+    try {
+      await this.options.persist();
+    } catch (err) {
+      try {
+        this.domain?.discardCheckpoint("visibility", siteAccountId);
+      } catch {
+        // The vault may already be locked; there is nothing left to discard.
+      }
+      throw err;
+    }
+  }
+
+  private async onHandoff(input: {
     siteAccount: SiteAccount;
     instruction: string;
     evidence: string;
@@ -219,6 +240,12 @@ export class VisibilityService {
     suggestSavedPageImport?: boolean;
     sameKindWallRepeat?: boolean;
   }): Promise<"resolved" | "abort"> {
+    // Pause point: save the checkpoint before waiting for the user. A failed save aborts the run.
+    try {
+      await this.persistCheckpoint(input.siteAccount.id);
+    } catch {
+      return "abort";
+    }
     const credential = input.credential ? toHandoffCredentialView(input.credential) : undefined;
     this.emit({
       type: "handoff",

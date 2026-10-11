@@ -990,3 +990,30 @@ test("full PAN comparisons survive reload, distinguish same suffix, and retain d
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("saveCheckpoint strips query and fragment from resumeData.url and discardCheckpoint removes it", async () => {
+  const { dir, service } = await openService();
+  try {
+    const checkpoint = service.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: "site-1",
+      step: "login",
+      status: "in-progress",
+      resumeData: { url: "https://example.test/account/profile?token=fake#frag", pages: 2 },
+    });
+    assert.equal(checkpoint.resumeData?.url, "https://example.test/account/profile");
+    assert.equal(checkpoint.resumeData?.pages, 2);
+    const invalid = service.saveCheckpoint({
+      workflow: "visibility",
+      siteAccountId: "site-2",
+      step: "login",
+      status: "in-progress",
+      resumeData: { url: "not a url?x=1" },
+    });
+    assert.equal(invalid.resumeData?.url, undefined);
+    service.discardCheckpoint("visibility", "site-1");
+    assert.equal(service.getCheckpoint("visibility", "site-1"), undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

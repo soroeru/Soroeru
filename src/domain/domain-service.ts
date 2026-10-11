@@ -902,7 +902,7 @@ export class DomainService {
       updatedAt: Date.now(),
     };
     if (input.siteAccountId !== undefined) checkpoint.siteAccountId = input.siteAccountId;
-    if (input.resumeData !== undefined) checkpoint.resumeData = input.resumeData;
+    if (input.resumeData !== undefined) checkpoint.resumeData = sanitizeResumeData(input.resumeData);
     if (input.resolutionStage !== undefined) checkpoint.resolutionStage = input.resolutionStage;
     if (input.unresolvedAttributeKeys !== undefined) {
       checkpoint.unresolvedAttributeKeys = [...input.unresolvedAttributeKeys];
@@ -916,6 +916,11 @@ export class DomainService {
     siteAccountId?: string,
   ): WorkflowCheckpoint | undefined {
     return this.vault.get("workflowCheckpoint", checkpointId(workflow, siteAccountId));
+  }
+
+  /** Remove a checkpoint so the next run starts fresh (e.g. when saving it failed). */
+  discardCheckpoint(workflow: WorkflowCheckpoint["workflow"], siteAccountId?: string): void {
+    this.vault.delete("workflowCheckpoint", checkpointId(workflow, siteAccountId));
   }
 
   listCheckpoints(): WorkflowCheckpoint[] {
@@ -960,6 +965,25 @@ export interface SaveCheckpointInput {
   resumeData?: Record<string, string | number | boolean>;
   resolutionStage?: WorkflowCheckpoint["resolutionStage"];
   unresolvedAttributeKeys?: string[];
+}
+
+/**
+ * Checkpoints must not carry personal data, so a resume `url` keeps only origin and path
+ * (no query string or fragment); an unparsable URL is dropped.
+ */
+function sanitizeResumeData(
+  data: Record<string, string | number | boolean>,
+): Record<string, string | number | boolean> {
+  if (typeof data.url !== "string") return data;
+  const { url: raw, ...rest } = data;
+  try {
+    const url = new URL(raw);
+    url.search = "";
+    url.hash = "";
+    return { ...rest, url: url.toString() };
+  } catch {
+    return rest;
+  }
 }
 
 function checkpointId(workflow: string, siteAccountId?: string): string {
