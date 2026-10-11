@@ -21,7 +21,12 @@ export default tseslint.config(
     ],
   },
   {
-    files: ["electron/**/*.ts"],
+    files: [
+      "electron/**/*.ts",
+      "cloud/src/**/*.ts",
+      "src/shared/cloud-contract.ts",
+      "extension/cloud-client.ts",
+    ],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.node },

@@ -45,3 +45,17 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/cloud"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+
+  - package-ecosystem: "terraform"
+    directories: ["/infra/bootstrap", "/infra/runtime"]
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]

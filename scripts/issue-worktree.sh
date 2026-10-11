@@ -327,7 +327,7 @@ case "$COMMAND" in
       --argjson issue "$ISSUE" --arg slug "$SLUG" --arg branch "$BRANCH" --arg worktree "$WORKTREE" \
       --arg agent "$AGENT" --arg session_hash "$HASH" --arg now "$NOW" --arg host "$HOST" --arg head "$HEAD" \
       --argjson owner_pid "$PPID" --argjson expires_at_epoch "$EXPIRES" \
-      '{schema:1,issue:$issue,slug:$slug,branch:$branch,worktree:$worktree,status:"active",owner:{agent:$agent,session_hash:$session_hash,active:true,generation:1,host:$host,pid:$owner_pid,expires_at_epoch:$expires_at_epoch,updated_at:$now},handoff_epoch:1,review:{epoch:1,used:0,pending:0,limit:2,reviewer:$agent},history:[{event:"create",epoch:1,agent:$agent,session_hash:$session_hash,head:$head,at:$now}] }')
+      '{schema:1,issue:$issue,slug:$slug,branch:$branch,worktree:$worktree,status:"active",owner:{agent:$agent,session_hash:$session_hash,active:true,generation:1,host:$host,pid:$owner_pid,expires_at_epoch:$expires_at_epoch,updated_at:$now},handoff_epoch:1,review:{epoch:1,used:0,pending:0,limit:1,reviewer:$agent},history:[{event:"create",epoch:1,agent:$agent,session_hash:$session_hash,head:$head,at:$now}] }')
     write_state "$JSON_VALUE"
     unlock_state
     printf '%s\n' "$WORKTREE"
@@ -397,8 +397,8 @@ case "$COMMAND" in
        | .handoff_epoch += 1
        | .owner.agent=$agent | .owner.session_hash=$hash | .owner.active=true
        | .owner.generation += 1 | .owner.host=$host | .owner.pid=$pid | .owner.expires_at_epoch=$expires | .owner.updated_at=$now
-       | .review={epoch:.handoff_epoch,used:0,pending:0,limit:2,reviewer:$agent}
-       | .history += [{event:"handoff",epoch:.handoff_epoch,agent:$agent,session_hash:$hash,head:$head,old_review_used:$old_review_used,new_review_limit:2,at:$now}]' "$STATE_FILE")
+       | .review={epoch:.handoff_epoch,used:0,pending:0,limit:1,reviewer:$agent}
+       | .history += [{event:"handoff",epoch:.handoff_epoch,agent:$agent,session_hash:$hash,head:$head,old_review_used:$old_review_used,new_review_limit:1,at:$now}]' "$STATE_FILE")
     write_state "$VALUE"
     unlock_state
     ;;
