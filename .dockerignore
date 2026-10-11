@@ -1,0 +1,13 @@
+**
+!cloud/
+!cloud/package.json
+!cloud/package-lock.json
+!cloud/tsconfig.json
+!cloud/src/
+!cloud/src/**
+!src/
+!src/shared/
+!src/shared/cloud-contract.ts
+!src/types.ts
+
+!cloud/Dockerfile

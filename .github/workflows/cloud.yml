@@ -1,0 +1,109 @@
+name: cloud
+on:
+  pull_request:
+    paths:
+      [
+        "cloud/**",
+        "infra/**",
+        "src/shared/cloud-contract.ts",
+        "src/types.ts",
+        "extension/cloud-client.ts",
+        ".github/workflows/cloud.yml",
+        ".dockerignore",
+        "scripts/check-cloud-deployment.mjs",
+        "scripts/cloud-smoke.mjs",
+      ]
+  push:
+    branches: [main]
+    paths:
+      [
+        "cloud/**",
+        "infra/runtime/**",
+        "src/shared/cloud-contract.ts",
+        "src/types.ts",
+        "extension/cloud-client.ts",
+        ".github/workflows/cloud.yml",
+        ".dockerignore",
+        "scripts/check-cloud-deployment.mjs",
+        "scripts/cloud-smoke.mjs",
+      ]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cloud-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cloud/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix cloud
+      - run: npx playwright install --with-deps chromium
+      - run: npm run format && npm run lint && npm run typecheck
+      - run: npm run release:check
+      - run: npm run typecheck --prefix cloud && npm test --prefix cloud && npm run audit --prefix cloud
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.14.3
+      - run: terraform fmt -check -recursive infra
+      - run: terraform -chdir=infra/bootstrap init -backend=false && terraform -chdir=infra/bootstrap validate
+      - run: terraform -chdir=infra/runtime init -backend=false && terraform -chdir=infra/runtime validate
+      - run: docker build -f cloud/Dockerfile -t soroeru-cloud:test .
+      - name: Start both production containers with fake configuration
+        run: |
+          for SERVICE in api pii-fallback; do
+            docker run --rm --mount "type=bind,source=${PWD}/cloud/tests/startup-smoke.mjs,target=/tmp/startup-smoke.mjs,readonly" \
+              -e "SOROERU_SERVICE=${SERVICE}" -e TIER3_TICKET_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+              soroeru-cloud:test node /tmp/startup-smoke.mjs
+          done
+  deploy:
+    needs: validate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    environment: soroeru-cloud
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_gemini_daily_limit: ${{ vars.GEMINI_DAILY_LIMIT || '100' }}
+      TF_VAR_ticket_secret_version: ${{ vars.TIER3_TICKET_SECRET_VERSION || '1' }}
+      STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: 1.14.3
+          terraform_wrapper: false
+      - name: Build and push image
+        run: |
+          gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet
+          IMAGE="asia-northeast1-docker.pkg.dev/${TF_VAR_project_id}/soroeru/cloud:${GITHUB_SHA}"
+          docker build -f cloud/Dockerfile -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST=$(gcloud artifacts docker images describe "$IMAGE" --format='value(image_summary.digest)')
+          echo "TF_VAR_image=asia-northeast1-docker.pkg.dev/${TF_VAR_project_id}/soroeru/cloud@${DIGEST}" >> "$GITHUB_ENV"
+      - name: Plan and apply runtime
+        run: |
+          terraform -chdir=infra/runtime init -backend-config="bucket=${STATE_BUCKET}" -backend-config="prefix=runtime"
+          terraform -chdir=infra/runtime plan -out=deploy.tfplan
+          terraform -chdir=infra/runtime apply deploy.tfplan
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify privacy configuration and public stubs
+        run: node scripts/check-cloud-deployment.mjs "$TF_VAR_project_id"

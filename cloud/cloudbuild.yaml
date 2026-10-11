@@ -1,0 +1,22 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "cloud/Dockerfile", "-t", "${_IMAGE}", "."]
+  - name: "${_IMAGE}"
+    entrypoint: node
+    env:
+      [
+        "SOROERU_SERVICE=api",
+        "TIER3_TICKET_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ]
+    args: ["/workspace/cloud/tests/startup-smoke.mjs"]
+  - name: "${_IMAGE}"
+    entrypoint: node
+    env:
+      [
+        "SOROERU_SERVICE=pii-fallback",
+        "TIER3_TICKET_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      ]
+    args: ["/workspace/cloud/tests/startup-smoke.mjs"]
+images: ["${_IMAGE}"]
+options:
+  logging: CLOUD_LOGGING_ONLY
