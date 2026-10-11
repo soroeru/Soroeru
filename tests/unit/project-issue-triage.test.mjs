@@ -1,4 +1,5 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
@@ -14,8 +15,9 @@ import {
   fallbackResult,
   RISKS,
   SIZES,
+  TRIAGE_POLICY, TRIAGE_RUBRIC_VERSION, TRIAGE_REVIEW_THRESHOLDS,
 } from "../../scripts/project-issue-triage-contract.mjs";
-import { evaluateTriage, JEV_ENDPOINT, RESPONSE_LIMIT } from "../../scripts/project-issue-triage.mjs";
+import { evaluateTriage, JEV_ENDPOINT, RESPONSE_LIMIT, buildTriageRequest, triageClassifierFingerprint } from "../../scripts/project-issue-triage.mjs";
 import {
   runTriageChild,
   createTriageState,
@@ -30,7 +32,7 @@ const now = Date.parse("2026-09-27T00:00:00Z");
 const input = {
   issue: 123,
   issueUpdatedAt: "2026-09-26T00:00:00Z",
-  policyVersion: "triage-v1",
+  policyVersion: "triage-v3",
   model: "jev-1.13.0",
   routes: [
     { agent: "Codex", model: "fixture-a" },
@@ -90,6 +92,14 @@ test("shadow sends only bounded issue text to fixed endpoint, projects structure
   assert.equal(result.result.route.choice, "abstain");
   assert.deepEqual(result.usage, { inputTokens: 30, outputTokens: 4 });
   assert.doesNotMatch(JSON.stringify(result), /must never escape|fake-secret|help message/);
+});
+
+test("the previous policy cannot be sent under the new classifier", async () => {
+  let fetched = false;
+  await assert.rejects(evaluateTriage({ ...input, policyVersion: "triage-v1" }, config,
+    dependencies({ fetchIssue: async () => { fetched = true; return disclosure; } })),
+    /triage-invalid-structure/);
+  assert.equal(fetched, false);
 });
 
 for (const [name, change, reason] of [
@@ -699,4 +709,63 @@ test("classic dry-run with shadow triage fetches no Issue text and never contact
   assert.equal(JSON.parse(stdout).triage.mode, "shadow");
   assert.equal(await readFile(log, "utf8"), "");
   assert.equal(`${stdout}${stderr}`.includes(marker), false);
+});
+
+
+test("classifier approval fingerprint includes route instructions and abstention criteria", () => {
+  const { questions } = buildTriageRequest({}, { routeMap: {
+    candidate: { agent: "fixture", model: "fixture" },
+  }, evidence: [] }, {});
+  const fingerprint = () => createHash("sha256").update(JSON.stringify({
+    policy: TRIAGE_POLICY, rubric: TRIAGE_RUBRIC_VERSION,
+    thresholds: TRIAGE_REVIEW_THRESHOLDS, questions,
+  })).digest("hex");
+  assert.ok(questions.route);
+  assert.equal(fingerprint(), triageClassifierFingerprint());
+  questions.route.instructions += " changed policy";
+  assert.notEqual(fingerprint(), triageClassifierFingerprint());
+  questions.route.instructions = buildTriageRequest({}, { routeMap: {
+    candidate: { agent: "fixture", model: "fixture" },
+  }, evidence: [] }, {}).questions.route.instructions;
+  questions.route.criteria.abstain = "changed abstention";
+  assert.notEqual(fingerprint(), triageClassifierFingerprint());
+});
+
+test("explicit private opt-in classifies fictional private Issue text inside the isolated boundary", async () => {
+  let sent;
+  const result = await evaluateTriage(input, { ...config, allowPrivateIssues: true }, dependencies({
+    fetchIssue: async () => ({ ...disclosure, isPrivate: true }),
+    fetchImpl: async (_url, options) => {
+      sent = JSON.parse(options.body);
+      return new Response(JSON.stringify(response()), { status: 200 });
+    },
+  }));
+  assert.deepEqual(sent.state, { title: disclosure.title, body: disclosure.body });
+  assert.equal(result.result.status, "recommended");
+  assert.doesNotMatch(JSON.stringify(result), /Change fixture wording|Update a local help message|fake-secret/);
+});
+
+for (const [name, change, reason] of [
+  ["unknown visibility", { isPrivate: undefined }, "input-not-approved"],
+  ["changed revision", { updatedAt: "2026-09-27T00:00:00Z" }, "stale-input"],
+  ["password", { body: '"password": "fake-private-password"' }, "sensitive-input"],
+  ["OTP", { body: "OTP=123456" }, "sensitive-input"],
+  ["CVV", { body: "CVV=123" }, "sensitive-input"],
+  ["token", { body: "token=fake-private-token" }, "sensitive-input"],
+  ["personal email", { body: "fake.person@example.invalid" }, "sensitive-input"],
+  ["oversized", { body: "文".repeat(9000) }, "input-too-large"],
+]) test(`private opt-in does not bypass ${name}`, async () => {
+  let sent = 0;
+  const result = await evaluateTriage(input, { ...config, allowPrivateIssues: true }, dependencies({
+    fetchIssue: async () => ({ ...disclosure, isPrivate: true, ...change }),
+    fetchImpl: async () => { sent++; throw new Error("unexpected"); },
+  }));
+  assert.equal(result.result.reason, reason);
+  assert.equal(sent, 0);
+});
+
+test("private input consent is a boolean, not a truthy string or Issue text instruction", () => {
+  for (const value of ["true", 1, {}, null])
+    assert.throws(() => normalizeTriageConfig({ ...config, allowPrivateIssues: value }), /triage-invalid-structure/);
+  assert.equal(normalizeTriageConfig({ ...config, allowPrivateIssues: false }).allowPrivateIssues, false);
 });

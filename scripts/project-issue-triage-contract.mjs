@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 
 export const TRIAGE_DEFAULTS = Object.freeze({ mode: "off", model: "jev-1.13.0", maxRequests: 20 });
-export const TRIAGE_POLICY = "triage-v1";
+export const TRIAGE_POLICY = "triage-v3";
+export const TRIAGE_RUBRIC_VERSION = "triage-rubric-538-v3";
+export const TRIAGE_REVIEW_THRESHOLDS = Object.freeze({ confidence: 0.7, probabilityGap: 0.2 });
 export const RISKS = ["low", "medium", "high", "critical"];
 export const SIZES = ["XS", "S", "M", "L", "XL"];
 export const FALLBACK_REASONS = [
@@ -43,8 +45,9 @@ function route(value) {
   return { agent: value.agent, model: value.model };
 }
 export function normalizeTriageConfig(raw = {}) {
-  keys(raw, ["mode", "model", "maxRequests"]);
+  keys(raw, ["mode", "model", "maxRequests", "allowPrivateIssues"]);
   const config = { ...TRIAGE_DEFAULTS, ...raw };
+  requireValue(config.allowPrivateIssues === undefined || typeof config.allowPrivateIssues === "boolean");
   requireValue(["off", "shadow", "assisted"].includes(config.mode));
   requireValue(/^jev-\d+\.\d+\.\d+$/.test(config.model));
   requireValue(
@@ -182,7 +185,8 @@ export function parseDistribution(raw, options) {
 }
 export function requiresReview(distribution) {
   const ranked = Object.values(distribution.probabilities).sort((a, b) => b - a);
-  return distribution.confidence < 0.7 || ranked[0] - (ranked[1] ?? 0) < 0.2;
+  return distribution.confidence < TRIAGE_REVIEW_THRESHOLDS.confidence ||
+    ranked[0] - (ranked[1] ?? 0) < TRIAGE_REVIEW_THRESHOLDS.probabilityGap;
 }
 export function parseTriageResponse(raw, input, context) {
   requireValue(object(raw) && raw.model === input.model && object(raw.answers));
@@ -245,7 +249,8 @@ export function parseTriageDecision(raw, context, recommendation) {
     ),
   );
   if (raw.action !== "fallback") requireValue(validTimestamp(raw.issueUpdatedAt));
-  if (raw.action === "override") requireValue(RISKS.includes(raw.riskCategory) && SIZES.includes(raw.size));
+  if (raw.action === "override") requireValue(RISKS.includes(raw.riskCategory) && SIZES.includes(raw.size) &&
+    ["domain-review", "insufficient-context", "route-unavailable"].includes(raw.reason));
   if (raw.riskCategory !== undefined) requireValue(RISKS.includes(raw.riskCategory));
   if (raw.size !== undefined) requireValue(SIZES.includes(raw.size));
   let result;

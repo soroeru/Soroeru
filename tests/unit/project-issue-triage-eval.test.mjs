@@ -98,6 +98,15 @@ test("dataset validation rejects unknown fields, duplicates, stray secrets and t
   assert.throws(() => validateEvalDataset(unconfirmed), /labeling/);
 });
 
+test("an evaluation cannot claim a rubric different from the deployed classifier", () => {
+  const stale = clone();
+  stale.rubricVersion = "triage-rubric-524-v1";
+  assert.throws(() => validateEvalDataset(stale), /triage-eval-invalid:rubric-version/);
+  const oldPolicy = clone();
+  oldPolicy.policyVersion = "triage-v1";
+  assert.throws(() => validateEvalDataset(oldPolicy), /triage-eval-invalid:policy/);
+});
+
 test("the keyword baseline run is reproducible and keeps Issue text out of every output", async () => {
   const transport = createFakeTransport(keywordBaselineAnswers);
   const first = await evaluate(transport, { transportKind: "keyword-baseline" });
@@ -205,6 +214,20 @@ test("the assisted gate never reports met by itself and marks stand-ins unmeasur
     { ...metrics, highCritical: { ...metrics.highCritical, directReviewMisses: ["H001"] } },
   );
   assert.equal(missed.overall, "not-met");
+});
+
+test("an older model, policy, rubric or prompt fingerprint cannot authorize the current classifier", async () => {
+  const run = await evaluate(oracleTransport());
+  const live = { ...run, transportKind: "jev-live", labeling: { status: "human-confirmed" } };
+  const metrics = computeTriageMetrics(run);
+  for (const change of [
+    { model: "jev-1.12.0" }, { policyVersion: "triage-v1" },
+    { rubricVersion: "triage-rubric-524-v1" }, { classifierFingerprint: "0".repeat(64) },
+  ]) {
+    const gate = assessAssistedGate({ ...live, ...change }, metrics);
+    assert.equal(gate.overall, "not-met");
+    assert.equal(gate.conditions.find((c) => c.id === "current-classifier").status, "not-met");
+  }
 });
 
 test("shadow comparison stratifies outcomes by recommendation agreement and flags small samples", () => {

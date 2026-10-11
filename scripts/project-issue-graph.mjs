@@ -50,15 +50,15 @@ import {
   loadOrchestratorConfig,
   mergeOrchestratorConfig,
 } from "./project-issue-config.mjs";
-import { fetchProjectItems, fetchTriageRevision, githubGraphql } from "./project-issue-github.mjs";
+import { fetchRepositoryIssues, repositoryIssueGraphql, fetchTriageRevision } from "./project-issue-github.mjs";
+import { loadAssistedApproval, loadApprovedRouteEvidence } from "./project-issue-triage-approval.mjs";
 import { createTriageRunner, createTriageState } from "./project-issue-triage-client.mjs";
-import { TRIAGE_POLICY, normalizeTriageConfig, normalizeTriageInput, triageContext, fallbackResult, parseTriageResult } from "./project-issue-triage-contract.mjs";
+import { TRIAGE_POLICY, normalizeTriageConfig, normalizeTriageInput, triageContext, fallbackResult, parseTriageResult, parseTriageDecision } from "./project-issue-triage-contract.mjs";
 import {
   applyMilestone,
   buildRunPlan,
   buildUsageReport,
   parseProjectItems,
-  selectProjectConfig,
   selectProjectItems,
   selectWorkerRoutes,
   validateCapabilities,
@@ -68,6 +68,7 @@ import {
   ROLES,
   advanceRoleProgram,
   assignRoleRoutes,
+  applyTriageDecision,
   buildRoleDispatchPayload,
   counterpartRole,
   distinctPreferenceRole,
@@ -135,7 +136,9 @@ const mergeByIssue =
     const merged = [...left];
     for (const entry of right ?? []) {
       const index = merged.findIndex((existing) => existing[key] === entry[key]);
-      if (index === -1) merged.push(entry);
+      if (entry.remove === true) {
+        if (index !== -1) merged.splice(index, 1);
+      } else if (index === -1) merged.push(entry);
       else merged[index] = entry;
     }
     return merged;
@@ -165,6 +168,7 @@ export const OrchestrationState = Annotation.Root({
   workerRoutes: Annotation(),
   /** Closed, non-sensitive shadow results; no Issue body or provider response text. */
   triageByIssue: Annotation({ reducer: mergeByIssue("issue"), default: () => [] }),
+  triageNotice: Annotation(),
   triageBudget: Annotation(),
   triagePreflightRetry: Annotation(),
   /** Optional caller-proposed assignments; always validated against the pool. */
@@ -349,7 +353,9 @@ function ensureRoleState(state, item, pool) {
   if (existing) return existing;
   const executionMode = item.executionMode ?? selectExecutionMode(item).mode;
   const program = item.roleProgram ?? roleProgramForMode(executionMode);
-  const { routes, degraded } = assignRoleRoutes(pool, program);
+  const preferred = (state.triageByIssue ?? []).find((e) => e.issue === item.number)?.decision?.preferredRoute;
+  const orderedPool = preferred ? [...pool.filter((r) => sameRoute(r, preferred)), ...pool.filter((r) => !sameRoute(r, preferred))] : pool;
+  const { routes, degraded } = assignRoleRoutes(orderedPool, program);
   return {
     issue: item.number,
     executionMode,
@@ -449,6 +455,8 @@ export function buildSummary(state, runStatus) {
           (state.assignments ?? []).find(({ number }) => number === issue)),
       }),
     ) } : {}),
+    ...(state.triageNotice ? { triageNotice: state.triageNotice } : {}),
+    ...(triageMode(state) === "assisted" ? { assistedTriage: (state.triageByIssue ?? []).map(({ issue, result, decision }) => ({ issue, result, decision })) } : {}),
     runStatus,
     ...(state.failureReason ? { failureReason: state.failureReason } : {}),
   };
@@ -458,7 +466,7 @@ export function buildSummary(state, runStatus) {
 /* Nodes                                                               */
 /* ------------------------------------------------------------------ */
 
-function loadConfigNode(state) {
+async function loadConfigNode(state, runtimeConfig) {
   const config = state.config;
   try {
     if (!config || typeof config !== "object") throw new Error("config-required");
@@ -466,8 +474,14 @@ function loadConfigNode(state) {
       throw new Error("invalid-max-parallel");
     if (!RELEASE_POLICIES.has(config.releasePolicy)) throw new Error("invalid-release-policy");
     if (!config.parent?.agent || !config.parent?.model) throw new Error("parent-route-required");
-    const triage = normalizeTriageConfig(config.triage);
-    if (triage.mode === "assisted") throw new Error("triage-assisted-not-available");
+    let triage = normalizeTriageConfig(config.triage);
+    let triageNotice = null;
+    if (triage.mode === "assisted" && config.singleWorker) {
+      triage = { ...triage, mode: "shadow" };
+      triageNotice = "triage-single-worker-shadow";
+    } else if (triage.mode === "assisted" && !(await getDeps(runtimeConfig).assistedApproval?.(triage.model))) {
+      throw new Error("triage-assisted-not-available");
+    }
     const selectors = config.selectors ?? {};
     const hasSelector = ["issues", "priority", "iteration", "size"].some(
       (key) => Array.isArray(selectors[key]) && selectors[key].length,
@@ -476,6 +490,7 @@ function loadConfigNode(state) {
     return {
       // Later nodes read model/maxRequests, so keep the normalized defaults.
       config: { ...config, triage },
+      triageNotice,
       unavailableAgents: config.unavailableAgents ?? [],
       unavailableModels: config.unavailableModels ?? [],
     };
@@ -525,7 +540,7 @@ async function fetchProjectIssuesNode(state, config) {
 
 function validateDependenciesNode(state) {
   try {
-    return { items: parseProjectItems(state.items) };
+    return { items: parseProjectItems(state.items, { completed: state.completed }) };
   } catch (error) {
     return { failureReason: error.message };
   }
@@ -543,6 +558,10 @@ function buildRunnablePlanNode(state) {
       maxParallel: state.config.maxParallel,
       releasePolicy: state.config.releasePolicy,
     });
+    if (triageMode(state) === "assisted") {
+      plan.runnable = plan.runnable.map((item) => applyTriageDecision(item,
+        (state.triageByIssue ?? []).find((e) => e.issue === item.number)?.decision));
+    }
     const workerRoutes = currentPool(state);
     // Fail closed before any worktree mutation when Issues are runnable
     // but no verified worker route remains.
@@ -595,7 +614,7 @@ async function triageInputFor(deps, issue, revision, pool, model) {
     const routes = pool.map(routeLabels);
     const input = normalizeTriageInput({
       issue, issueUpdatedAt: revision.updatedAt, routes,
-      routeEvidence: await deps.triageEvidence(routes), policyVersion: TRIAGE_POLICY, model,
+      routeEvidence: await deps.triageEvidence(routes, model), policyVersion: TRIAGE_POLICY, model,
     });
     return { input, context: triageContext(input) };
   } catch {
@@ -619,6 +638,17 @@ async function prepareTriageNode(state, config) {
         previous.result.evidenceVersion === context.evidenceVersion) continue;
     if (previous && !revision && previous.result.issueUpdatedAt === null &&
         previous.result.reason === "fetch-failed") continue;
+    if (triageMode(state) === "assisted" && previous?.decision && context &&
+        previous.result.issueUpdatedAt === revision.updatedAt && previous.inputModel === model &&
+        previous.result.policyVersion === TRIAGE_POLICY && previous.decision.action !== "fallback") {
+      const identity = { routeSetHash: context.routeSetHash, evidenceVersion: context.evidenceVersion };
+      const { preferredRoute: _discarded, ...decision } = previous.decision;
+      triageByIssue.push({ ...previous, decision: { ...decision, ...identity },
+        result: { ...previous.result, ...identity, ...(previous.result.status === "recommended" ? { routeMap: {},
+          route: { choice: "abstain", probabilities: { abstain: 1 }, confidence: 0 } } : {}) },
+        requiresManualAssignment: true });
+      continue;
+    }
     let result;
     if (!revision) {
       result = { issue: item.number, issueUpdatedAt: null, policyVersion: TRIAGE_POLICY,
@@ -637,7 +667,7 @@ async function prepareTriageNode(state, config) {
           if (claimed === null) result = fallbackResult(context, "provider-unavailable");
           else if (!claimed) result = fallbackResult(context, "cancelled");
           else {
-            const response = await deps.runTriage(input, state.config.triage);
+            const response = await deps.runTriage(input, { ...state.config.triage, mode: "shadow" });
             result = parseTriageResult(response.result, input, context);
           }
         }
@@ -645,7 +675,8 @@ async function prepareTriageNode(state, config) {
         result = fallbackResult(context, "provider-error");
       }
     }
-    triageByIssue.push({ issue: item.number, inputModel: model, result, evaluatedAt: deps.now(),
+    triageByIssue.push({ ...(previous?.preflightAttempts ? { preflightAttempts: previous.preflightAttempts } : {}),
+      issue: item.number, inputModel: model, result, evaluatedAt: deps.now(),
       requiresManualAssignment: result.status === "fallback",
       budget: deps.triageBudget?.() ?? state.triageBudget ?? null });
   }
@@ -653,8 +684,37 @@ async function prepareTriageNode(state, config) {
 }
 
 function resolveTriageNode(state) {
-  // Shadow is observational: role selection still comes from the original plan.
-  return triageMode(state) === "off" ? {} : { triageBudget: state.triageBudget ?? null };
+  if (triageMode(state) !== "assisted") return {};
+  const entries = (state.triageByIssue ?? []).filter((e) =>
+    triageCandidates(state).some((i) => i.number === e.issue) && !e.decision);
+  if (!entries.length) return {};
+  const resume = interrupt({ resolveTriage: {
+    issues: entries.map(({ issue, result }) => ({ issue, recommendation: result })),
+    actions: ["accept", "override", "fallback"],
+  }, ...(state.lastEventError ? { lastEventError: state.lastEventError } : {}) });
+  const raw = resume?.triageDecisions ?? [];
+  if (!Array.isArray(raw) || new Set(raw.map((d) => d?.issue)).size !== raw.length ||
+      raw.some((d) => !entries.some((e) => e.issue === d?.issue)))
+    return { lastEventError: "triage-invalid-decision" };
+  const updated = [];
+  let plan = { ...state.plan, runnable: [...state.plan.runnable] };
+  try {
+    for (const entry of entries) {
+      const context = { ...entry.result, model: entry.inputModel };
+      const proposal = raw.find((d) => d.issue === entry.issue) ?? {
+        issue: entry.issue, issueUpdatedAt: entry.result.issueUpdatedAt,
+        policyVersion: entry.result.policyVersion, routeSetHash: entry.result.routeSetHash,
+        evidenceVersion: entry.result.evidenceVersion, action: "fallback", reason: "legacy-fallback",
+      };
+      const decision = parseTriageDecision(proposal, context, entry.result);
+      const index = plan.runnable.findIndex((i) => i.number === entry.issue);
+      plan.runnable[index] = applyTriageDecision(plan.runnable[index], decision);
+      updated.push({ ...entry, decision, requiresManualAssignment: decision.action === "fallback" });
+    }
+  } catch (error) {
+    return { lastEventError: error.message === "triage-mode-conflict" ? error.message : "triage-invalid-decision" };
+  }
+  return { triageByIssue: updated, plan, lastEventError: null };
 }
 
 function dispatchCandidates(state) {
@@ -738,6 +798,7 @@ function assignRoutesNode(state) {
             size,
             priority,
             ...(triage ? { shadowTriage: triage.result,
+              ...(triage.decision ? { triageDecision: triage.decision } : {}),
               legacyMode: executionMode,
               requiresManualAssignment: triage.requiresManualAssignment } : {}),
             ...(roleState
@@ -848,7 +909,116 @@ function assignRoutesNode(state) {
   };
 }
 
+async function preflightAssistedDispatchNode(state, config) {
+  const deps = getDeps(config);
+  for (const assignment of pendingDispatches(state)) {
+    const initial = !worktreeExists(state, assignment.number);
+    if (initial && !(await deps.assistedApproval?.(state.config.triage.model)))
+      return { failureReason: "triage-assisted-not-available" };
+    const entry = (state.triageByIssue ?? []).find((e) => e.issue === assignment.number);
+    const revision = initial ? await deps.fetchTriageRevision(assignment.number).catch(() => null) : null;
+    let refreshed;
+    try { refreshed = await deps.refreshTriageRoutes(state); } catch {
+      return { failureReason: "triage-route-refresh-failed" };
+    }
+    let pool = selectWorkerRoutes(refreshed.capabilities, {
+      parentAgent: state.config.parent.agent, unavailableAgents: state.unavailableAgents,
+      unavailableModels: state.unavailableModels,
+    });
+    if (!pool.length) return { failureReason: "no-worker-route-available" };
+    let context = initial && revision ? await triageInputFor(deps, assignment.number, revision, pool,
+      state.config.triage.model) : null;
+    const adopted = entry?.decision && entry.decision.action !== "fallback";
+    const staleIssue = initial && (entry?.result.status !== "fallback" || adopted) && (!context ||
+      revision.updatedAt !== entry.result.issueUpdatedAt || entry.inputModel !== state.config.triage.model ||
+      entry.result.policyVersion !== TRIAGE_POLICY);
+    const changedRoutes = initial && context && (entry?.result.status === "recommended" || adopted) &&
+      (context.context.routeSetHash !== entry.result.routeSetHash || context.context.evidenceVersion !== entry.result.evidenceVersion);
+    const verified = !staleIssue && await deps.verifyTriageRoute(assignment.route, state).catch(() => ({ ok: false }));
+    if (!staleIssue && !changedRoutes && verified?.ok) continue;
+    const attempts = entry?.preflightAttempts ?? 0;
+    const unavailableModels = !staleIssue && !verified?.ok ? [assignment.model] : [];
+    if (unavailableModels.length) {
+      try { refreshed = await deps.refreshTriageRoutes({ ...state,
+        unavailableModels: [...state.unavailableModels, ...unavailableModels] }); } catch {
+        return { failureReason: "triage-route-refresh-failed" };
+      }
+      pool = selectWorkerRoutes(refreshed.capabilities, {
+        parentAgent: state.config.parent.agent, unavailableAgents: state.unavailableAgents,
+        unavailableModels: [...state.unavailableModels, ...unavailableModels],
+      });
+      if (!pool.length) return { failureReason: "no-worker-route-available" };
+      if (initial && revision) context = await triageInputFor(deps, assignment.number, revision, pool, state.config.triage.model);
+    }
+    const reason = staleIssue ? "stale-input" : "route-unavailable";
+    const identity = { issue: assignment.number, issueUpdatedAt: revision?.updatedAt ?? entry?.result.issueUpdatedAt ?? null,
+      policyVersion: TRIAGE_POLICY, routeSetHash: context?.context.routeSetHash ?? entry?.result.routeSetHash ?? null,
+      evidenceVersion: context?.context.evidenceVersion ?? entry?.result.evidenceVersion ?? "none" };
+    const retained = !staleIssue && entry?.decision && entry.decision.action !== "fallback";
+    const decision = retained ? { ...entry.decision, ...identity, preferredRoute: undefined } : {
+      ...identity, action: "fallback", reason: "legacy-fallback",
+    };
+    const result = retained ? { ...entry.result, ...identity,
+      ...(entry.result.status === "recommended" ? { route: { choice: "abstain",
+        probabilities: { abstain: 1 }, confidence: 0 }, routeMap: {} } : {}) } : {
+      ...identity, status: "fallback", reason,
+    };
+    const nextEntry = { ...entry, issue: assignment.number, inputModel: state.config.triage.model,
+      result, decision, preflightAttempts: attempts + 1, requiresManualAssignment: true };
+    let rawItem = state.items.find((i) => i.number === assignment.number);
+    let refreshedItems;
+    let completed = [];
+    if (staleIssue) {
+      try {
+        const fetched = await deps.fetchItems({ ...state.config,
+          selectors: { issues: [String(assignment.number)] } });
+        const selected = selectProjectItems(fetched.items, { issues: [assignment.number] });
+        const fresh = parseProjectItems(selected.items, { completed: selected.completed })
+          .find((i) => i.number === assignment.number);
+        if (!fresh || !["Ready", "Todo", "In Progress"].includes(fresh.status)) throw new Error();
+        const risks = ["low", "medium", "high", "critical"];
+        rawItem = { ...rawItem, ...fresh,
+          riskCategory: risks[Math.max(risks.indexOf(rawItem.riskCategory ?? "low"),
+            risks.indexOf(fresh.riskCategory ?? "low"))],
+          size: rawItem.size ?? fresh.size,
+          changeScopeCount: rawItem.changeScopeCount,
+          modeOverride: rawItem.modeOverride,
+        };
+        refreshedItems = state.items.map((i) => i.number === assignment.number ? rawItem : i);
+        completed = selected.completed;
+      } catch { return { failureReason: "triage-metadata-refresh-failed" }; }
+    }
+    const plan = initial ? { ...state.plan, runnable: state.plan.runnable.map((i) => i.number === assignment.number
+      ? applyTriageDecision({ ...i, ...rawItem, riskCategory: rawItem.riskCategory,
+        size: rawItem.size, ...selectPlanFields(rawItem) }, decision) : i) } : state.plan;
+    // One automatic re-evaluation only, before any role starts. Later failures
+    // wait for explicit assignment; they cannot spend another API request.
+    const reevaluate = initial && staleIssue && attempts < 1 && revision;
+    return {
+      plan, ...(refreshedItems ? { items: refreshedItems, completed } : {}),
+      assignments: [{ number: assignment.number, remove: true }],
+      proposedAssignments: (state.proposedAssignments ?? []).filter((p) => Number(p.number) !== assignment.number),
+      capabilities: refreshed.capabilities, workerRoutes: pool,
+      ...(unavailableModels.length ? { unavailableModels } : {}),
+      ...(initial ? { roleStates: [{ issue: assignment.number, remove: true }] } : {}),
+      triageByIssue: [{ ...nextEntry, ...(reevaluate ? { decision: undefined, result: {
+        ...result, issueUpdatedAt: entry?.result.issueUpdatedAt ?? null,
+      } } : {}) }],
+      triagePreflightRetry: reevaluate ? "triage" : true,
+      lastEventError: attempts >= 1 ? "triage-reselection-limit" : null,
+    };
+  }
+  return { triagePreflightRetry: false, lastEventError: null };
+}
+
+function selectPlanFields(item) {
+  const selected = selectExecutionMode(item);
+  return { executionMode: selected.mode, eligibleModes: selected.eligibleModes,
+    roleProgram: roleProgramForMode(selected.mode) };
+}
+
 async function preflightTriageDispatchNode(state, config) {
+  if (triageMode(state) === "assisted") return preflightAssistedDispatchNode(state, config);
   if (triageMode(state) !== "shadow") return {};
   const deps = getDeps(config);
   const freshPool = async (unavailableModels) => {
@@ -1358,6 +1528,7 @@ const assignmentRouter = (state) => state.failureReason ? "fail_run" :
   String(state.lastEventError ?? "").startsWith("invalid-assignment") && dispatchCandidates(state).length
     ? "assign_routes" : "preflight_triage_dispatch";
 const triagePreflightRouter = (state) => state.failureReason ? "fail_run" :
+  state.triagePreflightRetry === "triage" ? "refresh_triage_routes" :
   state.triagePreflightRetry ? "assign_routes" : dispatchRouter(state);
 
 function dispatchRouter(state) {
@@ -1447,7 +1618,8 @@ export function buildOrchestrationGraph({ checkpointer } = {}) {
       failOr(triageMode(state) === "off" ? "assign_routes" : "refresh_triage_routes")(state))
     .addConditionalEdges("refresh_triage_routes", failOr("prepare_triage"))
     .addConditionalEdges("prepare_triage", failOr("resolve_triage"))
-    .addConditionalEdges("resolve_triage", failOr("assign_routes"))
+    .addConditionalEdges("resolve_triage", (state) => state.failureReason ? "fail_run" :
+      state.lastEventError?.startsWith("triage-") ? "resolve_triage" : "assign_routes")
     .addConditionalEdges("assign_routes", assignmentRouter)
     .addConditionalEdges("preflight_triage_dispatch", triagePreflightRouter)
     .addEdge("dispatch_worker", "wait_for_events")
@@ -1481,7 +1653,8 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
     uuid: () => crypto.randomUUID(),
     now: () => new Date().toISOString(),
     triageBudget: () => checkpointer?.triageBudget(runId) ?? null,
-    triageEvidence: async () => [],
+    assistedApproval: async (model) => Boolean(await loadAssistedApproval(cwd, model)),
+    triageEvidence: async (_routes, model) => loadApprovedRouteEvidence(cwd, model),
     claimTriageAttempt: async (input) => {
       const context = triageContext(input);
       const fingerprint = crypto.createHash("sha256")
@@ -1497,9 +1670,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
       unavailableModels: state.unavailableModels,
     }),
     fetchTriageRevision: (issue) => fetchTriageRevision(issue, {
-      graphql: (query, variables) => githubGraphql(query, variables, {
-        token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
-      }),
+      graphql: repositoryIssueGraphql,
     }),
     verifyTriageRoute: (route, state) => verifyWorkerRoute(route, {
       cwd, parentAgent: state.config.parent.agent,
@@ -1521,26 +1692,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
       });
       return discovered.capabilities;
     },
-    async fetchItems(config) {
-      const projects = JSON.parse(
-        await fs.readFile(path.resolve(cwd, "config/github-projects.json"), "utf8"),
-      );
-      const project = selectProjectConfig(projects.projects, {
-        owner: config.projectOwner,
-        ownerType: config.ownerType ?? "organization",
-        name: config.projectName,
-      });
-      return fetchProjectItems({
-        owner: config.projectOwner,
-        ownerType: config.ownerType ?? "organization",
-        projectName: config.projectName,
-        fields: project.fields,
-        graphql: (query, variables) =>
-          githubGraphql(query, variables, {
-            token: process.env.GH_PROJECT_TOKEN || process.env.GITHUB_TOKEN,
-          }),
-      });
-    },
+    fetchItems: (config) => fetchRepositoryIssues({ issues: config.selectors.issues }),
     /**
      * CLI process launch is intentionally outside the graph: emit the exact
      * dispatch command for the orchestrating agent to run (usually in a
@@ -1751,6 +1903,7 @@ async function main() {
   const checkpointer = await FileCheckpointSaver.load(checkpointFile);
   const graph = buildOrchestrationGraph({ checkpointer });
   const config = {
+    recursionLimit: 100,
     configurable: {
       thread_id: cli.threadId,
       deps: createDefaultDeps({ cwd: repositoryRoot, checkpointer, threadId: cli.threadId }),

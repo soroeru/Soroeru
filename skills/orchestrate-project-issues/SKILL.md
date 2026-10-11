@@ -1,42 +1,38 @@
 ---
 name: orchestrate-project-issues
-description: Use when coordinating multiple Soroeru GitHub Project Issues whose implementation order, dependencies, run-time agent/model routing, worktrees, and interruption recovery must be managed together.
+description: Use when coordinating multiple Soroeru GitHub Issues whose implementation order, dependencies, run-time agent/model routing, worktrees, and interruption recovery must be managed together.
 ---
 
-# Orchestrate Project Issues
+# Orchestrate Issues
 
-Coordinate many Issues while keeping each Issue's implementation inside its assigned worker. The parent owns graph validation, run-time routing decisions, milestones, the integration quality gate, and exceptions. No agent/model assignment is stored in Issues or the Project; every routing decision is made at run time and recorded in run state.
+Coordinate many Issues while keeping each Issue's implementation inside its assigned worker. The parent owns graph validation, run-time routing decisions, milestones, the integration quality gate, and exceptions. No agent/model assignment is stored in Issues; every routing decision is made at run time and recorded in run state.
 
-## Inputs
+## Inputs and start gate
 
-Load `state/project-issue-orchestrator.yaml` automatically when it exists. The file is the
-Git-ignored runtime copy of `config/project-issue-orchestrator.example.yaml` and contains
-`project.owner`, `project.ownerType`, `project.name`, `run.maxParallel`,
-`run.releasePolicy`, `run.unavailableModels`, and `run.unavailableAgents`. An unavailable list may
-be `none` or a YAML list of exact runtime labels; both lists apply only to the current run.
-Use `--config <path>` only for an intentional non-default file. Explicit CLI flags override YAML
-values. If no YAML exists, require the Project owner/name, maximum parallel workers, and
-dependency release policy (`pr-created` or `merged`) in the invocation; reject a missing policy
-and never infer it.
+GitHub Issues are the source of work. Do not query or mutate GitHub Projects.
+The script names retain their historical `project-issue-` prefix.
 
-Each minimal item contains `number`, `title`, `url`, `status`, `priority`, `size`, and
-`dependencies`. Items carry **no** agent, model, or order assignment; legacy `AI Assignees` /
-`AI Sub Assignees` Project fields and `implementation-assignment` body blocks are ignored, never
-rejected. `Start date` is optional metadata only; do not pass `--run-date`.
+Load `state/project-issue-orchestrator.yaml` when it exists; its `run` section
+contains maximum parallelism, release policy, unavailable routes and optional
+triage settings. No `project` section or Project token is needed. Legacy files
+remain readable, but their Project identifiers are ignored for network access.
+Require explicit `--issues <numbers>` for live repository reads. Priority comes
+from an unambiguous `priority:P0..P3` label; open Issues are runnable, closed
+Issues are completed. Size is not fetched or written; triage may recommend it.
 
-Pass at least one target selector: `--issues`, `--priority`, `--iteration`, or `--size`. Repeat a
-selector or use comma-separated values for OR within that selector. Different selectors are ANDed.
-Selected Issues automatically include their recursive `Blocked by` dependencies, even when those
-dependencies do not match the selector fields. A closed Blocked by Issue is treated as completed;
-an open one stops the run with its Issue numbers in the reason. Dependency state is read from
-GitHub deterministically.
-
-## Start gate
-
-1. Discover worker runtimes automatically per [provider-routing.md](references/provider-routing.md). The normal path is `node scripts/project-issue-capabilities.mjs` (or omit `--capabilities-file` so the orchestrator discovers for you). Adapters run in fixed order Codex → Claude → Grok → Gemini; only verified routes become capability records `{agent, requestedModel, model, role, selector, selectable, verifiable, timeoutMs}`. Do not hand-limit the pool to Codex with a handmade capabilities file.
-2. Fetch and sanitize Project fields in one process with `node scripts/project-issue-orchestrator.mjs --dry-run --parent-agent <agent> --parent-model <model>` (optional `--capabilities-file` only for tests / intentional overrides). The default YAML supplies the stable Project/run values. The dry-run and Project planner never fetch Issue bodies — dependencies come from GitHub `blockedBy` relations and Priority/Size/Status from Project fields. In opt-in graph shadow mode, only the isolated Jev triage child fetches the currently dispatchable Issue's body; the parent graph receives closed, non-sensitive results. A worker fetches its own Issue body and comments immediately before implementation.
-3. Stop before any worktree mutation on unknown/cyclic `Blocked by` dependencies, open or unavailable dependency state, or an unverifiable parent route. Confirm the requested parent model can actually be selected; if exact selection cannot be verified, block that route and never relabel another model.
-4. The dry-run returns `plan.runnable` (ordered by Priority then Issue number) and `workerRoutes` (the run-scoped pool of verified worker routes after excluding the Parent agent runtime and applying `--unavailable-agent` / `--unavailable-model` exclusions). Every model and selector belonging to the Parent agent is excluded: if Codex is the Parent, no Codex route may be a worker. If Issues are runnable and the remaining pool is empty, the run stops with `no-worker-route-available`; otherwise the run may proceed with fewer workers than `maxParallel`.
+1. Discover verified worker runtimes per [provider-routing.md](references/provider-routing.md).
+   Exclude every model of the parent runtime and apply unavailable route labels.
+2. Use `node scripts/project-issue-orchestrator.mjs --issues <numbers> --dry-run
+   --max-parallel <count> --release-policy merged --parent-agent <agent>
+   --parent-model <model>`. It fetches only Issue metadata, labels and native
+   `Blocked by` relations, never bodies or Project fields. Only the isolated
+   opt-in triage child may fetch its current Issue body. Each worker reads its
+   own Issue body and comments immediately before its work.
+3. Stop before worktree writes on missing/truncated metadata, cross-repository
+   dependencies, cycles, an open blocker, ambiguous priority or unavailable routes.
+   A closed blocker is completed. No Project status transition is performed.
+4. Assign from `workerRoutes` in the resulting runnable plan; routing remains a
+   run-time decision. An empty verified pool stops with `no-worker-route-available`.
 
 ## Role programs
 
@@ -170,8 +166,18 @@ candidate pool. The assignment interrupt shows the recommendation and existing m
 it does not adopt Jev's risk, Size, mode, or route. Before first dispatch, a changed Issue,
 pool, or unverifiable route withdraws the assignment for a manual re-prompt (a failed
 route's model is excluded for the run). A fallback requires manual route
-assignment even with `--auto-assign`. `--triage assisted` is unavailable until the
-separate adoption Issue. The classic dry-run never fetches Issue text or calls Jev.
+assignment even with `--auto-assign`. `--triage assisted` requires the current live
+holdout report and explicit PO approval described in `docs/development.md`.
+Do not create an approval record without the human decision. Private Issue sending
+requires the independent boolean `run.triage.allowPrivateIssues: true`, authorized by
+the operator; default is rejection. Only reviewed, non-personal development title/body
+from the fixed repository may be sent; no secrets, comments or attachments. Handle `resolveTriage`
+before first role dispatch: accept only certain risk/Size, override with enum values
+and a closed reason, or fallback with manual assignment. Adopted values can only
+raise existing risk/Size; high/critical need planner, implementer and independent
+reviewer. Keep started programs across handoff; discard implementer recommendations
+for reviewer selection. Never write Size/status to GitHub. Route abstention is not
+capability evidence. The classic dry-run never fetches Issue text or calls Jev.
 
 ## State and reporting
 

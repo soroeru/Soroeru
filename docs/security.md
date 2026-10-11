@@ -1085,3 +1085,21 @@ notice that `requirements.md` §8 requires.
 - [ ] The deploy check confirms the Cloud Logging request-log exclusion for both services,
   body-free application logging, and disabled Vertex AI request/response logging.
 - [ ] A reused or payload-mismatched Tier 3 ticket is rejected.
+
+## Development Issue triage disclosure (Issue #538)
+
+Product Owner decision 2026-10-11: opt-in Jev triage may send reviewed, non-personal
+development Issue title/body from the fixed `soroeru/Soroeru` repository, including
+private Issues when `run.triage.allowPrivateIssues` is explicitly true. This permission
+is independent of assisted adoption and does not authorize vault/page values, secrets,
+other repositories, comments, attachments or linked-page fetches. Missing/false consent
+or unknown visibility rejects private transmission. Keep Issue text suitable for the
+provider's applicable processing/retention terms; the tripwire cannot certify safe text.
+
+The isolated child rejects recognized personal/secret values before provider requests,
+including passwords, CVV, OTP and tokens, and keeps revision, byte, timeout and budget
+limits. Never redact a detected secret and continue. Parent/worker triage state and logs carry
+only closed results and counts, never Issue bodies, provider text or keys.
+Non-personal Issue titles remain ordinary orchestration identity metadata. Tests use fictional
+private Issues and fake secrets only. This development-only egress does not change the
+application AI-disclosure policy above. See `docs/development.md` for opt-in/revocation.

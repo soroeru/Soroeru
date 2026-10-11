@@ -35,7 +35,7 @@ function optionalString(value) {
  * capability records, so only identity, status, ordering metadata, and the
  * GitHub-derived dependency closure are validated here.
  */
-export function parseProjectItems(rawItems) {
+export function parseProjectItems(rawItems, { completed = [] } = {}) {
   if (!Array.isArray(rawItems)) throw new Error("items-required");
   const items = rawItems.map((raw) => {
     const number = Number(raw?.number);
@@ -44,6 +44,14 @@ export function parseProjectItems(rawItems) {
     const dependencies = raw.dependencies.map((dependency) => Number(dependency));
     if (dependencies.some((dependency) => !Number.isSafeInteger(dependency) || dependency <= 0))
       throw new Error(`invalid-dependency:${number}`);
+    if (raw.riskCategory !== undefined && !["low", "medium", "high", "critical"].includes(raw.riskCategory))
+      throw new Error(`invalid-risk-category:${number}`);
+    if (raw.changeScopeCount !== undefined && (!Number.isSafeInteger(raw.changeScopeCount) || raw.changeScopeCount < 1))
+      throw new Error(`invalid-change-scope:${number}`);
+    if (raw.modeOverride !== undefined && (!raw.modeOverride ||
+        !Array.isArray(raw.modeOverride.roleProgram) || typeof raw.modeOverride.executionMode !== "string" ||
+        Object.keys(raw.modeOverride).some((k) => !["executionMode", "roleProgram"].includes(k))))
+      throw new Error(`invalid-mode-override:${number}`);
     const startDate = optionalString(raw.startDate);
     if (startDate !== undefined && !isCanonicalDate(startDate))
       throw new Error(`invalid-start-date:${number}`);
@@ -54,12 +62,17 @@ export function parseProjectItems(rawItems) {
       status: requiredString(raw.status, `missing-status:${number}`),
       priority: optionalString(raw.priority),
       size: optionalString(raw.size),
+      ...(raw.riskCategory === undefined ? {} : { riskCategory: raw.riskCategory }),
+      ...(raw.changeScopeCount === undefined ? {} : { changeScopeCount: raw.changeScopeCount }),
+      ...(raw.modeOverride === undefined ? {} : { modeOverride: {
+        executionMode: raw.modeOverride.executionMode, roleProgram: [...raw.modeOverride.roleProgram],
+      } }),
       iteration: optionalString(raw.iteration),
       ...(startDate === undefined ? {} : { startDate }),
       dependencies: Object.freeze([...new Set(dependencies)]),
     });
   });
-  validateProjectItems(items);
+  validateProjectItems(items, { completed });
   return Object.freeze(items);
 }
 
@@ -118,7 +131,8 @@ export function selectProjectItems(rawItems, selectors = {}) {
   };
 }
 
-export function validateProjectItems(items) {
+export function validateProjectItems(items, { completed = [] } = {}) {
+  const completedSet = new Set(completed.map(Number));
   const byNumber = new Map();
   for (const item of items) {
     if (byNumber.has(item.number)) throw new Error(`duplicate-issue:${item.number}`);
@@ -126,7 +140,8 @@ export function validateProjectItems(items) {
   }
   for (const item of items)
     for (const dependency of item.dependencies)
-      if (!byNumber.has(dependency)) throw new Error(`unknown-dependency:${item.number}:${dependency}`);
+      if (!byNumber.has(dependency) && !completedSet.has(dependency))
+        throw new Error(`unknown-dependency:${item.number}:${dependency}`);
 
   const visiting = new Set();
   const visited = new Set();
@@ -134,7 +149,8 @@ export function validateProjectItems(items) {
     if (visiting.has(number)) throw new Error(`dependency-cycle:${number}`);
     if (visited.has(number)) return;
     visiting.add(number);
-    for (const dependency of byNumber.get(number).dependencies) visit(dependency);
+    for (const dependency of byNumber.get(number).dependencies)
+      if (byNumber.has(dependency)) visit(dependency);
     visiting.delete(number);
     visited.add(number);
   };
@@ -254,7 +270,7 @@ function reasonFromReadiness(readiness) {
  * emit runnable / blocked / skipped. Parallel cap is applied last.
  */
 export function buildRunPlan(items, run = {}) {
-  validateProjectItems(items);
+  validateProjectItems(items, { completed: run.completed ?? [] });
   if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) throw new Error("invalid-max-parallel");
   if (!RELEASE_POLICIES.has(run.releasePolicy)) throw new Error("invalid-release-policy");
   const completed = new Set((run.completed ?? []).map(Number));

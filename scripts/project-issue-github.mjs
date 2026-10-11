@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { validTimestamp } from "./project-issue-triage-contract.mjs";
 import { OWNER_TYPES } from "./project-issue-assignment.mjs";
 
@@ -269,4 +271,74 @@ export async function fetchTriageRevision(issue, { graphql } = {}) {
     const updatedAt = data?.repository?.issue?.updatedAt;
     return validTimestamp(updatedAt) ? { updatedAt } : null;
   } catch { return null; }
+}
+
+
+/** Issue-only metadata transport. Never requests bodies or uses Project credentials. */
+export async function repositoryIssueGraphql(query, variables) {
+  const env = { ...process.env };
+  delete env.TYPESAFE_API_KEY;
+  delete env.GH_PROJECT_TOKEN;
+  try {
+    const args = ["api", "graphql", "-f", `query=${query}`];
+    for (const [key, value] of Object.entries(variables)) args.push("-F", `${key}=${value}`);
+    const { stdout } = await promisify(execFile)("gh", args, {
+      env, encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 10000,
+    });
+    const result = JSON.parse(stdout);
+    if (result.errors || !result.data) throw new Error();
+    return result.data;
+  } catch {
+    throw new Error("issue-metadata-fetch-failed");
+  }
+}
+
+/** Fetch explicit Issues and their dependency closure without Project or Issue text. */
+export async function fetchRepositoryIssues({ issues, graphql = repositoryIssueGraphql }) {
+  if (!Array.isArray(issues) || !issues.length || issues.some((n) => !Number.isSafeInteger(Number(n)) || Number(n) <= 0))
+    throw new Error("issue-numbers-required");
+  const query = `query IssueOnlyPlan($number:Int!) {
+    repository(owner:"soroeru", name:"Soroeru") {
+      issue(number:$number) {
+        number title url state
+        labels(first:100) { nodes { name } pageInfo { hasNextPage } }
+        blockedBy(first:100) {
+          nodes { number state repository { nameWithOwner } }
+          pageInfo { hasNextPage }
+        }
+      }
+    }
+  }`;
+  const pending = [...new Set(issues.map(Number))];
+  const items = new Map();
+  let fetchedBytes = 0;
+  while (pending.length) {
+    const number = pending.shift();
+    if (items.has(number)) continue;
+    if (items.size >= 256) throw new Error("issue-dependency-limit");
+    const data = await graphql(query, { number });
+    const issue = data?.repository?.issue;
+    if (!issue || issue.number !== number || !["OPEN", "CLOSED"].includes(issue.state) ||
+        !Array.isArray(issue.labels?.nodes) || !Array.isArray(issue.blockedBy?.nodes))
+      throw new Error("issue-metadata-unavailable");
+    if (issue.labels.pageInfo?.hasNextPage !== false || issue.blockedBy.pageInfo?.hasNextPage !== false)
+      throw new Error("issue-metadata-truncated");
+    const priority = issue.labels.nodes.map((l) => l.name).filter((l) => /^priority:P[0-3]$/.test(l));
+    if (priority.length > 1) throw new Error("issue-priority-ambiguous");
+    const dependencies = issue.blockedBy.nodes;
+    if (dependencies.some((d) => d.repository?.nameWithOwner !== "soroeru/Soroeru" ||
+        !Number.isSafeInteger(d.number) || d.number <= 0 || !["OPEN", "CLOSED"].includes(d.state)))
+      throw new Error("issue-dependency-unavailable");
+    items.set(number, {
+      number, title: issue.title, url: issue.url,
+      status: issue.state === "OPEN" ? "Ready" : "Done",
+      ...(priority.length ? { priority: priority[0].slice(9) } : {}),
+      ...(issue.labels.nodes.some((l) => l.name === "security") ? { riskCategory: "high" } : {}),
+      dependencies: dependencies.map((d) => d.number),
+      blockedBy: dependencies.map(({ number, state }) => ({ number, state })),
+    });
+    fetchedBytes += Buffer.byteLength(JSON.stringify(issue));
+    pending.push(...dependencies.map((d) => d.number));
+  }
+  return { items: [...items.values()], fetchedBytes };
 }

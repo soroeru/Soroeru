@@ -64,6 +64,9 @@ report residual risk honestly.
 
 ## Repository workflow
 
+- Use GitHub Issues only for work tracking. Never query or mutate GitHub Projects.
+  Use Issue labels and native `Blocked by` relations; no Project token is required.
+
 - Use `rg`/`rg --files` for search and repository-local patterns before introducing new ones.
 - When an Issue exists, work only in its matching `.worktrees/issue-<number>-<slug>` worktree via
   `scripts/issue-worktree.sh`; the primary clone is human-only. Resume inherited work with the
