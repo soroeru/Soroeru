@@ -1098,7 +1098,8 @@ provider's applicable processing/retention terms; the tripwire cannot certify sa
 
 The isolated child rejects recognized personal/secret values before provider requests,
 including passwords, CVV, OTP and tokens, and keeps revision, byte, timeout and budget
-limits. Never redact a detected secret and continue. Parent/worker state and logs carry
-only closed results and counts, never Issue/provider text or keys. Tests use fictional
+limits. Never redact a detected secret and continue. Parent/worker triage state and logs carry
+only closed results and counts, never Issue bodies, provider text or keys.
+Non-personal Issue titles remain ordinary orchestration identity metadata. Tests use fictional
 private Issues and fake secrets only. This development-only egress does not change the
 application AI-disclosure policy above. See `docs/development.md` for opt-in/revocation.
