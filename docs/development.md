@@ -1245,8 +1245,11 @@ exhaustion returns 429. Firestore contains counts only. The API stubs consume th
 
 `infra/runtime/main.tf` owns Firestore, Cloud Run, request-log exclusions, and runtime limits.
 The region is `asia-northeast1`. The API has at most two instances with concurrency 20; fallback
-has one instance with concurrency 1. The per-instance IP limiter trusts the socket address only,
-not caller-supplied forwarding headers. Behind a proxy this can group callers in one bucket;
+has one instance with concurrency 1. For direct `run.app` ingress, the per-instance IP limiter
+uses only the rightmost address appended by the Cloud Run frontend; caller-supplied prefixes
+are ignored. Local HTTP ignores forwarding headers. Cloud Run requests with a missing or invalid
+trusted suffix fail closed. This policy is specific to the direct frontend: adding a load balancer
+or another trusted proxy requires re-verifying the hop count. IPs remain in bounded memory only;
 it is conservative best-effort throttling, not a global quota. Gemini's transaction budget is
 shared across instances.
 
@@ -1291,7 +1294,10 @@ node scripts/check-cloud-deployment.mjs "$SOROERU_PROJECT"
 
 The check verifies request-log exclusions, fallback project permissions, runtime limits and secret
 references, then exercises all six public endpoints with fake data, including altered-payload and
-replayed-ticket rejection. It consumes two daily budget units. No response body is printed.
+replayed-ticket rejection when budget remains. It consumes at most two daily budget units and
+accepts only the expected `429 budget-exhausted` response when those units are unavailable.
+Complete ticket/replay checks also run in HTTP tests with an isolated fake budget. No response
+body is printed.
 Before release, also perform the Cloud Logging/Trace checks in `docs/manual-test.md`.
 #559 does not call Vertex AI, initialize tracing, or enable provider request/response logging or
 context caching. The deployment check rejects tracing/logging-enabling environment flags; provider

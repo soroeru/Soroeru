@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   CLOUD_PATHS,
@@ -27,6 +28,8 @@ export interface ServerOptions {
   log: (entry: SafeLog) => void;
   now?: () => number;
   rateLimit?: number;
+  /** Enable only for the direct run.app frontend, which appends one trusted hop. */
+  cloudRunProxy?: boolean;
 }
 class HttpError extends Error {
   constructor(
@@ -36,7 +39,20 @@ class HttpError extends Error {
     super(category);
   }
 }
-/** Bounded in-memory IP buckets. Never trusts caller-provided forwarding headers. */
+/** Direct Cloud Run ingress trusts only the rightmost appended address, never caller prefixes.
+ * Local/direct HTTP ignores forwarding headers. Missing/malformed trusted suffix fails closed.
+ */
+function clientAddress(req: IncomingMessage, cloudRunProxy: boolean): string {
+  if (!cloudRunProxy) return req.socket.remoteAddress ?? "unknown";
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded !== "string") throw new HttpError(400, "invalid-request");
+  const addresses = forwarded.split(",");
+  const address = addresses.at(-1)?.trim();
+  if (addresses.length > 32 || !address || !isIP(address)) throw new HttpError(400, "invalid-request");
+  // URL parsing canonicalizes IPv6 spellings so one address cannot acquire multiple buckets.
+  return isIP(address) === 6 ? new URL(`http://[${address}]`).hostname : address;
+}
+/** Bounded in-memory per-client IP buckets; addresses never enter logs or persistence. */
 class IpLimiter {
   private readonly entries = new Map<string, { tokens: number; last: number }>();
   constructor(
@@ -101,7 +117,8 @@ export function createCloudServer(options: ServerOptions) {
         res.setHeader("Access-Control-Allow-Methods", "POST");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type");
       }
-      if (!limiter.allow(req.socket.remoteAddress ?? "unknown")) throw new HttpError(429, "rate-limited");
+      if (!limiter.allow(clientAddress(req, options.cloudRunProxy ?? false)))
+        throw new HttpError(429, "rate-limited");
       const operation = paths.find(([, path]) => path === req.url)?.[0];
       if (!operation || (options.service === "pii-fallback") !== (operation === "readWithConsent"))
         throw new HttpError(404, "invalid-request");

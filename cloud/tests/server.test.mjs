@@ -26,6 +26,7 @@ async function start(t, options = {}) {
   const url = `http://127.0.0.1:${server.address().port}`;
   return {
     logs,
+    url,
     post: (path, body, init = {}) =>
       fetch(url + path, {
         method: "POST",
@@ -137,4 +138,30 @@ test("rate limiter ignores spoofed forwarding headers and refills by elapsed tim
   );
   now += 60000;
   assert.equal((await post("/v1/schemas/resolve", body)).status, 200);
+});
+
+test("Cloud Run clients behind one proxy have independent buckets; forged prefixes cannot reset them", async (t) => {
+  const { post } = await start(t, { rateLimit: 1, cloudRunProxy: true });
+  const body = { site: "example.com", pageFingerprint: hash, clientVersion: "0.1.0" };
+  const request = (header) =>
+    post("/v1/schemas/resolve", body, {
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": header },
+    });
+  assert.equal((await request("spoofed, 203.0.113.1")).status, 200);
+  assert.equal((await request("203.0.113.99, 203.0.113.1")).status, 429);
+  assert.equal((await request("203.0.113.2")).status, 200);
+  assert.equal((await request("2001:db8::1")).status, 200);
+  assert.equal((await request("2001:db8:0:0:0:0:0:1")).status, 429);
+  assert.equal((await request("not-an-address")).status, 400);
+  assert.equal((await post("/v1/schemas/resolve", body)).status, 400);
+});
+test("deployment endpoint smoke accepts exhausted and one-unit budgets without bypassing the cap", async (t) => {
+  const { verifyCloudEndpoints } = await import("../../scripts/cloud-smoke.mjs");
+  for (const remaining of [0, 1, 2]) {
+    let units = remaining;
+    const api = await start(t, { budget: { consume: async () => units > 0 && units-- > 0 } });
+    const fallback = await start(t, { service: "pii-fallback" });
+    await verifyCloudEndpoints({ api: api.url, "pii-fallback": fallback.url });
+    assert.equal(units, 0);
+  }
 });

@@ -10,6 +10,7 @@ const port = Number(process.env.PORT ?? "8080");
 if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("invalid-port");
 const server = createCloudServer({
   service: service as ServiceKind,
+  cloudRunProxy: Boolean(process.env.K_SERVICE),
   // The fallback never initializes a Firestore client.
   budget: service === "api" ? new FirestoreDailyBudget(limit) : { consume: async () => false },
   tickets: new TicketAuthority(key),

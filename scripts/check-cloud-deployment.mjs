@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { verifyCloudEndpoints } from "./cloud-smoke.mjs";
 const project = process.argv[2];
 if (!project || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(project)) throw new Error("project-id-required");
 const gcloud = (...args) =>
@@ -43,96 +43,8 @@ for (const name of ["api", "pii-fallback"]) {
   );
   services[name] = service.status.url;
 }
-const post = async (service, path, body, expected) => {
-  const response = await fetch(services[service] + path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    redirect: "error",
-    signal: AbortSignal.timeout(30000),
-  });
-  assert.equal(response.status, expected, `stub-status:${path}`);
-  return expected === 200 ? response.json() : undefined;
-};
-const hash = "a".repeat(64);
-await post(
-  "api",
-  "/v1/schemas/resolve",
-  { site: "example.com", pageFingerprint: hash, clientVersion: "0.1.0" },
-  200,
-);
-await post(
-  "api",
-  "/v1/schemas/feedback",
-  {
-    schemaId: null,
-    site: "example.com",
-    pageFingerprint: hash,
-    pagePurpose: "profile",
-    mappings: [{ anchor: "f-1", attributeKey: "email" }],
-    outcome: "validated",
-    resolutionTier: "gemini_structure",
-    siteValidatorToken: hash,
-    idempotencyKey: randomUUID(),
-  },
-  200,
-);
-await post(
-  "api",
-  "/v1/agent/map-structure",
-  {
-    site: "example.com",
-    pageFingerprint: hash,
-    purposeHint: "profile",
-    items: [{ id: "f-1", tag: "input", nameTokens: [] }],
-  },
-  200,
-);
-const payload = {
-  consentId: randomUUID(),
-  site: "example.com",
-  requestedKeys: ["email"],
-  items: [{ id: "d-1", text: "fake@example.com" }],
-};
-const { ticket } = await post(
-  "api",
-  "/v1/agent/tier3-ticket",
-  {
-    consentId: payload.consentId,
-    site: payload.site,
-    payloadSha256: createHash("sha256").update(JSON.stringify(payload)).digest("hex"),
-  },
-  200,
-);
-await post(
-  "pii-fallback",
-  "/v1/agent/read-with-consent",
-  { ...payload, items: [{ id: "d-1", text: "changed" }], ticket },
-  403,
-);
-await post("pii-fallback", "/v1/agent/read-with-consent", { ...payload, ticket }, 200);
-await post("pii-fallback", "/v1/agent/read-with-consent", { ...payload, ticket }, 403);
-await post(
-  "api",
-  "/v1/telemetry/outcome",
-  {
-    siteId: "example.com",
-    formId: hash,
-    schemaVersion: 1,
-    operationType: "read",
-    resolutionTier: "local_only",
-    result: "handoff",
-    errorCategory: "unknown",
-    mappingConfidenceBucket: "unknown",
-    clientVersion: "0.1.0",
-    schemaFingerprint: hash,
-    occurredAt: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
-  },
-  503,
-);
+await verifyCloudEndpoints(services);
+console.log("PASS: Cloud Run privacy configuration and public endpoint checks.");
 console.log(
-  "PASS: Cloud Run privacy configuration, six public endpoints, payload binding and replay rejection (fake data only).",
-);
-console.log(
-  "Vertex AI is not called by #559 stubs. Recheck provider request/response logging and caching before #561/#562 deploy.",
+  "Vertex AI is not called by #559 stubs. Recheck provider logging and caching before #561/#562 deploy.",
 );

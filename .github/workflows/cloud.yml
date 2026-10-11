@@ -11,6 +11,7 @@ on:
         ".github/workflows/cloud.yml",
         ".dockerignore",
         "scripts/check-cloud-deployment.mjs",
+        "scripts/cloud-smoke.mjs",
       ]
   push:
     branches: [main]
@@ -24,6 +25,7 @@ on:
         ".github/workflows/cloud.yml",
         ".dockerignore",
         "scripts/check-cloud-deployment.mjs",
+        "scripts/cloud-smoke.mjs",
       ]
   workflow_dispatch:
 permissions:
