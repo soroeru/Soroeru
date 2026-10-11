@@ -16,8 +16,8 @@
 
 Use `orchestrate-project-issues` only when coordinating multiple Project Issues. Dispatch
 reasoning-heavy bounded work to `deep-reasoner` and mechanical, fully specified work to
-`fast-worker`; their definitions constrain their tools. Local AI review and Issue lifecycle
-skills remain authoritative regardless of the orchestrating model.
+`fast-worker`; their definitions constrain their tools. Issue lifecycle skills remain
+authoritative regardless of the orchestrating model.
 
 Worker prompts must state four labeled parts:
 
