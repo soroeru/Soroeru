@@ -369,3 +369,23 @@ export function parseExtensionMessage(value: unknown): ExtensionMessage {
       return { version, kind: "keepalive" };
   }
 }
+
+/** Same-site boundary: a domain and its subdomains, never a sibling domain. */
+export function isSameSiteOrigin(origin: string, siteDomain: string): boolean {
+  try {
+    const host = new URL(origin).hostname.toLowerCase().replace(/^www\./, "");
+    return host === siteDomain || host.endsWith(`.${siteDomain}`);
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a page origin stays inside a lease's origin / site scope. Non-HTTPS is never in scope. */
+export function isOriginInLeaseScope(
+  pageOrigin: string,
+  scope: { origin: string; siteDomain?: string | undefined },
+): boolean {
+  if (!isHttpsOrigin(pageOrigin)) return false;
+  if (scope.siteDomain !== undefined) return isSameSiteOrigin(pageOrigin, scope.siteDomain);
+  return pageOrigin === scope.origin;
+}
