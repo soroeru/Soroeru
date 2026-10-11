@@ -10,7 +10,8 @@ import type { CollectionGrant } from "./collection-authorization.js";
 // entity operations and stale-state logic they build on. Raw values are never
 // logged here.
 
-import { randomUUID } from "node:crypto";
+// randomUUID replaced with globalThis.crypto.globalThis.crypto.randomUUID() for browser compatibility
+
 import { normalizedValueHash } from "./normalize.js";
 import { deriveLedgerAllowedOrigins, isUrlInLedgerScope } from "./site-account-scope.js";
 import {
@@ -184,7 +185,7 @@ export class DomainService {
   // --- Site Accounts ---
 
   upsertSiteAccount(input: UpsertSiteAccountInput): SiteAccount {
-    const id = input.id ?? randomUUID();
+    const id = input.id ?? globalThis.crypto.randomUUID();
     const existing = this.vault.get("siteAccount", id);
     const account: SiteAccount = {
       id,
@@ -338,7 +339,7 @@ export class DomainService {
 
   addCredential(input: AddCredentialInput): Credential {
     const credential: Credential = {
-      id: randomUUID(),
+      id: globalThis.crypto.randomUUID(),
       siteAccountId: input.siteAccountId,
       username: input.username,
       password: input.password,
@@ -514,7 +515,7 @@ export class DomainService {
     );
     const observedAt = input.observedAt ?? Date.now();
     const disclosure: Disclosure = {
-      id: randomUUID(),
+      id: globalThis.crypto.randomUUID(),
       siteAccountId: input.siteAccountId,
       attributeKey: input.attributeKey,
       observedAt,
@@ -656,7 +657,7 @@ export class DomainService {
 
   addAccountRelationship(input: AddAccountRelationshipInput): AccountRelationship {
     const relationship: AccountRelationship = {
-      id: randomUUID(),
+      id: globalThis.crypto.randomUUID(),
       siteAccountId: input.siteAccountId,
       kind: input.kind,
       state: input.state,
@@ -679,7 +680,7 @@ export class DomainService {
    */
   addEvidence(input: AddEvidenceInput): Evidence {
     const evidence: Evidence = {
-      id: randomUUID(),
+      id: globalThis.crypto.randomUUID(),
       observedAt: input.observedAt ?? Date.now(),
     };
     if (input.siteAccountId !== undefined) evidence.siteAccountId = input.siteAccountId;
@@ -816,7 +817,7 @@ export class DomainService {
   /** Surface a Constraint (e.g. a detected automation-prohibiting ToS clause). */
   addConstraint(input: AddConstraintInput): Constraint {
     const constraint: Constraint = {
-      id: randomUUID(),
+      id: globalThis.crypto.randomUUID(),
       kind: input.kind,
       detail: input.detail,
       evidenceIds: input.evidenceIds ?? [],
@@ -850,7 +851,7 @@ export class DomainService {
   }): SiteCollectionMap {
     const existing = this.vault.list("siteCollectionMap").filter((map) => map.siteAccountId === input.siteAccountId);
     const map: SiteCollectionMap = {
-      id: randomUUID(),
+      id: globalThis.crypto.randomUUID(),
       schemaVersion: 1,
       siteAccountId: input.siteAccountId,
       revision: Math.max(0, ...existing.map((m) => m.revision)) + 1,
