@@ -1,0 +1,18 @@
+@import "tailwindcss" source(none);
+
+/* Tailwind scans only the Side Panel and the shared renderer components it uses. */
+@source "./";
+@source "../src/renderer/components/VaultGate.tsx";
+
+body {
+  margin: 0;
+  background-color: #fcfbf7;
+  color: #1c1917;
+  /* System fonts only: the extension must not egress to non-target hosts. */
+  font-family:
+    system-ui,
+    -apple-system,
+    "Hiragino Kaku Gothic ProN",
+    "Noto Sans JP",
+    sans-serif;
+}

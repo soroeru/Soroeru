@@ -29,6 +29,8 @@ export const ENTITY_KINDS = [
   "siteCollectionMap",
   "diagnostic",
   "sessionState",
+  "formSchemaCache",
+  "cloudSettings",
 ] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];
@@ -229,6 +231,14 @@ export interface WorkflowCheckpoint extends DomainRecord {
   step: string;
   status: "pending" | "in-progress" | "handoff" | "done" | "failed";
   resumeData?: Record<string, string | number | boolean>;
+  /**
+   * Resolution stage reached when the run stopped (record schema v2, design
+   * #554 §6.4 / §7.4). Absent on v1 records. A resumed run never inherits a
+   * Tier 3 consent; `consent-pending` means consent must be asked again.
+   */
+  resolutionStage?: "tier1" | "tier2" | "consent-pending" | "tier3";
+  /** Attribute keys still unresolved at the checkpoint. Keys only — never values or page content. */
+  unresolvedAttributeKeys?: string[];
   updatedAt: number;
 }
 
@@ -277,6 +287,50 @@ export interface SessionState extends DomainRecord {
   expiresAt: number;
 }
 
+/**
+ * Locally cached shared Form Schema (design #554 §6.3). Which sites have a
+ * cached schema reveals which services the user uses, so the cache lives in
+ * the encrypted vault. The schema body is the value-free Soroeru Cloud shape
+ * (§7.3); its typed contract arrives with the cloud API (Issue #559), so it is
+ * held opaquely here.
+ */
+export interface FormSchemaCache extends DomainRecord {
+  /** Registrable site (eTLD+1) the schema belongs to. */
+  site: string;
+  /** Soroeru Cloud schema id. */
+  schemaId: string;
+  /** Monotonic schema version from Soroeru Cloud. */
+  version: number;
+  /** Value-free schema body (structure only, never personal values). */
+  schema: Record<string, unknown>;
+  fetchedAt: number;
+}
+
+/** One queued, not-yet-delivered cloud write (feedback or telemetry), retried idempotently. */
+export interface CloudQueueItem {
+  /** Client-generated key so a retried delivery is applied at most once. */
+  idempotencyKey: string;
+  kind: "feedback" | "telemetry";
+  /** Typed, allowlisted, value-free event body (built by the cloud contract layer). */
+  body: Record<string, unknown>;
+  attempts: number;
+  enqueuedAt: number;
+}
+
+/**
+ * Soroeru Cloud preferences and pending deliveries (design #554 §6.4). Single
+ * record (`id: "cloud"`). Telemetry and cloud assistance are off unless the
+ * user (or the documented hackathon build default) turns them on.
+ */
+export interface CloudSettings extends DomainRecord {
+  telemetryEnabled: boolean;
+  cloudAssistEnabled: boolean;
+  /** Per-install random token used for validator de-duplication (§7.3). Secret-ish; never logged. */
+  validatorKey: string;
+  queue: CloudQueueItem[];
+  updatedAt: number;
+}
+
 /** Local support diagnostic (RFC-002 §4.1). Sanitized metadata only. */
 export interface Diagnostic extends DomainRecord {
   at: number;
@@ -307,6 +361,8 @@ export interface EntityPayloadMap {
   siteCollectionMap: SiteCollectionMap;
   diagnostic: Diagnostic;
   sessionState: SessionState;
+  formSchemaCache: FormSchemaCache;
+  cloudSettings: CloudSettings;
 }
 
 /** Attribute keys whose values must never be displayed unmasked or logged. */

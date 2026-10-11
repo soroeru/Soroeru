@@ -43,7 +43,8 @@ account or real personal data.
 - [ ] Run `npm run build:extension` and load `dist/extension/` with
       Chrome's **Load unpacked** developer-mode flow.
 - [ ] Confirm the extension lists only `nativeMessaging`, `scripting`,
-      `activeTab`, and `storage`; no cookies/history/bookmarks/debugger access.
+      `activeTab`, `storage`, `sidePanel`, and `unlimitedStorage`; no
+      cookies/history/bookmarks/debugger access.
 - [ ] From the extension popup, approve one HTTPS origin with the explicit
       button; confirm a different origin is not silently approved.
 - [ ] Start the Electron bridge and confirm the extension badge shows `ON` and
@@ -59,6 +60,26 @@ account or real personal data.
 - [ ] `npm run poc -- check-bypass`（CAPTCHA 解決・ボット回避への依存がないこと）
 - [ ] `npm run poc:matrix -- deterministic chromium`（決定論的フィールドマッピング）
 - [ ] ブランチ / PR 上で GitHub の `ci / unit`・`ci / e2e-deterministic`・`shellcheck` がグリーン
+
+### 0.1a 拡張の Side Panel vault（Issue #557）
+
+フェイクのパスフレーズだけを使います。
+
+- [ ] `npm run build:extension` 後に `dist/extension/` を読み込み、Chrome のサイドパネルの
+      メニューから「Soroeru」を開く。拡張のエラー一覧（chrome://extensions）に CSP・
+      WebAssembly のエラーがないこと。
+- [ ] 8 文字未満では「作成して解錠」が押せないこと。フェイクのパスフレーズで作成すると、
+      リカバリーキーが 1 回だけ表示され、「控えました」の後は再表示されないこと。作成直後に
+      暗号化エクスポートを促す表示が出て、ダウンロードしたファイルにパスフレーズ・
+      リカバリーキーが平文で含まれないこと。KDF の所要時間（作成ボタンから表示まで）を記録する。
+- [ ] DevTools の Application → IndexedDB → `soroeru-vault` / `vault` / `document` が暗号文
+      （`vaultVersion`・`kdf`・`records[].ciphertext`）だけであること。
+- [ ] 「施錠」でアンロック画面に戻ること。誤ったパスフレーズは失敗し、正しいパスフレーズと
+      リカバリーキーの両方で解錠できること。
+- [ ] 解錠した状態でサイドパネルを閉じて開き直すと、アンロック画面から始まること（鍵が残らない）。
+      ブラウザを再起動した場合も同じであること。
+- [ ] 別のウィンドウでもサイドパネルを開くと「別のウィンドウで使用中」と表示され、解錠できないこと。
+      最初のサイドパネルを閉じてから「再試行」すると解錠画面になること。
 
 ### 0.2 Chrome bridge UI flow (Issue #339)
 

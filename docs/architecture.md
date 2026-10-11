@@ -508,7 +508,7 @@ sanitized operational-log excerpts), written only to a user-selected destination
 uploaded automatically. The detailed security policy and release checklist are owned by
 [`security.md`](security.md) §12.2 and §13.
 
-### 3.6 Extension vault durability (target, #554)
+### 3.6 Extension vault durability (#554; implemented in #557)
 
 In the extension, IndexedDB is the vault's only on-device copy, so `IndexedDbVaultPersistence`
 must provide: (1) whole-document replacement in a single `readwrite` transaction that reports
@@ -527,6 +527,14 @@ panel can take the lock. An Electron vault moves to the extension through the ex
 encrypted export/import format (no format conversion); the import UX is §2.3 P2.
 Rejected: `chrome.storage.local` (size limits for large values) and OPFS (would need hand-built
 atomic replacement).
+
+Implementation status: Issue #557 implements (1)–(5) in
+`src/store/indexeddb-vault-persistence.ts`, `src/store/vault-session.ts`, and the React Side
+Panel in `extension/` (P0 export prompt only; richer export/import UX remains P2). The Side
+Panel runs Argon2id from `hash-wasm` under an extension-page CSP of
+`script-src 'self' 'wasm-unsafe-eval'`, never `unsafe-eval`; the rationale is in
+[`security.md`](security.md) §4 and design #554 §6.2. Revisit the WebAssembly allowance if the
+platform offers a native Argon2id (Web Crypto) KDF.
 
 ## 4. IPC And Trust Boundary
 

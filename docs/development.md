@@ -612,7 +612,9 @@ not the supported product installation or binding UX. To use it during local dev
    npm run build:host
    ```
 
-   `build:extension` bundles the extension to `dist/extension/`. `build:host` bundles the
+   `build:extension` bundles the extension to `dist/extension/`, including the React Side Panel
+   (`sidepanel.html` / `sidepanel.js` / `sidepanel.css`, Issue #557) that holds the IndexedDB
+   vault session; manual checks are in `docs/manual-test.md` §0.1a. `build:host` bundles the
    native-messaging host relay into one self-contained file,
    `dist/native-host/host.cjs` — required because setup copies a **single file** into
    app-support and Chrome launches it from there (the per-module compiled output under

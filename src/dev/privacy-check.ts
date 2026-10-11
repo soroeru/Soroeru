@@ -33,8 +33,13 @@ const WRITE_PATTERNS: RegExp[] = [
   /\bwriteFile(?:Sync)?\(/,
   /\bappendFile(?:Sync)?\(/,
   /\bcreateWriteStream\(/,
-  // MV3 extension code cannot reach Node fs; its persistence surface is chrome.storage.
+  // MV3 extension code cannot reach Node fs; its persistence surfaces are
+  // chrome.storage, IndexedDB object-store writes, and user downloads. The
+  // IndexedDB pattern also matches other variables named `store`; annotate or
+  // rename those rather than weakening the pattern.
   /\bchrome\.storage\.\w+\.set\(/,
+  /\b(?:store|objectStore\([^)]*\))\.(?:put|add)\(/,
+  /\.download\s*=(?!=)/,
 ];
 
 export interface PersistenceCheckResult {

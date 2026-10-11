@@ -902,6 +902,10 @@ export class DomainService {
     };
     if (input.siteAccountId !== undefined) checkpoint.siteAccountId = input.siteAccountId;
     if (input.resumeData !== undefined) checkpoint.resumeData = input.resumeData;
+    if (input.resolutionStage !== undefined) checkpoint.resolutionStage = input.resolutionStage;
+    if (input.unresolvedAttributeKeys !== undefined) {
+      checkpoint.unresolvedAttributeKeys = [...input.unresolvedAttributeKeys];
+    }
     this.vault.put("workflowCheckpoint", checkpoint);
     return checkpoint;
   }
@@ -953,6 +957,8 @@ export interface SaveCheckpointInput {
   step: string;
   status: WorkflowCheckpoint["status"];
   resumeData?: Record<string, string | number | boolean>;
+  resolutionStage?: WorkflowCheckpoint["resolutionStage"];
+  unresolvedAttributeKeys?: string[];
 }
 
 function checkpointId(workflow: string, siteAccountId?: string): string {

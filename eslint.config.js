@@ -29,7 +29,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/renderer/**/*.{ts,tsx}"],
+    files: ["src/renderer/**/*.{ts,tsx}", "extension/**/*.tsx"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     languageOptions: {
       globals: { ...globals.browser },

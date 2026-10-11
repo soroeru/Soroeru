@@ -41,11 +41,16 @@ export function newKdfParams(algo: KdfAlgo, runtime: CryptoRuntime = webCryptoRu
   return { ...base, salt: bytesToBase64(randomBytes(16, runtime)) };
 }
 
-/** Derive the 256-bit master key. The result lives in memory only; never persist it. */
+/**
+ * Derive the 256-bit master key. The result lives in memory only; never persist it.
+ * `extractable: false` yields a key whose raw bytes the platform will not export
+ * (the extension Side Panel session, design #554 §6.2).
+ */
 export async function deriveKey(
   passphrase: string,
   params: KdfParams,
   runtime: CryptoRuntime = webCryptoRuntime,
+  extractable = true,
 ): Promise<MasterKey> {
   const salt = base64ToBytes(params.salt);
   const subtle = runtime.subtle;
@@ -70,9 +75,16 @@ export async function deriveKey(
     );
     raw = new Uint8Array(bits);
   }
-  // Extractable so the master key's raw bytes can be wrapped under a recovery
-  // key (SEC-003 / #44); the key itself never leaves this process.
-  return subtle.importKey("raw", new Uint8Array(raw), { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
+  // Extractable by default so the master key's raw bytes can be wrapped under a
+  // recovery key (SEC-003 / #44); the key itself never leaves this process.
+  const keyBytes = new Uint8Array(raw);
+  try {
+    return await subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, extractable, ["encrypt", "decrypt"]);
+  } finally {
+    // Best-effort scrub of the raw key copies once the CryptoKey holds them.
+    keyBytes.fill(0);
+    raw.fill(0);
+  }
 }
 
 /** Export an AES-GCM key's raw bytes, e.g. to wrap it under another key. */

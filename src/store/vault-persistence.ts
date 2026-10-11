@@ -3,8 +3,9 @@
 // `VaultV2` owns the envelope format and every crypto operation; a persistence
 // backend only stores and returns the already-encrypted document as a whole.
 // Backends: `FileVaultPersistence` (./file-vault-persistence.ts, Electron and
-// tests, atomic file replacement) and, later, an IndexedDB backend for the
-// extension. This module must stay free of `node:` imports and `Buffer`.
+// tests, atomic file replacement) and `IndexedDbVaultPersistence`
+// (./indexeddb-vault-persistence.ts, the extension, Issue #557).
+// This module must stay free of `node:` imports and `Buffer`.
 
 import type { EncryptedRecord, KdfParams } from "./crypto.js";
 import type { EntityKind } from "../domain/entities.js";

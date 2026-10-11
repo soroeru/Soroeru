@@ -252,6 +252,17 @@ definitions, and account-state metadata are persisted as encrypted records in th
 store, and the most-sensitive field (CVV) is kept out of the shared transform view and
 read only through a sanctioned fill-time accessor.
 
+**Chrome extension vault (Issue #557, design #554 §6).** The extension stores only the
+Vault v2 ciphertext document (header + record envelopes, the same shape as the encrypted
+export) in IndexedDB (`soroeru-vault`), never decrypted values. The unlocked master key is a
+non-extractable `CryptoKey` held only in the Side Panel's memory and dropped on lock, panel
+close, or browser restart; recovery-key setup derives a short-lived extractable copy only to
+wrap it. An exclusive Web Lock makes one Side Panel the single writer. The manifest adds
+`unlimitedStorage` (durability, not new data) and an extension-page CSP of
+`script-src 'self' 'wasm-unsafe-eval'` so the `hash-wasm` Argon2id KDF can run; `unsafe-eval`
+and remote script origins stay forbidden. The encrypted export is offered as a user-initiated
+download (`// persist: encrypted-export`); it contains only ciphertext.
+
 Convenience option: an OS keychain (macOS Keychain / Windows DPAPI / Linux libsecret) may
 hold a session key to avoid re-entry, trading convenience for relying on the OS login
 session — make the tradeoff explicit in settings.
