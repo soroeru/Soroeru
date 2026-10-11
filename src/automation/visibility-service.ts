@@ -34,6 +34,7 @@ export interface VisibilityServiceOptions {
   /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
   aiEngine?: AiEngine;
   collectionGrant?: VisibilityRunnerOptions["collectionGrant"];
+  resolveSharedSchema?: VisibilityRunnerOptions["resolveSharedSchema"];
   confirmCollectionDestination?: VisibilityRunnerOptions["confirmCollectionDestination"];
   decideCollectionTos?: VisibilityRunnerOptions["decideCollectionTos"];
   /** Plain-text diagnostics sink passed through to the runner (Issue #314); defaults to a no-op. */
@@ -134,6 +135,7 @@ export class VisibilityService {
         handoff: (input) => this.onHandoff(input),
         isCanceled: () => this.cancelRequested,
         logger: this.logger,
+        ...(this.options.resolveSharedSchema ? { resolveSharedSchema: this.options.resolveSharedSchema } : {}),
         ...(this.collectionProvider ? { collectionProvider: this.collectionProvider } : {}),
         ...(this.options.collectionGrant ? { collectionGrant: this.options.collectionGrant } : {}),
         ...(this.options.confirmCollectionDestination

@@ -1,3 +1,4 @@
+import { RAW_VALUE_PATTERNS } from "../shared/personal-value.js";
 // Shared site/form/field/wall/withdrawal definition matching, field-rule
 // application, and local-candidate validation (#80, RFC-001 v3 §8,
 // architecture.md §7.1). Definitions (official and local-candidate) share one
@@ -168,12 +169,6 @@ function isValidProfileKey(key: ProfileKey): boolean {
  * structure (security.md §9: candidates must not contain raw profile values).
  * This is a heuristic defense-in-depth check, not a guarantee.
  */
-const RAW_VALUE_PATTERNS: { name: string; re: RegExp }[] = [
-  { name: "email address", re: /[\w.+-]+@[\w-]+\.[\w.-]+/ },
-  { name: "card-number-like digit sequence", re: /\d[\d -]{10,18}\d/ },
-  { name: "phone-number-like value", re: /0\d{1,4}-\d{1,4}-\d{3,4}/ },
-];
-
 /** Every free-text/pattern string embedded in a definition, for the privacy scan. */
 function collectStrings(definition: LocalCandidateDefinition): string[] {
   const strings: string[] = [...(definition.match.domains ?? []), ...(definition.match.urlPatterns ?? [])];

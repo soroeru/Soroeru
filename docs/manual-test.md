@@ -510,3 +510,27 @@ After the PR merges, confirm `cloud / validate` succeeds and `cloud / deploy` us
 from main, publishes the commit's image digest, applies runtime Terraform and passes the smoke
 check. A PR run must execute validation only. Confirm environment branch restriction is main.
 The deployment workflow must not contain a service-account key or upload local state as artifacts.
+
+## Tier 1 shared schemas (#560)
+
+Use only the fictional `cloud/seeds/profile.html` and fake vault records.
+The automated browser equivalent is `tests/e2e/tier1-schema.e2e.ts`; deployment
+and Chrome Side Panel checks still require the development environment.
+
+- [ ] Review and import `cloud/seeds/official.json` with the maintainer CLI
+      (`cloud/README.md`), then resolve its fingerprint. Firestore stores only
+      the schema, counts, and timestamps, and logs contain no fixture values.
+- [ ] Build with `VITE_SOROERU_CLOUD_API_URL`, load the extension and enable
+      shared schemas in the unlocked panel. Serve the fixture at the fictional
+      HTTPS host using a development DNS mapping; use `schema-fixture.example`
+      as the Site Account domain. Inspect Network: resolve contains only the
+      domain, fingerprint, and client version, even if the local URL has a query.
+- [ ] Change a seed anchor to `f-99` in a new version. The email still resolves;
+      only the affected phone mapping is unresolved and a review constraint appears.
+- [ ] Inspect IndexedDB: `formSchemaCache` payloads are encrypted. Disable Cloud
+      assistance or disconnect the network and repeat the run: the matching cache
+      still works. Locking or closing the panel prevents further reads/writes.
+- [ ] Introduce a CAPTCHA/MFA marker or automation-prohibiting wording before
+      resolution. No schema value read occurs; hand off in the same tab. Never
+      bypass the control. Change the page structure during the lookup and verify
+      the stale schema cannot read values.

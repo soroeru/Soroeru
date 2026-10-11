@@ -1,3 +1,5 @@
+import { schemaPageFingerprint, readSchemaPage } from "./schema-page.js";
+import type { FormSchema } from "../src/shared/cloud-contract.js";
 import {
   collectionObservationInPage,
   structuralFingerprintInPage,
@@ -19,6 +21,8 @@ type ContentCommand =
   | { command: "captureCollectionObservation"; bindingEpoch: number }
   | { command: "checkCollectionObservation"; token: ObservationToken }
   | { command: "snapshot" }
+  | { command: "schemaFingerprint" }
+  | { command: "readSchema"; schema: FormSchema }
   | { command: "readValues"; fieldIds?: string[] }
   | { command: "readDisplayValues"; valueIds?: string[] }
   | { command: "fill"; fieldId: string; value: string }
@@ -125,6 +129,8 @@ async function execute(command: ContentCommand): Promise<unknown> {
     case "stop":
       hideAutomationBanner();
       return { ok: true };
+    case "schemaFingerprint": return schemaPageFingerprint();
+    case "readSchema": return readSchemaPage(command.schema);
     case "snapshot":
       return scanPage();
     case "readValues":

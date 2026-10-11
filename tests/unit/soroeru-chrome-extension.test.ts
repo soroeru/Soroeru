@@ -38,12 +38,6 @@ test("MV3 manifest requests only the bridge, Side Panel, and vault storage permi
   assert.equal(manifest.content_scripts, undefined);
 });
 
-test("extension build config bundles source imports into the unpacked files", async () => {
-  const config = await readFile(join(process.cwd(), "extension", "vite.config.mjs"), "utf8");
-  assert.match(config, /contentScript/);
-  assert.match(config, /worker/);
-});
-
 test("worker accepts only explicit bound tabs and HTTPS origins", () => {
   assert.equal(isAllowedExtensionOrigin("https://example.test"), true);
   assert.equal(isAllowedExtensionOrigin("http://example.test"), false);

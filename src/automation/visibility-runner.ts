@@ -1,3 +1,4 @@
+import type { SchemaReadResult } from "../shared/schema-resolution.js";
 import type { AiProvider } from "../agent/ai/provider.js";
 import type { CollectionGrant } from "../domain/collection-authorization.js";
 import { collectAiVisibility, type AiCollectionOptions } from "./ai-visibility-collector.js";
@@ -59,6 +60,7 @@ export interface VisibilityRunnerOptions {
   /** Optional AI fallback for DecisionEngine (Issue #310); absent = rules-only, today's behavior. */
   aiEngine?: AiEngine;
   collectionProvider?: AiProvider;
+  resolveSharedSchema?: (site: SiteAccount) => Promise<SchemaReadResult | null>;
   collectionGrant?: (context: { siteAccountId: string; runId: string; epoch: number }) => CollectionGrant | undefined;
   collectionAiSignal?: AbortSignal;
   confirmCollectionDestination?: AiCollectionOptions["confirmDestination"];
@@ -513,6 +515,30 @@ export class VisibilityRunner {
       }
 
       siteAccount = this.updateImportedDisplayName(siteAccount, snapshot);
+      if (this.options.resolveSharedSchema && this.wallDetection.detectTosProhibition(snapshot)) {
+        this.recordTosConstraint(siteAccount, snapshot);
+        return this.handoffResult(siteAccountId);
+      }
+      if (this.options.resolveSharedSchema) {
+        const resolved = await this.options.resolveSharedSchema(siteAccount);
+        if (this.isCanceled()) return this.canceledResult(siteAccountId);
+        if (resolved) {
+          const safeUrl = new URL(snapshot.url).origin + "/";
+          let disclosures = 0;
+          for (const entry of resolved.values) {
+            if (!entry.value || entry.attributeKey === "account.password" || entry.attributeKey === "card.cvv") continue;
+            const evidence = this.options.domain.addEvidence({ siteAccountId, pageUrl: safeUrl, observedAt: this.now(), maskedSnippet: "Locally validated shared schema" });
+            this.options.domain.addDisclosure({ siteAccountId, attributeKey: entry.attributeKey, siteHeldValue: entry.value,
+              observedAt: this.now(), sourcePageUrl: safeUrl, sourceKind: "profile-text", collectionTier: "deterministic", confidence: 1, evidenceIds: [evidence.id] });
+            disclosures++;
+          }
+          if (resolved.unresolved.length) this.options.domain.addConstraint({ siteAccountId, kind: "unknown-state", detail: "Shared schema has unresolved fields; review required", evidenceIds: [] });
+          this.options.domain.saveCheckpoint({ workflow: "visibility", siteAccountId, step: "shared-schema",
+            status: resolved.unresolved.length ? "handoff" : "done", unresolvedAttributeKeys: resolved.unresolved.map(f => f.attributeKey) });
+          return { siteAccountId, status: resolved.unresolved.length ? "handoff" : disclosures ? "collected" : "no-data", disclosures,
+            relationships: 0, constraints: resolved.unresolved.length ? 1 : 0 };
+        }
+      }
       const runId = globalThis.crypto.randomUUID();
       const grant = this.options.collectionGrant?.({ siteAccountId, runId, epoch: 1 });
       if (grant && session.page.captureCollectionObservation && session.page.checkCollectionObservation &&

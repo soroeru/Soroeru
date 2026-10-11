@@ -6,8 +6,9 @@ on:
         "cloud/**",
         "infra/**",
         "src/shared/cloud-contract.ts",
+        "src/shared/personal-value.ts",
         "src/types.ts",
-        "extension/cloud-client.ts",
+        "extension/**",
         ".github/workflows/cloud.yml",
         ".dockerignore",
         "scripts/check-cloud-deployment.mjs",
@@ -20,6 +21,7 @@ on:
         "cloud/**",
         "infra/runtime/**",
         "src/shared/cloud-contract.ts",
+        "src/shared/personal-value.ts",
         "src/types.ts",
         "extension/cloud-client.ts",
         ".github/workflows/cloud.yml",
@@ -50,6 +52,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run format && npm run lint && npm run typecheck
       - run: npm run release:check
+      - run: npm run build:extension && node --test dist/compiled/tests/e2e/tier1-*.e2e.js
       - run: npm run typecheck --prefix cloud && npm test --prefix cloud && npm run audit --prefix cloud
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:

@@ -8,6 +8,7 @@
 !src/
 !src/shared/
 !src/shared/cloud-contract.ts
+!src/shared/personal-value.ts
 !src/types.ts
 
 !cloud/cloudbuild.yaml

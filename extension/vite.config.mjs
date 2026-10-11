@@ -1,23 +1,45 @@
 import { resolve } from "node:path";
-import { defineConfig } from "vite";
+import { build, defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 const ENTRY_FILE_NAMES = {
   worker: "worker.js",
-  contentScript: "content-script.js",
   sidepanel: "sidepanel.js",
 };
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  define: { __SOROERU_CLOUD_API_URL__: JSON.stringify(process.env.VITE_SOROERU_CLOUD_API_URL ?? "") },
+  plugins: [
+    react(),
+    tailwindcss(),
+    {
+      name: "classic-content-script",
+      apply: "build",
+      async closeBundle() {
+        // executeScript injects a classic script, so it cannot load ESM shared chunks.
+        await build({
+          configFile: false,
+          build: {
+            outDir: resolve(process.cwd(), "dist/extension"),
+            emptyOutDir: false,
+            lib: {
+              entry: resolve(process.cwd(), "extension/content-script.ts"),
+              name: "SoroeruContent",
+              formats: ["iife"],
+              fileName: () => "content-script.js",
+            },
+          },
+        });
+      },
+    },
+  ],
   build: {
     outDir: resolve(process.cwd(), "dist/extension"),
     emptyOutDir: true,
     rollupOptions: {
       input: {
         worker: resolve(process.cwd(), "extension/worker.ts"),
-        contentScript: resolve(process.cwd(), "extension/content-script.ts"),
         sidepanel: resolve(process.cwd(), "extension/sidepanel.tsx"),
       },
       output: {
@@ -29,7 +51,9 @@ export default defineConfig({
         },
         // The Side Panel's stylesheet is linked by name from extension/sidepanel.html.
         assetFileNames: (asset) =>
-          asset.names.some((name) => name.endsWith(".css")) ? "sidepanel.css" : "assets/[name]-[hash][extname]",
+          asset.names.some((name) => name.endsWith(".css"))
+            ? "sidepanel.css"
+            : "assets/[name]-[hash][extname]",
       },
     },
   },

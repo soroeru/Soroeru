@@ -1,0 +1,29 @@
+[
+  {
+    "schemaId": "cfb17e1acfcc1ec82c62bdf3788f3864255f9e3e510b0a79dd10f587225d3bf1",
+    "site": "schema-fixture.example",
+    "formKey": "8c7d291601a8cc70cbe1b888a8d9dc7690bf5dbea817a0c148450912ef4e1961",
+    "version": 1,
+    "pageFingerprints": ["442617bf0ad0594304e204a61af44dc04f1ae8cc55dddf10762339f9ed56de95"],
+    "fields": [
+      {
+        "anchor": "f-1",
+        "attributeKey": "email",
+        "required": true
+      },
+      {
+        "anchor": "f-2",
+        "attributeKey": "phone.full",
+        "required": true
+      }
+    ],
+    "confidence": 1,
+    "status": "active",
+    "provenance": "official",
+    "validationCount": 0,
+    "distinctValidators": 0,
+    "failureCount": 0,
+    "createdAt": "2026-10-11T00:00:00.000Z",
+    "updatedAt": "2026-10-11T00:00:00.000Z"
+  }
+]

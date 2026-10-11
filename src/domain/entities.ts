@@ -291,8 +291,8 @@ export interface SessionState extends DomainRecord {
  * Locally cached shared Form Schema (design #554 §6.3). Which sites have a
  * cached schema reveals which services the user uses, so the cache lives in
  * the encrypted vault. The schema body is the value-free Soroeru Cloud shape
- * (§7.3); its typed contract arrives with the cloud API (Issue #559), so it is
- * held opaquely here.
+ * (§7.3); the Tier 1 boundary validates this opaque body with the shared
+ * cloud contract before storing or reusing it.
  */
 export interface FormSchemaCache extends DomainRecord {
   /** Registrable site (eTLD+1) the schema belongs to. */

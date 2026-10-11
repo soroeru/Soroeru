@@ -1,3 +1,4 @@
+import { ResolutionOrchestrator, type ResolveClient } from "../resolution-orchestrator.js";
 /**
  * Side Panel runtime host for Visibility runs (Issue #558). It wires the unlocked
  * `VaultSession.vault` -> `DomainService` -> `VisibilityService`, and gives the service an
@@ -32,6 +33,7 @@ export function hostPermissionOrigins(domain: string): string[] {
 
 export interface VisibilityHostOptions {
   session: VaultSession;
+  cloudClient?: ResolveClient;
   leaseClient: LeaseClient;
 }
 
@@ -43,7 +45,21 @@ export class VisibilityHost {
   private stopping = false;
 
   constructor(private readonly options: VisibilityHostOptions) {
+    const resolver = new ResolutionOrchestrator({
+      session: options.session,
+      clientVersion: "0.1.2",
+      ...(options.cloudClient ? { client: options.cloudClient } : {}),
+      sendPageCommand: (command) => options.leaseClient.sendPageCommand(command),
+      isActive: () => !this.stopping && options.leaseClient.isLeaseActive(),
+    });
     this.service = new VisibilityService({
+      resolveSharedSchema: async (site) => {
+        try {
+          return await resolver.resolve(site.domain);
+        } catch {
+          return null;
+        } // Deterministic collection retains its wall/lease gates.
+      },
       openSession: (site) => this.openSession(site),
       emit: (event) => {
         for (const listener of this.listeners) listener(event);
@@ -57,6 +73,27 @@ export class VisibilityHost {
     });
     this.stopStateWatch = options.session.onStateChange((state) => this.onSessionState(state));
     this.onSessionState(options.session.state);
+  }
+
+  get cloudAvailable(): boolean {
+    return Boolean(this.options.cloudClient);
+  }
+  get cloudAssistEnabled(): boolean {
+    return this.options.session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled ?? false;
+  }
+  async setCloudAssistEnabled(enabled: boolean): Promise<void> {
+    const session = this.options.session;
+    const old = session.vault.get("cloudSettings", "cloud");
+    session.vault.put("cloudSettings", {
+      id: "cloud",
+      telemetryEnabled: false,
+      validatorKey: crypto.randomUUID(),
+      queue: [],
+      ...old,
+      cloudAssistEnabled: enabled,
+      updatedAt: Date.now(),
+    });
+    await session.save();
   }
 
   onEvent(listener: (event: VisibilityEvent) => void): () => void {

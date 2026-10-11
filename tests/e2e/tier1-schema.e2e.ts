@@ -1,0 +1,54 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { chromium } from "playwright";
+import { build } from "vite";
+import type { FormSchema } from "../../src/shared/cloud-contract.js";
+import type { SchemaReadResult } from "../../src/shared/schema-resolution.js";
+
+test("real browser: reviewed seed fingerprint, local reads, positional anchors, isolated mismatch and wall gate", async t => {
+  const bundle = await build({ configFile: false, logLevel: "silent", build: { write: false, minify: false,
+    lib: { entry: resolve("extension/schema-page.ts"), name: "SchemaPage", formats: ["iife"] } } });
+  const output = (Array.isArray(bundle) ? bundle[0] : bundle) as { output: { type: string; code?: string }[] };
+  const code = output.output.find(c => c.type === "chunk")?.code;
+  assert.ok(code);
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://schema-fixture.example/**", route => route.fulfill({ contentType: "text/html", path: resolve("cloud/seeds/profile.html") }));
+  await page.goto("https://schema-fixture.example/profile?local-only=fake-private");
+  await page.addScriptTag({ content: code });
+  const [stored] = JSON.parse(await readFile("cloud/seeds/official.json", "utf8"));
+  const { validationCount: _v, distinctValidators: _d, failureCount: _f, createdAt: _c, updatedAt: _u, ...schema } = stored;
+  const run = (schema: FormSchema): Promise<SchemaReadResult> => page.evaluate(schema => {
+    const api = (window as unknown as { SchemaPage: { readSchemaPage(schema: FormSchema): SchemaReadResult } }).SchemaPage;
+    return api.readSchemaPage(schema);
+  }, schema);
+  const print = await page.evaluate(() => (window as unknown as { SchemaPage: { schemaPageFingerprint(): string } }).SchemaPage.schemaPageFingerprint());
+  assert.equal(print, schema.pageFingerprints[0]);
+  const good = await run(schema);
+  assert.deepEqual(good.values.map(v => v.value), ["fake@example.com", "090-0000-0000"]);
+  assert.deepEqual(good.unresolved, []);
+  const positional = await run({ ...schema, fields: [{ ...schema.fields[0], anchor: ":root > *:nth-child(2) > *:nth-child(1) > *:nth-child(1) > *:nth-child(1)" }] });
+  assert.equal(positional.values[0]?.value, "fake@example.com");
+  const partial = await run({ ...schema, fields: [schema.fields[0], { ...schema.fields[1], anchor: "f-99" }] });
+  assert.equal(partial.values.length, 1); assert.deepEqual(partial.unresolved, [{ attributeKey: "phone.full", reason: "anchor-not-found" }]);
+  const conflict = await run({ ...schema, fields: [schema.fields[0], { ...schema.fields[1], attributeKey: "name.full" }] });
+  assert.equal(conflict.values.length, 1); assert.equal(conflict.unresolved[0]?.reason, "classifier-conflict");
+  await page.locator("label").first().evaluate(el => el.setAttribute("data-af-id", "f-1"));
+  const ambiguous = await run(schema);
+  assert.equal(ambiguous.values.length, 1);
+  assert.equal(ambiguous.unresolved[0]?.reason, "anchor-ambiguous");
+  await page.locator("label").first().evaluate(el => el.removeAttribute("data-af-id"));
+  await page.locator('input[type="email"]').fill("changed@example.com");
+  assert.equal((await run(schema)).values[0]?.value, "changed@example.com");
+  await page.evaluate(() => { document.body.appendChild(document.createElement("div")); });
+  await assert.rejects(run(schema), /stale-schema-page/);
+  await page.goto("https://schema-fixture.example/profile"); await page.addScriptTag({ content: code });
+  await page.evaluate(() => { document.body.append("私はロボットではありません"); });
+  await assert.rejects(run(schema), /stale-schema-page/);
+  await page.goto("https://schema-fixture.example/profile"); await page.addScriptTag({ content: code });
+  await page.evaluate(() => { document.body.append("automated access is prohibited"); });
+  await assert.rejects(run(schema), /stale-schema-page/);
+});

@@ -1,3 +1,4 @@
+import { validateFormSchema, type FormSchema } from "./cloud-contract.js";
 /**
  * Wire contract for the Side Panel <-> service worker <-> content script lease protocol
  * (Issue #558). A lease binds one Side Panel to one tab/origin/site scope for one epoch.
@@ -5,12 +6,7 @@
  */
 
 import { isObservationToken, type ObservationToken } from "../automation/collection-observation.js";
-import {
-  ChromeBridgeProtocolError,
-  isRecord,
-  rejectUnknownKeys,
-  requireString,
-} from "./chrome-bridge.js";
+import { ChromeBridgeProtocolError, isRecord, rejectUnknownKeys, requireString } from "./chrome-bridge.js";
 
 export const EXTENSION_MESSAGE_VERSION = 1 as const;
 /** Name of the long-lived runtime port the Side Panel opens to the service worker. */
@@ -45,6 +41,8 @@ export type PageCommand =
   | { command: "goto"; url: string }
   | { command: "currentUrl" }
   | { command: "snapshot" }
+  | { command: "schemaFingerprint" }
+  | { command: "readSchema"; schema: FormSchema }
   | { command: "captureCollectionObservation"; bindingEpoch: number }
   | { command: "checkCollectionObservation"; token: ObservationToken }
   | { command: "readValues"; fieldIds?: string[] }
@@ -219,9 +217,15 @@ export function parsePageCommand(value: unknown): PageCommand {
     }
     case "currentUrl":
     case "snapshot":
+    case "schemaFingerprint":
     case "waitForReady":
       rejectUnknownKeys(value, ["command"]);
       return { command: name };
+    case "readSchema": {
+      rejectUnknownKeys(value, ["command", "schema"]);
+      validateFormSchema(value.schema);
+      return { command: name, schema: value.schema };
+    }
     case "captureCollectionObservation": {
       rejectUnknownKeys(value, ["command", "bindingEpoch"]);
       return { command: name, bindingEpoch: requireEpoch(value, "bindingEpoch") };

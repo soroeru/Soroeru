@@ -1146,3 +1146,21 @@ all Jev calls. Stop an existing run before revoking permission: checkpoints reta
 the original run configuration, so do not resume an old enabled checkpoint.
 The approval record only enables assisted's confirmation flow; private sending additionally
 requires this independent explicit flag. No new GitHub secret or Project token is needed.
+
+### Shared schemas (Issue #560)
+
+The Firestore registry and its maintainer-only seed import are documented in
+[`cloud/README.md`](../cloud/README.md). The Side Panel Tier 1 path is configured
+with `VITE_SOROERU_CLOUD_API_URL` at extension build time and enabled by the user
+inside the unlocked panel; the default is off. See
+[`extension/README.md`](../extension/README.md#tier-1-shared-form-schemas-560).
+
+Run `npm test --prefix cloud` for schema persistence validation and API routing.
+Run `npm run build:extension && node --test dist/compiled/tests/e2e/tier1-*.e2e.js`
+for the fake fixture, including per-field failure isolation, positional anchors,
+stale-page rejection, walls, and classic Content Script injection under a real
+extension lease. Root unit tests cover the typed request, encrypted
+cache, offline reuse, and Visibility ledger/checkpoint integration. Firestore SDK
+calls are isolated in tests; development-project deployment and real Chrome Side
+Panel verification remain in [`manual-test.md`](manual-test.md#tier-1-shared-schemas-560).
+
