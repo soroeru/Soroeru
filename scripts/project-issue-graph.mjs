@@ -289,7 +289,7 @@ function expectedMilestone(state, issue) {
   return hasPrCreated ? "merged" : "pr-created";
 }
 
-/** Parent exclusion for every worker-pool computation; `parent.asWorker` opts the parent in (Issue #589). */
+/** Parent route options for every worker-pool computation: excluded by default, opted in by `parent.asWorker` (Issue #589). */
 function parentPoolOptions(config) {
   return { parentAgent: config.parent.agent, parentAsWorker: config.parent.asWorker === true };
 }

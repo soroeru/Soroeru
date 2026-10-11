@@ -1245,6 +1245,7 @@ test("unusual graph thread IDs map to a stable valid triage budget ID", async ()
 });
 
 test("the parent runtime receives worker dispatches only when parent.asWorker opts it in (Issue #589)", async () => {
+  // parentRecord validates the parent route itself; only the role=worker record can join the pool.
   const capabilities = [parentRecord, workerRoute("Codex", "gpt-5")];
   const excluded = makeRun();
   await excluded.invoke(makeInput({ items: [item(1)], capabilities }));
