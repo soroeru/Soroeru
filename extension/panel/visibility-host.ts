@@ -26,6 +26,7 @@ export class VisibilityHostError extends Error {
 
 /** Host-permission match patterns for a site and its subdomains. */
 export function hostPermissionOrigins(domain: string): string[] {
+  // egress: target-site — host permission patterns for the user's selected site and its subdomains.
   return [`https://${domain}/*`, `https://*.${domain}/*`];
 }
 
@@ -158,6 +159,7 @@ export class VisibilityHost {
     if (!inScope(current)) {
       // The panel moves the user's tab to the site's own entry page; the worker only navigates
       // inside an existing lease scope.
+      // egress: target-site — navigate the user's selected tab after validating the site's origin.
       current = await this.navigateTab(tabId, site.url ?? `https://${site.domain}/`, site.domain);
     }
     const origin = new URL(current).origin;

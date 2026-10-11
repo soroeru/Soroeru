@@ -42,6 +42,7 @@ function originOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const origin = new URL(url).origin;
+    // egress: target-site — validate the selected tab's HTTPS origin; this comparison sends no request.
     return origin.startsWith("https://") ? origin : undefined;
   } catch {
     return undefined;
@@ -367,6 +368,7 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
 
   chrome.permissions.onRemoved.addListener((permissions) => {
     for (const pattern of permissions.origins ?? []) {
+      // egress: target-site — recognize revoked host permission patterns to invalidate leases; no request is sent.
       if (pattern === "https://*/*" || pattern === "<all_urls>") {
         drop(registry.list().flatMap((lease) => registry.invalidateByTab(lease.tabId, "permission-removed")));
         continue;
