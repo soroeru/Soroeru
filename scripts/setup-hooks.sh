@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-hooks.sh — wire up the local AI review git hooks for this repo.
+# setup-hooks.sh — wire up the git hooks for this repo.
 #
 # Idempotent. Run this once after cloning, and again any time the
 # .githooks/ contents are pulled fresh. It does the minimum:
@@ -31,29 +31,8 @@ require() {
   fi
 }
 
-require bash    "any modern bash (3.2+ ok); pre-installed on macOS"
-require git     "https://git-scm.com/"
-require jq      "brew install jq"
-
-if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1; then
-  printf 'missing: shasum or sha256sum — checksum command required for diff hashes\n' >&2
-  missing=$((missing + 1))
-fi
-
-# Reviewer CLIs are required only when their respective branch
-# prefix is in use, so we warn but do not fail the setup.
-warn_missing_reviewer() {
-  local cmd=$1 hint=$2
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    printf 'warning: %s not on PATH — %s reviews will fail until installed (%s)\n' \
-      "$cmd" "$cmd" "$hint" >&2
-  fi
-}
-warn_missing_reviewer claude "https://docs.claude.com/claude-code"
-warn_missing_reviewer codex  "https://github.com/openai/codex"
-warn_missing_reviewer grok   "install the Grok Build CLI (xAI)"
-# Gemini review uses the Antigravity CLI binary `agy`, not a `gemini`-named binary.
-warn_missing_reviewer agy    "https://antigravity.dev (Antigravity CLI for Gemini review)"
+require bash "any modern bash (3.2+ ok); pre-installed on macOS"
+require git  "https://git-scm.com/"
 
 if [ "$missing" -gt 0 ]; then
   printf '\ninstall the missing tools above and re-run this script.\n' >&2
@@ -61,9 +40,7 @@ if [ "$missing" -gt 0 ]; then
 fi
 
 # --- 2. Make hook files executable -------------------------------
-# All committed scripts under .githooks/ should be executable.
-# Limit chmod to regular files so we do not touch directories.
-find .githooks -type f \( -name 'post-commit' -o -name 'pre-commit' -o -name '*.sh' \) \
+find .githooks -type f \( -name 'pre-commit' -o -name '*.sh' \) \
   -exec chmod +x {} +
 
 # --- 3. Point git at the hooks dir -------------------------------
@@ -75,5 +52,4 @@ else
   printf 'set core.hooksPath = .githooks (was: %s)\n' "${CURRENT:-<unset>}"
 fi
 
-printf '\nhooks installed. local AI review will run on commits made\n'
-printf 'on branches prefixed with claude/, codex/, grok/, or gemini/.\n'
+printf '\nhooks installed. pre-commit quality gates (format / lint / typecheck) will run on commits.\n'

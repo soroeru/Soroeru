@@ -8,7 +8,7 @@ import type { LogFields, LogLevel } from "../../src/logging/logger.js";
 // uncaughtException/unhandledRejection listener suppresses Node's own
 // terminate-on-fatal-error default — the process must still be made to exit
 // explicitly rather than silently keep running in a possibly inconsistent
-// state (the local AI review's Finding 1).
+// state (reviewer finding: Issue #314 fix).
 
 interface RecordedLogCall {
   level: LogLevel;

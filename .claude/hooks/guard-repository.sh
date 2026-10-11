@@ -37,14 +37,6 @@ command_references_password_csv() {
   printf '%s' "$1" | grep -Eq '(^|[[:space:]"'"'"'=:/])tests/e2e/Google_Passwords\.csv([[:space:]"'"'"';|&]|$)'
 }
 
-command_references_review_artifacts() {
-  printf '%s' "$1" | grep -Eq '(^|[[:space:]"'"'"'=:/])state/ai-reviews/([^[:space:]"'"'"';|&]*)([[:space:]"'"'"';|&]|$)'
-}
-
-# The wait script is the only supported reader of finished review results, so
-# the deny reason must point at its --print flag rather than leave no path.
-REVIEW_ARTIFACT_REASON="Do not inspect local AI review artifacts directly. Read a finished review with scripts/wait-for-local-ai-review.sh --unit <unit> [--commit <sha>] --print."
-
 case "$tool" in
   Read|Grep)
     target=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // .tool_input.path // ""')
@@ -52,18 +44,12 @@ case "$tool" in
       *tests/e2e/Google_Passwords.csv)
         deny "The real-password CSV is restricted. Use the collection-diagnostics skill, which never exposes its contents."
         ;;
-      *state/ai-reviews/*)
-        deny "$REVIEW_ARTIFACT_REASON"
-        ;;
     esac
     ;;
   Bash)
     command=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""')
     if command_references_password_csv "$command"; then
       deny "Restricted local data cannot be read through Bash. Use the designated repository workflow instead."
-    fi
-    if command_references_review_artifacts "$command"; then
-      deny "$REVIEW_ARTIFACT_REASON"
     fi
     if printf '%s' "$command" | grep -Eq '(^|[;&|[:space:]])git([[:space:]]+-[^[:space:]]+)*[[:space:]]+commit([[:space:]]|$)'; then
       effective_cwd=$cwd

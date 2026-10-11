@@ -151,7 +151,7 @@ integration-scope review before releasing dependents. The gate checks only:
   (interfaces, schemas, documented behavior);
 - coverage of the Issue's stated acceptance criteria.
 
-Full implementation review is out of scope here — it belongs to the local AI review hook and PR
+Full implementation review is out of scope here — it belongs to the reviewer role and PR
 review. If the gate finds a problem, return the Issue to its worker with a concise reason and do
 not release dependents; otherwise record the milestone. The gate reads the PR diff and the
 related Issues' acceptance criteria; it never copies Issue bodies or diffs into parent state.

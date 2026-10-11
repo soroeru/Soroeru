@@ -46,7 +46,7 @@ Required tools for `Soroeru` development:
 
 - `git`
 - `bash`
-- `jq` for running the local AI review post-commit hook
+- `jq`
 - `shasum` on macOS or `sha256sum`
 - Node.js 22 LTS for local development and macOS release packaging
 - npm
@@ -76,9 +76,9 @@ not a synchronized copy. Area-specific guidance lives in Claude path rules and n
 files so it loads only when relevant.
 
 Claude Code project hooks in `.claude/settings.json` block commits from the human-only primary
-clone and direct reads of the real-password CSV or local AI review artifacts. These agent-layer
-guards complement, rather than replace, the Git hooks installed by `scripts/setup-hooks.sh`.
-Quality gates remain in the Git pre-commit hook rather than being duplicated in Claude settings.
+clone and direct reads of the real-password CSV. These agent-layer guards complement, rather
+than replace, the Git hooks installed by `scripts/setup-hooks.sh`. Quality gates remain in the
+Git pre-commit hook rather than being duplicated in Claude settings.
 
 High-side-effect skills are manually invocable, and Issue lifecycle skills advertise their Issue
 number argument. Repository skills intentionally do not grant broad `allowed-tools`: their GitHub,
@@ -87,7 +87,7 @@ Claude subagents use role-limited tool lists and intentionally have no persisten
 decisions belong in reviewed Issues or repository documents. Add skill eval fixtures only with a
 separate acceptance baseline and owner, so generated eval results do not become unreviewed policy.
 
-Install local hooks only if the local AI review workflow is in use:
+Install local git hooks:
 
 ```bash
 bash scripts/setup-hooks.sh
@@ -777,9 +777,8 @@ Decision (why this shape):
   (no separate allowlist to maintain).
 - **Where it runs.** In `release:check` (the release gate), **not** on every commit:
   `npm audit` needs the network and adds latency, so per-commit auditing would be noisy
-  and offline-hostile. A `pre-push` git hook is a reasonable **opt-in** addition (mirror
-  the opt-in model in [`local-ai-review.md`](local-ai-review.md)); it is intentionally
-  not enabled by default.
+  and offline-hostile. A `pre-push` git hook is a reasonable opt-in addition; it is
+  intentionally not enabled by default.
 - **Offline behavior.** `audit:check` requires registry access. When offline it will
   fail; that is acceptable for a release gate (a release should be audited online). For
   ordinary offline development, run the other gates individually
@@ -825,13 +824,6 @@ For code changes, run the available gates:
 - `npm run lint`
 - `npm run typecheck`
 - `npm test`
-- `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review
-  reviewer routing changes
-- `bash scripts/smoke-local-ai-review-issue-epoch.sh` for Issue epoch and
-  review-budget changes
-- `bash scripts/smoke-wait-for-local-ai-review.sh` for changes to the local AI
-  review completion-waiting script (see
-  [`local-ai-review.md`](local-ai-review.md) §10)
 - focused manual tests for affected browser behavior
 - for changes touching network calls, AI provider config, or `package.json`
   dependencies: `npm run poc -- check-egress` (PRIV-001, see
@@ -861,10 +853,7 @@ Code review (human or AI) prioritizes, in this order:
    path traversal, permission bits on state files
 4. **missing tests** — new behavior or new branches that have no test coverage
 
-This mirrors the local AI review's code-review criteria
-(`.githooks/prompts/local-review-claude.md` /
-`local-review-codex.md` / `local-review-grok.md`); keep them in sync if any
-change.
+These criteria are mirrored in the reviewer role's review checklist; keep them in sync if any change.
 
 ### 9.2 Requirements Review
 
@@ -884,9 +873,7 @@ priority order:
 The criteria derive from ISO/IEC/IEEE 29148 requirement quality
 characteristics, prioritized by defect impact. They mirror
 `skills/requirements-review/SKILL.md`; keep the two in sync if either
-changes. The local AI review hook applies the skill automatically to commits
-touching `docs/requirements.md` (see
-[`local-ai-review.md`](local-ai-review.md) §5).
+changes.
 
 ### 9.3 Design Doc Review
 
@@ -905,9 +892,7 @@ docs and checks, in priority order:
 5. **test strategy** — how the design's behavior will be verified is stated
 
 The criteria mirror `skills/design-doc-review/SKILL.md`; keep the two in sync
-if either changes. The local AI review hook applies the skill automatically
-to commits touching `docs/design/` (see
-[`local-ai-review.md`](local-ai-review.md) §5).
+if either changes.
 
 ### 9.4 Architecture Review
 
@@ -929,15 +914,7 @@ desktop app):
 A criterion that genuinely does not apply is answered "not applicable" with
 a reason, not forced. The criteria mirror
 `skills/architecture-review/SKILL.md`; keep the two in sync if either
-changes. The local AI review hook applies the skill automatically to commits
-touching `docs/architecture.md` (see
-[`local-ai-review.md`](local-ai-review.md) §5).
-
-### 9.5 Local AI Review
-
-Setup, behavior, and troubleshooting for the local AI review hook live in
-[`local-ai-review.md`](local-ai-review.md). The setup command is repeated
-once in §2 above as part of environment setup; do not duplicate it elsewhere.
+changes.
 
 ## 10. Issue Implementation
 
@@ -952,31 +929,23 @@ unless the user explicitly changes it:
    `scripts/issue-worktree.sh create` through `issue-implementation`.
 2. Move every operation to the helper's absolute Issue worktree path.
 3. Implement the Issue there; the primary clone remains human-only.
-4. After committing, check the commit command's own output for
-   `[local-ai-review] queued ...`. If present, wait for that result by
-   running `scripts/wait-for-local-ai-review.sh --print` (see
-   [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
-   the review-count cap and follow-up policy) rather than polling
-   `state/ai-reviews/` turn-by-turn. This workflow allows one local AI review
-   run per handoff epoch: apply a single fix pass for its actionable findings
-   and commit it normally; the hook skips it because the epoch budget is used,
-   so no confirming re-review runs.
-5. Push the finished local branch to GitHub and create a PR. Include
+4. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged. Also include the local AI review status, actionable
-   findings, and what was fixed. State that the fix pass was not AI-reviewed,
-   and state clearly if review did not run or residual risk remains.
+   when the PR is merged.
+5. Dispatch a reviewer role from a different verified route
+   (via `node scripts/project-issue-dispatch.mjs --role reviewer --execution-mode direct-review
+   --review-pass 1`). The reviewer works read-only in the existing Issue worktree,
+   reads the PR diff and acceptance criteria, and posts a `role=reviewer pass=1 verdict=<...>`
+   comment to the PR. A `NEEDS_REVISION` verdict buys one implementer fix pass (push to the
+   same branch, post a `role=implementer fix-cycle=1` comment stating what changed per
+   finding). A `REJECTED` verdict blocks. Include the reviewer verdict and any actionable
+   findings in the PR description.
 
-The workflow intentionally avoids a review loop, capped at one review run per
-handoff epoch. A successful new-session handoff (including the same agent after
-a session limit) starts a fresh `0/1` epoch; same-session
-re-entry is idempotent. If the user gives multiple Issue numbers, ask which
-single Issue to implement first.
+If the user gives multiple Issue numbers, ask which single Issue to implement first.
 
 ## 11. Operational Notes
 
 - `state/` is local state and must not be committed.
-- `state/ai-reviews/` contains local AI review artifacts.
 - `out/` and `release/` contain generated `.app` / DMG artifacts and must not be committed.
 - `node_modules/`, build outputs, coverage, and common caches are ignored by
   Git.

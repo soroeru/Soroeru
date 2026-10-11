@@ -210,13 +210,6 @@ before writing. The Settings tab's "ログをダウンロード" button reads th
 over IPC (`soroeru:logs:export`) and triggers a renderer-side download; no
 native dialog or extra filesystem grant is added to the renderer.
 
-**`state/ai-reviews/`** (the local AI review hook,
-[`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
-source code, not on `state/soroeru-poc/` (the encrypted profile store); since
-profile values are encrypted at rest and never appear in source, review
-artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
-`state/soroeru-poc/` are Git-ignored.
-
 ### 3.1 Password and CVV handling
 
 Product Owner decisions (2026-10-10; `requirements.md` §8; implementation Issue #572):
@@ -755,7 +748,6 @@ runtime, and the packaged Playwright Chromium browser, but must not bundle:
 
 - encrypted vault files from `state/` or `~/Library/Application Support/Soroeru`;
 - `.env`, API keys, passphrases, recovery keys, browser sessions, or cookies;
-- local AI review output under `state/ai-reviews/`;
 - screenshots, logs, diagnostics, or support bundles containing raw personal values.
 
 The packaged app stores beta data under the user's Soroeru app-support directory. Logs

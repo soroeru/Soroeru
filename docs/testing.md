@@ -294,7 +294,7 @@ the packaged `.app` artifact before sharing a build with beta users.
   support with extra display plumbing (Xvfb) we are not paying for yet. Run it as a
   manual / pre-release check. `npm run e2e:app-ui-exploration` (§5, Issue #251) and
   `npm run e2e:app-ui-logging` (§5, Issue #314) are the same decision for the same reason.
-- Local AI review (`docs/local-ai-review.md`) remains local, as before.
+- AI code review via the orchestrator's reviewer role runs locally in each Issue worktree.
 
 ## 8. Registration / Bulk-Update E2E Matrix (TEST-001 / #45)
 
