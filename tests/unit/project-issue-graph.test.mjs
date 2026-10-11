@@ -1244,7 +1244,23 @@ test("unusual graph thread IDs map to a stable valid triage budget ID", async ()
   }
 });
 
+test("the parent runtime receives worker dispatches only when parent.asWorker opts it in (Issue #589)", async () => {
+  // parentRecord validates the parent route itself; only the role=worker record can join the pool.
+  const capabilities = [parentRecord, workerRoute("Codex", "gpt-5")];
+  const excluded = makeRun();
+  await excluded.invoke(makeInput({ items: [item(1)], capabilities }));
+  assert.equal((await excluded.state()).failureReason, "no-worker-route-available");
+  assert.equal(excluded.deps.dispatched.length, 0);
+
+  const included = makeRun();
+  await included.invoke(makeInput({ items: [item(1)], capabilities,
+    config: { parent: { agent: "Codex", model: "gpt-5", asWorker: true } } }));
+  assert.equal((await included.state()).failureReason, undefined);
+  assert.equal(included.deps.dispatched.at(-1)?.route.agent, "Codex");
+});
+
 test("parseGraphCliArgs validates thread id and resume sources", () => {
+  assert.equal(parseGraphCliArgs(["--thread-id", "t", "--parent-as-worker"]).parentAsWorker, true);
   assert.throws(() => parseGraphCliArgs([]), /thread-id-required/);
   assert.throws(
     () => parseGraphCliArgs(["--thread-id", "t", "--resume-json", "{}", "--resume-file", "x"]),
