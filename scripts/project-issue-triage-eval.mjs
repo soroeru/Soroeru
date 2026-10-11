@@ -11,8 +11,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { evaluateTriage, containsSensitiveInput, JEV_ENDPOINT } from "./project-issue-triage.mjs";
-import { RISKS, SIZES, TRIAGE_POLICY, requiresReview } from "./project-issue-triage-contract.mjs";
+import { evaluateTriage, containsSensitiveInput, triageClassifierFingerprint, JEV_ENDPOINT } from "./project-issue-triage.mjs";
+import { RISKS, SIZES, TRIAGE_POLICY, TRIAGE_RUBRIC_VERSION, requiresReview } from "./project-issue-triage-contract.mjs";
 import { selectExecutionMode } from "./project-issue-roles.mjs";
 
 export const DEFAULT_DATASET = fileURLToPath(
@@ -67,6 +67,7 @@ export function validateEvalDataset(raw) {
     "dataset",
   );
   if (!label(raw.datasetVersion) || !label(raw.rubricVersion)) fail("version");
+  if (raw.rubricVersion !== TRIAGE_RUBRIC_VERSION) fail("rubric-version");
   if (raw.policyVersion !== TRIAGE_POLICY || !/^jev-\d+\.\d+\.\d+$/.test(raw.model)) fail("policy");
   onlyKeys(raw.labeling, ["status", "confirmedBy", "confirmedAt"], "labeling");
   const { status, confirmedBy, confirmedAt } = raw.labeling;
@@ -319,6 +320,7 @@ export async function runTriageEvaluation(
     });
   }
   return {
+    classifierFingerprint: triageClassifierFingerprint(),
     datasetVersion: dataset.datasetVersion,
     rubricVersion: dataset.rubricVersion,
     policyVersion: dataset.policyVersion,
@@ -507,6 +509,10 @@ export function assessAssistedGate(run, metrics) {
   // Provider-quality conditions are not measured by a stand-in transport.
   const measured = (ok) => (!live ? "unmeasured" : ok ? "met" : "not-met");
   const conditions = [
+    { id: "current-classifier", status: run.policyVersion === TRIAGE_POLICY &&
+        run.rubricVersion === TRIAGE_RUBRIC_VERSION &&
+        run.model === "jev-1.13.0" &&
+        run.classifierFingerprint === triageClassifierFingerprint() ? "met" : "not-met" },
     { id: "live-jev-measurement", status: live ? "met" : "not-met" },
     { id: "complete-run", status: run.complete ? "met" : "not-met" },
     { id: "holdout-split", status: run.split === "holdout" ? "met" : "not-met" },

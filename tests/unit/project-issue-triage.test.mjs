@@ -30,7 +30,7 @@ const now = Date.parse("2026-09-27T00:00:00Z");
 const input = {
   issue: 123,
   issueUpdatedAt: "2026-09-26T00:00:00Z",
-  policyVersion: "triage-v1",
+  policyVersion: "triage-v3",
   model: "jev-1.13.0",
   routes: [
     { agent: "Codex", model: "fixture-a" },
@@ -90,6 +90,14 @@ test("shadow sends only bounded issue text to fixed endpoint, projects structure
   assert.equal(result.result.route.choice, "abstain");
   assert.deepEqual(result.usage, { inputTokens: 30, outputTokens: 4 });
   assert.doesNotMatch(JSON.stringify(result), /must never escape|fake-secret|help message/);
+});
+
+test("the previous policy cannot be sent under the new classifier", async () => {
+  let fetched = false;
+  await assert.rejects(evaluateTriage({ ...input, policyVersion: "triage-v1" }, config,
+    dependencies({ fetchIssue: async () => { fetched = true; return disclosure; } })),
+    /triage-invalid-structure/);
+  assert.equal(fetched, false);
 });
 
 for (const [name, change, reason] of [

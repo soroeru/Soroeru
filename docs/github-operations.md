@@ -137,15 +137,21 @@ state, review usage, and next step in the Issue or PR.
 
 ## 3. Issue Workflow
 
-### 3.0 Project metadata contract
+### 3.0 Issue-only work tracking
 
-New Issues may include the bounded `project-metadata` block documented by the
-`create-issue` Skill. The `issues.opened` workflow uses only the title, body,
-labels, and dependencies for deterministic classification. Missing, invalid,
-ambiguous, or unknown values are logged as reason codes and never cause a new
-Project option to be created. Existing Project items and exact-name iterations
-are reused on rerun. A GraphQL failure exits non-zero so GitHub Actions can
-retry it; logs must not contain the Issue body, credentials, or secrets.
+GitHub Issues are the source of implementation work (Product Owner decision,
+2026-10-11). Do not fetch, configure or update GitHub Projects. Use Issue labels
+for type and Priority, native `Blocked by` relationships for dependencies,
+and Issue/PR milestones for implementation progress. Size and agent/model
+routing are run-time decisions, not fields to write at Issue creation.
+
+The automatic Project-defaults workflow has been removed. Old Project records,
+`project-metadata` blocks and Project utility functions are historical compatibility
+artifacts; they do not authorize Project access. No Project GitHub App or
+`GH_PROJECT_TOKEN` is required for implementation. Start a single Issue with the
+worktree helper (§2), or coordinate explicit Issue numbers through the Issue-only
+orchestrator. Issue bodies remain confined to the responsible worker or isolated
+opt-in triage child.
 
 Use Issues to define the goal, scope, non-scope, implementation direction, and
 acceptance criteria before starting non-trivial work.

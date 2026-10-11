@@ -302,3 +302,30 @@ export function buildRoleDispatchPayload({
   assertNoDisallowedKeys(payload);
   return payload;
 }
+
+
+/** Recompute provisional plan fields after explicit triage adoption. */
+export function applyTriageDecision(item, decision) {
+  if (!decision || decision.action === "fallback") return { ...item };
+  const risks = ["low", "medium", "high", "critical"];
+  const sizes = ["XS", "S", "M", "L", "XL"];
+  if (!risks.includes(decision.riskCategory) || !sizes.includes(decision.size))
+    throw new Error("triage-invalid-decision");
+  const riskCategory = risks[Math.max(risks.indexOf(item.riskCategory ?? "low"), risks.indexOf(decision.riskCategory))];
+  const size = sizes[Math.max(sizes.indexOf(item.size), sizes.indexOf(decision.size))];
+  const effective = { ...item, riskCategory, size };
+  const selected = selectExecutionMode(effective);
+  let executionMode = selected.mode;
+  let roleProgram = roleProgramForMode(executionMode);
+  if (item.modeOverride) {
+    const proposed = item.modeOverride;
+    let program;
+    try { program = roleProgramForMode(proposed.executionMode); } catch { throw new Error("triage-mode-conflict"); }
+    if (!selected.eligibleModes.includes(proposed.executionMode) ||
+        JSON.stringify(proposed.roleProgram) !== JSON.stringify(program))
+      throw new Error("triage-mode-conflict");
+    executionMode = proposed.executionMode;
+    roleProgram = program;
+  }
+  return { ...effective, eligibleModes: selected.eligibleModes, executionMode, roleProgram };
+}

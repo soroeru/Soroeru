@@ -113,7 +113,7 @@ function makeInput({ items, capabilities = defaultCapabilities, config = {} }) {
 
 function makeRun({ deps = makeDeps(), checkpointer = new MemorySaver(), threadId = "t" } = {}) {
   const graph = buildOrchestrationGraph({ checkpointer });
-  const config = { configurable: { thread_id: threadId, deps } };
+  const config = { recursionLimit: 100, configurable: { thread_id: threadId, deps } };
   return {
     deps,
     graph,
@@ -317,7 +317,7 @@ test("shadow triage does not invent a worker when fresh CLI discovery has none",
 test("assisted triage is explicitly unavailable before adoption", async () => {
   const run = makeRun();
   const result = await run.invoke(makeInput({ items: [item(1)], config: {
-    triage: { ...shadowConfig, mode: "assisted" },
+    triage: { ...shadowConfig, mode: "assisted" }, singleWorker: false,
   } }));
   assert.equal(result.runStatus, "failed");
   assert.equal(result.failureReason, "triage-assisted-not-available");
@@ -2000,4 +2000,114 @@ test("the file checkpointer rejects malformed triage budget or attempt sections"
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+function assistedRun(overrides = {}) {
+  let requests = 0;
+  const deps = makeDeps({
+    assistedApproval: async () => true,
+    refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
+    fetchTriageRevision: async () => revision,
+    triageEvidence: async () => [],
+    verifyTriageRoute: async () => ({ ok: true }),
+    runTriage: async (input) => { requests++; return { result: shadowRecommendation(input) }; },
+    ...overrides,
+  });
+  return { ...makeRun({ deps }), requests: () => requests };
+}
+const assistedInput = (overrides = {}) => makeInput({ items: [item(1)], config: {
+  triage: { ...shadowConfig, mode: "assisted" }, singleWorker: false, ...overrides,
+} });
+const decisionFor = (prompt, action = "accept", fields = {}) => {
+  const result = prompt.__interrupt__[0].value.resolveTriage.issues[0].recommendation;
+  return { issue: result.issue, issueUpdatedAt: result.issueUpdatedAt,
+    policyVersion: result.policyVersion, routeSetHash: result.routeSetHash,
+    evidenceVersion: result.evidenceVersion, action,
+    reason: action === "accept" ? "accepted" : action === "fallback" ? "legacy-fallback" : "domain-review",
+    ...fields };
+};
+
+test("assisted high adoption recomputes the provisional direct-review before any role starts", async () => {
+  const run = assistedRun();
+  const paused = await run.invoke(assistedInput());
+  assert.equal(run.deps.dispatched.length, 0);
+  assert.deepEqual((await run.state()).roleStates, []);
+  assert.equal((await run.state()).plan.runnable[0].executionMode, "direct-review");
+  await run.resume({ triageDecisions: [decisionFor(paused)] });
+  const state = await run.state();
+  assert.deepEqual(state.roleStates[0].program, ["planner", "implementer", "reviewer"]);
+  assert.equal(run.deps.dispatched[0].role, "planner");
+  assert.equal(state.plan.runnable[0].riskCategory, "high");
+  assert.equal(run.requests(), 1);
+  assert.notEqual(state.roleStates[0].routes.implementer.agent, state.roleStates[0].routes.reviewer.agent);
+});
+
+test("assisted autoAssign cannot adopt a recommendation or skip manual fallback", async () => {
+  const run = assistedRun();
+  await run.invoke(assistedInput());
+  const manual = await run.resume({});
+  assert.equal(manual.__interrupt__[0].value.assign.issues[0].requiresManualAssignment, true);
+  assert.equal(run.deps.dispatched.length, 0);
+  assert.equal((await run.state()).plan.runnable[0].executionMode, "direct-review");
+});
+
+test("uncertain risk/Size rejects accept and permits an explicit high override", async () => {
+  const run = assistedRun({ runTriage: async (input) => {
+    const result = shadowRecommendation(input);
+    result.risk.confidence = 0.4;
+    return { result };
+  } });
+  const first = await run.invoke(assistedInput());
+  const again = await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.equal(again.__interrupt__[0].value.lastEventError, "triage-invalid-decision");
+  assert.equal(run.deps.dispatched.length, 0);
+  await run.resume({ triageDecisions: [decisionFor(again, "override", { riskCategory: "high", size: "S" })] });
+  assert.equal(run.deps.dispatched[0].role, "planner");
+});
+
+test("an explicit direct-review override conflicts with adopted high risk", async () => {
+  const run = assistedRun();
+  const input = assistedInput();
+  input.items[0].modeOverride = { executionMode: "direct-review", roleProgram: ["implementer", "reviewer"] };
+  const first = await run.invoke(input);
+  const again = await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.equal(again.__interrupt__[0].value.lastEventError, "triage-mode-conflict");
+  assert.equal(run.deps.dispatched.length, 0);
+});
+
+test("assisted single-worker requests display shadow-only instead of starting role programs", async () => {
+  const run = assistedRun({ assistedApproval: async () => false });
+  await run.invoke(assistedInput({ singleWorker: true }));
+  const state = await run.state();
+  assert.equal(state.config.triage.mode, "shadow");
+  assert.equal(buildSummary(state, "in-progress").triageNotice, "triage-single-worker-shadow");
+  assert.deepEqual(state.roleStates, []);
+});
+
+test("a failed exact route retains high risk and requires an explicit fresh assignment", async () => {
+  let checks = 0;
+  const run = assistedRun({ verifyTriageRoute: async () => ({ ok: ++checks > 1 }) });
+  const first = await run.invoke(assistedInput());
+  const manual = await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.equal(manual.__interrupt__[0].value.assign.issues[0].requiresManualAssignment, true);
+  const route = manual.__interrupt__[0].value.assign.workerRoutes[0];
+  await run.resume({ assignments: [{ number: 1, ...route }] });
+  const state = await run.state();
+  assert.equal(state.plan.runnable[0].riskCategory, "high");
+  assert.equal(state.lastEventError, null);
+  assert.equal(run.deps.dispatched[0]?.role, "planner");
+  assert.equal(run.requests(), 1);
+});
+
+test("an Issue edit before first assisted dispatch is re-evaluated only once", async () => {
+  let reads = 0;
+  const run = assistedRun({ fetchTriageRevision: async () => ++reads === 1 ? revision :
+    { updatedAt: "2026-07-22T00:00:00.000Z" } });
+  const first = await run.invoke(assistedInput());
+  const again = await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.ok(again.__interrupt__[0].value.resolveTriage);
+  assert.equal(run.requests(), 2);
+  await run.resume({ triageDecisions: [decisionFor(again)] });
+  assert.equal(run.requests(), 2);
+  assert.equal(run.deps.dispatched[0].role, "planner");
 });

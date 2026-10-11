@@ -55,15 +55,18 @@ function normalizeDocument(document) {
   if (document.errors.length) fail("config-invalid-yaml");
   const root = assertObject(document.toJS(), "config-invalid-root");
   assertKeys(root, new Set(["project", "run"]), "root");
-  const project = assertObject(root.project, "config-missing:project");
+  const project = root.project === undefined ? null : assertObject(root.project, "config-invalid-project");
   const run = assertObject(root.run, "config-missing:run");
-  assertKeys(project, PROJECT_KEYS, "project");
+  if (project) assertKeys(project, PROJECT_KEYS, "project");
   assertKeys(run, RUN_KEYS, "run");
 
-  const projectOwner = requiredString(project.owner, "project.owner");
-  const ownerType = requiredString(project.ownerType, "project.ownerType");
-  if (ownerType !== "organization") fail("config-invalid-owner-type");
-  const projectName = requiredString(project.name, "project.name");
+  // Old files remain readable, but these fields no longer authorize Project IO.
+  const legacy = project ? {
+    projectOwner: requiredString(project.owner, "project.owner"),
+    ownerType: requiredString(project.ownerType, "project.ownerType"),
+    projectName: requiredString(project.name, "project.name"),
+  } : {};
+  if (legacy.ownerType && legacy.ownerType !== "organization") fail("config-invalid-owner-type");
 
   if (!Number.isSafeInteger(run.maxParallel) || run.maxParallel <= 0) fail("config-invalid-max-parallel");
   const releasePolicy = requiredString(run.releasePolicy, "run.releasePolicy");
@@ -71,9 +74,7 @@ function normalizeDocument(document) {
 
   return {
     ...(run.triage === undefined ? {} : { triage: normalizeTriageConfig(run.triage) }),
-    projectOwner,
-    ownerType,
-    projectName,
+    ...legacy,
     maxParallel: run.maxParallel,
     releasePolicy,
     unavailableModels: parseUnavailableModels(run.unavailableModels),

@@ -1058,7 +1058,7 @@ test("the create-issue agent prompt does not request abolished assignment metada
     "utf8",
   );
   assert.doesNotMatch(promptConfig, /primary|sub AI|AI Assignee|Model|Order/i);
-  assert.match(promptConfig, /Priority, Size, and Feature group/);
+  assert.match(promptConfig, /labels and native Issue dependencies/);
 });
 
 test("paginates organization ProjectV2 items and reports fetched bytes", async () => {

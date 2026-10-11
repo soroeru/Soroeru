@@ -1,9 +1,6 @@
 # Copy this file to state/project-issue-orchestrator.yaml and fill in the values.
 # The runtime copy is ignored by Git and is auto-loaded by the orchestrator and skill.
-project:
-  owner: soroeru
-  ownerType: organization
-  name: Visibility
+# Select targets with --issues. No GitHub Project or Project token is needed.
 
 run:
   maxParallel: 4

@@ -11,6 +11,13 @@ product requirements (see [`requirements.md`](requirements.md)), test strategy
 (see [`testing.md`](testing.md)), and GitHub workflow rules (see
 [`github-operations.md`](github-operations.md)).
 
+GitHub Issues now own work tracking (2026-10-11). The historical
+`project-issue-*` script names are retained, but active orchestration reads Issue
+numbers, labels and `Blocked by` relations only. It never reads or writes Projects.
+Use explicit `--issues`; no Project section, Project token, or GitHub App is required.
+The former automatic Project-defaults workflow is removed. Historical Project
+utilities and their tests remain available for compatibility, not active use.
+
 ## 1. Development Policy
 
 - Keep changes small enough to review as one coherent behavior, document, or
@@ -100,131 +107,19 @@ Playwright path is unchanged; there is no silent fallback after the extension cu
 
 ## 3. Run Locally
 
-### 3.0 GitHub Project issue defaults
+### 3.0 Issue-only orchestration
 
-`.github/workflows/project-issue-defaults.yml` runs on `issues.opened` and on
-manual `workflow_dispatch` (with `issue_number`). Because GitHub Actions does
-not expose the organization-level `projects_v2_item` webhook as a repository
-workflow trigger, it also runs a 15-minute scheduled reconciliation to configure
-Issues that were added to the Project manually. The reconciliation selects only
-Project items missing Priority, Size, or Feature group. When exactly one Project
-is configured, every Issue is added to it; deterministic classification is used
-only to choose among multiple configured Projects. It resolves Project, field,
-option, item, and iteration IDs by name through GraphQL; IDs are intentionally
-not stored in the repository. The workflow sets Priority, Size, Feature group,
-and Start/Target date. It also sets Iteration when an exact-name iteration
-already exists; it never changes Project field configuration using the
-short-lived App token. Feature group is copied from the bounded
-`project-metadata` block in the Issue body. Agent/model assignment is decided at
-orchestration run time and is **not** stored in the Project or the Issue body;
-the former `AI Assignees` / `AI Sub Assignees` fields are abolished (the
-Product Owner deletes those two single-select fields from the Project settings
-UI once — the automation ignores them either way, and legacy Issues that still
-contain AI Assignee lines or an `implementation-assignment` block are processed
-with those fields ignored, never rejected).
+The Project-defaults workflow is retired. No GitHub App secrets or Project
+permissions are needed. Create Issues with a type label, optional `priority:P0..P3`
+label and native `Blocked by` relations, using the `create-issue` skill. Do not
+configure Project items, iterations, statuses or Size.
 
-The Visibility Project is organization-owned (`soroeru` org, Project number in
-`config/github-projects.json`). The workflow authenticates with a **short-lived
-GitHub App installation token** from the dedicated App
-`soroeru-project-automation` (not a long-lived PAT and not bare `GITHUB_TOKEN`
-for Project writes).
-
-The workflow is fail-close: every read and validation completes before the
-first GraphQL mutation (a validation failure performs zero mutations), and a
-final readback confirms all written fields converged. A partial failure
-returns `{"status":"retryable-error","reason":...}` — with the unconverged
-Project field names for `project-fields-unconverged` — and rerunning the
-workflow reconciles by reusing the existing Project item and exact-name
-iteration. Exercise the implementation locally with:
-
-```bash
-node --test tests/unit/project-issue-defaults.test.mjs
-node scripts/project-issue-defaults.mjs --event path/to/issues-opened.json
-```
-
-#### GitHub App setup (repository administrators)
-
-1. Create a GitHub App (example name: `soroeru-project-automation`) owned by
-   an account that can install it on the **`soroeru` organization**.
-2. **Repository permissions:** Metadata (read), Issues (read). Leave other
-   repository permissions at No access.
-3. **Organization permissions:** Projects (read and write). Account permissions
-   do not need a Projects entry for this automation.
-4. Disable the App webhook (Active off) unless you intentionally subscribe to
-   events outside this workflow.
-5. Install the App on organization **`soroeru`**, repository access **Only
-   select repositories** → **`Soroeru` only**.
-6. Register **repository** Actions secrets on `soroeru/Soroeru` (not
-   organization-wide secrets unless multiple repos intentionally share the App):
-   - `SOROERU_PROJECT_APP_ID` — numeric App ID
-   - `SOROERU_PROJECT_APP_PRIVATE_KEY` — full PEM private key, including
-     header/footer lines
-7. Do not commit the private key, paste it into Issues/PR bodies, or print
-   tokens / keys / Issue bodies in Actions logs or artifacts.
-
-The workflow pins `actions/create-github-app-token` by commit SHA and passes
-the installation token as `GH_PROJECT_TOKEN` to
-`scripts/project-issue-defaults.mjs`. Long-lived `SOROERU_PROJECT_TOKEN` is
-not used.
-
-#### Rotate or revoke the App private key
-
-1. In the GitHub App settings, generate a new private key (or remove the
-   compromised key).
-2. Update `SOROERU_PROJECT_APP_PRIVATE_KEY` on `soroeru/Soroeru` with the new
-   PEM only (never commit it).
-3. Delete old private keys from the App settings once the new secret is in
-   place.
-4. To stop automation entirely: uninstall the App from `soroeru`, or remove
-   both secrets, or suspend/delete the App.
-
-#### Re-run Project defaults for an existing Issue
-
-Use Actions → **project-issue-defaults** → **Run workflow** and set
-`issue_number` to a number in **this** repository (for example `413`). The
-script rejects non-positive numbers, missing Issues, pull-request numbers, and
-repository mismatches before any Project mutation. Idempotent re-runs reuse the
-existing Project item and reconverge fields.
-
-To run the same reconciliation used by the schedule immediately, leave
-`issue_number` empty and enable `reconcile_project`. This scans all Project
-pages and updates only Issue items with a missing managed field.
-
-```bash
-gh workflow run project-issue-defaults.yml --repo soroeru/Soroeru -f issue_number=413
-```
-
-#### Troubleshooting
-
-| Symptom                                                                   | Likely cause                                                                                                                                                                                                      |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Token step fails / missing App credentials                                | `SOROERU_PROJECT_APP_ID` or `SOROERU_PROJECT_APP_PRIVATE_KEY` unset or PEM malformed                                                                                                                              |
-| Token step `Not Found` on `/repos/.../installation`                       | App is not installed on org `soroeru` with repository `Soroeru` selected (install must be on the org, not only a personal account)                                                                                |
-| `{"status":"retryable-error","reason":"project-token-required"}`          | `GH_PROJECT_TOKEN` not passed into the Node step                                                                                                                                                                  |
-| `github-graphql-forbidden` after a successful token step                  | Organization **Projects** write missing, App install incomplete, or Projects V2 access denied for the installation                                                                                                |
-| `github-graphql-failed` / `github-graphql-not-found`                      | GraphQL rejected the request; confirm `config/github-projects.json` owner / number and App Projects permission. A bad field shape (e.g. `projectsV2(number:)` instead of `projectV2(number:)`) also surfaces here |
-| `project-not-found` / empty project                                       | `config/github-projects.json` owner, `ownerType`, or `number` does not match the org Project                                                                                                                      |
-| `invalid-issue-number` / `issue-not-found` / `pull-request-not-supported` | Manual `issue_number` input is wrong; no Project mutation ran                                                                                                                                                     |
-| `project-fields-unconverged`                                              | Partial write; re-run the workflow for the same Issue number                                                                                                                                                      |
-
-Never expand logging to dump Issue bodies, GraphQL variables with secrets, or
-installation tokens when diagnosing failures.
-
-Python-based Skill validation uses `uv` and the repository-managed PyYAML
-development dependency:
-
-```bash
-uv sync
-uv run python "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" skills/create-issue
-uv run python "$HOME/.codex/skills/.system/skill-creator/scripts/quick_validate.py" skills/orchestrate-project-issues
-```
-
-Multi-Issue Project orchestration is dry-run first. Feed only the minimal,
-sanitized Project item schema to the deterministic planner; individual workers
+Multi-Issue orchestration is dry-run first. Feed only the minimal,
+sanitized Issue metadata schema to the deterministic planner; individual workers
 fetch their own Issue body and comments immediately before implementation:
 
 Copy `config/project-issue-orchestrator.example.yaml` to
-`state/project-issue-orchestrator.yaml` and fill in the Project/run values. The
+`state/project-issue-orchestrator.yaml` and fill in the run values. The
 CLI and `orchestrate-project-issues` skill discover that path automatically.
 Use `--config path/to/other.yaml` only when intentionally selecting another
 configuration file. Explicit CLI flags override YAML values.
@@ -248,7 +143,7 @@ node scripts/project-issue-capabilities.mjs
 # re-probing every adapter on every run. --refresh forces a full re-discovery;
 # --invalidate-agent drops and re-probes only the agent(s) that just failed at
 # dispatch time (see below), leaving the rest of the cache untouched.
-GH_PROJECT_TOKEN=... node scripts/project-issue-orchestrator.mjs \
+node scripts/project-issue-orchestrator.mjs \
   --dry-run --issues 380,382,384,386,387 \
   --unavailable-model MODEL --unavailable-agent Codex --existing-worktree 396 \
   --parent-agent Codex --parent-model MODEL
@@ -330,7 +225,7 @@ It returns `{ok:true, route, probedAt}` or `{ok:false, reason}` with a closed
 reason; a missing/excluded route or selector drift is `model-not-selectable`.
 Callers must reselect on failure rather than dispatching the old route.
 The graph's shadow triage path uses these APIs for fresh candidate discovery
-and exact-model preflight before initial dispatch; assisted adoption remains #538.
+and exact-model preflight before initial dispatch; #538 adds explicitly approved assisted adoption.
 CLI-reported model metadata can reveal substitutions; a CLI that reports no
 actual model still proves only that its exact selector completed the probe,
 not independent attestation of which backend served it.
@@ -410,7 +305,7 @@ is `project-issue-orchestrator.mjs`.
 #### LangGraph StateGraph runner (Issue #439)
 
 `scripts/project-issue-graph.mjs` models the same orchestration as an explicit
-LangGraph `StateGraph` (config → capability discovery → Project fetch →
+LangGraph `StateGraph` (config → capability discovery → Issue metadata fetch →
 dependency validation → plan → optional shadow triage → route assignment → `Send` fan-out dispatch →
 event wait → integration gate → dependent release → summary), with
 checkpointing and `thread_id`-based resume. It calls the same planning,
@@ -434,7 +329,7 @@ node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
   --issues 380,382 --max-parallel 2 --release-policy merged \
   --parent-agent Codex --parent-model gpt-5 --auto-assign
 # Add --single-worker to disable role programs (one worker owns the Issue).
-# Add --triage shadow for opt-in reference-only Jev triage. `assisted` is unavailable.
+# Add --triage shadow for opt-in reference-only Jev triage; assisted requires reviewed evaluation approval.
 # Resume the same thread with a worker event or a gate verdict:
 # node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
 #   --resume-json '{"type":"role-complete","issue":380,"role":"implementer"}'
@@ -1085,7 +980,7 @@ and withdraws the assignment for a manual re-prompt on a mismatch (`stale-input`
 with `triage-route-refresh-failed`, `no-worker-route-available`, or a repeated
 `stale-input`. A fallback requires an explicit route assignment even with `--auto-assign`.
 Later roles, fix cycles, and interrupted-worker handoff keep the existing pool and do not depend on a refresh.
-`--triage assisted` fails with `triage-assisted-not-available` until #538. The configuration
+`--triage assisted` requires a current live holdout evaluation and explicit Product Owner approval; otherwise it fails with `triage-assisted-not-available`. The configuration
 loader accepts the following optional section, and the plan CLI accepts `--triage off|shadow|assisted`. CLI mode overrides YAML while preserving
 the pinned model and budget. Defaults are off, `jev-1.13.0`, and 20 attempts.
 
@@ -1182,3 +1077,47 @@ record its SHA-256 in the evaluation report before #538 connects it to the graph
 `triageEvidence` provider; until then shadow route answers always abstain. Evidence
 older than 30 days, from another `benchmarkVersion`, or for a model outside the current pool
 is ignored, and fewer than two comparable candidates or a tie yields `abstain`.
+
+### Assisted triage adoption (Issue #538)
+
+The frozen `triage-v3` / `triage-rubric-538-v3` classifier meets the measured
+holdout floors; see [the evaluation record](triage-evaluation-538.md). Approval
+is pending. Keep `off` or `shadow` until the Product Owner confirms the labels,
+reviews uncertain/fallback causes, and approves adoption.
+
+Place the exact reviewed live JSON report at
+`state/triage-eval/assisted-evaluation.json`. After the human decision, record
+`state/triage-eval/assisted-approval.json` with these fields (never fabricate approval):
+`evaluationSha256`, optional `routeEvidenceSha256`, `labelsConfirmed: true`,
+`overrideCausesReviewed: true`, `decision: "approved"`,
+`reviewedBy: "Product Owner"`, and an ISO `reviewedAt` after the evaluation.
+Calculate the SHA-256 over the exact file bytes. These files stay ignored and local.
+The loader recomputes metrics and requires the deployed classifier fingerprint,
+policy, rubric, pinned model, full live holdout, and all measured safety floors.
+Changing any classifier input invalidates approval and requires shadow/evaluation again.
+A missing, malformed, outdated or unapproved artifact never enables assisted mode.
+
+Before any role starts, `resolveTriage` interrupts even with `--auto-assign`.
+Resume with `triageDecisions`, one object per Issue containing the displayed
+`issue`, `issueUpdatedAt`, `policyVersion`, `routeSetHash`, `evidenceVersion`,
+and an `action` of `accept`, `override`, or `fallback`.
+Use reason `accepted` for accept, `legacy-fallback` for fallback, or one of
+`domain-review`, `insufficient-context`, `route-unavailable` for override.
+Override also supplies enum `riskCategory` and `size`; an optional `preferredRoute`
+contains a currently allowed `agent`/`model` pair. Missing decisions use legacy fallback
+and require manual route assignment. Uncertain risk or Size cannot be accepted.
+
+Adoption takes the maximum existing/adopted risk and Size, preserves dependencies
+and `changeScopeCount`, and recomputes provisional mode and role program.
+An explicit `modeOverride` stays separate and must fit the effective risk/Size;
+high/critical always use planner → implementer → independent reviewer.
+No Size or status is written to GitHub. Parent runtimes remain excluded.
+Single-worker requests expose `triage-single-worker-shadow` and do not adopt roles.
+
+Every assisted dispatch checks exact model availability; first dispatch also
+rechecks approval, Issue revision and reviewed route evidence. Route-only changes
+retain adopted risk/Size and request manual assignment without another Jev call.
+A stale Issue can be re-evaluated once before any role starts; subsequent changes
+use fallback/manual assignment. Started role programs and handoffs keep their
+program; reviewer selection discards implementer route recommendations.
+Unreviewed or incomplete RouteEvidence produces abstention, not a capability rank.

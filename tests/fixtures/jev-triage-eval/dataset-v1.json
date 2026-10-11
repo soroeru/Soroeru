@@ -1,7 +1,7 @@
 {
   "datasetVersion": "jev-triage-eval-1.0.0",
-  "rubricVersion": "triage-rubric-524-v1",
-  "policyVersion": "triage-v1",
+  "rubricVersion": "triage-rubric-538-v3",
+  "policyVersion": "triage-v3",
   "model": "jev-1.13.0",
   "labeling": {
     "status": "agent-proposed",
