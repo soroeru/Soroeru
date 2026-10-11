@@ -99,6 +99,15 @@
       color: #7c2d12;
       border: 1px solid #e7e5e4;
     }
+    #open-panel {
+      width: 100%;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      border-radius: 6px;
+      border: 1px solid #d6d3d1;
+      background-color: #ffffff;
+      cursor: pointer;
+    }
     #reconnect:hover {
       background-color: #fafaf9;
       border-color: #d6d3d1;
@@ -120,6 +129,7 @@
       <h1 class="title">Soroeru 拡張機能</h1>
       <span id="status-badge" class="status-badge status-disconnected">OFFLINE</span>
     </div>
+    <button id="open-panel" type="button">サイドパネルを開く</button>
     <button id="reconnect" type="button" style="display: none;">アプリに再接続</button>
     <p id="status" class="message" role="status">状態を確認中...</p>
   </div>

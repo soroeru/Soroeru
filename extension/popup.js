@@ -40,3 +40,10 @@ reconnectButton.addEventListener("click", () => {
     }, 300);
   });
 });
+
+// Side Panel (Issue #558): the primary UI. It must be opened from this user gesture.
+document.getElementById("open-panel").addEventListener("click", () => {
+  chrome.windows.getCurrent((win) => {
+    chrome.sidePanel.open({ windowId: win.id }, () => window.close());
+  });
+});
