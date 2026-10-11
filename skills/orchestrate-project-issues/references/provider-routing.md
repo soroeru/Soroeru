@@ -49,7 +49,8 @@ Codex-only file for ordinary orchestration; discovery (fresh or cached) is the s
 
 1. A route is usable only when both `selectable` and `verifiable` are true. `requestedModel` is the
    exact display label when one exists; `model` is the canonical identifier returned or accepted by
-   the runtime. A canonical `model` without an exact `requestedModel` match is not an alias.
+   the runtime. A requested route must exactly match either `model` or `requestedModel` on
+   the same verified record. Do not infer aliases or normalize case.
 2. If the runtime cannot select or prove a requested model machine-readably, that route is
    unavailable (`verifiable: false` / omitted). Do not use a nearby model name and never relabel
    another model.

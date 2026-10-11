@@ -270,6 +270,11 @@ repository's risk posture; the review-and-confirm gate, the three guards, and
 the never-bypass-walls rule for the Soroeru _product_ these workers implement
 are unaffected.
 
+`--parent-model` accepts the exact canonical model ID (`gpt-6.1-sol`) or its
+exact display name (`GPT-6.1-Sol`) from the same verified capability record.
+Model aliases and case normalization are not supported; both forms still
+require a selectable, verifiable parent route.
+
 The written capabilities file also carries `cli` (per-agent `{path, version}`
 from `--version`) and `probedAt`. `project-issue-orchestrator.mjs` uses those
 to decide whether to reuse the file as-is (default), targeted-re-probe only
