@@ -4,6 +4,7 @@
 
 import {
   EXTENSION_MESSAGE_VERSION,
+  PANEL_PORT_NAME,
   isOriginInLeaseScope,
   parseExtensionMessage,
   type ExtensionMessage,
@@ -32,7 +33,6 @@ export {
 } from "./legacy-native-bridge.js";
 import { withPageIdentity } from "./legacy-native-bridge.js";
 
-export const PANEL_PORT_NAME = "soroeru-panel";
 const LEASE_STORAGE_KEY = "soroeruLeases";
 const NAVIGATION_TIMEOUT_MS = 15_000;
 

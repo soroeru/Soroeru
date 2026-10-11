@@ -9,6 +9,7 @@ import { isCollectionFingerprints, isObservationToken, type CollectionObservatio
 // not export the real Chrome profile's session (#294 stays Playwright-only).
 
 import type { PageSnapshot } from "../types.js";
+import { parsePageCommand, type PageCommand } from "../shared/extension-messages.js";
 import type { PageDriver, SiteSession } from "./page-driver.js";
 
 /** Default per-command timeout so a hung extension/host never blocks the runner forever. */
@@ -28,6 +29,50 @@ export interface ChromeBridgeTransport {
   sendCommand(command: string, payload?: unknown, options?: { timeoutMs?: number }): Promise<unknown>;
   /** Whether a host/extension socket is currently authenticated and open. */
   isConnected(): boolean;
+}
+
+/**
+ * Page-command seam (Issue #558): the driver talks only to a ChromeBridgeTransport. There are
+ * two adapters. The legacy adapter is the Electron `ChromeExtensionBridge` (Native Messaging),
+ * which already implements this interface and is used unchanged. The lease adapter below runs
+ * inside the Side Panel and sends the same commands as lease-gated `page.command` messages.
+ */
+export type PageCommandTransport = ChromeBridgeTransport;
+
+/** What the lease adapter needs from the Side Panel's lease client. */
+export interface LeasePageCommandClient {
+  sendPageCommand(command: PageCommand, options?: { timeoutMs?: number }): Promise<unknown>;
+  isLeaseActive(): boolean;
+  releaseLease(): Promise<void>;
+}
+
+/** Legacy adapter: the Electron Native Messaging bridge is already a PageCommandTransport. */
+export function legacyBridgePageTransport(bridge: ChromeBridgeTransport): PageCommandTransport {
+  return bridge;
+}
+
+/**
+ * Lease adapter: the lease (not the driver) carries tab, origin and site scope, so `tabId` and
+ * `siteDomain` are dropped from the driver's payload; every other field is validated strictly.
+ * `unbind` releases the lease.
+ */
+export function leasePageTransport(client: LeasePageCommandClient): PageCommandTransport {
+  return {
+    isConnected: () => client.isLeaseActive(),
+    async sendCommand(command, payload, options) {
+      if (command === "unbind") {
+        await client.releaseLease();
+        return undefined;
+      }
+      const rest: Record<string, unknown> = isRecord(payload) ? { ...payload } : {};
+      delete rest.tabId;
+      delete rest.siteDomain;
+      const pageCommand = parsePageCommand({ command, ...rest });
+      return client.sendPageCommand(pageCommand, {
+        ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      });
+    },
+  };
 }
 
 export interface ExtensionTabSessionOptions {

@@ -71,6 +71,7 @@ declare namespace chrome {
     function getURL(path: string): string;
     const onConnect: { addListener(listener: (port: Port) => void): void };
     function connectNative(name: string): Port;
+    function connect(connectInfo: { name: string }): Port;
     function sendMessage<T = unknown>(message: unknown): Promise<T>;
     const onMessage: {
       addListener(

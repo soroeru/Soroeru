@@ -13,6 +13,8 @@ import {
 } from "./chrome-bridge.js";
 
 export const EXTENSION_MESSAGE_VERSION = 1 as const;
+/** Name of the long-lived runtime port the Side Panel opens to the service worker. */
+export const PANEL_PORT_NAME = "soroeru-panel";
 
 export const LEASE_INVALID_REASONS = [
   "released",
