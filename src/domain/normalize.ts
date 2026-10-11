@@ -5,7 +5,7 @@
 // (spacing, separators, case) so "090-1234-5678" and "09012345678" compare
 // equal, while still being a one-way hash so raw values are not duplicated.
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../shared/sha256.js";
 
 /**
  * Normalize a value for comparison, keyed by attribute. Japanese-only domain
@@ -32,5 +32,5 @@ export function normalizeValue(attributeKey: string, value: string): string {
  * same value under different attributes does not collide.
  */
 export function normalizedValueHash(attributeKey: string, value: string): string {
-  return createHash("sha256").update(`${attributeKey}:${normalizeValue(attributeKey, value)}`, "utf8").digest("hex");
+  return sha256Hex(`${attributeKey}:${normalizeValue(attributeKey, value)}`);
 }

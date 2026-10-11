@@ -6,6 +6,9 @@ import { createRoot } from "react-dom/client";
 import { IndexedDbVaultPersistence } from "../src/store/indexeddb-vault-persistence.js";
 import { VaultSession, webLockManager } from "../src/store/vault-session.js";
 import { VaultPanel } from "./VaultPanel.js";
+import { createChromeLeaseClient } from "./panel/lease-client.js";
+import { VisibilityHost } from "./panel/visibility-host.js";
+import { VisibilityPanel } from "./panel/VisibilityPanel.js";
 import "./sidepanel.css";
 
 const persistence = new IndexedDbVaultPersistence();
@@ -16,14 +19,23 @@ const started = session.start();
 started.catch(() => undefined);
 const persistGranted = navigator.storage.persist().catch(() => false);
 
-// Closing the panel, reloading it, or quitting the browser drops the key and the Web Lock.
+const host = new VisibilityHost({ session, leaseClient: createChromeLeaseClient() });
+
+// Closing the panel, reloading it, or quitting the browser aborts any run, releases the lease,
+// saves best-effort, and drops the key and the Web Lock.
 window.addEventListener("pagehide", () => {
-  session.close();
+  host.shutdown();
   persistence.close();
 });
 
 const container = document.getElementById("root");
 if (!container) throw new Error("missing #root");
 createRoot(container).render(
-  <VaultPanel session={session} started={started} persistGranted={persistGranted} />,
+  <VaultPanel
+    session={session}
+    started={started}
+    persistGranted={persistGranted}
+    unlockedContent={<VisibilityPanel host={host} />}
+    onLock={() => void host.lock()}
+  />,
 );

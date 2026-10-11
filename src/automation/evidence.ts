@@ -3,7 +3,7 @@
 // hash. Raw values, screenshots/pixels, full HTML, cookies, and tokens are
 // never produced here.
 
-import { createHash } from "node:crypto";
+import { sha256Hex } from "../shared/sha256.js";
 import { normalizeValue } from "../domain/normalize.js";
 import type { AddEvidenceInput } from "../domain/domain-service.js";
 
@@ -19,7 +19,7 @@ export function maskSnippet(value: string): string {
 /** Normalized-value hash for audit/compare without storing the raw value. */
 export function evidenceHash(attributeKey: string, value: string): string {
   const normalized = normalizeValue(attributeKey, value);
-  return createHash("sha256").update(`${attributeKey}:${normalized}`).digest("hex");
+  return sha256Hex(`${attributeKey}:${normalized}`);
 }
 
 export interface ObservedFieldEvidence {
