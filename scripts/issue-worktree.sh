@@ -117,11 +117,10 @@ state_lock_mtime() {
 }
 
 reclaim_stale_state_lock() {
-  local owner="$LOCK_DIR/owner" pid timestamp generation now age mtime
+  local owner="$LOCK_DIR/owner" pid timestamp now age mtime
   pid=''
   timestamp=''
-  generation=''
-  IFS=':' read -r pid timestamp generation < "$owner" 2>/dev/null || true
+  IFS=':' read -r pid timestamp _ < "$owner" 2>/dev/null || true
   case "$pid:$timestamp" in
     *[!0-9:]*|::*|*:)
       mtime=$(state_lock_mtime "$LOCK_DIR") || return 1
