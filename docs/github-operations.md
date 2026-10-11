@@ -5,8 +5,7 @@ naming, Issue workflow, commit conventions, PR descriptions, review
 expectations, and merge policy.
 
 Out of scope here: local setup and quality gate commands (see
-[`development.md`](development.md)) and local AI review hook details (see
-[`local-ai-review.md`](local-ai-review.md)).
+[`development.md`](development.md)).
 
 ## 1. Development Model
 
@@ -70,7 +69,7 @@ Before any agent creates a branch or edits files for Issue work — including th
 
 `issue-worktree.sh create` verifies the GitHub Issue, attempts to fetch
 `origin/main`, rejects partial or duplicate state, creates the named
-branch/worktree, and starts epoch 1 with a `0/1` review budget. If the fetch is
+branch/worktree, and starts at epoch 1. If the fetch is
 temporarily unavailable, it may use an existing local `origin/main`, then local
 `main` as a last-resort base; creation fails when none is available. Do not
 implement on detached HEAD or check out local `main` in an agent worktree.
@@ -92,16 +91,12 @@ force avoidable approval requests.
 Operational notes:
 
 - `core.hooksPath` is set with `git config --local` (stored in the shared common
-  git dir, not per-worktree), so running `scripts/setup-hooks.sh` once enables
-  the local AI review hook in every worktree.
+  git dir, not per-worktree), so running `scripts/setup-hooks.sh` once applies
+  commit hooks in every worktree.
 - Claude Code also has a repository `PreToolUse` guard that rejects `git commit`
   when its working directory is outside `.worktrees/`. It is defense in depth for
   Claude sessions only; every runtime remains responsible for the start gate.
-- `state/ai-reviews/` (the review lock and bookkeeping) lives inside each working
-  tree, so worktrees do not contend for the same review lock. Wait for reviews
-  only under the worktree where the commit was made.
-- Issue lifecycle metadata selects the current reviewer and handoff epoch (see
-  §8 and `local-ai-review.md`).
+- Issue lifecycle metadata tracks the handoff epoch.
 - Each worktree needs its own `node_modules` / tool installs if you run quality
   gates there; they are not shared automatically.
 - Never repurpose a dirty Issue worktree for another Issue. Never auto-stash,
@@ -125,15 +120,14 @@ bash scripts/issue-worktree.sh handoff <issue> \
   --agent <codex|claude|grok|gemini> --session <non-sensitive-session-id>
 ```
 
-A successful different-session handoff increments `handoff_epoch`, selects the
-new current reviewer, and resets that epoch's review budget to `0/1`. This also
+A successful different-session handoff increments `handoff_epoch`. This also
 applies when the agent name is unchanged after a session limit. Repeating the
-command from the same session is idempotent and does not reset the budget.
+command from the same session is idempotent.
 
-Do not hand off while a Git operation or local AI review is active. Preserve a
-dirty worktree in place; never auto-stash, auto-commit, reset, clean, or copy it.
+Do not hand off while a Git operation is in progress. Preserve a dirty worktree
+in place; never auto-stash, auto-commit, reset, clean, or copy it.
 Record the handoff epoch, agents, redacted session identifiers, HEAD, local
-state, review usage, and next step in the Issue or PR.
+state, and next step in the Issue or PR.
 
 ## 3. Issue Workflow
 
@@ -251,22 +245,7 @@ PR descriptions should include:
 - how it was verified
 - remaining risks or skipped checks
 
-See §8 for the local AI review convention.
-
-## 8. Local AI Review
-
-Setup, branch rules, skip conditions, follow-up policy, cleanup policy, output,
-and troubleshooting live in [`local-ai-review.md`](local-ai-review.md). By
-default, `codex/*` branches run Codex review, `claude/*` branches run Claude
-review, `grok/*` branches run Grok review, and `gemini/*` branches run Gemini
-review when the matching CLI is available. Local AI review output under
-`state/ai-reviews/` is fast feedback, not a replacement for final judgment.
-
-GitHub Actions based AI review is not enabled by default. If a project adds it
-as fallback automation, keep PAT / secret requirements in that fallback
-documentation rather than mixing them into the core workflow.
-
-## 9. Merge Policy
+## 8. Merge Policy
 
 - Prefer squash merge into `main`.
 - Merge only after required checks pass.
@@ -300,14 +279,9 @@ obscure which work is still in flight.
   For a non-squash (true) merge the branch is a `main` ancestor, so plain
   `git branch -d` suffices.
 
-- **Local AI review artifacts**: after the review cycle settles, clean up
-  `state/ai-reviews/` per the cleanup policy in
-  [`local-ai-review.md`](local-ai-review.md) §8 (delete the review `*.md` and
-  logs; keep `last-reviewed.json`).
-
 For Issue worktrees, prefer the guarded command below. It requires GitHub PR
 state `MERGED`, a released lease, a clean tree, no in-progress Git operation,
-no active review lock, and a PR head matching the worktree HEAD:
+and a PR head matching the worktree HEAD:
 
 ```bash
 bash scripts/issue-worktree.sh cleanup <issue> --pr <pr-number>
@@ -324,7 +298,6 @@ of creating a separate learning log without a clear owner.
 Examples:
 
 - A lesson about branch naming belongs in this document.
-- A lesson about local review hooks belongs in [`local-ai-review.md`](local-ai-review.md).
 - A lesson about manual testing belongs in [`manual-test.md`](manual-test.md).
 - A one-off decision for a specific task may stay in that Issue or PR.
 
