@@ -1,4 +1,4 @@
-import { KNOWN_PROFILE_KEYS, type KnownProfileKey } from "../types.js";
+import { KNOWN_PROFILE_KEYS, type FormField, type KnownProfileKey } from "../types.js";
 import type { CollectionItem, CollectionObservation, CollectionTarget } from "./collection-observation.js";
 import { classifyFields } from "../agent/classifier.js";
 
@@ -26,20 +26,70 @@ export const COLLECTION_SCHEMA = {
   },
 };
 const forbidden = /マイナンバー|個人番号|暗証番号|\bpin\b|my.?number|identity.?secret/i;
-export function permittedCollectionItem(item: CollectionItem): boolean {
+/** PIN / My Number by label or content; never stored, never sent. */
+function forbiddenCollectionItem(item: CollectionItem): boolean {
   const f = item.field;
-  return /^([fd])-\d+$/.test(item.id) && f.type !== "hidden" &&
-    !forbidden.test([f.name, f.id, f.autocomplete, f.placeholder, ...f.labels, f.nearbyText, item.value].join(" ")) &&
-    !/^\d{12}$/.test(item.value.replace(/[ -]/g, ""));
+  return forbidden.test([f.name, f.id, f.autocomplete, f.placeholder, ...f.labels, f.nearbyText, item.value].join(" ")) ||
+    /^\d{12}$/.test(item.value.replace(/[ -]/g, ""));
 }
-export interface CollectionInput { observationId: string; items: CollectionItem[]; targets: CollectionTarget[] }
-/** Item-aligned envelope, retained in memory for corroboration. Never includes arbitrary page HTML/text. */
+export function permittedCollectionItem(item: CollectionItem): boolean {
+  return /^([fd])-\d+$/.test(item.id) && item.field.type !== "hidden" && !forbiddenCollectionItem(item);
+}
+/** Stands in for a secret item's value and nearby text in the model envelope (Issue #572). */
+export const MASKED_VALUE = "[masked]";
+const SECRET_AUTOCOMPLETE = new Set(["current-password", "new-password", "one-time-code", "cc-csc"]);
+const SECRET_KEYS: readonly string[] = ["account.password", "card.cvv"];
+// Secret-like but not certain: fail closed and mask; the key still needs local classifier agreement.
+const secretHint = /pass(?:word|wd|code|phrase)|(?<![a-z])(?:pwd?|otp|totp|2fa|mfa)(?![a-z])|secret|token|api.?key|one.?time|cvv|cvc|csc|security.?code|verification.?code|auth.?code|パスワード|暗証|セキュリティ.?コード|認証コード|確認コード|ワンタイム|秘密/i;
+/** Password, CVV, OTP and secret-like items: their values never reach a model, in any build (Issue #572). */
+export function secretCollectionItem(item: CollectionItem): boolean {
+  const f = item.field;
+  if (f.type === "password" || SECRET_AUTOCOMPLETE.has(f.autocomplete.trim().toLowerCase())) return true;
+  const local = classifyFields([f], []).entries[0]?.profileKey;
+  // The item's own label/attributes only (camelCase split: loginPw, cardCvc); nearby text would mask whole security pages.
+  const own = [f.name, f.id, f.autocomplete, f.placeholder, ...f.labels].join(" ").replace(/([a-z])([A-Z])/g, "$1 $2");
+  return (!!local && SECRET_KEYS.includes(local)) || secretHint.test(own);
+}
+export interface CollectionInput {
+  observationId: string; items: CollectionItem[]; targets: CollectionTarget[];
+  /** IDs of items whose values stay local; the model only classifies them by label. */
+  masked: string[];
+  /** Local only, never serialized: secret and PIN/My Number values of every observed item, admitted or not. */
+  secrets: string[];
+}
+/** Matches a secret only as a whole token, so a CVV inside a longer number is not one. */
+function secretPattern(secrets: string[]): RegExp | undefined {
+  const alternatives = [...secrets].sort((a, b) => b.length - a.length).map(v => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return alternatives.length ? new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives.join("|")})(?![\\p{L}\\p{N}])`, "gu") : undefined;
+}
+/** What the provider receives: masked items carry no value and no nearby text. */
+export interface CollectionEnvelope { observationId: string; items: (CollectionItem & { masked?: true })[]; targets: CollectionTarget[] }
+export function collectionEnvelope(input: CollectionInput): CollectionEnvelope {
+  const masked = new Set(input.masked);
+  const pattern = secretPattern(input.secrets);
+  // Page text can echo a secret elsewhere (e.g. <dt>CVV</dt><dd>…</dd> beside another item); scrub every
+  // page-derived context string. Values are not scrubbed: an item whose value echoes a secret is masked whole.
+  const scrub = (text: string): string => pattern ? text.replace(pattern, MASKED_VALUE) : text;
+  const field = (f: FormField): FormField => ({ ...f, name: scrub(f.name), id: scrub(f.id), placeholder: scrub(f.placeholder),
+    labels: f.labels.map(scrub), nearbyText: scrub(f.nearbyText),
+    ...(f.options ? { options: f.options.map(o => ({ ...o, value: scrub(o.value), label: scrub(o.label) })) } : {}) });
+  return { observationId: input.observationId,
+    items: input.items.map(i => masked.has(i.id)
+      ? { id: i.id, field: { ...field(i.field), nearbyText: "" }, value: MASKED_VALUE, masked: true as const }
+      : { id: i.id, field: field(i.field), value: i.value }),
+    targets: input.targets.map(t => ({ ...t, href: scrub(t.href), text: scrub(t.text) })) };
+}
+/** Item-aligned input, retained in memory for corroboration. Never includes arbitrary page HTML/text. */
 export function collectionInput(observation: CollectionObservation): CollectionInput {
-  const input: CollectionInput = { observationId: observation.token.observationId, items: [], targets: [] };
-  const fits = (): boolean => new TextEncoder().encode(JSON.stringify(input)).length <= 16_384;
+  const secrets = [...new Set(observation.items.filter(i => secretCollectionItem(i) || forbiddenCollectionItem(i))
+    .map(i => i.value.trim()).filter(v => v.length >= 3))];
+  const pattern = secretPattern(secrets);
+  const input: CollectionInput = { observationId: observation.token.observationId, items: [], targets: [], masked: [], secrets };
+  const fits = (): boolean => new TextEncoder().encode(JSON.stringify(collectionEnvelope(input))).length <= 16_384;
   for (const item of observation.items.filter(permittedCollectionItem)) {
-    input.items.push(item);
-    if (!fits()) input.items.pop();
+    const secret = secretCollectionItem(item) || (!!pattern && item.value.search(pattern) >= 0);
+    input.items.push(item); if (secret) input.masked.push(item.id);
+    if (!fits()) { input.items.pop(); if (secret) input.masked.pop(); }
   }
   // Model gets observed IDs and labels, not authority to invent executable URLs.
   for (const target of observation.targets) {
@@ -75,13 +125,19 @@ export function corroborateProposal(proposal: CollectionProposal, input: Collect
   for (const value of proposal.values) {
     const item = input.items.find(i => i.id === value.itemId)!;
     const local = classifyFields([item.field], []).entries[0]?.profileKey;
+    const maskedPan = value.attributeKey === "card.number" && /[*•xX]/.test(item.value);
+    if (input.masked.includes(item.id)) {
+      // The model saw no value: its key must match local classification, and the value is the locally read one.
+      const corroborated = local === value.attributeKey && permittedCollectionItem(item) && !maskedPan;
+      facts.push({ observationId: input.observationId, itemId: item.id, attributeKey: value.attributeKey, corroborated });
+      if (corroborated) candidates.push({ item, attributeKey: value.attributeKey });
+      continue;
+    }
     const normalize = (v: string): string => {
-      if (["card.cvv", "account.password"].includes(value.attributeKey)) return v;
       const text = v.normalize("NFC").replace(/\r\n?/g, "\n").trim();
       return local === value.attributeKey && ["phone.full", "card.number"].includes(local) ? text.replace(/[ -]/g, "") : text;
     };
-    const corroborated = local === value.attributeKey && permittedCollectionItem(item) && normalize(item.value) === normalize(value.value) &&
-      !(value.attributeKey === "card.number" && /[*•xX]/.test(item.value));
+    const corroborated = local === value.attributeKey && permittedCollectionItem(item) && normalize(item.value) === normalize(value.value) && !maskedPan;
     facts.push({ observationId: input.observationId, itemId: item.id, attributeKey: value.attributeKey, corroborated });
     if (corroborated) candidates.push({ item, attributeKey: value.attributeKey });
   }
