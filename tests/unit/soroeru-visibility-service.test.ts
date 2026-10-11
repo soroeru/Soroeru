@@ -524,8 +524,14 @@ test("abort during checkpoint persistence does not install a later handoff", asy
     const running = service.runSite(site.id);
     await entered;
     service.abortRun();
+    let completed = false;
+    const completion = service.waitForActiveRunCompletion().then(() => { completed = true; });
+    await Promise.resolve();
+    assert.equal(completed, false);
     releaseSave();
     await running;
+    await completion;
+    assert.equal(completed, true);
     assert.equal(service.isRunning, false);
     assert.equal(service.status().awaitingHandoff, false);
     assert.equal(events.some((event) => event.type === "handoff"), false);

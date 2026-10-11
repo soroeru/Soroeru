@@ -713,3 +713,30 @@ test("panel shutdown drops plaintext immediately and holds the writer lock until
     next.close();
   } finally { release(); await closing; }
 });
+
+test("overlapping vault saves retain call order and newest records", async () => {
+  const factory = new FakeIdbFactory();
+  const persistence = idb(factory);
+  const vault = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
+  let entered!: () => void;
+  let release!: () => void;
+  const storing = new Promise<void>((resolve) => { entered = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const originalSave = persistence.save.bind(persistence);
+  let writes = 0;
+  persistence.save = async (data) => { if (writes++ === 0) { entered(); await blocked; } await originalSave(data); };
+  vault.put("siteAccount", siteAccount("first", "Fake first"));
+  const first = vault.save();
+  await storing;
+  vault.put("siteAccount", siteAccount("second", "Fake second"));
+  const second = vault.save();
+  try {
+    await Promise.resolve();
+    assert.equal(writes, 1);
+    release();
+    await Promise.all([first, second]);
+    const reopened = await VaultV2.open(persistence, PASSPHRASE);
+    assert.equal(reopened.list("siteAccount").length, 2);
+    reopened.lock();
+  } finally { release(); await Promise.all([first, second]); vault.lock(); }
+});

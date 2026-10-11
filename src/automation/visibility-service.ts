@@ -62,6 +62,7 @@ export class VisibilityService {
   private pendingHandoff: PendingHandoff | undefined;
   /** The in-flight `close()` triggered by `abortRun()`, if any (Issue #294 app-quit race). */
   private pendingSessionClose: Promise<void> | undefined;
+  private activeRunDone: Promise<void> | undefined;
   /** Optional AI fallback for DecisionEngine (Issue #310); mutable so the caller can rebuild it per vault-unlock session. */
   private aiEngine: AiEngine | undefined;
   private collectionProvider: AiProvider | undefined;
@@ -123,6 +124,8 @@ export class VisibilityService {
       return { siteAccountId, status: "busy", disclosures: 0, relationships: 0, constraints: 0 };
     }
     this.running = true;
+    let finishRun!: () => void;
+    this.activeRunDone = new Promise<void>((resolve) => { finishRun = resolve; });
     this.activeSiteId = siteAccountId;
     try {
       const runner = new VisibilityRunner({
@@ -153,6 +156,7 @@ export class VisibilityService {
       this.activeSession = undefined;
       this.cancelRequested = false;
       this.pendingHandoff = undefined;
+      finishRun();
     }
   }
 
@@ -201,6 +205,11 @@ export class VisibilityService {
    */
   async waitForActiveSessionClose(): Promise<void> {
     await this.pendingSessionClose;
+  }
+
+  /** Includes the runner's cancellation checkpoint and its final persistence. */
+  async waitForActiveRunCompletion(): Promise<void> {
+    await this.activeRunDone;
   }
 
   private async openTrackedSession(site: SiteAccount): Promise<SiteSession> {

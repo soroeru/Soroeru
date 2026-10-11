@@ -40,6 +40,7 @@ export class VisibilityHost {
   private readonly listeners = new Set<(event: VisibilityEvent) => void>();
   private readonly stopStateWatch: () => void;
   private bound = false;
+  private stopping = false;
 
   constructor(private readonly options: VisibilityHostOptions) {
     this.service = new VisibilityService({
@@ -80,6 +81,7 @@ export class VisibilityHost {
   }
 
   async run(site: SiteAccount): Promise<VisibilityRunResultView> {
+    if (this.stopping) throw new VisibilityHostError("runtime is stopping");
     return this.service.runSite(site.id);
   }
 
@@ -94,12 +96,19 @@ export class VisibilityHost {
 
   /** User-initiated lock: stop, release the lease, save, then drop the key. */
   async lock(): Promise<void> {
-    await this.stop(true);
-    this.options.session.lock();
+    if (this.stopping) return;
+    this.stopping = true;
+    try {
+      await this.stop(true);
+      this.options.session.lock();
+    } finally {
+      this.stopping = false;
+    }
   }
 
   /** Panel closing: abort, release the lease and save best-effort, then drop the key. */
   async shutdown(): Promise<void> {
+    this.stopping = true;
     this.stopStateWatch();
     this.service.abortRun();
     void this.options.leaseClient.releaseLease();
@@ -131,6 +140,7 @@ export class VisibilityHost {
   private async stop(save: boolean): Promise<void> {
     this.service.abortRun();
     await this.service.waitForActiveSessionClose();
+    await this.service.waitForActiveRunCompletion();
     await this.options.leaseClient.releaseLease();
     if (save && this.options.session.state === "unlocked") {
       await this.options.session.save();

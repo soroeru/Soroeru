@@ -200,7 +200,7 @@ function requestIdOf(raw: unknown): string {
 
 /**
  * Handle one runtime message. Resolves with the response to send. Only the extension itself
- * (service worker; no sender.tab) may bind, revoke, or command; everything else is rejected.
+ * (worker bindings and direct Side Panel commands; no sender.tab) may bind, revoke, or command; everything else is rejected.
  */
 export async function handleExtensionMessage(
   raw: unknown,

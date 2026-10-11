@@ -31,7 +31,6 @@ export {
   validateExtensionCommand,
   withPageIdentity,
 } from "./legacy-native-bridge.js";
-import { withPageIdentity } from "./legacy-native-bridge.js";
 
 const LEASE_STORAGE_KEY = "soroeruLeases";
 const NAVIGATION_TIMEOUT_MS = 15_000;
@@ -142,7 +141,9 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
       // A late bind response can arrive after disconnect's first revoke.
       const lost = registry.invalidate(lease.leaseId, "panel-closed");
       if (lost) drop([lost], false);
-      await chrome.tabs.sendMessage(lease.tabId, versioned({ kind: "lease.revoke", leaseId: lease.leaseId })).catch(() => undefined);
+      await chrome.tabs
+        .sendMessage(lease.tabId, versioned({ kind: "lease.revoke", leaseId: lease.leaseId }))
+        .catch(() => undefined);
       return;
     }
     if (!bound) {
@@ -181,7 +182,13 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
       } catch {
         bound = false;
       }
-      if (registry.verify(leaseId, epoch, current.ownerPort) !== "ok") return;
+      if (registry.verify(leaseId, epoch, current.ownerPort) !== "ok") {
+        if (!registry.get(leaseId))
+          await chrome.tabs
+            .sendMessage(current.tabId, versioned({ kind: "lease.revoke", leaseId }))
+            .catch(() => undefined);
+        return;
+      }
       if (!bound) {
         drop(registry.invalidateByTab(current.tabId, "content-script-lost"));
         return;
@@ -253,13 +260,38 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
     const { requestId } = message;
     const stopped = (): boolean => registry.verify(lease.leaseId, message.epoch, lease.ownerPort) !== "ok";
     const tab = await chrome.tabs.get(lease.tabId);
-    if (stopped()) return resultMessage(requestId, false, undefined, "execution stopped");
+    if (
+      stopped() &&
+      !(
+        message.command.command === "waitForReady" &&
+        registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) === "ok"
+      )
+    )
+      return resultMessage(requestId, false, undefined, "execution stopped");
     const pageOrigin = originOf(tab.url);
     if (!pageOrigin || !isOriginInLeaseScope(pageOrigin, lease)) {
       drop(registry.invalidateByTab(lease.tabId, "navigated-out-of-scope"));
       return reject(requestId, "origin-out-of-scope");
     }
     const command: PageCommand = message.command;
+    if (command.command === "waitForReady") {
+      if (tab.status === "loading") await waitForNavigation(lease);
+      await rebinding.get(lease.leaseId);
+      const current = registry.get(lease.leaseId);
+      if (
+        !current ||
+        current.ownerPort !== lease.ownerPort ||
+        current.epoch < message.epoch ||
+        current.epoch > message.epoch + 1
+      ) {
+        return resultMessage(requestId, false, undefined, "execution stopped");
+      }
+      const readyEpoch = current.epoch;
+      const ready = await chrome.tabs.get(lease.tabId);
+      if (registry.verify(lease.leaseId, readyEpoch, lease.ownerPort) !== "ok")
+        return resultMessage(requestId, false, undefined, "execution stopped");
+      return resultMessage(requestId, true, { url: ready.url ?? "" });
+    }
     if (command.command === "goto") {
       const target = new URL(command.url).origin;
       if (!isOriginInLeaseScope(target, lease)) return reject(requestId, "origin-out-of-scope");
@@ -277,7 +309,8 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
       } else if (registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) === "ok") {
         await rebinding.get(lease.leaseId);
       }
-      const navigationStopped = (): boolean => registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) !== "ok";
+      const navigationStopped = (): boolean =>
+        registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) !== "ok";
       if (navigationStopped()) return resultMessage(requestId, false, undefined, "execution stopped");
       const landed = await chrome.tabs.get(lease.tabId);
       if (navigationStopped()) return resultMessage(requestId, false, undefined, "execution stopped");
@@ -286,23 +319,7 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
     if (!(await permitted(pageOrigin)))
       return resultMessage(requestId, false, undefined, "origin permission required");
     if (command.command === "currentUrl") return resultMessage(requestId, true, { url: tab.url ?? "" });
-    const raw = await chrome.tabs.sendMessage<unknown>(lease.tabId, message);
-    if (stopped()) return resultMessage(requestId, false, undefined, "execution stopped");
-    let reply: ExtensionMessage;
-    try {
-      reply = parseExtensionMessage(raw);
-    } catch {
-      return resultMessage(requestId, false, undefined, "invalid content script response");
-    }
-    if (reply.kind === "page.rejected" && reply.requestId === requestId) return reply;
-    if (reply.kind !== "page.result" || reply.requestId !== requestId)
-      return resultMessage(requestId, false, undefined, "invalid content script response");
-    if (!reply.ok) return reply;
-    if (command.command === "snapshot" || command.command === "waitForReady") {
-      const scanned = await chrome.tabs.get(lease.tabId);
-      return resultMessage(requestId, true, withPageIdentity(reply.payload, scanned));
-    }
-    return reply;
+    return reject(requestId, "invalid-command");
   }
 
   async function onPanelMessage(port: PanelPort, raw: unknown): Promise<void> {
@@ -326,7 +343,9 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
         return;
       }
       case "page.command": {
-        const verdict = registry.verify(message.leaseId, message.epoch, port);
+        let verdict = registry.verify(message.leaseId, message.epoch, port);
+        if (message.command.command === "waitForReady" && verdict === "stale-epoch")
+          verdict = registry.verify(message.leaseId, message.epoch + 1, port);
         const lease = registry.get(message.leaseId);
         if (verdict !== "ok" || !lease) {
           post(port, reject(message.requestId, verdict === "ok" ? "no-lease" : verdict));

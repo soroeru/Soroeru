@@ -15,6 +15,7 @@ import {
   type LeaseOpened,
   type PageCommand,
   type PageRejectedReason,
+  isOriginInLeaseScope,
 } from "../../src/shared/extension-messages.js";
 
 export const KEEPALIVE_INTERVAL_MS = 20_000;
@@ -39,6 +40,7 @@ export interface LeaseClientTimers {
 
 export interface LeaseClientDeps {
   connectPort: () => PortLike;
+  sendToTab?: (tabId: number, message: ExtensionMessage) => Promise<unknown>;
   timers?: LeaseClientTimers;
   newId?: () => string;
 }
@@ -166,7 +168,88 @@ export class LeaseClient {
   }
 
   /** Send one page command under the current lease and epoch. */
-  sendPageCommand(command: PageCommand, options: { timeoutMs?: number } = {}): Promise<unknown> {
+  async sendPageCommand(command: PageCommand, options: { timeoutMs?: number } = {}): Promise<unknown> {
+    if (command.command === "goto" || command.command === "currentUrl")
+      return this.sendWorkerCommand(command, options);
+    // Only navigation metadata crosses the worker. Readiness waits for injection
+    // before the panel asks the new document to observe DOM readiness directly.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (command.command === "waitForReady") await this.sendWorkerCommand(command, options);
+        return await this.sendDirectCommand(command, options);
+      } catch (error) {
+        if (command.command !== "waitForReady" || attempt > 0 || !this.isLeaseActive()) throw error;
+      }
+    }
+    throw new Error("page readiness failed");
+  }
+
+  private sendDirectCommand(command: PageCommand, options: { timeoutMs?: number }): Promise<unknown> {
+    const lease = this.currentLease();
+    if (!lease || !this.port) return Promise.reject(new LeaseInvalidatedError("worker-restarted"));
+    const requestId = this.newId();
+    return new Promise((resolve, reject) => {
+      const timer = this.timers.setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error("page command timed out"));
+      }, options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
+      this.pending.set(requestId, { resolve, reject, timer });
+      const send = this.deps.sendToTab ?? ((tabId, message) => chrome.tabs.sendMessage(tabId, message));
+      void send(lease.tabId, {
+        version: EXTENSION_MESSAGE_VERSION,
+        kind: "page.command",
+        requestId,
+        leaseId: lease.leaseId,
+        epoch: lease.epoch,
+        command,
+      })
+        .then((raw) => {
+          const current = this.currentLease();
+          if (
+            !current ||
+            current.leaseId !== lease.leaseId ||
+            (current.epoch !== lease.epoch &&
+              !(command.command === "click" && current.epoch === lease.epoch + 1))
+          )
+            throw new PageCommandRejectedError("stale-epoch");
+          const reply = parseExtensionMessage(raw);
+          if (reply.kind === "page.rejected" && reply.requestId === requestId)
+            throw new PageCommandRejectedError(reply.reason);
+          if (reply.kind !== "page.result" || reply.requestId !== requestId || !reply.ok)
+            throw new Error("page command failed");
+          this.takePending(requestId)?.resolve(reply.payload);
+        })
+        .catch(async (error: unknown) => {
+          // A document navigation can close the click response channel. Do not
+          // replay the click: the following readiness command awaits the new page.
+          if (command.command === "click") {
+            const tab = await chrome.tabs.get(lease.tabId).catch(() => undefined);
+            const current = this.currentLease();
+            let scoped = false;
+            try {
+              scoped = !!tab?.url && isOriginInLeaseScope(new URL(tab.url).origin, lease);
+            } catch {
+              /* invalid URL */
+            }
+            if (
+              current?.leaseId === lease.leaseId &&
+              current.epoch >= lease.epoch &&
+              current.epoch <= lease.epoch + 1 &&
+              scoped &&
+              (tab?.status === "loading" || current.epoch === lease.epoch + 1)
+            ) {
+              this.takePending(requestId)?.resolve(undefined);
+              return;
+            }
+          }
+          this.takePending(requestId)?.reject(
+            error instanceof Error ? error : new Error("page command failed"),
+          );
+        });
+    });
+  }
+
+  private sendWorkerCommand(command: PageCommand, options: { timeoutMs?: number } = {}): Promise<unknown> {
     const port = this.port;
     const lease = this.lease;
     if (!port || !lease) return Promise.reject(new LeaseInvalidatedError("worker-restarted"));

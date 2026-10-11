@@ -503,7 +503,20 @@ The Chrome extension bridge is the **selected production direction** (Issue #391
 still exercised through the developer setup from Issue #340. It enables automation via the
 user's actual Chrome profile instead of sandboxed Playwright Chromium. This setup is for
 development/parity evidence only; unpacked loading and environment-variable tab selection are
-not the supported product installation or binding UX. To use it during local development:
+not the supported product installation or binding UX.
+
+For the Issue #558 Side Panel demo, run `npm run build:extension`, load `dist/extension/`
+as an unpacked extension, and open Soroeru from the toolbar. Create/unlock the local vault,
+add a fake site, and grant access to its selected tab to run Visibility. This demo needs no
+Native Messaging host. DOM commands and page values travel directly between the panel and
+content script; the worker handles leases, navigation, and rebinding metadata. A failed save
+when locking keeps the vault unlocked so the user can retry or export. Closing the panel
+drops live plaintext immediately and retains its writer lock until the pending save settles;
+browser termination may interrupt that best-effort save. Manual checks are in §0.1a of
+[`manual-test.md`](manual-test.md).
+
+The following setup exercises the retained Electron/Native Messaging path. Start that bridge
+explicitly with the legacy popup's reconnect action:
 
 1. **Build the extension and the native-messaging host bundle:**
 

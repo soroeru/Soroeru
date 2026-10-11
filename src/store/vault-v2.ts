@@ -131,6 +131,7 @@ export class VaultV2 {
   private recovery: EncryptedRecord | undefined;
   private metadata: VaultMetadata;
   private readonly persistence: VaultPersistence;
+  private pendingSave: Promise<void> = Promise.resolve();
   private readonly extractableKey: boolean;
   /** entityKind -> (recordId -> stored record). Cleared on lock. */
   private readonly records = new Map<EntityKind, Map<string, StoredRecord>>();
@@ -472,7 +473,15 @@ export class VaultV2 {
 
   /** Persist everything; every record gets a fresh random IV. */
   async save(): Promise<void> {
-    await this.persistence.save(await this.serialize());
+    const snapshot = this.serialize();
+    // Snapshots are captured synchronously, but writes must retain call order.
+    // A failed earlier write must not prevent an explicit later retry.
+    snapshot.catch(() => undefined);
+    const saving = this.pendingSave.catch(() => undefined).then(async () => {
+      await this.persistence.save(await snapshot);
+    });
+    this.pendingSave = saving;
+    await saving;
   }
 
   /** Same encrypted JSON shape as the stored document, for the user to copy elsewhere as a backup. */
