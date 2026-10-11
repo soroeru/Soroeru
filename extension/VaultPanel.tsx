@@ -14,7 +14,7 @@ export interface VaultPanelProps {
   /** Content shown while unlocked (Issue #558: the Visibility ledger). */
   unlockedContent?: React.ReactNode;
   /** Replaces the direct lock so a running collection is stopped and saved first (Issue #558). */
-  onLock?: () => void;
+  onLock?: () => void | Promise<void>;
 }
 
 export function VaultPanel({
@@ -34,6 +34,8 @@ export function VaultPanel({
   // unlocked view never renders before the one-time recovery key is shown.
   const [creating, setCreating] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [locking, setLocking] = useState(false);
+  const [lockError, setLockError] = useState<string | undefined>();
 
   useEffect(
     () =>
@@ -114,13 +116,30 @@ export function VaultPanel({
         {state === "unlocked" && (
           <button
             type="button"
-            onClick={() => (onLock ? onLock() : session.lock())}
+            disabled={locking}
+            onClick={() => {
+              setLocking(true);
+              setLockError(undefined);
+              void Promise.resolve()
+                .then(() => (onLock ? onLock() : session.lock()))
+                .catch(() => {
+                  setLockError(
+                    "保存できなかったため施錠していません。再試行するか、暗号化エクスポートで控えを保存してください。",
+                  );
+                })
+                .finally(() => setLocking(false));
+            }}
             className="text-sm underline"
           >
             施錠
           </button>
         )}
       </header>
+      {lockError && state === "unlocked" && (
+        <p role="alert" className="text-red-600">
+          {lockError}
+        </p>
+      )}
 
       {persistDenied && (
         <p className="rounded bg-amber-100 p-2 text-xs text-amber-900">

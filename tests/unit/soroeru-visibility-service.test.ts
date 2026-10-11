@@ -502,3 +502,35 @@ function field(fieldId: string, overrides: Partial<FormField>): FormField {
     ...overrides,
   };
 }
+
+test("abort during checkpoint persistence does not install a later handoff", async () => {
+  const { dir, domain } = await openDomain();
+  let releaseSave!: () => void;
+  let enteredSave!: () => void;
+  const entered = new Promise<void>((resolve) => { enteredSave = resolve; });
+  const blocked = new Promise<void>((resolve) => { releaseSave = resolve; });
+  try {
+    const site = domain.upsertSiteAccount({ domain: "captcha.test", url: "https://captcha.test/account", displayName: "Fake" });
+    const wall = snapshot("https://captcha.test/account", [], "captcha required");
+    wall.wallMarkers = ["recaptcha"];
+    const events: VisibilityEvent[] = [];
+    let saves = 0;
+    const service = new VisibilityService({
+      openSession: () => Promise.resolve(new FakeSession(new FakePageDriver([wall], {}))),
+      emit: (event) => events.push(event),
+      persist: async () => { if (saves++ === 0) { enteredSave(); await blocked; } },
+    });
+    service.setDomain(domain);
+    const running = service.runSite(site.id);
+    await entered;
+    service.abortRun();
+    releaseSave();
+    await running;
+    assert.equal(service.isRunning, false);
+    assert.equal(service.status().awaitingHandoff, false);
+    assert.equal(events.some((event) => event.type === "handoff"), false);
+  } finally {
+    releaseSave();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

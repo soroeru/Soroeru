@@ -246,6 +246,7 @@ export class VisibilityService {
     } catch {
       return "abort";
     }
+    if (this.cancelRequested) return "abort";
     const credential = input.credential ? toHandoffCredentialView(input.credential) : undefined;
     this.emit({
       type: "handoff",

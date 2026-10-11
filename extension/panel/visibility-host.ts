@@ -99,14 +99,20 @@ export class VisibilityHost {
   }
 
   /** Panel closing: abort, release the lease and save best-effort, then drop the key. */
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     this.stopStateWatch();
     this.service.abortRun();
     void this.options.leaseClient.releaseLease();
     const saving = this.options.session.state === "unlocked" ? this.options.session.save() : undefined;
-    saving?.catch(() => undefined);
+    // save() snapshots synchronously; discard live plaintext immediately while
+    // retaining the single-writer Web Lock until the pending write settles.
+    this.options.session.lock();
     this.options.leaseClient.close();
-    this.options.session.close();
+    try {
+      await saving;
+    } finally {
+      this.options.session.close();
+    }
   }
 
   private onSessionState(state: string): void {
@@ -127,7 +133,7 @@ export class VisibilityHost {
     await this.service.waitForActiveSessionClose();
     await this.options.leaseClient.releaseLease();
     if (save && this.options.session.state === "unlocked") {
-      await this.options.session.save().catch(() => undefined);
+      await this.options.session.save();
     }
   }
 

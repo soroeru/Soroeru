@@ -24,8 +24,10 @@ const host = new VisibilityHost({ session, leaseClient: createChromeLeaseClient(
 // Closing the panel, reloading it, or quitting the browser aborts any run, releases the lease,
 // saves best-effort, and drops the key and the Web Lock.
 window.addEventListener("pagehide", () => {
-  host.shutdown();
-  persistence.close();
+  void host
+    .shutdown()
+    .catch(() => undefined)
+    .finally(() => persistence.close());
 });
 
 const container = document.getElementById("root");
@@ -36,6 +38,6 @@ createRoot(container).render(
     started={started}
     persistGranted={persistGranted}
     unlockedContent={<VisibilityPanel host={host} />}
-    onLock={() => void host.lock()}
+    onLock={() => host.lock()}
   />,
 );

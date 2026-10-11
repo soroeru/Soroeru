@@ -308,3 +308,23 @@ test("migrates a v1 store into a v2 record vault", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("saving snapshots all records before lock clears decrypted maps", async () => {
+  const { dir, path } = await tmpVaultPath();
+  try {
+    const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
+    for (let i = 0; i < 4; i++) {
+      vault.put("siteAccount", { id: `site-${i}`, domain: `site-${i}.test`, displayName: `Site ${i}`, createdAt: 1, updatedAt: 1 });
+    }
+    vault.put("diagnostic", { id: "diag", at: 1, type: "app", message: "fake", severity: "info" });
+    const saving = vault.save();
+    vault.lock();
+    await saving;
+    const reopened = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
+    assert.equal(reopened.list("siteAccount").length, 4);
+    assert.equal(reopened.get("diagnostic", "diag")?.message, "fake");
+    reopened.lock();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

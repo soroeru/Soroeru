@@ -58,6 +58,7 @@ const versioned = <T extends object>(message: T): T & { version: typeof EXTENSIO
 export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
   const registry = new LeaseRegistry<PanelPort>({ bootId: crypto.randomUUID() });
   const rebinding = new Map<string, Promise<void>>();
+  const livePorts = new Set<PanelPort>();
 
   function post(port: PanelPort, message: ExtensionMessage): void {
     try {
@@ -118,9 +119,11 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
     } catch {
       return refuse("tab-closed");
     }
+    if (!livePorts.has(port)) return;
     const tabOrigin = originOf(tab.url);
     if (!tabOrigin || !isOriginInLeaseScope(tabOrigin, scope)) return refuse("navigated-out-of-scope");
     if (!(await permitted(tabOrigin))) return refuse("permission-removed");
+    if (!livePorts.has(port)) return;
 
     const { lease, superseded } = registry.open({
       tabId: request.tabId,
@@ -135,7 +138,13 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
     } catch {
       bound = false;
     }
-    if (registry.get(lease.leaseId) !== lease) return; // invalidated while binding
+    if (!livePorts.has(port) || registry.get(lease.leaseId) !== lease) {
+      // A late bind response can arrive after disconnect's first revoke.
+      const lost = registry.invalidate(lease.leaseId, "panel-closed");
+      if (lost) drop([lost], false);
+      await chrome.tabs.sendMessage(lease.tabId, versioned({ kind: "lease.revoke", leaseId: lease.leaseId })).catch(() => undefined);
+      return;
+    }
     if (!bound) {
       const lost = registry.invalidate(lease.leaseId, "content-script-lost");
       if (lost) drop([lost], false);
@@ -165,18 +174,20 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
     const task = (async () => {
       const current = registry.bumpEpoch(leaseId);
       if (!current) return;
+      const epoch = current.epoch;
       let bound = false;
       try {
         bound = await bindContentScript(current);
       } catch {
         bound = false;
       }
-      if (registry.get(leaseId) !== current) return;
+      if (registry.verify(leaseId, epoch, current.ownerPort) !== "ok") return;
       if (!bound) {
         drop(registry.invalidateByTab(current.tabId, "content-script-lost"));
         return;
       }
       const tab = await chrome.tabs.get(current.tabId).catch(() => undefined);
+      if (registry.verify(leaseId, epoch, current.ownerPort) !== "ok") return;
       post(
         current.ownerPort,
         versioned({
@@ -259,9 +270,17 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
       navigation.catch(() => undefined);
       await chrome.tabs.update(lease.tabId, { url: command.url });
       await navigation;
-      if (stopped()) return resultMessage(requestId, false, undefined, "execution stopped");
-      await rebind(lease.leaseId);
+      // The completion listener may already have advanced the epoch. Accept
+      // exactly this navigation's one transition, never a revoked or newer lease.
+      if (registry.verify(lease.leaseId, message.epoch, lease.ownerPort) === "ok") {
+        await rebind(lease.leaseId);
+      } else if (registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) === "ok") {
+        await rebinding.get(lease.leaseId);
+      }
+      const navigationStopped = (): boolean => registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) !== "ok";
+      if (navigationStopped()) return resultMessage(requestId, false, undefined, "execution stopped");
       const landed = await chrome.tabs.get(lease.tabId);
+      if (navigationStopped()) return resultMessage(requestId, false, undefined, "execution stopped");
       return resultMessage(requestId, true, { url: landed.url ?? "" });
     }
     if (!(await permitted(pageOrigin)))
@@ -343,10 +362,12 @@ export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
       port.disconnect();
       return;
     }
+    livePorts.add(port);
     port.onMessage.addListener((raw) => {
-      void onPanelMessage(port, raw);
+      if (livePorts.has(port)) void onPanelMessage(port, raw);
     });
     port.onDisconnect.addListener(() => {
+      livePorts.delete(port);
       drop(registry.invalidateByOwner(port, "panel-closed"), false);
     });
   });

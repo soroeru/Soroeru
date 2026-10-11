@@ -427,6 +427,12 @@ export class VaultV2 {
   private async serialize(): Promise<VaultFileV2> {
     const key = this.requireKey();
     const now = Date.now();
+    const kdf = this.kdf;
+    const metadata = { ...this.metadata, updatedAt: now };
+    const recovery = this.recovery;
+    // Capture every plaintext payload before encryption yields. Lock/close clears
+    // the live maps, and callers may mutate records while encryption is pending.
+    const snapshot = [];
     const records: VaultRecordEnvelope[] = [];
     for (const kind of ENTITY_KINDS) {
       for (const [id, stored] of this.bucket(kind)) {
@@ -438,26 +444,28 @@ export class VaultV2 {
         ) {
           throw new VaultCorruptError("invalid site collection map");
         }
-        const enc = await encryptRecord(key, JSON.stringify(stored.payload));
-        records.push({
+        snapshot.push({
           recordId: id,
           entityKind: kind,
           schemaVersion: stored.schemaVersion,
-          iv: enc.iv,
-          ciphertext: enc.ct,
+          payload: JSON.stringify(stored.payload),
           createdAt: stored.createdAt,
           updatedAt: stored.updatedAt,
         });
       }
     }
+    for (const { payload, ...record } of snapshot) {
+      const enc = await encryptRecord(key, payload);
+      records.push({ ...record, iv: enc.iv, ciphertext: enc.ct });
+    }
     const file: VaultFileV2 = {
       vaultVersion: VAULT_FORMAT_VERSION,
-      kdf: this.kdf,
-      metadata: { ...this.metadata, updatedAt: now },
+      kdf,
+      metadata,
       verifier: await encryptRecord(key, PASSPHRASE_VERIFIER_TOKEN),
       records,
     };
-    if (this.recovery) file.recovery = this.recovery;
+    if (recovery) file.recovery = recovery;
     this.metadata = file.metadata;
     return file;
   }
