@@ -28,7 +28,7 @@ EOF
 COMMON=$(git -C "$WORK" rev-parse --path-format=absolute --git-common-dir)
 mkdir -p "$COMMON/soroeru-issue-worktrees"
 cat > "$COMMON/soroeru-issue-worktrees/365.json" <<EOF
-{"schema":1,"issue":365,"branch":"issue-365-review-epoch","worktree":"$WORK","owner":{"agent":"codex","session_hash":"abc","active":true,"generation":1,"updated_at":"2026-07-13T00:00:00Z"},"handoff_epoch":4,"review":{"epoch":4,"used":0,"limit":2,"reviewer":"codex"}}
+{"schema":1,"issue":365,"branch":"issue-365-review-epoch","worktree":"$WORK","owner":{"agent":"codex","session_hash":"abc","active":true,"generation":1,"updated_at":"2026-07-13T00:00:00Z"},"handoff_epoch":4,"review":{"epoch":4,"used":0,"limit":1,"reviewer":"codex"}}
 EOF
 
 cd "$WORK"
@@ -60,14 +60,22 @@ USED=$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")
   exit 1
 }
 
-# A second queue reservation succeeds; a third is atomically refused.
-[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
-local_ai_review_refund_budget 365 4 "$WORK"
-[ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "1" ]
-[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
-[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "2" ]
+# The epoch's single run (0/1, Issue #581) is used: a second reservation is atomically refused.
 if local_ai_review_reserve_budget 365 4 "$WORK" >/dev/null 2>&1; then
-  printf 'expected exhausted epoch budget to reject a third reservation\n' >&2
+  printf 'expected exhausted 0/1 epoch budget to reject a second reservation\n' >&2
+  exit 1
+fi
+# A refunded reservation frees the single slot again, which is then exhausted once more.
+jq '.review.used=0 | .review.pending=0' \
+  "$COMMON/soroeru-issue-worktrees/365.json" > "$COMMON/soroeru-issue-worktrees/365.json.tmp"
+mv "$COMMON/soroeru-issue-worktrees/365.json.tmp" "$COMMON/soroeru-issue-worktrees/365.json"
+[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "1" ]
+local_ai_review_refund_budget 365 4 "$WORK"
+[ "$(jq -r .review.used "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+[ "$(jq -r '.review.pending // 0' "$COMMON/soroeru-issue-worktrees/365.json")" = "0" ]
+[ "$(local_ai_review_reserve_budget 365 4 "$WORK")" = "1" ]
+if local_ai_review_reserve_budget 365 4 "$WORK" >/dev/null 2>&1; then
+  printf 'expected exhausted 0/1 epoch budget to reject a second reservation after refund\n' >&2
   exit 1
 fi
 

@@ -159,7 +159,9 @@ Issue #581). Commit a single fix pass for that review's actionable findings;
 the hook skips it because the epoch's budget is already used, so no confirming
 re-review runs. Read the result with `scripts/wait-for-local-ai-review.sh
 --print` (§10), then record the review status, findings, fixes, and that the
-fix pass itself was not AI-reviewed in the PR body.
+fix pass itself was not AI-reviewed in the PR body. An epoch created before
+Issue #581 keeps its stored `0/2` budget until its next handoff; in such an
+epoch, put `[skip-review]` in the fix commit message so it is not re-reviewed.
 
 A successful handoff from a different session starts a new monotonically
 increasing epoch with a `0/1` budget, including same-agent recovery after a
