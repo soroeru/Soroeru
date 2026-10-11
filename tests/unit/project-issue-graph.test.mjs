@@ -1341,7 +1341,7 @@ test("a milestone reported while the role program is still running is rejected",
   assert.deepEqual(state.completed, []);
 });
 
-test("NEEDS_REVISION buys one fix pass, and the second rejection blocks the Issue", async () => {
+test("NEEDS_REVISION buys one fix pass, which goes to the milestone without a second review", async () => {
   const run = makeRun();
   await run.invoke(roleInput([item(1)]));
   await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
@@ -1350,21 +1350,16 @@ test("NEEDS_REVISION buys one fix pass, and the second rejection blocks the Issu
   const fix = run.deps.dispatched.at(-1);
   assert.equal(fix.role, "implementer");
   assert.equal(fix.skill, "handoff-issue");
-
-  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
-  assert.equal(run.deps.dispatched.at(-1).reviewPass, 2);
+  assert.equal(fix.fixCycle, 1);
 
   const dispatchesBefore = run.deps.dispatched.length;
-  const result = await run.resume({
-    type: "role-complete",
-    issue: 1,
-    role: "reviewer",
-    verdict: "NEEDS_REVISION",
-  });
-  assert.equal(result.runStatus, "blocked");
-  assert.equal(run.deps.dispatched.length, dispatchesBefore, "no third review pass");
-  assert.deepEqual(result.summary.milestones, []);
-  assert.equal(result.summary.roles[0].status, "blocked");
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  assert.equal(run.deps.dispatched.length, dispatchesBefore, "no second review pass");
+
+  const result = await run.resume({ accepted: true });
+  assert.deepEqual(result.summary.milestones, [{ issue: 1, type: "pr-created" }]);
+  assert.deepEqual(result.summary.completed, [1]);
+  assert.equal(result.summary.roles[0].reviewPasses, 1);
 });
 
 test("an interrupted reviewer resumes as the reviewer on another verified route", async () => {

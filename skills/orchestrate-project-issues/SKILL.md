@@ -57,12 +57,13 @@ to enter an Issue creates the worktree via `issue-implementation`; later impleme
 resume it via `handoff-issue`. **A reviewer runs no skill at all** — both implementation skills
 commit, so it enters the existing worktree read-only.
 
-Review is bounded: a `NEEDS_REVISION` verdict buys one implementer fix pass, `REJECTED` blocks
-immediately, and at most two review passes ever run. An integration-gate rejection reopens the
-program at the implementer on its **own** single allowance, separate from the review passes; a
-second gate rejection blocks the Issue (`integration-gate-rejected-twice`), and a reopen is
-refused outright when no review pass is left to check the fix. Pass `--single-worker` to fall
-back to one worker owning the whole Issue.
+Review is bounded to one pass per Issue (Product Owner decision 2026-10-11, #581): a
+`NEEDS_REVISION` verdict buys one implementer fix pass that is **not** re-reviewed — the Issue
+then goes straight to its milestone gate — and `REJECTED` blocks immediately. An
+integration-gate rejection reopens the program at the implementer on its **own** single
+allowance; that fix is re-checked by the gate, not the reviewer, and a second gate rejection
+blocks the Issue (`integration-gate-rejected-twice`). Pass `--single-worker` to fall back to one
+worker owning the whole Issue.
 
 `parallel-analysis-implement-review` has no role program yet and is never selected.
 

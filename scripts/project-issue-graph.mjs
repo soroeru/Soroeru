@@ -1290,7 +1290,8 @@ async function waitForEventsNode(state, config) {
       lastEventError: null,
     };
     if (next.status === "awaiting-milestone") {
-      // Every role has run and the reviewer passed: the Issue may now enter
+      // Every role has run and the reviewer passed (or its single fix pass is
+      // done, which is not re-reviewed): the Issue may now enter
       // the integration gate for its milestone. Terminal telemetry waits for
       // the release, since the gate may still send the program back.
       updates.pendingGate = { issue, type: expectedMilestone(state, issue) };
