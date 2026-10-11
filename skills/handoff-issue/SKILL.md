@@ -8,7 +8,7 @@ argument-hint: "[issue-number]"
 
 ## Overview
 
-Resume one existing Issue in its existing worktree without losing inherited WIP or allowing concurrent edits. A successful new-session handoff starts a new audit epoch and restores that epoch's local AI review allowance to one run.
+Resume one existing Issue in its existing worktree without losing inherited WIP or allowing concurrent edits. A successful new-session handoff starts a new audit epoch.
 
 ## Input
 
@@ -26,8 +26,8 @@ Use `issue-implementation` instead when the Issue worktree and branch have not b
    ```
 
 3. Stop if metadata, worktree, branch, or Issue identity is missing, corrupt, duplicated, or mismatched. Never create a replacement worktree in this skill.
-4. Inspect the reported HEAD, dirty state, upstream/ahead/behind (`upstream_gone: true` means the tracked remote branch was deleted, for example after a merged PR), Git operation, review lock, owner, epoch, and review budget. Also inspect the Issue, PR state, diff, commits, CI, unresolved review threads, and saved local review results.
-5. Stop while merge, rebase, cherry-pick, bisect, or local AI review is active. An expired timestamp alone is not permission to discard or overwrite work.
+4. Inspect the reported HEAD, dirty state, upstream/ahead/behind (`upstream_gone: true` means the tracked remote branch was deleted, for example after a merged PR), Git operation, owner, and epoch. Also inspect the Issue, PR state, diff, commits, CI, and unresolved review threads.
+5. Stop while merge, rebase, cherry-pick, or bisect is active. An expired timestamp alone is not permission to discard or overwrite work.
 6. Preserve inherited files exactly. Do not stash, commit, reset, clean, switch branches, copy the WIP, or force-remove anything merely to make takeover convenient.
 7. Choose a stable session identifier available to the current runtime. It must distinguish a new session but must not contain credentials or personal data. Run:
 
@@ -37,11 +37,11 @@ Use `issue-implementation` instead when the Issue worktree and branch have not b
      --session <session-id>
    ```
 
-8. Re-run `status --json`. Verify the owner and reviewer match the current agent.
-   - A different session MUST increment `handoff_epoch` and set review budget to `0/1`, including when the agent name is unchanged.
-   - Re-running from the same session MUST keep the same epoch and budget. It must not manufacture extra reviews.
+8. Re-run `status --json`. Verify the owner matches the current agent.
+   - A different session MUST increment `handoff_epoch`, including when the agent name is unchanged.
+   - Re-running from the same session MUST keep the same epoch.
 9. Move every subsequent git and file operation to the absolute `worktree` path returned by status. The primary clone remains human-only.
-10. Post a concise audit comment to the Issue before a PR exists, or to the PR once one exists. Include epoch, old/new agent and redacted session identifiers, HEAD, dirty/unpushed/operation/review-lock status, prior epoch review usage, new `0/1` budget, and the next known step.
+10. Post a concise audit comment to the Issue before a PR exists, or to the PR once one exists. Include epoch, old/new agent and redacted session identifiers, HEAD, dirty/unpushed/operation status, and the next known step.
 11. Summarize current state, inherited changes, unresolved findings, remaining work, and risks to the user. Then continue the Issue workflow in the same worktree.
 
 ## Stop Conditions
@@ -50,7 +50,7 @@ Stop and report evidence when any of these is true:
 
 - Issue worktree or branch was never created: route to `issue-implementation`.
 - PR state is `MERGED`: route to merge cleanup; do not resume implementation.
-- Another live session or local AI review still owns the worktree.
+- Another live session still owns the worktree.
 - Metadata points to a different Issue or branch.
 - A Git operation is incomplete.
 - Safe state cannot be established from local and GitHub evidence.
@@ -62,8 +62,6 @@ Stop and report evidence when any of these is true:
 | Temptation | Required response |
 | --- | --- |
 | “The remote branch is gone, so start over.” | Preserve and inspect the local worktree; it may contain unpublished work. |
-| “The lease expired, so takeover is automatically safe.” | Diagnose owner, Git operation, and review process before explicit handoff. |
+| “The lease expired, so takeover is automatically safe.” | Diagnose owner and Git operation before explicit handoff. |
 | “Stash or reset the dirty files first.” | Leave inherited WIP in place until it is understood. |
-| “Reuse the old review remainder.” | A successful new-session handoff gets a new epoch with one run. |
-| “Run handoff again to get another review.” | Same-session invocation is idempotent and must not reset the budget. |
 | “PR is closed, so cleanup is safe.” | Cleanup requires GitHub state `MERGED` and all local safety checks. |

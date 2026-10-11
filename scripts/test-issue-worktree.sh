@@ -74,8 +74,6 @@ assert_eq "$(git -C "$WORKTREE" branch --show-current)" "issue-365-demo"
 STATUS=$("$HELPER" status 365 --repo "$REPO" --json)
 assert_eq "$(printf '%s' "$STATUS" | jq -r .issue)" "365"
 assert_eq "$(printf '%s' "$STATUS" | jq -r .handoff_epoch)" "1"
-assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_used)" "0"
-assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_limit)" "1"
 
 OUT=$(assert_fails "$HELPER" acquire 365 --agent claude --session session-b --repo "$REPO")
 assert_contains "$OUT" "use handoff"
@@ -95,37 +93,12 @@ printf '999999:%s\n' "$(date +%s)" > "$COMMON/soroeru-issue-worktrees/365.lock/o
 "$HELPER" acquire 365 --agent codex --session session-a --repo "$REPO"
 [ ! -e "$COMMON/soroeru-issue-worktrees/365.lock" ] || fail "dead lifecycle lock was not reclaimed"
 
-# Review helpers may run in a command-substitution child while their parent PID
-# remains alive. Their generation-bearing lock is reclaimable after timeout.
-mkdir "$COMMON/soroeru-issue-worktrees/365.lock"
-printf '%s:0:1\n' "$$" > "$COMMON/soroeru-issue-worktrees/365.lock/owner"
-"$HELPER" acquire 365 --agent codex --session session-a --repo "$REPO"
-[ ! -e "$COMMON/soroeru-issue-worktrees/365.lock" ] || fail "expired review state lock was not reclaimed"
-
 jq '.owner.pid=999999' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
-
-jq '.review.pending=1' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
-OUT=$(assert_fails "$HELPER" handoff 365 --agent codex --session session-b --repo "$REPO")
-assert_contains "$OUT" "review launch is pending"
-jq '.review.pending=0' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp" "$STATE_FILE"
 
 "$HELPER" handoff 365 --agent codex --session session-b --repo "$REPO" >/dev/null
 STATUS=$("$HELPER" status 365 --repo "$REPO" --json)
 assert_eq "$(printf '%s' "$STATUS" | jq -r .handoff_epoch)" "2"
-assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_used)" "0"
-assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_limit)" "1"
-assert_eq "$(jq -r '.history[-1].new_review_limit' "$STATE_FILE")" "1"
 assert_eq "$(printf '%s' "$STATUS" | jq -r .owner.agent)" "codex"
-
-mkdir -p "$WORKTREE/state/ai-reviews"
-: > "$WORKTREE/state/ai-reviews/.lock"
-OUT=$(assert_fails "$HELPER" handoff 365 --agent claude --session session-c --repo "$REPO")
-assert_contains "$OUT" "local AI review"
-
-# A dead-PID lock is reclaimed instead of permanently stranding the Issue.
-printf '999999:1\n' > "$WORKTREE/state/ai-reviews/.lock"
-"$HELPER" handoff 365 --agent codex --session session-b --repo "$REPO" >/dev/null
-[ ! -e "$WORKTREE/state/ai-reviews/.lock" ] || fail "stale review lock was not removed"
 
 "$HELPER" release 365 --session session-b --repo "$REPO" >/dev/null
 OUT=$(assert_fails "$HELPER" acquire 365 --agent claude --session session-c --repo "$REPO")

@@ -117,11 +117,10 @@ state_lock_mtime() {
 }
 
 reclaim_stale_state_lock() {
-  local owner="$LOCK_DIR/owner" pid timestamp generation now age mtime
+  local owner="$LOCK_DIR/owner" pid timestamp now age mtime
   pid=''
   timestamp=''
-  generation=''
-  IFS=':' read -r pid timestamp generation < "$owner" 2>/dev/null || true
+  IFS=':' read -r pid timestamp _ < "$owner" 2>/dev/null || true
   case "$pid:$timestamp" in
     *[!0-9:]*|::*|*:)
       mtime=$(state_lock_mtime "$LOCK_DIR") || return 1
@@ -133,8 +132,7 @@ reclaim_stale_state_lock() {
       now=$(date +%s)
       age=$((now - timestamp))
       if kill -0 "$pid" 2>/dev/null; then
-        [ -n "$generation" ] || return 1
-        [ "$age" -ge "${ISSUE_WORKTREE_REVIEW_STATE_LOCK_TIMEOUT_SEC:-30}" ] || return 1
+        return 1
       fi
       ;;
   esac
@@ -170,7 +168,7 @@ unlock_state() {
 
 require_state() {
   [ -f "$STATE_FILE" ] || die "Issue #$ISSUE has no lifecycle metadata; use issue-implementation for new work"
-  jq -e '.schema == 1 and .issue and .branch and .worktree and .owner and .review' "$STATE_FILE" >/dev/null 2>&1 \
+  jq -e '(.schema == 1 or .schema == 2) and .issue and .branch and .worktree and .owner' "$STATE_FILE" >/dev/null 2>&1 \
     || die "Issue #$ISSUE lifecycle metadata is missing or corrupt"
 }
 
@@ -181,36 +179,6 @@ write_state() {
   mv "$tmp" "$STATE_FILE"
 }
 
-review_lock_present() {
-  local worktree=$1
-  local lock="$worktree/state/ai-reviews/.lock" pid timestamp now age mtime
-  [ -e "$lock" ] || return 1
-  pid=''
-  timestamp=''
-  IFS=':' read -r pid timestamp < "$lock" || true
-  case "$pid:$timestamp" in
-    *[!0-9:]*|::*|*:)
-      if mtime=$(stat -f %m "$lock" 2>/dev/null); then :
-      elif mtime=$(stat -c %Y "$lock" 2>/dev/null); then :
-      else return 0
-      fi
-      now=$(date +%s)
-      age=$((now - mtime))
-      if [ "$age" -lt 5 ]; then
-        return 0
-      fi
-      rm -f "$lock"
-      note "removed malformed stale local AI review lock"
-      return 1
-      ;;
-  esac
-  if kill -0 "$pid" 2>/dev/null; then
-    return 0
-  fi
-  rm -f "$lock"
-  note "removed stale local AI review lock from dead pid=$pid"
-  return 1
-}
 
 git_operation() {
   local worktree=$1 gitdir
@@ -237,7 +205,7 @@ worktree_registered() {
 
 state_json() {
   require_state
-  local worktree branch head dirty operation lock upstream upstream_ref upstream_gone ahead behind stash_count cwd_in_use
+  local worktree branch head dirty operation upstream upstream_ref upstream_gone ahead behind stash_count cwd_in_use
   worktree=$(jq -r .worktree "$STATE_FILE")
   branch=$(jq -r .branch "$STATE_FILE")
   [ -d "$worktree" ] || die "registered Issue worktree directory is missing: $worktree"
@@ -247,7 +215,6 @@ state_json() {
   head=$(git -C "$worktree" rev-parse HEAD)
   if [ -n "$(git -C "$worktree" status --porcelain)" ]; then dirty=true; else dirty=false; fi
   operation=$(git_operation "$worktree")
-  if review_lock_present "$worktree"; then lock=true; else lock=false; fi
   # rev-parse echoes '@{upstream}' when the tracked ref was pruned, so read the
   # configured upstream and treat a missing ref as gone (no upstream).
   upstream_ref=$(git -C "$worktree" for-each-ref --format='%(upstream)' "refs/heads/$branch")
@@ -277,10 +244,10 @@ state_json() {
   jq -c \
     --arg head "$head" --arg operation "$operation" --arg upstream "$upstream" \
     --argjson upstream_gone "$upstream_gone" \
-    --argjson dirty "$dirty" --argjson review_lock "$lock" \
+    --argjson dirty "$dirty" \
     --argjson ahead "$ahead" --argjson behind "$behind" --argjson stash_count "$stash_count" \
     --argjson cwd_in_use "$cwd_in_use" \
-    '. + {head:$head,dirty:$dirty,git_operation:$operation,review_lock:$review_lock,upstream:$upstream,upstream_gone:$upstream_gone,ahead:$ahead,behind:$behind,stash_count:$stash_count,cwd_in_use:$cwd_in_use}' \
+    '. + {head:$head,dirty:$dirty,git_operation:$operation,upstream:$upstream,upstream_gone:$upstream_gone,ahead:$ahead,behind:$behind,stash_count:$stash_count,cwd_in_use:$cwd_in_use}' \
     "$STATE_FILE"
 }
 
@@ -327,7 +294,7 @@ case "$COMMAND" in
       --argjson issue "$ISSUE" --arg slug "$SLUG" --arg branch "$BRANCH" --arg worktree "$WORKTREE" \
       --arg agent "$AGENT" --arg session_hash "$HASH" --arg now "$NOW" --arg host "$HOST" --arg head "$HEAD" \
       --argjson owner_pid "$PPID" --argjson expires_at_epoch "$EXPIRES" \
-      '{schema:1,issue:$issue,slug:$slug,branch:$branch,worktree:$worktree,status:"active",owner:{agent:$agent,session_hash:$session_hash,active:true,generation:1,host:$host,pid:$owner_pid,expires_at_epoch:$expires_at_epoch,updated_at:$now},handoff_epoch:1,review:{epoch:1,used:0,pending:0,limit:1,reviewer:$agent},history:[{event:"create",epoch:1,agent:$agent,session_hash:$session_hash,head:$head,at:$now}] }')
+      '{schema:2,issue:$issue,slug:$slug,branch:$branch,worktree:$worktree,status:"active",owner:{agent:$agent,session_hash:$session_hash,active:true,generation:1,host:$host,pid:$owner_pid,expires_at_epoch:$expires_at_epoch,updated_at:$now},handoff_epoch:1,history:[{event:"create",epoch:1,agent:$agent,session_hash:$session_hash,head:$head,at:$now}] }')
     write_state "$JSON_VALUE"
     unlock_state
     printf '%s\n' "$WORKTREE"
@@ -336,9 +303,9 @@ case "$COMMAND" in
   status)
     VALUE=$(state_json)
     if [ "$JSON" = "1" ]; then
-      printf '%s\n' "$VALUE" | jq '{issue,slug,branch,worktree,status,owner,handoff_epoch,review_budget_used:.review.used,review_pending:(.review.pending // 0),review_budget_limit:.review.limit,reviewer:.review.reviewer,head,dirty,git_operation,review_lock,upstream,upstream_gone,ahead,behind,stash_count,cwd_in_use}'
+      printf '%s\n' "$VALUE" | jq '{issue,slug,branch,worktree,status,owner,handoff_epoch,head,dirty,git_operation,upstream,upstream_gone,ahead,behind,stash_count,cwd_in_use}'
     else
-      printf '%s\n' "$VALUE" | jq -r '"Issue #\(.issue)  branch=\(.branch)  epoch=\(.handoff_epoch)  owner=\(.owner.agent)  dirty=\(.dirty)  review=\(.review.used)/\(.review.limit)\nworktree=\(.worktree)\nHEAD=\(.head) upstream=\(.upstream) upstream_gone=\(.upstream_gone) ahead=\(.ahead) behind=\(.behind) operation=\(.git_operation) review_lock=\(.review_lock)"'
+      printf '%s\n' "$VALUE" | jq -r '"Issue #\(.issue)  branch=\(.branch)  epoch=\(.handoff_epoch)  owner=\(.owner.agent)  dirty=\(.dirty)\nworktree=\(.worktree)\nHEAD=\(.head) upstream=\(.upstream) upstream_gone=\(.upstream_gone) ahead=\(.ahead) behind=\(.behind) operation=\(.git_operation)"'
     fi
     ;;
 
@@ -350,7 +317,7 @@ case "$COMMAND" in
     HASH=$(session_hash "$SESSION")
     OLD_HASH=$(jq -r .owner.session_hash "$STATE_FILE")
     if [ "$OLD_HASH" != "$HASH" ]; then
-      die "lease belongs to another session; use handoff so the epoch and review budget are reset"
+      die "lease belongs to another session; use handoff so the epoch is reset"
     fi
     NOW=$(utc_now)
     HOST=$(hostname 2>/dev/null || printf unknown)
@@ -369,8 +336,6 @@ case "$COMMAND" in
     require_state
     WORKTREE=$(jq -r .worktree "$STATE_FILE")
     [ -d "$WORKTREE" ] || die "Issue worktree directory is missing: $WORKTREE"
-    [ "$(jq -r '(.review.pending // 0)' "$STATE_FILE")" -eq 0 ] || die "local AI review launch is pending; wait before handoff"
-    review_lock_present "$WORKTREE" && die "local AI review is running; wait before handoff"
     OPERATION=$(git_operation "$WORKTREE")
     [ "$OPERATION" = "none" ] || die "Git operation is in progress ($OPERATION); resolve it before handoff"
     HASH=$(session_hash "$SESSION")
@@ -393,12 +358,11 @@ case "$COMMAND" in
     EXPIRES=$(lease_expiry)
     VALUE=$(jq -c --arg agent "$AGENT" --arg hash "$HASH" --arg now "$NOW" --arg head "$HEAD" --arg host "$HOST" \
       --argjson pid "$PPID" --argjson expires "$EXPIRES" \
-      '.review.used as $old_review_used
-       | .handoff_epoch += 1
+      '.handoff_epoch += 1
        | .owner.agent=$agent | .owner.session_hash=$hash | .owner.active=true
        | .owner.generation += 1 | .owner.host=$host | .owner.pid=$pid | .owner.expires_at_epoch=$expires | .owner.updated_at=$now
-       | .review={epoch:.handoff_epoch,used:0,pending:0,limit:1,reviewer:$agent}
-       | .history += [{event:"handoff",epoch:.handoff_epoch,agent:$agent,session_hash:$hash,head:$head,old_review_used:$old_review_used,new_review_limit:1,at:$now}]' "$STATE_FILE")
+       | del(.review)
+       | .history += [{event:"handoff",epoch:.handoff_epoch,agent:$agent,session_hash:$hash,head:$head,at:$now}]' "$STATE_FILE")
     write_state "$VALUE"
     unlock_state
     ;;
@@ -425,7 +389,6 @@ case "$COMMAND" in
     [ "$(printf '%s' "$VALUE" | jq -r .owner.active)" = "false" ] || die "active lease must be released before cleanup"
     [ "$(printf '%s' "$VALUE" | jq -r .dirty)" = "false" ] || die "worktree is dirty; cleanup refused"
     [ "$(printf '%s' "$VALUE" | jq -r .git_operation)" = "none" ] || die "Git operation is in progress; cleanup refused"
-    [ "$(printf '%s' "$VALUE" | jq -r .review_lock)" = "false" ] || die "local AI review is running; cleanup refused"
     [ "$(printf '%s' "$VALUE" | jq -r .cwd_in_use)" = "false" ] || die "worktree is the cwd of a running process; cleanup refused"
     if [ -n "${ISSUE_WORKTREE_PR_STATE:-}" ]; then
       PR_STATE=$ISSUE_WORKTREE_PR_STATE
