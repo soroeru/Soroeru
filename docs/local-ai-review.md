@@ -140,7 +140,7 @@ The hook skips when:
 
 - `LOCAL_AI_REVIEW_RUNNING=1`
 - branch is neither a valid Issue lifecycle branch nor a legacy configured prefix
-- the current handoff epoch has consumed its two-review budget
+- the current handoff epoch has consumed its one-review budget
 - the commit is a merge commit
 - rebase or cherry-pick is in progress
 - commit message contains `[skip-review]`
@@ -153,21 +153,16 @@ The hook skips when:
 Do not use it manually to suppress review for ordinary commits; use
 `[skip-review]` when the skip should be visible in Git history.
 
-The repository's single-Issue implementation workflow is capped at **two**
-local AI review runs per handoff epoch (never open-ended within an epoch): after the
-first review, commit a fix pass for its actionable findings *without*
-`LOCAL_AI_REVIEW_RUNNING=1`, so the hook reviews that fix commit too (a
-confirming second review). If that second review still has actionable
-findings, commit one more fix pass *with* `LOCAL_AI_REVIEW_RUNNING=1` so the
-hook does not start a third review — the cap holds regardless of what the
-second review finds. If the first review already comes back with nothing
-actionable, no second review is needed. Read each result with
-`scripts/wait-for-local-ai-review.sh --print` (§10), then record the review
-status, findings, and fixes in the PR body instead of extending the loop
-further.
+The repository's single-Issue implementation workflow is capped at **one**
+local AI review run per handoff epoch (Product Owner decision 2026-10-11,
+Issue #581). Commit a single fix pass for that review's actionable findings;
+the hook skips it because the epoch's budget is already used, so no confirming
+re-review runs. Read the result with `scripts/wait-for-local-ai-review.sh
+--print` (§10), then record the review status, findings, fixes, and that the
+fix pass itself was not AI-reviewed in the PR body.
 
 A successful handoff from a different session starts a new monotonically
-increasing epoch with a `0/2` budget, including same-agent recovery after a
+increasing epoch with a `0/1` budget, including same-agent recovery after a
 session limit. Review artifacts from earlier epochs remain audit history. A
 same-session repeated handoff is idempotent and does not create another epoch
 or restore budget. Artifact bodies and `last-reviewed.json` record the epoch;

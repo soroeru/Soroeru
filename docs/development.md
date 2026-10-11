@@ -953,22 +953,19 @@ unless the user explicitly changes it:
    running `scripts/wait-for-local-ai-review.sh --print` (see
    [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
    the review-count cap and follow-up policy) rather than polling
-   `state/ai-reviews/` turn-by-turn. This workflow allows up to two local AI
-   review runs per handoff epoch: apply a fix pass for the first review's actionable
-   findings and commit it _without_ `LOCAL_AI_REVIEW_RUNNING=1` (a confirming
-   second review runs on that fix commit); if that second review still has
-   actionable findings, apply one more fix pass and commit it _with_
-   `LOCAL_AI_REVIEW_RUNNING=1` so a third review never starts.
+   `state/ai-reviews/` turn-by-turn. This workflow allows one local AI review
+   run per handoff epoch: apply a single fix pass for its actionable findings
+   and commit it normally; the hook skips it because the epoch budget is used,
+   so no confirming re-review runs.
 5. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged. Also include the local AI review status for each
-   run, actionable findings, and what was fixed. If review did not run or
-   residual risk remains once the two-review cap is reached, state that
-   clearly.
+   when the PR is merged. Also include the local AI review status, actionable
+   findings, and what was fixed. State that the fix pass was not AI-reviewed,
+   and state clearly if review did not run or residual risk remains.
 
-The workflow intentionally avoids an open-ended review loop, capped at two
-review runs per handoff epoch. A successful new-session handoff (including the
-same agent after a session limit) starts a fresh `0/2` epoch; same-session
+The workflow intentionally avoids a review loop, capped at one review run per
+handoff epoch. A successful new-session handoff (including the same agent after
+a session limit) starts a fresh `0/1` epoch; same-session
 re-entry is idempotent. If the user gives multiple Issue numbers, ask which
 single Issue to implement first.
 
