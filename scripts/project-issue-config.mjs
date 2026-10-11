@@ -13,6 +13,7 @@ const RUN_KEYS = new Set([
   "releasePolicy",
   "unavailableModels",
   "unavailableAgents",
+  "parentAsWorker",
 ]);
 
 function fail(reason) {
@@ -51,6 +52,12 @@ function parseUnavailableAgents(value) {
   return value.map((agent) => agent.trim());
 }
 
+/** Opt-in (Issue #589): the parent runtime may also receive worker routes. */
+function parseParentAsWorker(value) {
+  if (typeof value !== "boolean") fail("config-invalid-parent-as-worker");
+  return value;
+}
+
 function normalizeDocument(document) {
   if (document.errors.length) fail("config-invalid-yaml");
   const root = assertObject(document.toJS(), "config-invalid-root");
@@ -79,6 +86,7 @@ function normalizeDocument(document) {
     releasePolicy,
     unavailableModels: parseUnavailableModels(run.unavailableModels),
     unavailableAgents: parseUnavailableAgents(run.unavailableAgents ?? "none"),
+    parentAsWorker: parseParentAsWorker(run.parentAsWorker ?? false),
   };
 }
 

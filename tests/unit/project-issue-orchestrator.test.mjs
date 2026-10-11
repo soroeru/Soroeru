@@ -532,6 +532,21 @@ test("excludes every model of the parent agent from the worker route pool", () =
   );
 });
 
+test("parentAsWorker opts the parent agent back into the worker route pool (Issue #589)", () => {
+  const capabilities = [workerRoute("Codex", "gpt-5"), workerRoute("Claude", "sonnet")];
+  assert.deepEqual(
+    selectWorkerRoutes(capabilities, { parentAgent: "Codex", parentAsWorker: true }).map(({ agent }) => agent),
+    ["Codex", "Claude"],
+  );
+  // The parent is still validated, and run-scoped exclusions still win.
+  assert.throws(() => selectWorkerRoutes(capabilities, { parentAgent: "agy", parentAsWorker: true }), /runtime-retired/);
+  assert.deepEqual(
+    selectWorkerRoutes(capabilities, { parentAgent: "Codex", parentAsWorker: true, unavailableAgents: ["Codex"] })
+      .map(({ agent }) => agent),
+    ["Claude"],
+  );
+});
+
 test("does not treat retired agy as an eligible Gemini runtime alias", () => {
   const capabilities = [workerRoute("Gemini", "fixture"), workerRoute("Claude", "sonnet")];
   assert.throws(() => selectWorkerRoutes(capabilities, { parentAgent: "agy" }), /runtime-retired/);
@@ -868,7 +883,12 @@ test("loads and normalizes the orchestrator YAML config", async () => {
     releasePolicy: "merged",
     unavailableModels: [],
     unavailableAgents: ["Codex"],
+    parentAsWorker: false,
   });
+  await writeFile(configPath, "run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  parentAsWorker: true\n");
+  assert.equal((await loadOrchestratorConfig(configPath, { cwd: directory })).parentAsWorker, true);
+  await writeFile(configPath, "run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  parentAsWorker: yes please\n");
+  await assert.rejects(loadOrchestratorConfig(configPath, { cwd: directory }), /config-invalid-parent-as-worker/);
 });
 
 test("rejects malformed and unsafe orchestrator YAML configs", async () => {
@@ -1248,6 +1268,7 @@ test("parses the documented operational Project CLI flags", () => {
     },
   );
   assert.equal(parseCliArgs(["--parent-provider", "Claude"]).parentAgent, "Claude");
+  assert.equal(parseCliArgs(["--parent-as-worker"]).parentAsWorker, true);
   assert.throws(() => parseCliArgs(["--mystery"]), /unknown-flag:--mystery/);
 });
 

@@ -175,7 +175,11 @@ constraints, and the result includes `workerRoutes` — the run-scoped pool of
 verified worker capability records after `--unavailable-agent` /
 `--unavailable-model` exclusions and Parent-agent exclusion. The Parent agent
 runtime is excluded by agent identity, including all of its models and
-selectors: a Codex Parent means no Codex worker route. The orchestrating agent
+selectors: a Codex Parent means no Codex worker route. To let the calling
+Parent also work Issues, pass `--parent-as-worker` (to
+`project-issue-orchestrator.mjs` or `project-issue-graph.mjs`) or set
+`run.parentAsWorker: true` in the YAML config (Issue #589, default `false`);
+the Parent's verified worker records then join the pool. The orchestrating agent
 assigns each runnable Issue to one of the remaining routes at run time. If the
 remaining pool is smaller than `maxParallel`, the run proceeds with the
 available capacity; if Issues are runnable but the pool is empty the run stops
@@ -1130,7 +1134,7 @@ Adoption takes the maximum existing/adopted risk and Size, preserves dependencie
 and `changeScopeCount`, and recomputes provisional mode and role program.
 An explicit `modeOverride` stays separate and must fit the effective risk/Size;
 high/critical always use planner → implementer → independent reviewer.
-No Size or status is written to GitHub. Parent runtimes remain excluded.
+No Size or status is written to GitHub. Parent runtimes remain excluded unless the run opts them in (`parentAsWorker`).
 Single-worker requests expose `triage-single-worker-shadow` and do not adopt roles.
 
 Every assisted dispatch checks exact model availability; first dispatch also
