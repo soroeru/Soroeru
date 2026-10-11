@@ -16,8 +16,8 @@
 
 Use `orchestrate-project-issues` only when coordinating multiple Project Issues. Dispatch
 reasoning-heavy bounded work to `deep-reasoner` and mechanical, fully specified work to
-`fast-worker`; their definitions constrain their tools. Local AI review and Issue lifecycle
-skills remain authoritative regardless of the orchestrating model.
+`fast-worker`; their definitions constrain their tools. Issue lifecycle skills remain
+authoritative regardless of the orchestrating model.
 
 Worker prompts must state four labeled parts:
 
@@ -35,7 +35,4 @@ orchestrator state. Follow the tighter worker contract in the orchestration skil
 - Do only the requested work. Pause only for destructive action, a material scope change, or
   information only the user can provide.
 - Ground progress and verification claims in tool output.
-- For background local review, run `scripts/wait-for-local-ai-review.sh --print` once in the
-  background and read the result from its output; use one bounded fallback wakeup and do not
-  repeatedly poll review files or process output.
 - Keep final reports concise: outcome, changed files, checks, omissions, and residual risk.

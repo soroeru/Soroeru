@@ -19,7 +19,6 @@ Soroeru.
 | [`manual-test.md`](manual-test.md) | Manual test checklist; §0 owns the Soroeru unsigned DMG smoke. |
 | [`user-manual.md`](user-manual.md) | User-facing manual for the current Soroeru Mac private beta: DMG install, vault setup, CSV import, Visibility collection, disclosure ledger, insights, wall hand-off, and privacy boundaries. |
 | [`github-operations.md`](github-operations.md) | Issue, branch, label/priority, commit, pull request, review, and merge workflow rules. §3 also owns the design-doc policy below. |
-| [`local-ai-review.md`](local-ai-review.md) | Local AI review hook setup, behavior, outputs, and troubleshooting. |
 | `design/*.md` | Per-Issue detailed design docs produced by Plan mode at the start of implementation (see [`github-operations.md`](github-operations.md) §3). Session-scoped: read only the doc for the Issue being implemented. |
 
 ## Primary Sources

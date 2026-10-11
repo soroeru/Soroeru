@@ -72,9 +72,8 @@ report residual risk honestly.
   `scripts/issue-worktree.sh`; the primary clone is human-only. Resume inherited work with the
   `handoff-issue` skill. Never discard another worker's WIP.
 - Follow [`docs/github-operations.md`](docs/github-operations.md) for branches, commits, PRs, and
-  review. Local AI review behavior is in [`docs/local-ai-review.md`](docs/local-ai-review.md).
-- Do not commit secrets, real personal data, local state, generated caches, or
-  `state/ai-reviews/` artifacts.
+  review.
+- Do not commit secrets, real personal data, local state, or generated caches.
 - Update user docs when behavior changes and technical docs when setup, commands, architecture,
   security, or workflow changes. `README.md` stays user-facing.
 - Read only the Issue-specific file under `docs/design/`, when one exists. Do not bulk-load the

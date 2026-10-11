@@ -1,6 +1,6 @@
 ---
 name: issue-implementation
-description: Implement exactly one explicit GitHub Issue in its dedicated worktree, including local review, push, and PR creation. Use for a new single-Issue implementation; use handoff-issue when its worktree already exists.
+description: Implement exactly one explicit GitHub Issue in its dedicated worktree, including reviewer-role dispatch, push, and PR creation. Use for a new single-Issue implementation; use handoff-issue when its worktree already exists.
 argument-hint: "[issue-number]"
 ---
 
@@ -64,41 +64,32 @@ Follow this workflow:
    an existing local `origin/main`, then local `main`; do not create either one
    with ad hoc Git commands.
 3. Implement the Issue (all edits and commits stay in the Issue worktree).
-4. After committing, check the commit command's own output for
-   `[local-ai-review] queued ...`. If present, wait for that result by
-   running `scripts/wait-for-local-ai-review.sh --unit <unit[,unit...]> --print` via a
-   single backgrounded shell command (Claude Code: `Bash` with
-   `run_in_background: true`) so its one completion notification replaces
-   manual re-checking — never a chain of short-interval wakeups or ad hoc
-   `ls`/`ps`/`cat` checks against `state/ai-reviews/` in between. Pair it with
-   exactly one long fallback wakeup (comfortably above the script's
-   `--timeout`) as a dead-man's switch only, not a second poll loop. See
-   `docs/local-ai-review.md` §10 for the script's flags and matching
-   mechanics. Read the verdict and findings from that command's `--print`
-   output; direct reads of `state/ai-reviews/` are denied by the repository
-   guard. This workflow allows **one local AI review run in the current
-   handoff epoch** (see `docs/local-ai-review.md` §6): apply a single fix pass
-   for its actionable findings (`NIT_ONLY` handled per
-   `docs/local-ai-review.md` §7) and commit it normally. The hook skips that
-   commit because the epoch budget is used, so no confirming re-review runs —
-   do not wait for one.
-   Wait for reviews under **this** worktree's `state/ai-reviews/` only.
-5. When local development is complete, push the branch to GitHub and create a
-   PR. Include `Closes #<issue>` in the PR body so GitHub closes the Issue
-   automatically when the PR is merged. Also include the local AI review status,
-   the actionable findings, and what was fixed. State that the fix pass was not
-   AI-reviewed, and state clearly if the review did not run or residual risk
-   remains.
+4. Push the branch to GitHub and create a PR. Include `Closes #<issue>` in the
+   PR body so GitHub closes the Issue automatically when the PR is merged.
+5. Dispatch a reviewer role from a **different** verified route using
+   `node scripts/project-issue-dispatch.mjs --role reviewer
+   --execution-mode direct-review --review-pass 1` (plus the route, issue, release
+   policy, and next-milestone flags). The reviewer works read-only in the existing
+   Issue worktree: it reads the Issue acceptance criteria, the PR diff, changed
+   file paths, and the test summary, then posts one PR comment whose first line is
+   `role=reviewer pass=1 verdict=<PASS|NEEDS_REVISION|REJECTED>`.
+   - **`PASS`**: review is complete. Include the verdict in the PR description.
+   - **`NEEDS_REVISION`**: apply one implementer fix pass — push to the same
+     branch and post a `role=implementer fix-cycle=1` PR comment stating what
+     changed per finding. The fix pass is **not** re-reviewed. Include the
+     verdict, findings, and fix summary in the PR description.
+   - **`REJECTED`**: block and report. Do not apply a fix pass.
+
+   If no distinct route is available, run on a shared route and record
+   `same-route-reviewer:*` in the PR description. If route discovery fails,
+   state that clearly and proceed without a reviewer pass.
 
 ## Boundaries
 
 - Respect repository instructions, sandbox rules, external-network approval
   requirements, and destructive-command safety boundaries.
 - Do not skip the Issue worktree start gate. Do not commit on the primary clone.
-- Do not skip local AI review unless the repository instructions explicitly
-  allow it.
-- Do not run a local AI review loop. This workflow allows one local AI review
-  run per handoff epoch; the fix pass is not re-reviewed, and the hook's epoch
-  budget enforces that.
+- Do not run an open-ended reviewer loop. This workflow allows one review pass
+  and at most one implementer fix cycle; the fix pass is never re-reviewed.
 - Treat PR close as distinct from merge. Close a PR only when the user or the
   repository workflow explicitly asks to close it instead of merging it.
