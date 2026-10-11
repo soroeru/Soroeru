@@ -58,18 +58,18 @@ export class ChromeBridgeProtocolError extends Error {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function requireString(record: Record<string, unknown>, key: string): string {
+export function requireString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value !== "string" || value.length === 0)
     throw new ChromeBridgeProtocolError(`${key} must be a non-empty string`);
   return value;
 }
 
-function rejectUnknownKeys(record: Record<string, unknown>, allowed: readonly string[]): void {
+export function rejectUnknownKeys(record: Record<string, unknown>, allowed: readonly string[]): void {
   const unknown = Object.keys(record).find((key) => !allowed.includes(key));
   if (unknown) throw new ChromeBridgeProtocolError(`unknown field: ${unknown}`);
 }
