@@ -483,3 +483,30 @@ CATASHIRO_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visib
 - [ ] フィールド検出は現在 **日本語のみ**
 - [ ] AI プロバイダモードは任意で、ユーザー設定の鍵を使い、受け取るのはフォーム構造 / 規約テキストのみ。
       生の個人情報は決して受け取らない
+
+## Cloud foundation and public stub verification (#559)
+
+Use a development project with the #559 Terraform configuration and fake data only.
+Run `node scripts/check-cloud-deployment.mjs <project-id>` after each runtime deployment.
+It checks all public stubs, ticket payload binding/replay rejection, log exclusions, runtime
+service accounts and instance/concurrency limits. A 503 from the telemetry stub is expected
+until #563; it must not acknowledge data that was not stored.
+
+In Cloud Logging, check the deployment interval for both `soroeru-api` and
+`soroeru-pii-fallback`. Application stdout entries must contain only `errorCategory` and
+`latencyMs`, never IP, origin, site, consent ID, ticket, request/response content or values.
+Confirm the project exclusion is enabled for both services' request/system logs and that no
+additional log sink captures excluded request logs. In Cloud Trace, confirm no application spans
+or body capture. #559 stubs do not call Vertex AI; inspect request/response logging and cache
+configuration again before deploying #561/#562.
+
+Inspect Firestore `budgets/<UTC date>`: only the integer `count` is written, and the smoke test
+increments it twice. Verify the monthly budget alert includes only the new project and has
+50%/90%/100% thresholds. Notifications do not enforce a spending cap.
+Verify the fallback service account has Vertex AI access and specific ticket-secret access,
+but no Firestore or BigQuery grant; repeat the permission check after future IAM changes.
+
+After the PR merges, confirm `cloud / validate` succeeds and `cloud / deploy` uses GitHub OIDC
+from main, publishes the commit's image digest, applies runtime Terraform and passes the smoke
+check. A PR run must execute validation only. Confirm environment branch restriction is main.
+The deployment workflow must not contain a service-account key or upload local state as artifacts.

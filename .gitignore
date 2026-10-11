@@ -28,3 +28,15 @@ release/
 out/
 dist-electron/
 coverage/
+
+# Terraform state, credentials and local deployment values
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.example.tfvars
+gha-creds-*.json
+
+/plan.log
+/apply.log

@@ -70,7 +70,7 @@ Before any agent creates a branch or edits files for Issue work — including th
 
 `issue-worktree.sh create` verifies the GitHub Issue, attempts to fetch
 `origin/main`, rejects partial or duplicate state, creates the named
-branch/worktree, and starts epoch 1 with a `0/2` review budget. If the fetch is
+branch/worktree, and starts epoch 1 with a `0/1` review budget. If the fetch is
 temporarily unavailable, it may use an existing local `origin/main`, then local
 `main` as a last-resort base; creation fails when none is available. Do not
 implement on detached HEAD or check out local `main` in an agent worktree.
@@ -126,7 +126,7 @@ bash scripts/issue-worktree.sh handoff <issue> \
 ```
 
 A successful different-session handoff increments `handoff_epoch`, selects the
-new current reviewer, and resets that epoch's review budget to `0/2`. This also
+new current reviewer, and resets that epoch's review budget to `0/1`. This also
 applies when the agent name is unchanged after a session limit. Repeating the
 command from the same session is idempotent and does not reset the budget.
 

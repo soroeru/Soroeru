@@ -8,7 +8,7 @@ argument-hint: "[issue-number]"
 
 ## Overview
 
-Resume one existing Issue in its existing worktree without losing inherited WIP or allowing concurrent edits. A successful new-session handoff starts a new audit epoch and restores that epoch's local AI review allowance to two runs.
+Resume one existing Issue in its existing worktree without losing inherited WIP or allowing concurrent edits. A successful new-session handoff starts a new audit epoch and restores that epoch's local AI review allowance to one run.
 
 ## Input
 
@@ -38,10 +38,10 @@ Use `issue-implementation` instead when the Issue worktree and branch have not b
    ```
 
 8. Re-run `status --json`. Verify the owner and reviewer match the current agent.
-   - A different session MUST increment `handoff_epoch` and set review budget to `0/2`, including when the agent name is unchanged.
+   - A different session MUST increment `handoff_epoch` and set review budget to `0/1`, including when the agent name is unchanged.
    - Re-running from the same session MUST keep the same epoch and budget. It must not manufacture extra reviews.
 9. Move every subsequent git and file operation to the absolute `worktree` path returned by status. The primary clone remains human-only.
-10. Post a concise audit comment to the Issue before a PR exists, or to the PR once one exists. Include epoch, old/new agent and redacted session identifiers, HEAD, dirty/unpushed/operation/review-lock status, prior epoch review usage, new `0/2` budget, and the next known step.
+10. Post a concise audit comment to the Issue before a PR exists, or to the PR once one exists. Include epoch, old/new agent and redacted session identifiers, HEAD, dirty/unpushed/operation/review-lock status, prior epoch review usage, new `0/1` budget, and the next known step.
 11. Summarize current state, inherited changes, unresolved findings, remaining work, and risks to the user. Then continue the Issue workflow in the same worktree.
 
 ## Stop Conditions
@@ -64,6 +64,6 @@ Stop and report evidence when any of these is true:
 | “The remote branch is gone, so start over.” | Preserve and inspect the local worktree; it may contain unpublished work. |
 | “The lease expired, so takeover is automatically safe.” | Diagnose owner, Git operation, and review process before explicit handoff. |
 | “Stash or reset the dirty files first.” | Leave inherited WIP in place until it is understood. |
-| “Reuse the old review remainder.” | A successful new-session handoff gets a new epoch with two runs. |
-| “Run handoff again to get two more reviews.” | Same-session invocation is idempotent and must not reset the budget. |
+| “Reuse the old review remainder.” | A successful new-session handoff gets a new epoch with one run. |
+| “Run handoff again to get another review.” | Same-session invocation is idempotent and must not reset the budget. |
 | “PR is closed, so cleanup is safe.” | Cleanup requires GitHub state `MERGED` and all local safety checks. |

@@ -23,6 +23,7 @@ export const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// egress: <category>` annotations for a flagged line. */
 const ALLOWED_CATEGORIES = new Set([
+  "soroeru-cloud", // Issue #554: typed Cloud Run API from the Side Panel
   "target-site", // navigation / form submission / terms text on the site the user acts on
   "ai-provider", // the user's configured Anthropic / OpenAI provider
 ]);
