@@ -644,8 +644,8 @@ async function prepareTriageNode(state, config) {
       const identity = { routeSetHash: context.routeSetHash, evidenceVersion: context.evidenceVersion };
       const { preferredRoute: _discarded, ...decision } = previous.decision;
       triageByIssue.push({ ...previous, decision: { ...decision, ...identity },
-        result: { ...previous.result, ...identity, routeMap: {},
-          route: { choice: "abstain", probabilities: { abstain: 1 }, confidence: 0 } },
+        result: { ...previous.result, ...identity, ...(previous.result.status === "recommended" ? { routeMap: {},
+          route: { choice: "abstain", probabilities: { abstain: 1 }, confidence: 0 } } : {}) },
         requiresManualAssignment: true });
       continue;
     }
@@ -928,10 +928,11 @@ async function preflightAssistedDispatchNode(state, config) {
     if (!pool.length) return { failureReason: "no-worker-route-available" };
     let context = initial && revision ? await triageInputFor(deps, assignment.number, revision, pool,
       state.config.triage.model) : null;
-    const staleIssue = initial && entry?.result.status !== "fallback" && (!context ||
+    const adopted = entry?.decision && entry.decision.action !== "fallback";
+    const staleIssue = initial && (entry?.result.status !== "fallback" || adopted) && (!context ||
       revision.updatedAt !== entry.result.issueUpdatedAt || entry.inputModel !== state.config.triage.model ||
       entry.result.policyVersion !== TRIAGE_POLICY);
-    const changedRoutes = initial && context && entry?.result.status === "recommended" &&
+    const changedRoutes = initial && context && (entry?.result.status === "recommended" || adopted) &&
       (context.context.routeSetHash !== entry.result.routeSetHash || context.context.evidenceVersion !== entry.result.evidenceVersion);
     const verified = !staleIssue && await deps.verifyTriageRoute(assignment.route, state).catch(() => ({ ok: false }));
     if (!staleIssue && !changedRoutes && verified?.ok) continue;
@@ -958,7 +959,8 @@ async function preflightAssistedDispatchNode(state, config) {
       ...identity, action: "fallback", reason: "legacy-fallback",
     };
     const result = retained ? { ...entry.result, ...identity,
-      route: { choice: "abstain", probabilities: { abstain: 1 }, confidence: 0 }, routeMap: {} } : {
+      ...(entry.result.status === "recommended" ? { route: { choice: "abstain",
+        probabilities: { abstain: 1 }, confidence: 0 }, routeMap: {} } : {}) } : {
       ...identity, status: "fallback", reason,
     };
     const nextEntry = { ...entry, issue: assignment.number, inputModel: state.config.triage.model,
@@ -972,6 +974,7 @@ async function preflightAssistedDispatchNode(state, config) {
     const reevaluate = initial && staleIssue && attempts < 1 && revision;
     return {
       plan, assignments: [{ number: assignment.number, remove: true }],
+      proposedAssignments: (state.proposedAssignments ?? []).filter((p) => Number(p.number) !== assignment.number),
       capabilities: refreshed.capabilities, workerRoutes: pool,
       ...(unavailableModels.length ? { unavailableModels } : {}),
       ...(initial ? { roleStates: [{ issue: assignment.number, remove: true }] } : {}),

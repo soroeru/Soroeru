@@ -2111,3 +2111,32 @@ test("an Issue edit before first assisted dispatch is re-evaluated only once", a
   assert.equal(run.requests(), 2);
   assert.equal(run.deps.dispatched[0].role, "planner");
 });
+
+test("an adopted override of a provider fallback is invalidated by an Issue edit", async () => {
+  let reads = 0;
+  const run = assistedRun({
+    fetchTriageRevision: async () => ({ updatedAt: ++reads === 1 ? revision.updatedAt : "2026-07-22T00:00:00.000Z" }),
+    runTriage: async (input) => ({ result: fallbackResult(triageContext(input), "provider-error") }),
+  });
+  const first = await run.invoke(assistedInput());
+  const again = await run.resume({ triageDecisions: [decisionFor(first, "override", { riskCategory: "high", size: "S" })] });
+  assert.ok(again.__interrupt__[0].value.resolveTriage);
+  assert.equal(run.deps.dispatched.length, 0);
+  assert.equal((await run.state()).triageByIssue[0].preflightAttempts, 1);
+});
+
+test("a changed pool discards a pre-supplied assignment and waits for a fresh manual choice", async () => {
+  let refreshes = 0;
+  const enlarged = [...defaultCapabilities, workerRoute("Claude", "new-model")];
+  const run = assistedRun({ refreshTriageRoutes: async () => ({
+    capabilities: ++refreshes === 1 ? defaultCapabilities : enlarged,
+  }) });
+  const first = await run.invoke({ ...assistedInput(), proposedAssignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
+  const manual = await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.ok(manual.__interrupt__[0].value.assign);
+  assert.equal(run.deps.dispatched.length, 0);
+  assert.deepEqual((await run.state()).proposedAssignments, []);
+  await run.resume({ assignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
+  assert.equal(run.deps.dispatched[0].role, "planner");
+  assert.equal(run.requests(), 1);
+});
