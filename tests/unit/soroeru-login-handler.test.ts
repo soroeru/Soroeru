@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { AiProvider } from "../../src/agent/ai/provider.js";
+import { AiEngine } from "../../src/automation/ai-engine.js";
 import { DecisionEngine } from "../../src/automation/decision-engine.js";
 import { findPasskeyLoginOptions, findSsoLoginOptions, LoginHandler } from "../../src/automation/login-handler.js";
 import type { PageDriver } from "../../src/automation/page-driver.js";
@@ -132,6 +134,26 @@ test("login fills the detected form, submits, and judges success", async () => {
   assert.equal(page.filled["f-user"], "user@example.test");
   assert.equal(page.filled["f-pass"], "fake-pass");
   assert.deepEqual(page.clicked, ["button[type=submit]"]);
+});
+
+test("login fills the password locally and never routes credentials through the AI fallback (Issue #572)", async () => {
+  const requests: string[] = [];
+  const provider: AiProvider = { id: "fake", completeJson: async (request) => { requests.push(JSON.stringify(request)); return {}; } };
+  const rules = new RuleEngine();
+  // Every decision is unconfident, so each one consults the AI before the rule result is used.
+  const unconfident = new DecisionEngine({ evaluate: (request) => ({ ...rules.evaluate(request), confident: false }) },
+    new AiEngine(provider, { currentValues: () => [] }));
+  const page = new FakePageDriver([loginPage(), loggedInPage()]);
+
+  const result = await new LoginHandler(unconfident, new WallDetectionService()).login(page, credential(), siteAccount());
+
+  assert.deepEqual(result, { success: true });
+  assert.equal(page.filled["f-pass"], "fake-pass");
+  assert.ok(requests.length >= 2, "the AI fallback was exercised");
+  for (const request of requests) {
+    assert.equal(request.includes("fake-pass"), false);
+    assert.equal(request.includes("user@example.test"), false);
+  }
 });
 
 test("login discovers the login page from the domain top page when the entry URL has no form", async () => {

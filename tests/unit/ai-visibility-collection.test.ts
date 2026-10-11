@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { collectAiVisibility, type AiCollectionOptions, type CollectionBatch } from "../../src/automation/ai-visibility-collector.js";
-import { collectionInput, parseCollectionProposal, corroborateProposal } from "../../src/automation/ai-visibility-contract.js";
+import { collectionEnvelope, collectionInput, parseCollectionProposal, corroborateProposal, MASKED_VALUE } from "../../src/automation/ai-visibility-contract.js";
 import { collectionNavigation, collectionUrlAllowed } from "../../src/automation/visibility-navigation-policy.js";
 import type { CollectionObservation } from "../../src/automation/collection-observation.js";
 import type { PageDriver } from "../../src/automation/page-driver.js";
@@ -20,6 +20,24 @@ function observation(path = "/profile", value = "fake@example.test", field: Part
   return { token: { observationId: path, documentId: "doc", revision: 0, bindingEpoch: 1 },
     snapshot: { url: new URL(path, siteUrl).href, title: "Account", fields: [], links: [], buttons: [], visibleText: "", iframeSrcs: [], wallMarkers: [] },
     items: [{ id: "f-1", value, field: { fieldId: "f-1", tag: "input", type: "email", name: "email", id: "email", labels: ["メールアドレス"], autocomplete: "email", placeholder: "", nearbyText: "", required: false, ...field } }], targets: [] };
+}
+function item(id: string, value: string, field: Partial<FormField>): CollectionObservation["items"][number] {
+  return { id, value, field: { fieldId: id, tag: "input", type: "text", name: "", id: "", labels: [], autocomplete: "", placeholder: "", nearbyText: "", required: false, ...field } };
+}
+// Fake secrets only (Issue #572): each must stay out of every provider request.
+const SECRETS = { password: "Fake-Pass-4821", cvv: "7319", otp: "602418", answer: "fake-secret-answer" };
+function secretObservation(): CollectionObservation {
+  const o = observation();
+  o.items.push(
+    item("f-2", SECRETS.password, { type: "password", name: "login_pw", labels: ["ログインパスワード"] }),
+    item("f-3", SECRETS.cvv, { name: "cc_code", autocomplete: "cc-csc", labels: ["セキュリティコード"] }),
+    item("f-4", SECRETS.otp, { name: "code", autocomplete: "one-time-code", labels: ["確認番号"] }),
+    item("f-5", SECRETS.answer, { name: "q1", labels: ["秘密の質問の答え"] }),
+    // A display row whose nearby text echoes the preceding row's secret value.
+    item("d-1", "fake-holder", { labels: ["名義"], nearbyText: `${SECRETS.cvv} 名義` }),
+  );
+  o.targets = [{ id: "n-0", href: `${siteUrl}help?code=${SECRETS.otp}`, text: "ヘルプ", passive: true }];
+  return o;
 }
 function proposal(o: CollectionObservation, overrides: Record<string, unknown> = {}) {
   return { observationId: o.token.observationId, pagePurpose: "profile", values: [{ itemId: "f-1", attributeKey: "email", value: o.items[0]!.value, confidence: 1 }], nextTargetIds: [], done: true, ...overrides };
@@ -55,6 +73,35 @@ test("AI observes raw fake values with no tools, and commits before moving to th
   assert.equal(r.reason, "complete"); assert.equal(r.disclosures, 2); assert.equal(r.calls, 2);
   assert.equal(f.batches[0]?.tier, "ai-driven");
   assert.doesNotMatch(JSON.stringify(r), /fake@example|second@example/);
+});
+
+test("provider requests never carry password, CVV, OTP or secret-like values; other raw values still go", async () => {
+  const f = fixture(); f.set(secretObservation());
+  const requests: { system: string; user: string }[] = [];
+  f.options.provider = { id: "fake", completeJson: async request => { requests.push({ system: request.system, user: request.user }); return proposal(f.current()); } };
+  const r = await collectAiVisibility(f.options);
+  assert.equal(r.reason, "complete"); assert.equal(requests.length, 1);
+  const raw = JSON.stringify(requests);
+  for (const secret of Object.values(SECRETS)) assert.equal(raw.includes(secret), false, "a secret reached the provider");
+  assert.match(requests[0]!.user, /fake@example\.test/);
+  const sent = JSON.parse(requests[0]!.user) as ReturnType<typeof collectionEnvelope>;
+  assert.equal(sent.items.find(i => i.id === "d-1")?.field.nearbyText, `${MASKED_VALUE} 名義`);
+  assert.deepEqual(sent.items.filter(i => i.masked).map(i => [i.id, i.value, i.field.nearbyText]),
+    ["f-2", "f-3", "f-4", "f-5"].map(id => [id, MASKED_VALUE, ""]));
+  assert.deepEqual(sent.items.find(i => i.id === "f-3")?.field.labels, ["セキュリティコード"]);
+});
+
+test("a masked item is stored from the locally read value only when local classification agrees with the model", () => {
+  const o = secretObservation(), input = collectionInput(o);
+  const parsed = parseCollectionProposal(proposal(o, { values: [
+    { itemId: "f-3", attributeKey: "card.cvv", value: MASKED_VALUE, confidence: 0.9 },
+    { itemId: "f-2", attributeKey: "account.password", value: "model-invented", confidence: 0.9 },
+    { itemId: "f-4", attributeKey: "phone.full", value: MASKED_VALUE, confidence: 0.9 },
+    { itemId: "f-5", attributeKey: "name.full", value: MASKED_VALUE, confidence: 0.9 },
+  ] }), input)!;
+  const { candidates, facts } = corroborateProposal(parsed, input);
+  assert.deepEqual(candidates.map(c => [c.attributeKey, c.item.value]), [["card.cvv", SECRETS.cvv], ["account.password", SECRETS.password]]);
+  assert.deepEqual(facts.filter(x => !x.corroborated).map(x => x.itemId), ["f-4", "f-5"]);
 });
 
 test("unsupported hallucination becomes a review fact, never a candidate", async () => {
@@ -157,6 +204,32 @@ for (const href of ["http://example.test/profile", "https://evil.test/profile", 
 test("GET and familiar label cannot authorize mutation controls", () => {
   assert.equal(collectionNavigation({ id: "n-0", href: siteUrl + "profile", text: "プロフィール変更", passive: true }, siteUrl), "deny");
   assert.equal(collectionNavigation({ id: "n-0", href: siteUrl + "profile", text: "プロフィール", passive: false }, siteUrl), "deny");
+});
+
+test("runner stores a model-classified masked CVV from the local read as an encrypted ai-driven Disclosure", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "collection-572-"));
+  try {
+    const path = join(dir, "vault.json"), vault = await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase");
+    const domain = new DomainService(vault), site = domain.upsertSiteAccount({ domain: "example.test", url: siteUrl, displayName: "Fake" });
+    const f = fixture(); f.set(secretObservation());
+    const users: string[] = [];
+    f.options.provider = { id: "fake", completeJson: async request => { users.push(request.user);
+      return proposal(f.current(), { values: [{ itemId: "f-3", attributeKey: "card.cvv", value: MASKED_VALUE, confidence: 0.9 }] }); } };
+    const runner = new VisibilityRunner({ domain, openSession: async () => ({ page: f.options.page, close: async () => {} }),
+      collectionProvider: f.options.provider,
+      collectionGrant: context => {
+        vault.put("mandate", { id: "m", siteAccountId: site.id, operation: "ai-assisted-discovery", authorizedAt: 2, scope: context.runId });
+        vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", updatedAt: 1 });
+        return { ...context, mandateId: "m", capabilityId: "c", capabilityUpdatedAt: 1 };
+      } });
+    const r = await runner.runSite(site.id);
+    assert.equal(r.status, "collected"); assert.equal(users.length, 1); assert.equal(users[0]!.includes(SECRETS.cvv), false);
+    const cvv = domain.listDisclosures().find(d => d.attributeKey === "card.cvv");
+    assert.equal(cvv?.siteHeldValue, SECRETS.cvv); assert.equal(cvv?.collectionTier, "ai-driven");
+    await vault.save(); assert.doesNotMatch(await readFile(path, "utf8"), new RegExp(`"${SECRETS.cvv}"`));
+    const reopened = new DomainService(await VaultV2.open(new FileVaultPersistence(path), "fake-passphrase"));
+    assert.equal(reopened.listDisclosures().find(d => d.attributeKey === "card.cvv")?.siteHeldValue, SECRETS.cvv);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test("runner uses real scoped authorization and typed encrypted persistence, hallucinations store no value", async () => {
