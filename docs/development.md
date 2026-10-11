@@ -1003,9 +1003,12 @@ replay a claimed request. `off` neither starts a child nor
 uses a slot. `TYPESAFE_API_KEY` belongs in the process environment, never YAML, argv,
 Issue content, checkpoint, telemetry, or worker environments.
 
-Only reviewed public development Issues may be sent. Use fake data in examples; the
+Only reviewed development Issue title/body text may be sent. Private Issues in
+`soroeru/Soroeru` additionally require explicit `run.triage.allowPrivateIssues: true`
+(default absent/false). The Product Owner authorized this opt-in on 2026-10-11.
+Do not put secrets or real personal values in any triage input. Use fake data in examples; the
 preflight detector is incomplete and cannot certify the absence of personal information.
-Private repositories, changed revisions, obvious sensitive text, empty context, and large
+Unapproved private repositories, unknown visibility, changed revisions, obvious sensitive text, empty context, and large
 inputs return a fixed fallback reason without a provider call. Errors contain no raw
 provider body. A missing key falls back locally; 401/403 and 429/529 disable the provider
 for the run. Other errors consume their reserved slot with no retry. Usage is the API's
@@ -1081,9 +1084,9 @@ is ignored, and fewer than two comparable candidates or a tie yields `abstain`.
 ### Assisted triage adoption (Issue #538)
 
 The frozen `triage-v3` / `triage-rubric-538-v3` classifier meets the measured
-holdout floors; see [the evaluation record](triage-evaluation-538.md). Approval
-is pending. Keep `off` or `shadow` until the Product Owner confirms the labels,
-reviews uncertain/fallback causes, and approves adoption.
+holdout floors; see [the evaluation record](triage-evaluation-538.md). The Product Owner approved the labels, cause analysis and limited assisted adoption
+on 2026-10-11. A local approval record is still required on each checkout; approval
+is not inferred from merging or copied to another classifier.
 
 Place the exact reviewed live JSON report at
 `state/triage-eval/assisted-evaluation.json`. After the human decision, record
@@ -1122,3 +1125,36 @@ A stale Issue refreshes its current labels and dependency metadata (failure is
 use fallback/manual assignment. Started role programs and handoffs keep their
 program; reviewer selection discards implementer route recommendations.
 Unreviewed or incomplete RouteEvidence produces abstention, not a capability rank.
+
+### Private development Issue opt-in (Issue #538)
+
+The Product Owner also authorized private Issue support on 2026-10-11.
+In the ignored local `state/project-issue-orchestrator.yaml`, use:
+
+```yaml
+run:
+  maxParallel: 4
+  releasePolicy: merged
+  unavailableModels: none
+  unavailableAgents: none
+  triage:
+    mode: assisted
+    model: jev-1.13.0
+    maxRequests: 20
+    allowPrivateIssues: true
+```
+
+`allowPrivateIssues` must be a boolean; omitted/false retains the original rejection.
+It permits only the fixed `soroeru/Soroeru` repository's title/body fetched by the
+isolated child, never other repositories, comments, attachments or linked pages.
+Only external-provider-suitable, non-personal development text belongs in these Issues.
+Review the selected Issues before running: the secret/PII tripwire is incomplete.
+Permission does not bypass secret rejection (including passwords, CVV, OTP and tokens),
+revision checks, input limits, request budgets, response validation or manual adoption.
+Unknown visibility still rejects. Body/provider text stays out of parent stdout, state,
+logs and worker environments. The flag is non-sensitive config and survives checkpoints.
+For new runs, set it to false to revoke private transmission; `--triage off` disables
+all Jev calls. Stop an existing run before revoking permission: checkpoints retain
+the original run configuration, so do not resume an old enabled checkpoint.
+The approval record only enables assisted's confirmation flow; private sending additionally
+requires this independent explicit flag. No new GitHub secret or Project token is needed.

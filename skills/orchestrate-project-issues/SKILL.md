@@ -168,7 +168,10 @@ pool, or unverifiable route withdraws the assignment for a manual re-prompt (a f
 route's model is excluded for the run). A fallback requires manual route
 assignment even with `--auto-assign`. `--triage assisted` requires the current live
 holdout report and explicit PO approval described in `docs/development.md`.
-Do not create an approval record without the human decision. Handle `resolveTriage`
+Do not create an approval record without the human decision. Private Issue sending
+requires the independent boolean `run.triage.allowPrivateIssues: true`, authorized by
+the operator; default is rejection. Only reviewed, non-personal development title/body
+from the fixed repository may be sent; no secrets, comments or attachments. Handle `resolveTriage`
 before first role dispatch: accept only certain risk/Size, override with enum values
 and a closed reason, or fallback with manual assignment. Adopted values can only
 raise existing risk/Size; high/critical need planner, implementer and independent

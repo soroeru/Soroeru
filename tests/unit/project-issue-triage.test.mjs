@@ -730,3 +730,42 @@ test("classifier approval fingerprint includes route instructions and abstention
   questions.route.criteria.abstain = "changed abstention";
   assert.notEqual(fingerprint(), triageClassifierFingerprint());
 });
+
+test("explicit private opt-in classifies fictional private Issue text inside the isolated boundary", async () => {
+  let sent;
+  const result = await evaluateTriage(input, { ...config, allowPrivateIssues: true }, dependencies({
+    fetchIssue: async () => ({ ...disclosure, isPrivate: true }),
+    fetchImpl: async (_url, options) => {
+      sent = JSON.parse(options.body);
+      return new Response(JSON.stringify(response()), { status: 200 });
+    },
+  }));
+  assert.deepEqual(sent.state, { title: disclosure.title, body: disclosure.body });
+  assert.equal(result.result.status, "recommended");
+  assert.doesNotMatch(JSON.stringify(result), /Change fixture wording|Update a local help message|fake-secret/);
+});
+
+for (const [name, change, reason] of [
+  ["unknown visibility", { isPrivate: undefined }, "input-not-approved"],
+  ["changed revision", { updatedAt: "2026-09-27T00:00:00Z" }, "stale-input"],
+  ["password", { body: '"password": "fake-private-password"' }, "sensitive-input"],
+  ["OTP", { body: "OTP=123456" }, "sensitive-input"],
+  ["CVV", { body: "CVV=123" }, "sensitive-input"],
+  ["token", { body: "token=fake-private-token" }, "sensitive-input"],
+  ["personal email", { body: "fake.person@example.invalid" }, "sensitive-input"],
+  ["oversized", { body: "文".repeat(9000) }, "input-too-large"],
+]) test(`private opt-in does not bypass ${name}`, async () => {
+  let sent = 0;
+  const result = await evaluateTriage(input, { ...config, allowPrivateIssues: true }, dependencies({
+    fetchIssue: async () => ({ ...disclosure, isPrivate: true, ...change }),
+    fetchImpl: async () => { sent++; throw new Error("unexpected"); },
+  }));
+  assert.equal(result.result.reason, reason);
+  assert.equal(sent, 0);
+});
+
+test("private input consent is a boolean, not a truthy string or Issue text instruction", () => {
+  for (const value of ["true", 1, {}, null])
+    assert.throws(() => normalizeTriageConfig({ ...config, allowPrivateIssues: value }), /triage-invalid-structure/);
+  assert.equal(normalizeTriageConfig({ ...config, allowPrivateIssues: false }).allowPrivateIssues, false);
+});

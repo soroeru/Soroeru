@@ -43,13 +43,18 @@ Among 52 usable recommendations, the label-relative override proxy is 15/52:
 These are comparison-to-label causes, not measured human override behavior;
 production parent override rates and route outcome comparisons remain unmeasured.
 
-**Adoption pending:** Product Owner label confirmation, review of uncertain and
-fallback cases, and explicit assisted adoption approval are not yet recorded.
-The local `state/triage-eval/label-review.md` contains the complete fictional
-label set for human review. Neither configuring the API key nor requesting
-implementation is treated as this approval. Assisted stays unavailable until
-its approval record matches the exact measured report and deployed classifier.
-See [setup and adoption procedure](development.md#assisted-triage-adoption-issue-538).
+**Product Owner approval recorded 2026-10-11:** the user explicitly approved the
+labels, cause analysis and limited risk/Size assisted adoption. The ignored local
+`state/triage-eval/assisted-approval.json` binds that decision to the exact report hash
+above. Route selection still abstains without reviewed evidence. The fictional
+label set remains at `state/triage-eval/label-review.md`.
+
+The same instruction authorized private Issue support. An independent boolean
+`allowPrivateIssues` opt-in now permits the fixed repository's reviewed, non-personal
+development title/body. Existing secret rejection, isolation, budgets and freshness
+checks remain enforced. This authorization change does not alter classifier questions,
+model or thresholds, so the measured classifier fingerprint remains current.
+See [setup and private opt-in](development.md#private-development-issue-opt-in-issue-538).
 
 GitHub Projects are retired for active Issue implementation. Only Issue identity,
 labels and native `Blocked by` metadata drive selection. No Project token is needed.

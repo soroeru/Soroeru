@@ -1129,6 +1129,8 @@ test("the graph CLI starts, pauses, and resumes across separate processes", asyn
       "--parent-model",
       "gpt-5",
       "--auto-assign",
+      "--triage",
+      "off",
     ]);
     const paused = JSON.parse(started.stdout);
     assert.equal(paused.status, "paused");
@@ -2176,4 +2178,19 @@ test("stale recovery fails closed when current Issue metadata cannot be verified
   assert.equal(run.deps.dispatched.length, 0);
   assert.equal(run.requests(), 1);
   assert.equal(JSON.stringify(state).includes("fake-private-error"), false);
+});
+
+test("approved assisted configuration forwards explicit private consent to the isolated shadow adapter", async () => {
+  let childConfig;
+  const run = assistedRun({ runTriage: async (input, config) => {
+    childConfig = config;
+    return { result: shadowRecommendation(input) };
+  } });
+  const first = await run.invoke(assistedInput({ triage: { ...shadowConfig,
+    mode: "assisted", allowPrivateIssues: true } }));
+  assert.equal(childConfig.mode, "shadow");
+  assert.equal(childConfig.allowPrivateIssues, true);
+  assert.equal(run.deps.dispatched.length, 0);
+  await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.equal(run.deps.dispatched[0].role, "planner");
 });

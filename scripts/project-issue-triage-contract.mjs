@@ -45,8 +45,9 @@ function route(value) {
   return { agent: value.agent, model: value.model };
 }
 export function normalizeTriageConfig(raw = {}) {
-  keys(raw, ["mode", "model", "maxRequests"]);
+  keys(raw, ["mode", "model", "maxRequests", "allowPrivateIssues"]);
   const config = { ...TRIAGE_DEFAULTS, ...raw };
+  requireValue(config.allowPrivateIssues === undefined || typeof config.allowPrivateIssues === "boolean");
   requireValue(["off", "shadow", "assisted"].includes(config.mode));
   requireValue(/^jev-\d+\.\d+\.\d+$/.test(config.model));
   requireValue(

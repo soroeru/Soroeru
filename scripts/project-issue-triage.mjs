@@ -28,7 +28,7 @@ export function containsSensitiveInput(text) {
     /(?:\d[ -]?){10,19}/,
     /\b\d{3}-\d{4}\b/,
     /https?:\/\/[^\s/]+@/i,
-    /(?:password|passwd|api[_ -]?key|access[_ -]?token|secret|パスワード|暗証番号|CVV)\s*[=:：]\s*["']?[^\s"']{3,}/i,
+    /(?:password|passwd|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|session[_ -]?token|token|secret|otp|one[_ -]?time[_ -]?password|パスワード|暗証番号|ワンタイム(?:パスワード|コード)|CVV)["']?\s*[=:：]\s*["']?[^\s"']{3,}/i,
   ].some((pattern) => pattern.test(text));
 }
 
@@ -154,7 +154,9 @@ export async function evaluateTriage(
     return fallback(signal?.aborted ? "cancelled" : "fetch-failed");
   }
   if (signal?.aborted) return fallback("cancelled");
-  if (disclosure.isPrivate !== false) return fallback("input-not-approved");
+  if (typeof disclosure.isPrivate !== "boolean" ||
+      (disclosure.isPrivate && config.allowPrivateIssues !== true))
+    return fallback("input-not-approved");
   if (disclosure.updatedAt !== input.issueUpdatedAt) return fallback("stale-input");
   if (typeof disclosure.title !== "string" || typeof disclosure.body !== "string")
     return fallback("fetch-failed");
