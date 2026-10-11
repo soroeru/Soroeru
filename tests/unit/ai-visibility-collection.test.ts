@@ -104,6 +104,49 @@ test("a masked item is stored from the locally read value only when local classi
   assert.deepEqual(facts.filter(x => !x.corroborated).map(x => x.itemId), ["f-4", "f-5"]);
 });
 
+test("echoes of unadmitted secrets are scrubbed too: a PIN row and an over-budget password", () => {
+  const o = observation();
+  o.items.push(
+    item("f-6", "4821", { labels: ["暗証番号"] }),
+    item("f-7", SECRETS.password, { type: "password", labels: ["x".repeat(17_000)] }),
+    item("d-2", "fake-note", { labels: ["備考"], nearbyText: `4821 ${SECRETS.password} 備考` }),
+  );
+  const input = collectionInput(o), sent = JSON.stringify(collectionEnvelope(input));
+  assert.deepEqual(input.items.map(i => i.id), ["f-1", "d-2"]);
+  assert.equal(sent.includes("4821"), false); assert.equal(sent.includes(SECRETS.password), false);
+  assert.equal(sent.includes('"secrets"'), false);
+});
+
+test("a CVV inside a longer number is not scrubbed; a delimited echo masks the item, which still corroborates locally", () => {
+  const o = observation();
+  o.items.push(
+    item("f-3", SECRETS.cvv, { autocomplete: "cc-csc", labels: ["セキュリティコード"] }),
+    item("f-8", `090${SECRETS.cvv}5555`, { type: "tel", labels: ["電話番号"] }),
+    item("f-9", `03-${SECRETS.cvv}-5555`, { type: "tel", labels: ["自宅電話"] }),
+  );
+  const input = collectionInput(o), sent = collectionEnvelope(input);
+  assert.equal(sent.items.find(i => i.id === "f-8")?.value, `090${SECRETS.cvv}5555`);
+  assert.deepEqual(input.masked, ["f-3", "f-9"]);
+  const values = [{ itemId: "f-8", attributeKey: "phone.full", value: `090${SECRETS.cvv}5555`, confidence: 1 },
+    { itemId: "f-9", attributeKey: "email", value: MASKED_VALUE, confidence: 1 }];
+  const { candidates } = corroborateProposal(parseCollectionProposal(proposal(o, { values }), input)!, input);
+  assert.deepEqual(candidates.map(c => c.item.id), ["f-8"]);
+  const phone = corroborateProposal(parseCollectionProposal(proposal(o, { values: [{ ...values[1]!, attributeKey: "phone.full" }] }), input)!, input);
+  assert.equal(phone.candidates[0]?.item.value, `03-${SECRETS.cvv}-5555`);
+});
+
+test("a hint-masked masked PAN never corroborates as card.number; camelCase secret names are masked", () => {
+  const o = observation();
+  o.items.push(
+    item("d-3", "**** **** **** 1234", { labels: ["カード番号（セキュリティコードは表示されません）"] }),
+    item("f-10", SECRETS.answer, { name: "loginPw" }),
+  );
+  const input = collectionInput(o);
+  assert.deepEqual(input.masked, ["d-3", "f-10"]);
+  const parsed = parseCollectionProposal(proposal(o, { values: [{ itemId: "d-3", attributeKey: "card.number", value: MASKED_VALUE, confidence: 1 }] }), input)!;
+  assert.deepEqual(corroborateProposal(parsed, input).candidates, []);
+});
+
 test("unsupported hallucination becomes a review fact, never a candidate", async () => {
   const f = fixture();
   f.options.provider = { id: "fake", completeJson: async () => proposal(f.current(), { values: [{ itemId: "f-1", attributeKey: "email", value: "invented@example.test", confidence: 1 }] }) };

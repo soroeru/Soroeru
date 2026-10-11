@@ -135,8 +135,9 @@ model returns must match its own captured item verbatim (limited normalization o
 line-ending/whitespace trimming, and ASCII space/hyphen removal for phone/card items) before it
 is written. Since Issue #572, password, CVV, OTP, and secret-like items (`type=password`, the
 `current-password`/`new-password`/`one-time-code`/`cc-csc` autocomplete tokens, a local
-password/CVV classification, or a secret-like label) are masked in the request, and page text
-echoing their values is scrubbed; the model's key for a masked item must match local
+password/CVV classification, or a secret-like label on the item itself) are masked in the
+request. Whole-token echoes of those values, and of PIN/My Number values, are scrubbed from
+other page text, and an item whose own value contains such an echo is masked whole; the model's key for a masked item must match local
 classification, and the stored value is the locally read one. A masked PAN can never corroborate
 a proposed full number, and My Number/PIN-shaped values are rejected by local content/label classification
 regardless of the key the model assigned. A non-corroborating value becomes an `unknown-state`
