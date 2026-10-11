@@ -434,7 +434,7 @@ test("does not treat a canonical model identifier as proof for a different reque
   );
 });
 
-test("does not let a mismatched requestedModel fall back to the canonical identifier", () => {
+test("rejects requests matching neither the display name nor the canonical identifier", () => {
   const required = [{ agent: "Grok", model: "Grok 4.5", role: "parent" }];
   assert.throws(
     () =>
@@ -452,6 +452,43 @@ test("does not let a mismatched requestedModel fall back to the canonical identi
       ]),
     /routing-unavailable:parent:Grok:Grok 4\.5/,
   );
+});
+
+test("accepts the exact canonical ID or display name on the same verified capability", async () => {
+  const capability = {
+    agent: "Codex",
+    model: "gpt-6.1-sol",
+    requestedModel: "GPT-6.1-Sol",
+    role: "parent",
+    selector: "codex exec -m gpt-6.1-sol",
+    selectable: true,
+    verifiable: true,
+    timeoutMs: 60_000,
+  };
+  const input = await load("linear.json");
+  for (const model of ["gpt-6.1-sol", "GPT-6.1-Sol"]) {
+    const result = await runOrchestration({
+      ...input,
+      options: {
+        ...runOptions,
+        dryRun: true,
+        parent: { agent: "Codex", model },
+        capabilities: [capability, workerRoute("Claude", "sonnet")],
+      },
+    });
+    assert.deepEqual(result.plan.runnable.map(({ number }) => number), [101]);
+    assert.deepEqual(validateCapabilities([{ agent: "Codex", model, role: "parent" }], [capability]), [capability]);
+    assert.throws(
+      () => validateCapabilities([{ agent: "Codex", model, role: "parent" }], [{ ...capability, verifiable: false }]),
+      /routing-unavailable/,
+    );
+  }
+  for (const model of ["gpt-6-sol", "GPT-6-Sol", "GPT-6.1-SOL"]) {
+    assert.throws(
+      () => validateCapabilities([{ agent: "Codex", model, role: "parent" }], [capability]),
+      /routing-unavailable/,
+    );
+  }
 });
 
 test("requires a canonical model when requestedModel is supplied", () => {
