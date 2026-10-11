@@ -48,11 +48,16 @@ declare namespace chrome {
       onDisconnect: { addListener(listener: () => void): void };
       postMessage(message: unknown): void;
     }
+    const id: string;
     function connectNative(name: string): Port;
     function sendMessage<T = unknown>(message: unknown): Promise<T>;
     const onMessage: {
       addListener(
-        listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => void,
+        listener: (
+          message: unknown,
+          sender: { id?: string; tab?: unknown },
+          sendResponse: (response: unknown) => void,
+        ) => boolean | void,
       ): void;
     };
   }
