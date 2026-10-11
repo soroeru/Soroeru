@@ -2006,6 +2006,7 @@ function assistedRun(overrides = {}) {
   let requests = 0;
   const deps = makeDeps({
     assistedApproval: async () => true,
+    fetchItems: async (config) => ({ items: config.selectors.issues.map((n) => item(Number(n))) }),
     refreshTriageRoutes: async () => ({ capabilities: defaultCapabilities }),
     fetchTriageRevision: async () => revision,
     triageEvidence: async () => [],
@@ -2139,4 +2140,40 @@ test("a changed pool discards a pre-supplied assignment and waits for a fresh ma
   await run.resume({ assignments: [{ number: 1, agent: "Grok", model: "grok-4" }] });
   assert.equal(run.deps.dispatched[0].role, "planner");
   assert.equal(run.requests(), 1);
+});
+
+test("a newly added security label overrides a low re-evaluation before dispatch", async () => {
+  let reads = 0;
+  const run = assistedRun({
+    fetchTriageRevision: async () => ({ updatedAt: ++reads === 1 ? revision.updatedAt : "2026-07-22T00:00:00.000Z" }),
+    fetchItems: async () => ({ items: [item(1, [], { riskCategory: "high" })] }),
+    runTriage: async (input) => {
+      const result = shadowRecommendation(input);
+      return { result: { ...result, risk: { choice: "low", confidence: 1,
+        probabilities: { low: 1, medium: 0, high: 0, critical: 0 } } } };
+    },
+  });
+  const first = await run.invoke(assistedInput());
+  const again = await run.resume({ triageDecisions: [decisionFor(first)] });
+  assert.ok(again.__interrupt__[0].value.resolveTriage);
+  assert.equal(run.deps.dispatched.length, 0);
+  await run.resume({ triageDecisions: [decisionFor(again)] });
+  const state = await run.state();
+  assert.equal(state.plan.runnable[0].riskCategory, "high");
+  assert.equal(run.deps.dispatched[0].role, "planner");
+});
+
+test("stale recovery fails closed when current Issue metadata cannot be verified", async () => {
+  let reads = 0;
+  const run = assistedRun({
+    fetchTriageRevision: async () => ({ updatedAt: ++reads === 1 ? revision.updatedAt : "2026-07-22T00:00:00.000Z" }),
+    fetchItems: async () => { throw new Error("fake-private-error"); },
+  });
+  const first = await run.invoke(assistedInput());
+  await run.resume({ triageDecisions: [decisionFor(first)] });
+  const state = await run.state();
+  assert.equal(state.failureReason, "triage-metadata-refresh-failed");
+  assert.equal(run.deps.dispatched.length, 0);
+  assert.equal(run.requests(), 1);
+  assert.equal(JSON.stringify(state).includes("fake-private-error"), false);
 });

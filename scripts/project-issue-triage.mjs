@@ -82,7 +82,7 @@ export function buildTriageRequest(input, context, disclosure) {
 
 /** Bind evaluations to the actual question text and thresholds, not just a supplied version label. */
 export function triageClassifierFingerprint() {
-  const { questions } = buildTriageRequest({}, { routeMap: {}, evidence: [] }, {});
+  const { questions } = buildTriageRequest({}, { routeMap: { candidate: { agent: "fixture", model: "fixture" } }, evidence: [] }, {});
   return createHash("sha256").update(JSON.stringify({
     policy: TRIAGE_POLICY, rubric: TRIAGE_RUBRIC_VERSION,
     thresholds: TRIAGE_REVIEW_THRESHOLDS, questions,

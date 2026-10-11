@@ -965,7 +965,29 @@ async function preflightAssistedDispatchNode(state, config) {
     };
     const nextEntry = { ...entry, issue: assignment.number, inputModel: state.config.triage.model,
       result, decision, preflightAttempts: attempts + 1, requiresManualAssignment: true };
-    const rawItem = state.items.find((i) => i.number === assignment.number);
+    let rawItem = state.items.find((i) => i.number === assignment.number);
+    let refreshedItems;
+    let completed = [];
+    if (staleIssue) {
+      try {
+        const fetched = await deps.fetchItems({ ...state.config,
+          selectors: { issues: [String(assignment.number)] } });
+        const selected = selectProjectItems(fetched.items, { issues: [assignment.number] });
+        const fresh = parseProjectItems(selected.items, { completed: selected.completed })
+          .find((i) => i.number === assignment.number);
+        if (!fresh || !["Ready", "Todo", "In Progress"].includes(fresh.status)) throw new Error();
+        const risks = ["low", "medium", "high", "critical"];
+        rawItem = { ...rawItem, ...fresh,
+          riskCategory: risks[Math.max(risks.indexOf(rawItem.riskCategory ?? "low"),
+            risks.indexOf(fresh.riskCategory ?? "low"))],
+          size: rawItem.size ?? fresh.size,
+          changeScopeCount: rawItem.changeScopeCount,
+          modeOverride: rawItem.modeOverride,
+        };
+        refreshedItems = state.items.map((i) => i.number === assignment.number ? rawItem : i);
+        completed = selected.completed;
+      } catch { return { failureReason: "triage-metadata-refresh-failed" }; }
+    }
     const plan = initial ? { ...state.plan, runnable: state.plan.runnable.map((i) => i.number === assignment.number
       ? applyTriageDecision({ ...i, ...rawItem, riskCategory: rawItem.riskCategory,
         size: rawItem.size, ...selectPlanFields(rawItem) }, decision) : i) } : state.plan;
@@ -973,7 +995,8 @@ async function preflightAssistedDispatchNode(state, config) {
     // wait for explicit assignment; they cannot spend another API request.
     const reevaluate = initial && staleIssue && attempts < 1 && revision;
     return {
-      plan, assignments: [{ number: assignment.number, remove: true }],
+      plan, ...(refreshedItems ? { items: refreshedItems, completed } : {}),
+      assignments: [{ number: assignment.number, remove: true }],
       proposedAssignments: (state.proposedAssignments ?? []).filter((p) => Number(p.number) !== assignment.number),
       capabilities: refreshed.capabilities, workerRoutes: pool,
       ...(unavailableModels.length ? { unavailableModels } : {}),

@@ -8,7 +8,7 @@ personal data were sent. The existing holdout labels were unchanged.
 | --- | --- |
 | Holdout requests | 79 |
 | High/critical cases | 41 |
-| Usable high/critical recommendations | 33 (required ≥30) |
+| Usable high/critical recommendations | 34 (required ≥30) |
 | High/critical predicted low/medium | 0 |
 | Direct-review misses | 0 |
 | Sensitive fixtures rejected before sending | 5 |
@@ -22,20 +22,26 @@ made on the separate tune split; confidence 0.7 and probability gap 0.2 stayed
 unchanged. v3 tune reached 16/18 usable high/critical and 93.6% risk accuracy.
 The frozen v3 holdout first yielded 34/41 usable results. Repeating the same
 classifier after adding its identity fingerprint yielded 33/41; no holdout-based
-prompt or threshold tuning occurred. Provider variability remains a limitation.
+prompt or threshold tuning occurred. The final review added the static route question
+to the approval fingerprint without changing any classification instruction; a new
+full measurement yielded 34/41 and is the exact artifact bound to adoption. Provider variability remains a limitation.
 
-Final full report SHA-256: `de92dc42527c6c1357074862ab6db32d08ca14ae15d1503086af712cddc22840`.
+Final full report SHA-256: `21f81c4ae3400b26c0cbc654d76afc3e9a6531ed338ead1ce89677cce6a86ab4`.
 The exact local report is `state/triage-eval/assisted-evaluation.json`; classifier
-fingerprint: `dd1a81ec6bea9d83d5c7102aa01ef5c4e41ca961cb733f54317e2d7c0113d2fc`. Logs and reports remain ignored.
+fingerprint: `d1f52a58bf50c0ecd6ffd532187b7ab0983a71901ddbd73dc58c18421ea5fc8d`. Logs and reports remain ignored.
 
 The live CLI route benchmark confirmed only Claude Fable availability; the
 benchmark did not complete, so no usable RouteEvidence was produced. Route
 selection abstains without reviewed evidence. This evaluation establishes
 risk/Size gate floors, not model capability ranking or general Issue accuracy.
 
-The eight high/critical cases requiring manual review are H025, H031, H047,
-H056, H059, H074, H076 and H079. Review their risk/Size uncertainty rather than
+The seven high/critical cases requiring manual review are H025, H031, H047,
+H056, H059, H074 and H076. Review their risk/Size uncertainty rather than
 accepting them automatically. Sensitive cases remain pre-send fallback.
+Among 52 usable recommendations, the label-relative override proxy is 15/52:
+3 risk underestimates, 1 risk overestimate and 11 Size-only disagreements.
+These are comparison-to-label causes, not measured human override behavior;
+production parent override rates and route outcome comparisons remain unmeasured.
 
 **Adoption pending:** Product Owner label confirmation, review of uncertain and
 fallback cases, and explicit assisted adoption approval are not yet recorded.

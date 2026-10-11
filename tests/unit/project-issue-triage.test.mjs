@@ -1,4 +1,5 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
@@ -14,8 +15,9 @@ import {
   fallbackResult,
   RISKS,
   SIZES,
+  TRIAGE_POLICY, TRIAGE_RUBRIC_VERSION, TRIAGE_REVIEW_THRESHOLDS,
 } from "../../scripts/project-issue-triage-contract.mjs";
-import { evaluateTriage, JEV_ENDPOINT, RESPONSE_LIMIT } from "../../scripts/project-issue-triage.mjs";
+import { evaluateTriage, JEV_ENDPOINT, RESPONSE_LIMIT, buildTriageRequest, triageClassifierFingerprint } from "../../scripts/project-issue-triage.mjs";
 import {
   runTriageChild,
   createTriageState,
@@ -707,4 +709,24 @@ test("classic dry-run with shadow triage fetches no Issue text and never contact
   assert.equal(JSON.parse(stdout).triage.mode, "shadow");
   assert.equal(await readFile(log, "utf8"), "");
   assert.equal(`${stdout}${stderr}`.includes(marker), false);
+});
+
+
+test("classifier approval fingerprint includes route instructions and abstention criteria", () => {
+  const { questions } = buildTriageRequest({}, { routeMap: {
+    candidate: { agent: "fixture", model: "fixture" },
+  }, evidence: [] }, {});
+  const fingerprint = () => createHash("sha256").update(JSON.stringify({
+    policy: TRIAGE_POLICY, rubric: TRIAGE_RUBRIC_VERSION,
+    thresholds: TRIAGE_REVIEW_THRESHOLDS, questions,
+  })).digest("hex");
+  assert.ok(questions.route);
+  assert.equal(fingerprint(), triageClassifierFingerprint());
+  questions.route.instructions += " changed policy";
+  assert.notEqual(fingerprint(), triageClassifierFingerprint());
+  questions.route.instructions = buildTriageRequest({}, { routeMap: {
+    candidate: { agent: "fixture", model: "fixture" },
+  }, evidence: [] }, {}).questions.route.instructions;
+  questions.route.criteria.abstain = "changed abstention";
+  assert.notEqual(fingerprint(), triageClassifierFingerprint());
 });

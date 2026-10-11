@@ -1117,7 +1117,8 @@ Single-worker requests expose `triage-single-worker-shadow` and do not adopt rol
 Every assisted dispatch checks exact model availability; first dispatch also
 rechecks approval, Issue revision and reviewed route evidence. Route-only changes
 retain adopted risk/Size and request manual assignment without another Jev call.
-A stale Issue can be re-evaluated once before any role starts; subsequent changes
+A stale Issue refreshes its current labels and dependency metadata (failure is
+`triage-metadata-refresh-failed`) and can be re-evaluated once before any role starts; subsequent changes
 use fallback/manual assignment. Started role programs and handoffs keep their
 program; reviewer selection discards implementer route recommendations.
 Unreviewed or incomplete RouteEvidence produces abstention, not a capability rank.
