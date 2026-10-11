@@ -21,7 +21,8 @@ from an unambiguous `priority:P0..P3` label; open Issues are runnable, closed
 Issues are completed. Size is not fetched or written; triage may recommend it.
 
 1. Discover verified worker runtimes per [provider-routing.md](references/provider-routing.md).
-   Exclude every model of the parent runtime and apply unavailable route labels.
+   Exclude every model of the parent runtime (unless the run opts the parent in with
+   `--parent-as-worker` / `run.parentAsWorker: true`) and apply unavailable route labels.
 2. Use `node scripts/project-issue-orchestrator.mjs --issues <numbers> --dry-run
    --max-parallel <count> --release-policy merged --parent-agent <agent>
    --parent-model <model>`. It fetches only Issue metadata, labels and native
@@ -57,12 +58,13 @@ to enter an Issue creates the worktree via `issue-implementation`; later impleme
 resume it via `handoff-issue`. **A reviewer runs no skill at all** — both implementation skills
 commit, so it enters the existing worktree read-only.
 
-Review is bounded: a `NEEDS_REVISION` verdict buys one implementer fix pass, `REJECTED` blocks
-immediately, and at most two review passes ever run. An integration-gate rejection reopens the
-program at the implementer on its **own** single allowance, separate from the review passes; a
-second gate rejection blocks the Issue (`integration-gate-rejected-twice`), and a reopen is
-refused outright when no review pass is left to check the fix. Pass `--single-worker` to fall
-back to one worker owning the whole Issue.
+Review is bounded to one pass per Issue (Product Owner decision 2026-10-11, #581): a
+`NEEDS_REVISION` verdict buys one implementer fix pass that is **not** re-reviewed — the Issue
+then goes straight to its milestone gate — and `REJECTED` blocks immediately. An
+integration-gate rejection reopens the program at the implementer on its **own** single
+allowance; that fix is re-checked by the gate, not the reviewer, and a second gate rejection
+blocks the Issue (`integration-gate-rejected-twice`). Pass `--single-worker` to fall back to one
+worker owning the whole Issue.
 
 `parallel-analysis-implement-review` has no role program yet and is never selected.
 
@@ -76,9 +78,11 @@ strengths and the user's run-scoped hints. Rules:
   relabel a canonical identifier as a different model.
 - A reviewer proposal equal to that Issue's implementer route is rejected while another route
   exists; independent review means a different runtime.
-- The Parent agent runtime is never a worker route. This exclusion is by `agent`, not by model:
-  a different model or selector from the same agent is still excluded. Only a different verified
-  agent may receive an Issue.
+- By default the Parent agent runtime is not a worker route. This exclusion is by `agent`, not by
+  model: a different model or selector from the same agent is still excluded. Opt the parent in
+  with `--parent-as-worker` (both orchestrator CLIs) or YAML `run.parentAsWorker: true`
+  (Issue #589); its verified `role: worker` records then join `workerRoutes`, while run-scoped
+  unavailable lists and the different-runtime reviewer rule still apply.
 - Record the chosen route (agent + model labels only) in run state and in the dispatch message.
 - Exclusions are run-scoped: YAML `run.unavailableAgents` / `run.unavailableModels` and their
   `--unavailable-agent` / `--unavailable-model` CLI overrides affect only the current run, and
@@ -124,7 +128,7 @@ Do not embed hidden rationale or repeat repository-wide instructions that the wo
   receives `--fix-cycle <N>`, is told a PR already exists, reads the findings with
   `gh pr view --comments`, pushes to the same branch, and posts its own PR comment headed
   `role=implementer fix-cycle=<N>` stating what it changed per finding.
-- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which never includes the Parent agent; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
+- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which excludes the Parent agent unless the run opted it in; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 - A route that fails at actual dispatch (not just at discovery) is a signal the cached capability record no longer reflects reality. Pass `--invalidate-agent <name>` on the *next* orchestrator invocation (in addition to this run's `--unavailable-agent`) so that agent is dropped from the capability cache and re-probed instead of being trusted as "ok" indefinitely.
 
 Workers return only `started`, `blocked`, `role-complete`, `pr-created`, `merged`, or `failed`,
@@ -147,7 +151,7 @@ integration-scope review before releasing dependents. The gate checks only:
   (interfaces, schemas, documented behavior);
 - coverage of the Issue's stated acceptance criteria.
 
-Full implementation review is out of scope here — it belongs to the local AI review hook and PR
+Full implementation review is out of scope here — it belongs to the reviewer role and PR
 review. If the gate finds a problem, return the Issue to its worker with a concise reason and do
 not release dependents; otherwise record the milestone. The gate reads the PR diff and the
 related Issues' acceptance criteria; it never copies Issue bodies or diffs into parent state.

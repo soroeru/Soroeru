@@ -289,9 +289,14 @@ function expectedMilestone(state, issue) {
   return hasPrCreated ? "merged" : "pr-created";
 }
 
+/** Parent route options for every worker-pool computation: excluded by default, opted in by `parent.asWorker` (Issue #589). */
+function parentPoolOptions(config) {
+  return { parentAgent: config.parent.agent, parentAsWorker: config.parent.asWorker === true };
+}
+
 function currentPool(state) {
   return selectWorkerRoutes(state.capabilities ?? [], {
-    parentAgent: state.config.parent.agent,
+    ...parentPoolOptions(state.config),
     unavailableAgents: state.unavailableAgents,
     unavailableModels: state.unavailableModels,
   });
@@ -518,7 +523,7 @@ async function discoverCapabilitiesNode(state, config) {
   }
   try {
     const workerRoutes = selectWorkerRoutes(capabilities, {
-      parentAgent: state.config.parent.agent,
+      ...parentPoolOptions(state.config),
       unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     });
@@ -592,7 +597,7 @@ async function refreshTriageRoutesNode(state, config) {
     const refreshed = await getDeps(config).refreshTriageRoutes(state);
     const capabilities = refreshed.capabilities;
     const workerRoutes = selectWorkerRoutes(capabilities, {
-      parentAgent: state.config.parent.agent,
+      ...parentPoolOptions(state.config),
       unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     });
@@ -922,7 +927,7 @@ async function preflightAssistedDispatchNode(state, config) {
       return { failureReason: "triage-route-refresh-failed" };
     }
     let pool = selectWorkerRoutes(refreshed.capabilities, {
-      parentAgent: state.config.parent.agent, unavailableAgents: state.unavailableAgents,
+      ...parentPoolOptions(state.config), unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     });
     if (!pool.length) return { failureReason: "no-worker-route-available" };
@@ -944,7 +949,7 @@ async function preflightAssistedDispatchNode(state, config) {
         return { failureReason: "triage-route-refresh-failed" };
       }
       pool = selectWorkerRoutes(refreshed.capabilities, {
-        parentAgent: state.config.parent.agent, unavailableAgents: state.unavailableAgents,
+        ...parentPoolOptions(state.config), unavailableAgents: state.unavailableAgents,
         unavailableModels: [...state.unavailableModels, ...unavailableModels],
       });
       if (!pool.length) return { failureReason: "no-worker-route-available" };
@@ -1026,7 +1031,7 @@ async function preflightTriageDispatchNode(state, config) {
     return {
       capabilities: refreshed.capabilities,
       pool: selectWorkerRoutes(refreshed.capabilities, {
-        parentAgent: state.config.parent.agent,
+        ...parentPoolOptions(state.config),
         unavailableAgents: state.unavailableAgents,
         unavailableModels,
       }),
@@ -1290,7 +1295,8 @@ async function waitForEventsNode(state, config) {
       lastEventError: null,
     };
     if (next.status === "awaiting-milestone") {
-      // Every role has run and the reviewer passed: the Issue may now enter
+      // Every role has run and the reviewer passed (or its single fix pass is
+      // done, which is not re-reviewed): the Issue may now enter
       // the integration gate for its milestone. Terminal telemetry waits for
       // the release, since the gate may still send the program back.
       updates.pendingGate = { issue, type: expectedMilestone(state, issue) };
@@ -1665,7 +1671,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
     },
     runTriage: (input, triage) => runner().run(input, triage),
     refreshTriageRoutes: (state) => refreshWorkerRoutes({
-      cwd, parentAgent: state.config.parent.agent,
+      cwd, ...parentPoolOptions(state.config),
       unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     }),
@@ -1673,7 +1679,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
       graphql: repositoryIssueGraphql,
     }),
     verifyTriageRoute: (route, state) => verifyWorkerRoute(route, {
-      cwd, parentAgent: state.config.parent.agent,
+      cwd, ...parentPoolOptions(state.config),
       unavailableAgents: state.unavailableAgents,
       unavailableModels: state.unavailableModels,
     }),
@@ -1802,6 +1808,10 @@ export function parseGraphCliArgs(argv) {
       options.singleWorker = true;
       continue;
     }
+    if (flag === "--parent-as-worker") {
+      options.parentAsWorker = true;
+      continue;
+    }
     const key = valueFlags.get(flag);
     if (!key) throw new Error(`unknown-flag:${flag}`);
     const value = argv[++index];
@@ -1850,6 +1860,7 @@ async function buildStartInput(cli, repositoryRoot) {
         ["releasePolicy", cli.releasePolicy],
         ["unavailableModels", cli.unavailableModels],
         ["unavailableAgents", cli.unavailableAgents],
+        ["parentAsWorker", cli.parentAsWorker],
         ["triage", cli.triage],
       ].filter(([, value]) => value !== undefined),
     ),
@@ -1865,7 +1876,7 @@ async function buildStartInput(cli, repositoryRoot) {
       releasePolicy: merged.releasePolicy,
       unavailableAgents: merged.unavailableAgents ?? [],
       unavailableModels: merged.unavailableModels ?? [],
-      parent: { agent: cli.parentAgent, model: cli.parentModel },
+      parent: { agent: cli.parentAgent, model: cli.parentModel, ...(merged.parentAsWorker === true ? { asWorker: true } : {}) },
       selectors: {
         issues: cli.issues,
         priority: cli.priority,

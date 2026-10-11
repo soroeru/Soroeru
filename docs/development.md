@@ -46,7 +46,7 @@ Required tools for `Soroeru` development:
 
 - `git`
 - `bash`
-- `jq` for running the local AI review post-commit hook
+- `jq`
 - `shasum` on macOS or `sha256sum`
 - Node.js 22 LTS for local development and macOS release packaging
 - npm
@@ -76,9 +76,9 @@ not a synchronized copy. Area-specific guidance lives in Claude path rules and n
 files so it loads only when relevant.
 
 Claude Code project hooks in `.claude/settings.json` block commits from the human-only primary
-clone and direct reads of the real-password CSV or local AI review artifacts. These agent-layer
-guards complement, rather than replace, the Git hooks installed by `scripts/setup-hooks.sh`.
-Quality gates remain in the Git pre-commit hook rather than being duplicated in Claude settings.
+clone and direct reads of the real-password CSV. These agent-layer guards complement, rather
+than replace, the Git hooks installed by `scripts/setup-hooks.sh`. Quality gates remain in the
+Git pre-commit hook rather than being duplicated in Claude settings.
 
 High-side-effect skills are manually invocable, and Issue lifecycle skills advertise their Issue
 number argument. Repository skills intentionally do not grant broad `allowed-tools`: their GitHub,
@@ -87,7 +87,7 @@ Claude subagents use role-limited tool lists and intentionally have no persisten
 decisions belong in reviewed Issues or repository documents. Add skill eval fixtures only with a
 separate acceptance baseline and owner, so generated eval results do not become unreviewed policy.
 
-Install local hooks only if the local AI review workflow is in use:
+Install local git hooks:
 
 ```bash
 bash scripts/setup-hooks.sh
@@ -175,7 +175,11 @@ constraints, and the result includes `workerRoutes` — the run-scoped pool of
 verified worker capability records after `--unavailable-agent` /
 `--unavailable-model` exclusions and Parent-agent exclusion. The Parent agent
 runtime is excluded by agent identity, including all of its models and
-selectors: a Codex Parent means no Codex worker route. The orchestrating agent
+selectors: a Codex Parent means no Codex worker route. To let the calling
+Parent also work Issues, pass `--parent-as-worker` (to
+`project-issue-orchestrator.mjs` or `project-issue-graph.mjs`) or set
+`run.parentAsWorker: true` in the YAML config (Issue #589, default `false`);
+the Parent's verified worker records then join the pool. The orchestrating agent
 assigns each runnable Issue to one of the remaining routes at run time. If the
 remaining pool is smaller than `maxParallel`, the run proceeds with the
 available capacity; if Issues are runnable but the pool is empty the run stops
@@ -773,9 +777,8 @@ Decision (why this shape):
   (no separate allowlist to maintain).
 - **Where it runs.** In `release:check` (the release gate), **not** on every commit:
   `npm audit` needs the network and adds latency, so per-commit auditing would be noisy
-  and offline-hostile. A `pre-push` git hook is a reasonable **opt-in** addition (mirror
-  the opt-in model in [`local-ai-review.md`](local-ai-review.md)); it is intentionally
-  not enabled by default.
+  and offline-hostile. A `pre-push` git hook is a reasonable opt-in addition; it is
+  intentionally not enabled by default.
 - **Offline behavior.** `audit:check` requires registry access. When offline it will
   fail; that is acceptable for a release gate (a release should be audited online). For
   ordinary offline development, run the other gates individually
@@ -821,13 +824,6 @@ For code changes, run the available gates:
 - `npm run lint`
 - `npm run typecheck`
 - `npm test`
-- `bash scripts/smoke-local-ai-review-branch-mapping.sh` for local AI review
-  reviewer routing changes
-- `bash scripts/smoke-local-ai-review-issue-epoch.sh` for Issue epoch and
-  review-budget changes
-- `bash scripts/smoke-wait-for-local-ai-review.sh` for changes to the local AI
-  review completion-waiting script (see
-  [`local-ai-review.md`](local-ai-review.md) §10)
 - focused manual tests for affected browser behavior
 - for changes touching network calls, AI provider config, or `package.json`
   dependencies: `npm run poc -- check-egress` (PRIV-001, see
@@ -857,10 +853,7 @@ Code review (human or AI) prioritizes, in this order:
    path traversal, permission bits on state files
 4. **missing tests** — new behavior or new branches that have no test coverage
 
-This mirrors the local AI review's code-review criteria
-(`.githooks/prompts/local-review-claude.md` /
-`local-review-codex.md` / `local-review-grok.md`); keep them in sync if any
-change.
+These criteria are mirrored in the reviewer role's review checklist; keep them in sync if any change.
 
 ### 9.2 Requirements Review
 
@@ -880,9 +873,7 @@ priority order:
 The criteria derive from ISO/IEC/IEEE 29148 requirement quality
 characteristics, prioritized by defect impact. They mirror
 `skills/requirements-review/SKILL.md`; keep the two in sync if either
-changes. The local AI review hook applies the skill automatically to commits
-touching `docs/requirements.md` (see
-[`local-ai-review.md`](local-ai-review.md) §5).
+changes.
 
 ### 9.3 Design Doc Review
 
@@ -901,9 +892,7 @@ docs and checks, in priority order:
 5. **test strategy** — how the design's behavior will be verified is stated
 
 The criteria mirror `skills/design-doc-review/SKILL.md`; keep the two in sync
-if either changes. The local AI review hook applies the skill automatically
-to commits touching `docs/design/` (see
-[`local-ai-review.md`](local-ai-review.md) §5).
+if either changes.
 
 ### 9.4 Architecture Review
 
@@ -925,15 +914,7 @@ desktop app):
 A criterion that genuinely does not apply is answered "not applicable" with
 a reason, not forced. The criteria mirror
 `skills/architecture-review/SKILL.md`; keep the two in sync if either
-changes. The local AI review hook applies the skill automatically to commits
-touching `docs/architecture.md` (see
-[`local-ai-review.md`](local-ai-review.md) §5).
-
-### 9.5 Local AI Review
-
-Setup, behavior, and troubleshooting for the local AI review hook live in
-[`local-ai-review.md`](local-ai-review.md). The setup command is repeated
-once in §2 above as part of environment setup; do not duplicate it elsewhere.
+changes.
 
 ## 10. Issue Implementation
 
@@ -948,32 +929,23 @@ unless the user explicitly changes it:
    `scripts/issue-worktree.sh create` through `issue-implementation`.
 2. Move every operation to the helper's absolute Issue worktree path.
 3. Implement the Issue there; the primary clone remains human-only.
-4. After committing, check the commit command's own output for
-   `[local-ai-review] queued ...`. If present, wait for that result by
-   running `scripts/wait-for-local-ai-review.sh --print` (see
-   [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
-   the review-count cap and follow-up policy) rather than polling
-   `state/ai-reviews/` turn-by-turn. Run one local AI review per handoff epoch,
-   apply its actionable findings, and commit fixes with
-   `LOCAL_AI_REVIEW_RUNNING=1` so no confirming review starts.
-
-5. Push the finished local branch to GitHub and create a PR. Include
+4. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged. Also include the local AI review status for each
-   run, actionable findings, and what was fixed. If review did not run or
-   residual risk remains after the single review, state that
-   clearly.
+   when the PR is merged.
+5. Dispatch a reviewer role from a different verified route
+   (via `node scripts/project-issue-dispatch.mjs --role reviewer --execution-mode direct-review
+   --review-pass 1`). The reviewer works read-only in the existing Issue worktree,
+   reads the PR diff and acceptance criteria, and posts a `role=reviewer pass=1 verdict=<...>`
+   comment to the PR. A `NEEDS_REVISION` verdict buys one implementer fix pass (push to the
+   same branch, post a `role=implementer fix-cycle=1` comment stating what changed per
+   finding). A `REJECTED` verdict blocks. Include the reviewer verdict and any actionable
+   findings in the PR description.
 
-The workflow intentionally avoids an open-ended review loop, capped at one
-review run per handoff epoch. A successful new-session handoff (including the
-same agent after a session limit) starts a fresh `0/1` epoch; same-session
-re-entry is idempotent. If the user gives multiple Issue numbers, ask which
-single Issue to implement first.
+If the user gives multiple Issue numbers, ask which single Issue to implement first.
 
 ## 11. Operational Notes
 
 - `state/` is local state and must not be committed.
-- `state/ai-reviews/` contains local AI review artifacts.
 - `out/` and `release/` contain generated `.app` / DMG artifacts and must not be committed.
 - `node_modules/`, build outputs, coverage, and common caches are ignored by
   Git.
@@ -1130,7 +1102,7 @@ Adoption takes the maximum existing/adopted risk and Size, preserves dependencie
 and `changeScopeCount`, and recomputes provisional mode and role program.
 An explicit `modeOverride` stays separate and must fit the effective risk/Size;
 high/critical always use planner → implementer → independent reviewer.
-No Size or status is written to GitHub. Parent runtimes remain excluded.
+No Size or status is written to GitHub. Parent runtimes remain excluded unless the run opts them in (`parentAsWorker`).
 Single-worker requests expose `triage-single-worker-shadow` and do not adopt roles.
 
 Every assisted dispatch checks exact model availability; first dispatch also
@@ -1175,147 +1147,6 @@ the original run configuration, so do not resume an old enabled checkpoint.
 The approval record only enables assisted's confirmation flow; private sending additionally
 requires this independent explicit flag. No new GitHub secret or Project token is needed.
 
-## Soroeru Cloud development and deployment (#559)
-
-`cloud/` is a separate Node 22 npm package. It shares the browser-safe runtime validators in
-`src/shared/cloud-contract.ts` with the Side Panel's `extension/cloud-client.ts`.
-No Google SDK is added to the root package or extension. The backend currently has six POST
-endpoints including the Tier 3 ticket endpoint. Resolve returns no schema, feedback returns
-`accepted: false`, mapping/read return empty results, and telemetry returns 503 until #563
-implements persistence. These are development stubs, not a complete collection backend.
-
-```bash
-npm ci
-npm ci --prefix cloud
-npm run typecheck --prefix cloud
-npm test --prefix cloud
-npm run audit --prefix cloud
-terraform fmt -check -recursive infra
-terraform -chdir=infra/bootstrap init -backend=false
-terraform -chdir=infra/bootstrap validate
-terraform -chdir=infra/runtime init -backend=false
-terraform -chdir=infra/runtime validate
-```
-
-Run the root format/lint/typecheck/test/release gates as well. The cloud workflow builds the
-Dockerfile and runs both packages' checks on pull requests without cloud credentials.
-The local HTTP tests use fake data and in-memory budget adapters; a real Firestore transaction
-is verified by the deployed smoke test. Before changing Tier 2/3 handlers, retain those budget
-and ticket boundaries and add the corresponding provider/masking tests.
-
-### Initial Google Cloud foundation
-
-Install Terraform 1.14.x and gcloud. Use local Application Default Credentials (`gcloud auth
-application-default login`) or set `GOOGLE_APPLICATION_CREDENTIALS` to an existing local key
-file. Never copy a key into the repository, Docker build context, extension, or GitHub secrets.
-The following IDs are examples; supply the actual project ID, open billing account, and numeric
-repository/owner IDs locally. The billing account must use JPY for the default budget resource.
-
-```bash
-export TF_VAR_project_id=soroeru-example-cloud
-export TF_VAR_billing_account=000000-000000-000000
-export TF_VAR_github_repository_id=123456789
-export TF_VAR_github_owner_id=12345678
-node scripts/bootstrap-cloud.mjs
-```
-
-The bootstrap uses `infra/bootstrap/main.tf`: it creates a project, links billing, enables APIs,
-creates Artifact Registry, separate bootstrap/runtime GCS state buckets, runtime service accounts,
-Secret Manager's ticket-key container, GitHub OIDC federation, a local-build account/bucket, and
-a monthly JPY budget notification. The default notification is ¥1,000 at 50%, 90%, and 100%.
-Notifications go to the billing account's default recipients and **do not stop spending**.
-Change `TF_VAR_monthly_budget_yen` when a different alert level is approved.
-
-The first apply uses ignored local state under `state/cloud-bootstrap`, then migrates it into
-`${project}-bootstrap-tfstate` with prefix `bootstrap`. Keep that local directory until migration
-succeeds; do not rerun initial provisioning from a fresh checkout against an existing project.
-For subsequent foundation changes, initialize `infra/bootstrap` against that existing bucket
-and prefix with local credentials, then plan/apply. Project, secrets, state, and runtime services
-have deletion protections; destructive migration requires an explicit separate decision.
-
-The bootstrap generates the HMAC key in memory and sends it to Secret Manager through stdin.
-It creates a version only when no enabled version exists; key bytes never enter Terraform state.
-Both runtimes have access to that specific secret. At project level the fallback account has
-Vertex AI only, and no Firestore/BigQuery roles. The API account also has Firestore access for
-`budgets/{UTC yyyy-mm-dd}`. The default daily budget is 100 requests shared by Tier 2 and ticket
-issuance; a transaction consumes one unit before either operation. Storage failure returns 503,
-exhaustion returns 429. Firestore contains counts only. The API stubs consume this budget too.
-
-### Runtime deployment and GitHub Actions
-
-`infra/runtime/main.tf` owns Firestore, Cloud Run, request-log exclusions, and runtime limits.
-The region is `asia-northeast1`. The API has at most two instances with concurrency 20; fallback
-has one instance with concurrency 1. For direct `run.app` ingress, the per-instance IP limiter
-uses only the rightmost address appended by the Cloud Run frontend; caller-supplied prefixes
-are ignored. Local HTTP ignores forwarding headers. Cloud Run requests with a missing or invalid
-trusted suffix fail closed. This policy is specific to the direct frontend: adding a load balancer
-or another trusted proxy requires re-verifying the hop count. IPs remain in bounded memory only;
-it is conservative best-effort throttling, not a global quota. Gemini's transaction budget is
-shared across instances.
-
-Create the GitHub environment `soroeru-cloud`, restrict deployments to main, and set these
-repository or environment variables (public configuration, not secrets):
-
-| Variable | Value |
-| --- | --- |
-| `GCP_PROJECT_ID` | Created project ID |
-| `TF_STATE_BUCKET` | `${project}-runtime-tfstate` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Bootstrap output `workload_identity_provider` |
-| `GCP_DEPLOY_SERVICE_ACCOUNT` | Bootstrap output `deploy_service_account` |
-| `GEMINI_DAILY_LIMIT` | Positive integer; default 100 |
-| `TIER3_TICKET_SECRET_VERSION` | Enabled numeric secret version; initially 1 |
-
-`.github/workflows/cloud.yml` validates pull requests and, after successful validation, deploys
-main pushes or a manual main dispatch. Google accepts OIDC tokens only from the configured numeric
-repository and owner IDs, main, and this exact workflow. PRs and other workflows have no deployment
-credentials. CI can update runtime resources and its runtime state bucket; it cannot change
-foundation IAM/WIF/billing or access bootstrap state. There is no project Editor/Owner grant.
-The workflow pushes an image tagged with the commit, resolves its digest, and Terraform deploys
-the immutable digest. Terraform state locking and workflow concurrency serialize deployment.
-
-For the first local deployment when Docker is unavailable, use the dedicated Cloud Build account.
-`.gcloudignore` and `.dockerignore` include only the cloud sources, lockfiles, and shared contracts.
-They exclude vaults, local credentials, state, and other application files.
-
-```bash
-export SOROERU_PROJECT=soroeru-example-cloud
-export SOROERU_IMAGE="asia-northeast1-docker.pkg.dev/${SOROERU_PROJECT}/soroeru/cloud:bootstrap"
-gcloud builds submit . --project="$SOROERU_PROJECT" --region=asia-northeast1 \
-  --config=cloud/cloudbuild.yaml --substitutions="_IMAGE=${SOROERU_IMAGE}" \
-  --service-account="projects/${SOROERU_PROJECT}/serviceAccounts/cloud-build@${SOROERU_PROJECT}.iam.gserviceaccount.com" \
-  --gcs-source-staging-dir="gs://${SOROERU_PROJECT}-build-source/source"
-export TF_VAR_project_id="$SOROERU_PROJECT"
-export TF_VAR_image="asia-northeast1-docker.pkg.dev/${SOROERU_PROJECT}/soroeru/cloud@$(gcloud artifacts docker images describe "$SOROERU_IMAGE" --project="$SOROERU_PROJECT" --format='value(image_summary.digest)')"
-terraform -chdir=infra/runtime init -backend-config="bucket=${SOROERU_PROJECT}-runtime-tfstate" -backend-config=prefix=runtime
-terraform -chdir=infra/runtime plan -out=deploy.tfplan
-terraform -chdir=infra/runtime apply deploy.tfplan
-node scripts/check-cloud-deployment.mjs "$SOROERU_PROJECT"
-```
-
-The check verifies request-log exclusions, fallback project permissions, runtime limits and secret
-references, then exercises all six public endpoints with fake data, including altered-payload and
-replayed-ticket rejection when budget remains. It consumes at most two daily budget units and
-accepts only the expected `429 budget-exhausted` response when those units are unavailable.
-Complete ticket/replay checks also run in HTTP tests with an isolated fake budget. No response
-body is printed.
-Before release, also perform the Cloud Logging/Trace checks in `docs/manual-test.md`.
-#559 does not call Vertex AI, initialize tracing, or enable provider request/response logging or
-context caching. The deployment check rejects tracing/logging-enabling environment flags; provider
-logging/cache settings must be rechecked when #561/#562 introduce the Gemini client.
-
-The ticket is valid for five minutes and binds the site, consent ID, and SHA-256 of
-`tier3PayloadJson(payload)` (stable serialization excluding the ticket). A fallback instance keeps
-used nonces in memory until expiry; replay or a modified payload is rejected. A restart within
-five minutes can accept the same payload again, the accepted risk in architecture §14.1. Tickets
-are server budget/binding controls, not proof of human consent; #562 owns the client consent gate.
-The CloudClient has bounded responses, a 30-second timeout, no credentials, no redirects, no
-automatic retries, and validates both requests and responses. Cloud permissions must be requested
-for the configured exact endpoint origins before Side Panel use; #560 wires that integration.
-
-The manual Codex/Claude implementation order is recorded in
-[`cloud-implementation-order.md`](cloud-implementation-order.md); GitHub `Blocked by` remains the
-source of truth for dependencies.
-
 ### Shared schemas (Issue #560)
 
 The Firestore registry and its maintainer-only seed import are documented in
@@ -1332,3 +1163,4 @@ extension lease. Root unit tests cover the typed request, encrypted
 cache, offline reuse, and Visibility ledger/checkpoint integration. Firestore SDK
 calls are isolated in tests; development-project deployment and real Chrome Side
 Panel verification remain in [`manual-test.md`](manual-test.md#tier-1-shared-schemas-560).
+

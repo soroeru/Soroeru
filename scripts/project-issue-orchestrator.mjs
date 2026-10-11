@@ -111,6 +111,7 @@ export async function runOrchestration(input) {
   });
   const workerRoutes = selectWorkerRoutes(options.capabilities ?? [], {
     parentAgent: parent.agent,
+    parentAsWorker: parent.asWorker === true,
     unavailableAgents: options.unavailableAgents,
     unavailableModels: options.unavailableModels,
   });
@@ -177,6 +178,10 @@ export function parseCliArgs(argv) {
     }
     if (flag === "--skip-capability-discovery") {
       options.skipCapabilityDiscovery = true;
+      continue;
+    }
+    if (flag === "--parent-as-worker") {
+      options.parentAsWorker = true;
       continue;
     }
     // Forces a full re-discovery of every adapter, ignoring any cached
@@ -284,6 +289,7 @@ async function main() {
       ...(cli.releasePolicy === undefined ? {} : { releasePolicy: cli.releasePolicy }),
       ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
       ...(cli.unavailableAgents === undefined ? {} : { unavailableAgents: cli.unavailableAgents }),
+      ...(cli.parentAsWorker === undefined ? {} : { parentAsWorker: cli.parentAsWorker }),
     },
   });
   const effectiveCli = {
@@ -296,6 +302,7 @@ async function main() {
     ...(merged.releasePolicy === undefined ? {} : { releasePolicy: merged.releasePolicy }),
     ...(merged.unavailableModels === undefined ? {} : { unavailableModels: merged.unavailableModels }),
     ...(merged.unavailableAgents === undefined ? {} : { unavailableAgents: merged.unavailableAgents }),
+    ...(merged.parentAsWorker === undefined ? {} : { parentAsWorker: merged.parentAsWorker }),
   };
   const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
@@ -352,7 +359,7 @@ async function main() {
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
     ...(capabilities === undefined ? {} : { capabilities }),
     ...(cli.parentAgent && cli.parentModel
-      ? { parent: { agent: cli.parentAgent, model: cli.parentModel } }
+      ? { parent: { agent: cli.parentAgent, model: cli.parentModel, ...(effectiveCli.parentAsWorker === true ? { asWorker: true } : {}) } }
       : {}),
   };
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))

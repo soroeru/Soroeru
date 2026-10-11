@@ -113,6 +113,8 @@ jq '.review.pending=0' "$STATE_FILE" > "$STATE_FILE.tmp" && mv "$STATE_FILE.tmp"
 STATUS=$("$HELPER" status 365 --repo "$REPO" --json)
 assert_eq "$(printf '%s' "$STATUS" | jq -r .handoff_epoch)" "2"
 assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_used)" "0"
+assert_eq "$(printf '%s' "$STATUS" | jq -r .review_budget_limit)" "1"
+assert_eq "$(jq -r '.history[-1].new_review_limit' "$STATE_FILE")" "1"
 assert_eq "$(printf '%s' "$STATUS" | jq -r .owner.agent)" "codex"
 
 mkdir -p "$WORKTREE/state/ai-reviews"

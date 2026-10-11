@@ -68,14 +68,18 @@ export function modePreferencesFor(riskCategory, dependencyDepth = 0) {
 /** Reviewer verdicts, mirroring ReviewerOutput in src/shared/role-schemas.ts. */
 export const REVIEW_VERDICTS = Object.freeze(["PASS", "NEEDS_REVISION", "REJECTED"]);
 
-/** A rejected implementation gets at most one fix pass, so at most 2 reviews. */
-export const MAX_REVIEW_PASSES = 2;
+/**
+ * One review per Issue (Product Owner decision 2026-10-11, Issue #581). A
+ * NEEDS_REVISION verdict buys one implementer fix pass that is not re-reviewed.
+ */
+export const MAX_REVIEW_PASSES = 1;
 
 /**
  * An integration-gate rejection may send the program back to the implementer
  * once. This budget is separate from MAX_REVIEW_PASSES: a gate rejection is a
  * cross-Issue problem, not a code-review round, so it gets its own single
- * allowance and a second rejection stops the Issue instead of cycling.
+ * allowance (re-checked by the gate, not the reviewer) and a second rejection
+ * stops the Issue instead of cycling.
  */
 export const MAX_GATE_REOPENS = 1;
 
@@ -202,6 +206,11 @@ export function advanceRoleProgram(roleState, { role, verdict } = {}) {
   if (current !== role) throw new Error(`role-mismatch:${roleState.issue}:${role}`);
 
   if (role !== ROLES.REVIEWER) {
+    // A fix pass after the review budget is spent (review findings or a gate
+    // reopen) is not re-reviewed: it goes straight back to the milestone gate.
+    if (role === ROLES.IMPLEMENTER && roleState.fixCycles > 0 && roleState.reviewPasses >= MAX_REVIEW_PASSES) {
+      return { ...roleState, index: program.indexOf(ROLES.REVIEWER), status: "awaiting-milestone" };
+    }
     return { ...roleState, index: roleState.index + 1, status: "active" };
   }
 
@@ -210,7 +219,7 @@ export function advanceRoleProgram(roleState, { role, verdict } = {}) {
   if (verdict === "PASS") {
     return { ...roleState, reviewPasses, status: "awaiting-milestone" };
   }
-  if (verdict === "REJECTED" || reviewPasses >= MAX_REVIEW_PASSES) {
+  if (verdict === "REJECTED" || reviewPasses > MAX_REVIEW_PASSES) {
     return {
       ...roleState,
       reviewPasses,
@@ -218,8 +227,7 @@ export function advanceRoleProgram(roleState, { role, verdict } = {}) {
       blockedReason: verdict === "REJECTED" ? "review-rejected" : "review-passes-exhausted",
     };
   }
-  // NEEDS_REVISION with budget left: one fix pass by the implementer, then
-  // the reviewer looks again.
+  // NEEDS_REVISION: one fix pass by the implementer, which is not re-reviewed.
   return {
     ...roleState,
     reviewPasses,
@@ -231,8 +239,8 @@ export function advanceRoleProgram(roleState, { role, verdict } = {}) {
 
 /**
  * Send a finished program back to the implementer for one more fix cycle —
- * used when the integration gate rejects work the reviewer had passed. The
- * review budget bounds this too, so a rejected Issue cannot cycle forever.
+ * used when the integration gate rejects work. MAX_GATE_REOPENS bounds this,
+ * so a rejected Issue cannot cycle forever; the gate re-checks the fix.
  */
 export function reopenRoleProgramForFix(roleState, reason) {
   // The gate gets one reopen of its own. A second rejection means the fix did
@@ -240,11 +248,6 @@ export function reopenRoleProgramForFix(roleState, reason) {
   const gateReopens = roleState.gateReopens ?? 0;
   if (gateReopens >= MAX_GATE_REOPENS) {
     return { ...roleState, status: "blocked", blockedReason: `${reason}-twice` };
-  }
-  // The review budget is still shared: a reopen has no value if no review pass
-  // is left to check the fix.
-  if (roleState.reviewPasses >= MAX_REVIEW_PASSES) {
-    return { ...roleState, status: "blocked", blockedReason: reason };
   }
   return {
     ...roleState,

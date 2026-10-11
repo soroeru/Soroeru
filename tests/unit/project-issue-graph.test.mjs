@@ -1244,7 +1244,23 @@ test("unusual graph thread IDs map to a stable valid triage budget ID", async ()
   }
 });
 
+test("the parent runtime receives worker dispatches only when parent.asWorker opts it in (Issue #589)", async () => {
+  // parentRecord validates the parent route itself; only the role=worker record can join the pool.
+  const capabilities = [parentRecord, workerRoute("Codex", "gpt-5")];
+  const excluded = makeRun();
+  await excluded.invoke(makeInput({ items: [item(1)], capabilities }));
+  assert.equal((await excluded.state()).failureReason, "no-worker-route-available");
+  assert.equal(excluded.deps.dispatched.length, 0);
+
+  const included = makeRun();
+  await included.invoke(makeInput({ items: [item(1)], capabilities,
+    config: { parent: { agent: "Codex", model: "gpt-5", asWorker: true } } }));
+  assert.equal((await included.state()).failureReason, undefined);
+  assert.equal(included.deps.dispatched.at(-1)?.route.agent, "Codex");
+});
+
 test("parseGraphCliArgs validates thread id and resume sources", () => {
+  assert.equal(parseGraphCliArgs(["--thread-id", "t", "--parent-as-worker"]).parentAsWorker, true);
   assert.throws(() => parseGraphCliArgs([]), /thread-id-required/);
   assert.throws(
     () => parseGraphCliArgs(["--thread-id", "t", "--resume-json", "{}", "--resume-file", "x"]),
@@ -1341,7 +1357,7 @@ test("a milestone reported while the role program is still running is rejected",
   assert.deepEqual(state.completed, []);
 });
 
-test("NEEDS_REVISION buys one fix pass, and the second rejection blocks the Issue", async () => {
+test("NEEDS_REVISION buys one fix pass, which goes to the milestone without a second review", async () => {
   const run = makeRun();
   await run.invoke(roleInput([item(1)]));
   await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
@@ -1350,21 +1366,16 @@ test("NEEDS_REVISION buys one fix pass, and the second rejection blocks the Issu
   const fix = run.deps.dispatched.at(-1);
   assert.equal(fix.role, "implementer");
   assert.equal(fix.skill, "handoff-issue");
-
-  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
-  assert.equal(run.deps.dispatched.at(-1).reviewPass, 2);
+  assert.equal(fix.fixCycle, 1);
 
   const dispatchesBefore = run.deps.dispatched.length;
-  const result = await run.resume({
-    type: "role-complete",
-    issue: 1,
-    role: "reviewer",
-    verdict: "NEEDS_REVISION",
-  });
-  assert.equal(result.runStatus, "blocked");
-  assert.equal(run.deps.dispatched.length, dispatchesBefore, "no third review pass");
-  assert.deepEqual(result.summary.milestones, []);
-  assert.equal(result.summary.roles[0].status, "blocked");
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+  assert.equal(run.deps.dispatched.length, dispatchesBefore, "no second review pass");
+
+  const result = await run.resume({ accepted: true });
+  assert.deepEqual(result.summary.milestones, [{ issue: 1, type: "pr-created" }]);
+  assert.deepEqual(result.summary.completed, [1]);
+  assert.equal(result.summary.roles[0].reviewPasses, 1);
 });
 
 test("an interrupted reviewer resumes as the reviewer on another verified route", async () => {

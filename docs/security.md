@@ -116,8 +116,8 @@ Never stored:
 
 > **Changed in part (2026-10-10, Issue #572):** CVV retention below is unchanged, but the
 > model-side read is replaced: password and CVV items are masked before the provider call, and
-> their values are read locally (not returned by the model) before storage. Until #572 lands,
-> the code still sends those items to the provider as described below.
+> their values are read locally (not returned by the model) before storage. The #517 status
+> below is amended accordingly.
 
 **Implementation status (Issue #516):** `AddDisclosureInput.collectionTier` explicitly selects
 `"ai-driven"` for the trusted AI collection caller. Only that tier retains CVV values/hashes
@@ -132,9 +132,14 @@ collector action (Issue #517). No existing deterministic caller opts into the AI
 **Implementation status (Issue #517):** the AI exploration loop and captured-page corroboration
 are implemented (`src/automation/ai-visibility-collector.ts` and related modules). A value the
 model returns must match its own captured item verbatim (limited normalization only: NFC form,
-line-ending/whitespace trimming, and ASCII space/hyphen removal for phone/card items; passwords
-and CVV require exact match) before it is written; a masked PAN can never corroborate a proposed
-full number, and My Number/PIN-shaped values are rejected by local content/label classification
+line-ending/whitespace trimming, and ASCII space/hyphen removal for phone/card items) before it
+is written. Since Issue #572, password, CVV, OTP, and secret-like items (`type=password`, the
+`current-password`/`new-password`/`one-time-code`/`cc-csc` autocomplete tokens, a local
+password/CVV classification, or a secret-like label on the item itself) are masked in the
+request. Whole-token echoes of those values, and of PIN/My Number values, are scrubbed from
+other page text, and an item whose own value contains such an echo is masked whole; the model's key for a masked item must match local
+classification, and the stored value is the locally read one. A masked PAN can never corroborate
+a proposed full number, and My Number/PIN-shaped values are rejected by local content/label classification
 regardless of the key the model assigned. A non-corroborating value becomes an `unknown-state`
 Constraint, never a stored Disclosure or its hash. Production authorization issuance — the
 collection gate naming the raw-value categories at L0, and the L1 understanding check — remains
@@ -204,13 +209,6 @@ regex-based redaction pass over every message/field string as defense-in-depth
 before writing. The Settings tab's "ログをダウンロード" button reads this file
 over IPC (`soroeru:logs:export`) and triggers a renderer-side download; no
 native dialog or extra filesystem grant is added to the renderer.
-
-**`state/ai-reviews/`** (the local AI review hook,
-[`docs/local-ai-review.md`](local-ai-review.md)) operates on `git diff` of
-source code, not on `state/soroeru-poc/` (the encrypted profile store); since
-profile values are encrypted at rest and never appear in source, review
-artifacts cannot contain raw personal data. Both `state/ai-reviews/` and
-`state/soroeru-poc/` are Git-ignored.
 
 ### 3.1 Password and CVV handling
 
@@ -750,7 +748,6 @@ runtime, and the packaged Playwright Chromium browser, but must not bundle:
 
 - encrypted vault files from `state/` or `~/Library/Application Support/Soroeru`;
 - `.env`, API keys, passphrases, recovery keys, browser sessions, or cookies;
-- local AI review output under `state/ai-reviews/`;
 - screenshots, logs, diagnostics, or support bundles containing raw personal values.
 
 The packaged app stores beta data under the user's Soroeru app-support directory. Logs

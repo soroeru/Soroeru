@@ -7,6 +7,8 @@ run:
   releasePolicy: merged
   unavailableModels: none
   unavailableAgents: none
+  # Set true to let the calling Parent agent also receive worker routes (default false).
+  parentAsWorker: false
   # Opt-in only: assisted also requires a local measured-evaluation approval record.
   triage:
     mode: off

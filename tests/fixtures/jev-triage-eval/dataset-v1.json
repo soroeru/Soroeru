@@ -2071,8 +2071,8 @@
         "egress",
         "orchestration"
       ],
-      "title": "Upload local AI review artifacts to a shared bucket",
-      "body": "### Goal\nShare state/ai-reviews artifacts with collaborators by uploading them after each review.\n### Scope\nNew upload step and credentials.",
+      "title": "Upload code review artifacts to a shared bucket",
+      "body": "### Goal\nShare state/code-reviews artifacts with collaborators by uploading them after each review.\n### Scope\nNew upload step and credentials.",
       "label": {
         "risk": "high",
         "size": "M"

@@ -208,12 +208,13 @@ export function validateCapabilities(requiredRoutes, capabilities) {
 /**
  * Run-time worker route pool: every role=worker capability record that is
  * well-formed, selectable, verifiable, and not excluded by the parent agent
- * or run-scoped unavailable agent/model lists. The orchestrating agent assigns
+ * (unless `parentAsWorker` opts it in, Issue #589) or run-scoped unavailable
+ * agent/model lists. The orchestrating agent assigns
  * each runnable Issue to one of these routes; the pool never invents a route.
  */
 export function selectWorkerRoutes(
   capabilities,
-  { parentAgent, unavailableAgents = [], unavailableModels = [] } = {},
+  { parentAgent, parentAsWorker = false, unavailableAgents = [], unavailableModels = [] } = {},
 ) {
   if (!Array.isArray(capabilities)) throw new Error("capability-records-required");
   const excludedAgents = new Set(
@@ -223,7 +224,7 @@ export function selectWorkerRoutes(
     if (isRetiredRuntimeRoute({ agent: parentAgent })) throw new Error("runtime-retired");
     const canonicalParent = canonicalizeAgent(parentAgent);
     if (!canonicalParent) throw new Error("invalid-parent-agent");
-    excludedAgents.add(canonicalParent.toLowerCase());
+    if (parentAsWorker !== true) excludedAgents.add(canonicalParent.toLowerCase());
   }
   const excludedModels = new Set(unavailableModels);
   const routes = [];
