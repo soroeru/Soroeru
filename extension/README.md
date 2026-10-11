@@ -29,3 +29,31 @@ Argon2id WebAssembly KDF) but never `unsafe-eval`.
 The content script reuses the structure-only scanner used by Playwright. Raw
 field/display values are returned only for an explicit command and are not
 persisted or logged by the extension.
+
+## Tier 1 shared form schemas (#560)
+
+Build with `VITE_SOROERU_CLOUD_API_URL` set to the reviewed HTTPS Cloud Run API
+origin (no path, query, or credentials):
+
+```bash
+VITE_SOROERU_CLOUD_API_URL=<api-origin> npm run build:extension
+```
+
+After unlocking the Side Panel, enable **共有フォームスキーマを使う** to allow
+lookup. Assistance defaults to off and the preference is encrypted in the vault.
+This sends only the Site Account's normalized registrable domain, the #518
+structure-only fingerprint, and the client version. Configure the Site Account
+with the registrable domain; do not configure a personalized subdomain as its domain.
+
+The Content Script rechecks walls, automation-prohibiting terms, the page fingerprint,
+and each field's unique anchor and deterministic classification before reading.
+Values return directly to the Side Panel and stay local. A mismatch affects that
+field alone. Unresolved mappings produce an unknown-state constraint; Tier 2/3
+are follow-up Issues. Password/CVV collection is not added by this path, and schemas
+never authorize a fill or submission.
+
+Resolved schemas and retrieval times are saved in the encrypted `formSchemaCache`.
+When assistance is off or Cloud is unreachable, matching cached schemas remain
+usable. A live `none` response does not reuse a potentially obsolete cache. A cache
+or server schema with confidence below 0.8 is not used. Cache and deterministic
+collection work even in builds without a configured Cloud origin.

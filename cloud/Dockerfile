@@ -7,6 +7,7 @@ RUN npm ci
 COPY cloud/tsconfig.json ./
 COPY cloud/src ./src
 COPY src/shared/cloud-contract.ts /app/src/shared/cloud-contract.ts
+COPY src/shared/personal-value.ts /app/src/shared/personal-value.ts
 COPY src/types.ts /app/src/types.ts
 RUN npm run build && npm prune --omit=dev
 

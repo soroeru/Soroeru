@@ -77,6 +77,7 @@ export function LedgerView(props: {
 }
 
 export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.Element {
+  const [cloudEnabled, setCloudEnabled] = useState(() => host.cloudAssistEnabled);
   const [sites, setSites] = useState<SiteAccount[]>(() => host.listSites());
   const [results, setResults] = useState<Record<string, VisibilityRunResultView>>({});
   const [instruction, setInstruction] = useState<string | undefined>();
@@ -132,6 +133,23 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
       )}
       {instruction !== undefined && (
         <HandoffCard instruction={instruction} onResume={() => host.resume()} onAbort={() => host.abort()} />
+      )}
+      {host.cloudAvailable && (
+        <label className="text-sm">
+          <input
+            type="checkbox"
+            checked={cloudEnabled}
+            disabled={running}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              void host
+                .setCloudAssistEnabled(enabled)
+                .then(() => setCloudEnabled(enabled))
+                .catch(() => setError("設定を保存できませんでした。"));
+            }}
+          />{" "}
+          共有フォームスキーマを使う（送信はサイト名と構造ハッシュのみ）
+        </label>
       )}
       <LedgerView sites={sites} results={results} busy={running} onRun={run} />
     </div>

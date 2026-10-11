@@ -1,9 +1,11 @@
+import type { SchemaRegistry } from "./schema-registry.js";
 import { isIP } from "node:net";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   CLOUD_PATHS,
   CLOUD_LIMITS,
   validateCloudRequest,
+  validateCloudResponse,
   type CloudOperation,
   type CloudRequests,
 } from "../../src/shared/cloud-contract.js";
@@ -23,6 +25,7 @@ export interface SafeLog {
 }
 export interface ServerOptions {
   service: ServiceKind;
+  schemas?: SchemaRegistry;
   budget: DailyBudget;
   tickets: TicketAuthority;
   log: (entry: SafeLog) => void;
@@ -143,7 +146,12 @@ export function createCloudServer(options: ServerOptions) {
       }
       switch (operation) {
         case "resolve":
-          send(res, 200, { schema: null, status: "none" });
+          {
+            const schema = (await options.schemas?.resolve(body as CloudRequests["resolve"])) ?? null;
+            const response = { schema, status: schema ? "active" : "none" };
+            validateCloudResponse("resolve", response);
+            send(res, 200, response);
+          }
           break;
         // Do not claim persistence or completed AI processing while those handlers remain stubs.
         case "feedback":

@@ -1,3 +1,4 @@
+import { looksLikePersonalValue } from "./personal-value.js";
 import { KNOWN_PROFILE_KEYS, type KnownProfileKey } from "../types.js";
 
 export const CLOUD_PATHS = {
@@ -178,7 +179,7 @@ function version(v: unknown): void {
 function id(v: unknown): void {
   pattern(v, /^[fd]-[1-9][0-9]{0,5}$/);
 }
-function anchor(v: unknown): void {
+export function validateSchemaAnchor(v: unknown): asserts v is string {
   str(v, 2048);
   check(/^[fd]-[1-9][0-9]{0,5}$/.test(v) || /^:root(?: > \*:nth-child\([1-9][0-9]{0,4}\)){0,32}$/.test(v));
 }
@@ -214,7 +215,7 @@ export function validateFormSchema(v: unknown): asserts v is FormSchema {
     o.fields,
     (v) => {
       const f = object(v, ["anchor", "attributeKey", "required"]);
-      anchor(f.anchor);
+      validateSchemaAnchor(f.anchor);
       key(f.attributeKey);
       check(typeof f.required === "boolean");
     },
@@ -223,6 +224,23 @@ export function validateFormSchema(v: unknown): asserts v is FormSchema {
   confidence(o.confidence);
   oneOf(o.status, ["candidate", "active", "retired"]);
   oneOf(o.provenance, ["official", "gemini_structure", "feedback"]);
+  // Basic identity and card mappings require maintainer-reviewed official provenance (§15.5).
+  check(
+    o.status !== "active" ||
+      o.provenance === "official" ||
+      !(o.fields as Obj[]).some((f) =>
+        /^(?:name\.|address\.|postal\.|birth\.|card\.)/.test(String(f.attributeKey)),
+      ),
+  );
+  // Scan every string, including nested fields, using the shared #80 privacy heuristic.
+  const scan = (value: unknown): void => {
+    if (typeof value === "string") check(!looksLikePersonalValue(value));
+    else if (Array.isArray(value)) value.forEach(scan);
+    else if (value && typeof value === "object") Object.values(value).forEach(scan);
+  };
+  scan(o);
+  check(new TextEncoder().encode(JSON.stringify(o)).byteLength <= CLOUD_LIMITS.bodyBytes - 64);
+  check(new Set((o.fields as Obj[]).map((f) => f.anchor)).size === (o.fields as Obj[]).length);
 }
 function readPayload(o: Obj): void {
   uuid(o.consentId);
@@ -299,7 +317,7 @@ export function validateCloudRequest<K extends CloudOperation>(
         o.mappings,
         (v) => {
           const m = object(v, ["anchor", "attributeKey"]);
-          anchor(m.anchor);
+          validateSchemaAnchor(m.anchor);
           key(m.attributeKey);
         },
         1,

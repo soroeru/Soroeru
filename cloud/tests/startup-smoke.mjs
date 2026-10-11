@@ -22,7 +22,7 @@ try {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(
             isApi
-              ? { site: "example.com", pageFingerprint: "a".repeat(64), clientVersion: "0.1.0" }
+              ? { site: "example.com", pageFingerprint: "invalid", clientVersion: "0.1.0" }
               : {
                   consentId: "11111111-1111-4111-8111-111111111111",
                   site: "example.com",
@@ -34,7 +34,7 @@ try {
           signal: AbortSignal.timeout(1000),
         },
       );
-      assert.equal(response.status, isApi ? 200 : 403);
+      assert.equal(response.status, isApi ? 400 : 403);
       ready = true;
     } catch {
       if (!exit) await setTimeout(100);

@@ -165,3 +165,48 @@ test("deployment endpoint smoke accepts exhausted and one-unit budgets without b
     assert.equal(units, 0);
   }
 });
+test("resolve HTTP handler fails closed without logging storage errors", async (t) => {
+  const { post, logs } = await start(t, {
+    schemas: {
+      resolve: async () => {
+        throw new Error("fake-private-registry-error");
+      },
+    },
+  });
+  const response = await post("/v1/schemas/resolve", {
+    site: "example.com",
+    pageFingerprint: hash,
+    clientVersion: "0.1.2",
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "unavailable" });
+  assert.doesNotMatch(JSON.stringify(logs), /private|example/);
+});
+test("resolve HTTP returns only a validated active registry response", async (t) => {
+  const schema = {
+    schemaId: hash,
+    site: "example.com",
+    formKey: hash,
+    version: 1,
+    pageFingerprints: [hash],
+    fields: [{ anchor: "f-1", attributeKey: "email", required: true }],
+    confidence: 1,
+    status: "active",
+    provenance: "official",
+  };
+  const { post } = await start(t, {
+    schemas: {
+      resolve: async (request) => {
+        assert.equal(request.site, "example.com");
+        return schema;
+      },
+    },
+  });
+  const response = await post("/v1/schemas/resolve", {
+    site: "example.com",
+    pageFingerprint: hash,
+    clientVersion: "0.1.2",
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: "active", schema });
+});
