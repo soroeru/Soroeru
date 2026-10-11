@@ -9,11 +9,18 @@ declare namespace chrome {
     function request(details: { origins?: string[] }): Promise<boolean>;
     function remove(details: { origins?: string[] }): Promise<boolean>;
     function getAll(): Promise<{ origins?: string[] }>;
+    const onRemoved: {
+      addListener(listener: (permissions: { origins?: string[] }) => void): void;
+    };
   }
 
   namespace storage {
     const local: {
       set(items: Record<string, unknown>): Promise<void>;
+    };
+    const session: {
+      set(items: Record<string, unknown>): Promise<void>;
+      get(keys: string | string[]): Promise<Record<string, unknown>>;
     };
   }
 
@@ -33,8 +40,12 @@ declare namespace chrome {
       removeListener(listener: (tabId: number) => void): void;
     };
     const onUpdated: {
-      addListener(listener: (tabId: number, changeInfo: { status?: string }, tab: Tab) => void): void;
-      removeListener(listener: (tabId: number, changeInfo: { status?: string }, tab: Tab) => void): void;
+      addListener(
+        listener: (tabId: number, changeInfo: { status?: string; url?: string }, tab: Tab) => void,
+      ): void;
+      removeListener(
+        listener: (tabId: number, changeInfo: { status?: string; url?: string }, tab: Tab) => void,
+      ): void;
     };
   }
 
@@ -43,12 +54,22 @@ declare namespace chrome {
   }
 
   namespace runtime {
+    interface MessageSender {
+      id?: string;
+      url?: string;
+      tab?: unknown;
+    }
     interface Port {
+      name: string;
+      sender?: MessageSender;
+      disconnect(): void;
       onMessage: { addListener(listener: (message: unknown) => void): void };
       onDisconnect: { addListener(listener: () => void): void };
       postMessage(message: unknown): void;
     }
     const id: string;
+    function getURL(path: string): string;
+    const onConnect: { addListener(listener: (port: Port) => void): void };
     function connectNative(name: string): Port;
     function sendMessage<T = unknown>(message: unknown): Promise<T>;
     const onMessage: {

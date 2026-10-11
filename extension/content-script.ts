@@ -1,4 +1,8 @@
-import { collectionObservationInPage, structuralFingerprintInPage, type ObservationToken } from "../src/automation/collection-observation.js";
+import {
+  collectionObservationInPage,
+  structuralFingerprintInPage,
+  type ObservationToken,
+} from "../src/automation/collection-observation.js";
 import { scanInPage } from "../src/agent/scan.js";
 import {
   EXTENSION_MESSAGE_VERSION,
@@ -111,7 +115,11 @@ async function execute(command: ContentCommand): Promise<unknown> {
   showAutomationBanner();
   switch (command.command) {
     case "captureCollectionObservation":
-      return collectionObservationInPage(scanPage, { kind: "capture", bindingEpoch: command.bindingEpoch }, structuralFingerprintInPage);
+      return collectionObservationInPage(
+        scanPage,
+        { kind: "capture", bindingEpoch: command.bindingEpoch },
+        structuralFingerprintInPage,
+      );
     case "checkCollectionObservation":
       return collectionObservationInPage(scanPage, { kind: "check", token: command.token });
     case "stop":
@@ -127,13 +135,11 @@ async function execute(command: ContentCommand): Promise<unknown> {
       return waitForReady();
     case "fill": {
       const element = elementForField(command.fieldId);
-      if (
-        !(
-          element instanceof HTMLInputElement ||
-          element instanceof HTMLTextAreaElement ||
-          element instanceof HTMLSelectElement
-        )
-      ) {
+      if (!(
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement
+      )) {
         throw new Error("field is not fillable");
       }
       element.value = command.value;
@@ -169,7 +175,10 @@ function toContentCommand(command: PageCommand): ContentCommand | undefined {
     case "fillField":
       return { command: "fill", fieldId: command.fieldId, value: command.value };
     case "readValues":
-      return { command: "readValues", ...(command.fieldIds === undefined ? {} : { fieldIds: command.fieldIds }) };
+      return {
+        command: "readValues",
+        ...(command.fieldIds === undefined ? {} : { fieldIds: command.fieldIds }),
+      };
     case "readDisplayValues":
       return {
         command: "readDisplayValues",
@@ -235,7 +244,13 @@ export async function handleExtensionMessage(
       if (!content) return rejected(message.requestId, "invalid-command");
       try {
         const payload = await execute(content);
-        return { version: EXTENSION_MESSAGE_VERSION, kind: "page.result", requestId: message.requestId, ok: true, payload };
+        return {
+          version: EXTENSION_MESSAGE_VERSION,
+          kind: "page.result",
+          requestId: message.requestId,
+          ok: true,
+          payload,
+        };
       } catch (error) {
         return {
           version: EXTENSION_MESSAGE_VERSION,
