@@ -153,13 +153,15 @@ The hook skips when:
 Do not use it manually to suppress review for ordinary commits; use
 `[skip-review]` when the skip should be visible in Git history.
 
-The repository's single-Issue implementation workflow runs **one** local AI
-review per handoff epoch. Read the result with
-`scripts/wait-for-local-ai-review.sh --print` (§10), apply its actionable
-findings, and commit the fixes with `LOCAL_AI_REVIEW_RUNNING=1` to suppress
-another review, including for inherited epochs with a larger stored budget.
-This fix-commit exception is intentional. Record the verdict, findings, fixes,
-and any residual risk in the PR body; do not run a confirming review.
+The repository's single-Issue implementation workflow is capped at **one**
+local AI review run per handoff epoch (Product Owner decision 2026-10-11,
+Issue #581). Commit a single fix pass for that review's actionable findings;
+the hook skips it because the epoch's budget is already used, so no confirming
+re-review runs. Read the result with `scripts/wait-for-local-ai-review.sh
+--print` (§10), then record the review status, findings, fixes, and that the
+fix pass itself was not AI-reviewed in the PR body. An epoch created before
+Issue #581 keeps its stored `0/2` budget until its next handoff; in such an
+epoch, put `[skip-review]` in the fix commit message so it is not re-reviewed.
 
 A successful handoff from a different session starts a new monotonically
 increasing epoch with a `0/1` budget, including same-agent recovery after a

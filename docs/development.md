@@ -957,20 +957,19 @@ unless the user explicitly changes it:
    running `scripts/wait-for-local-ai-review.sh --print` (see
    [`local-ai-review.md`](local-ai-review.md) §10 for the script, and §6/§7 for
    the review-count cap and follow-up policy) rather than polling
-   `state/ai-reviews/` turn-by-turn. Run one local AI review per handoff epoch,
-   apply its actionable findings, and commit fixes with
-   `LOCAL_AI_REVIEW_RUNNING=1` so no confirming review starts.
-
+   `state/ai-reviews/` turn-by-turn. This workflow allows one local AI review
+   run per handoff epoch: apply a single fix pass for its actionable findings
+   and commit it normally; the hook skips it because the epoch budget is used,
+   so no confirming re-review runs.
 5. Push the finished local branch to GitHub and create a PR. Include
    `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged. Also include the local AI review status for each
-   run, actionable findings, and what was fixed. If review did not run or
-   residual risk remains after the single review, state that
-   clearly.
+   when the PR is merged. Also include the local AI review status, actionable
+   findings, and what was fixed. State that the fix pass was not AI-reviewed,
+   and state clearly if review did not run or residual risk remains.
 
-The workflow intentionally avoids an open-ended review loop, capped at one
-review run per handoff epoch. A successful new-session handoff (including the
-same agent after a session limit) starts a fresh `0/1` epoch; same-session
+The workflow intentionally avoids a review loop, capped at one review run per
+handoff epoch. A successful new-session handoff (including the same agent after
+a session limit) starts a fresh `0/1` epoch; same-session
 re-entry is idempotent. If the user gives multiple Issue numbers, ask which
 single Issue to implement first.
 
@@ -1178,144 +1177,3 @@ all Jev calls. Stop an existing run before revoking permission: checkpoints reta
 the original run configuration, so do not resume an old enabled checkpoint.
 The approval record only enables assisted's confirmation flow; private sending additionally
 requires this independent explicit flag. No new GitHub secret or Project token is needed.
-
-## Soroeru Cloud development and deployment (#559)
-
-`cloud/` is a separate Node 22 npm package. It shares the browser-safe runtime validators in
-`src/shared/cloud-contract.ts` with the Side Panel's `extension/cloud-client.ts`.
-No Google SDK is added to the root package or extension. The backend currently has six POST
-endpoints including the Tier 3 ticket endpoint. Resolve returns no schema, feedback returns
-`accepted: false`, mapping/read return empty results, and telemetry returns 503 until #563
-implements persistence. These are development stubs, not a complete collection backend.
-
-```bash
-npm ci
-npm ci --prefix cloud
-npm run typecheck --prefix cloud
-npm test --prefix cloud
-npm run audit --prefix cloud
-terraform fmt -check -recursive infra
-terraform -chdir=infra/bootstrap init -backend=false
-terraform -chdir=infra/bootstrap validate
-terraform -chdir=infra/runtime init -backend=false
-terraform -chdir=infra/runtime validate
-```
-
-Run the root format/lint/typecheck/test/release gates as well. The cloud workflow builds the
-Dockerfile and runs both packages' checks on pull requests without cloud credentials.
-The local HTTP tests use fake data and in-memory budget adapters; a real Firestore transaction
-is verified by the deployed smoke test. Before changing Tier 2/3 handlers, retain those budget
-and ticket boundaries and add the corresponding provider/masking tests.
-
-### Initial Google Cloud foundation
-
-Install Terraform 1.14.x and gcloud. Use local Application Default Credentials (`gcloud auth
-application-default login`) or set `GOOGLE_APPLICATION_CREDENTIALS` to an existing local key
-file. Never copy a key into the repository, Docker build context, extension, or GitHub secrets.
-The following IDs are examples; supply the actual project ID, open billing account, and numeric
-repository/owner IDs locally. The billing account must use JPY for the default budget resource.
-
-```bash
-export TF_VAR_project_id=soroeru-example-cloud
-export TF_VAR_billing_account=000000-000000-000000
-export TF_VAR_github_repository_id=123456789
-export TF_VAR_github_owner_id=12345678
-node scripts/bootstrap-cloud.mjs
-```
-
-The bootstrap uses `infra/bootstrap/main.tf`: it creates a project, links billing, enables APIs,
-creates Artifact Registry, separate bootstrap/runtime GCS state buckets, runtime service accounts,
-Secret Manager's ticket-key container, GitHub OIDC federation, a local-build account/bucket, and
-a monthly JPY budget notification. The default notification is ¥1,000 at 50%, 90%, and 100%.
-Notifications go to the billing account's default recipients and **do not stop spending**.
-Change `TF_VAR_monthly_budget_yen` when a different alert level is approved.
-
-The first apply uses ignored local state under `state/cloud-bootstrap`, then migrates it into
-`${project}-bootstrap-tfstate` with prefix `bootstrap`. Keep that local directory until migration
-succeeds; do not rerun initial provisioning from a fresh checkout against an existing project.
-For subsequent foundation changes, initialize `infra/bootstrap` against that existing bucket
-and prefix with local credentials, then plan/apply. Project, secrets, state, and runtime services
-have deletion protections; destructive migration requires an explicit separate decision.
-
-The bootstrap generates the HMAC key in memory and sends it to Secret Manager through stdin.
-It creates a version only when no enabled version exists; key bytes never enter Terraform state.
-Both runtimes have access to that specific secret. At project level the fallback account has
-Vertex AI only, and no Firestore/BigQuery roles. The API account also has Firestore access for
-`budgets/{UTC yyyy-mm-dd}`. The default daily budget is 100 requests shared by Tier 2 and ticket
-issuance; a transaction consumes one unit before either operation. Storage failure returns 503,
-exhaustion returns 429. Firestore contains counts only. The API stubs consume this budget too.
-
-### Runtime deployment and GitHub Actions
-
-`infra/runtime/main.tf` owns Firestore, Cloud Run, request-log exclusions, and runtime limits.
-The region is `asia-northeast1`. The API has at most two instances with concurrency 20; fallback
-has one instance with concurrency 1. For direct `run.app` ingress, the per-instance IP limiter
-uses only the rightmost address appended by the Cloud Run frontend; caller-supplied prefixes
-are ignored. Local HTTP ignores forwarding headers. Cloud Run requests with a missing or invalid
-trusted suffix fail closed. This policy is specific to the direct frontend: adding a load balancer
-or another trusted proxy requires re-verifying the hop count. IPs remain in bounded memory only;
-it is conservative best-effort throttling, not a global quota. Gemini's transaction budget is
-shared across instances.
-
-Create the GitHub environment `soroeru-cloud`, restrict deployments to main, and set these
-repository or environment variables (public configuration, not secrets):
-
-| Variable | Value |
-| --- | --- |
-| `GCP_PROJECT_ID` | Created project ID |
-| `TF_STATE_BUCKET` | `${project}-runtime-tfstate` |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Bootstrap output `workload_identity_provider` |
-| `GCP_DEPLOY_SERVICE_ACCOUNT` | Bootstrap output `deploy_service_account` |
-| `GEMINI_DAILY_LIMIT` | Positive integer; default 100 |
-| `TIER3_TICKET_SECRET_VERSION` | Enabled numeric secret version; initially 1 |
-
-`.github/workflows/cloud.yml` validates pull requests and, after successful validation, deploys
-main pushes or a manual main dispatch. Google accepts OIDC tokens only from the configured numeric
-repository and owner IDs, main, and this exact workflow. PRs and other workflows have no deployment
-credentials. CI can update runtime resources and its runtime state bucket; it cannot change
-foundation IAM/WIF/billing or access bootstrap state. There is no project Editor/Owner grant.
-The workflow pushes an image tagged with the commit, resolves its digest, and Terraform deploys
-the immutable digest. Terraform state locking and workflow concurrency serialize deployment.
-
-For the first local deployment when Docker is unavailable, use the dedicated Cloud Build account.
-`.gcloudignore` and `.dockerignore` include only the cloud sources, lockfiles, and shared contracts.
-They exclude vaults, local credentials, state, and other application files.
-
-```bash
-export SOROERU_PROJECT=soroeru-example-cloud
-export SOROERU_IMAGE="asia-northeast1-docker.pkg.dev/${SOROERU_PROJECT}/soroeru/cloud:bootstrap"
-gcloud builds submit . --project="$SOROERU_PROJECT" --region=asia-northeast1 \
-  --config=cloud/cloudbuild.yaml --substitutions="_IMAGE=${SOROERU_IMAGE}" \
-  --service-account="projects/${SOROERU_PROJECT}/serviceAccounts/cloud-build@${SOROERU_PROJECT}.iam.gserviceaccount.com" \
-  --gcs-source-staging-dir="gs://${SOROERU_PROJECT}-build-source/source"
-export TF_VAR_project_id="$SOROERU_PROJECT"
-export TF_VAR_image="asia-northeast1-docker.pkg.dev/${SOROERU_PROJECT}/soroeru/cloud@$(gcloud artifacts docker images describe "$SOROERU_IMAGE" --project="$SOROERU_PROJECT" --format='value(image_summary.digest)')"
-terraform -chdir=infra/runtime init -backend-config="bucket=${SOROERU_PROJECT}-runtime-tfstate" -backend-config=prefix=runtime
-terraform -chdir=infra/runtime plan -out=deploy.tfplan
-terraform -chdir=infra/runtime apply deploy.tfplan
-node scripts/check-cloud-deployment.mjs "$SOROERU_PROJECT"
-```
-
-The check verifies request-log exclusions, fallback project permissions, runtime limits and secret
-references, then exercises all six public endpoints with fake data, including altered-payload and
-replayed-ticket rejection when budget remains. It consumes at most two daily budget units and
-accepts only the expected `429 budget-exhausted` response when those units are unavailable.
-Complete ticket/replay checks also run in HTTP tests with an isolated fake budget. No response
-body is printed.
-Before release, also perform the Cloud Logging/Trace checks in `docs/manual-test.md`.
-#559 does not call Vertex AI, initialize tracing, or enable provider request/response logging or
-context caching. The deployment check rejects tracing/logging-enabling environment flags; provider
-logging/cache settings must be rechecked when #561/#562 introduce the Gemini client.
-
-The ticket is valid for five minutes and binds the site, consent ID, and SHA-256 of
-`tier3PayloadJson(payload)` (stable serialization excluding the ticket). A fallback instance keeps
-used nonces in memory until expiry; replay or a modified payload is rejected. A restart within
-five minutes can accept the same payload again, the accepted risk in architecture §14.1. Tickets
-are server budget/binding controls, not proof of human consent; #562 owns the client consent gate.
-The CloudClient has bounded responses, a 30-second timeout, no credentials, no redirects, no
-automatic retries, and validates both requests and responses. Cloud permissions must be requested
-for the configured exact endpoint origins before Side Panel use; #560 wires that integration.
-
-The manual Codex/Claude implementation order is recorded in
-[`cloud-implementation-order.md`](cloud-implementation-order.md); GitHub `Blocked by` remains the
-source of truth for dependencies.

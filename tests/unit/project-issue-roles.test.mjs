@@ -137,7 +137,8 @@ test("a passing review ends the program and opens the milestone gate", () => {
   assert.equal(afterReview.reviewPasses, 1);
 });
 
-test("NEEDS_REVISION returns to the implementer, and the review budget is bounded", () => {
+test("NEEDS_REVISION buys one fix pass that is not re-reviewed (one review per Issue)", () => {
+  assert.equal(MAX_REVIEW_PASSES, 1);
   let state = advanceRoleProgram(newRoleState(), { role: "implementer" });
   state = advanceRoleProgram(state, { role: "reviewer", verdict: "NEEDS_REVISION" });
   assert.equal(state.status, "active");
@@ -146,10 +147,9 @@ test("NEEDS_REVISION returns to the implementer, and the review budget is bounde
   assert.equal(state.reviewPasses, 1);
 
   state = advanceRoleProgram(state, { role: "implementer" });
-  state = advanceRoleProgram(state, { role: "reviewer", verdict: "NEEDS_REVISION" });
-  assert.equal(state.reviewPasses, MAX_REVIEW_PASSES);
-  assert.equal(state.status, "blocked");
-  assert.equal(state.blockedReason, "review-passes-exhausted");
+  assert.equal(state.status, "awaiting-milestone");
+  assert.equal(state.reviewPasses, 1, "the fix pass is not reviewed again");
+  assert.throws(() => advanceRoleProgram(state, { role: "implementer" }), /role-mismatch/);
 });
 
 test("REJECTED blocks immediately without spending a fix pass", () => {
@@ -348,10 +348,10 @@ test("the integration gate gets its own single reopen, separate from review pass
   assert.equal(first.gateReopens, 1);
   assert.equal(first.fixCycles, 1);
 
-  // The reopened cycle still spends the shared review budget.
-  let second = advanceRoleProgram(first, { role: "implementer" });
-  second = advanceRoleProgram(second, { role: "reviewer", verdict: "PASS" });
-  assert.equal(second.reviewPasses, 2);
+  // The single review is already spent, so the gate (not the reviewer) re-checks the fix.
+  const second = advanceRoleProgram(first, { role: "implementer" });
+  assert.equal(second.status, "awaiting-milestone");
+  assert.equal(second.reviewPasses, 1);
 
   // A second gate rejection stops the Issue with its own closed reason.
   const blocked = reopenRoleProgramForFix(second, "integration-gate-rejected");
@@ -359,19 +359,18 @@ test("the integration gate gets its own single reopen, separate from review pass
   assert.equal(blocked.blockedReason, "integration-gate-rejected-twice");
 });
 
-test("a gate reopen is refused when no review pass is left to check the fix", async () => {
+test("a review fix pass does not spend the gate reopen; the gate's fix is not re-reviewed either", async () => {
   const { reopenRoleProgramForFix } = await import("../../scripts/project-issue-roles.mjs");
-  // NEEDS_REVISION then PASS spends both review passes without touching the
-  // gate budget, so the gate cannot usefully reopen.
   let state = advanceRoleProgram(newRoleState(), { role: "implementer" });
   state = advanceRoleProgram(state, { role: "reviewer", verdict: "NEEDS_REVISION" });
   state = advanceRoleProgram(state, { role: "implementer" });
-  state = { ...state, reviewPasses: 1 };
-  state = advanceRoleProgram(state, { role: "reviewer", verdict: "PASS" });
-  assert.equal(state.reviewPasses, 2);
+  assert.equal(state.status, "awaiting-milestone");
   assert.equal(state.gateReopens ?? 0, 0, "the gate budget is untouched by review cycles");
 
-  const blocked = reopenRoleProgramForFix(state, "integration-gate-rejected");
-  assert.equal(blocked.status, "blocked");
-  assert.equal(blocked.blockedReason, "integration-gate-rejected");
+  const reopened = reopenRoleProgramForFix(state, "integration-gate-rejected");
+  assert.equal(reopened.status, "active");
+  assert.equal(reopened.program[reopened.index], "implementer");
+  const fixed = advanceRoleProgram(reopened, { role: "implementer" });
+  assert.equal(fixed.status, "awaiting-milestone");
+  assert.equal(fixed.reviewPasses, 1);
 });

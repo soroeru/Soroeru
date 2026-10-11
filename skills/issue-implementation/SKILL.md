@@ -76,17 +76,19 @@ Follow this workflow:
    `docs/local-ai-review.md` §10 for the script's flags and matching
    mechanics. Read the verdict and findings from that command's `--print`
    output; direct reads of `state/ai-reviews/` are denied by the repository
-   guard. This workflow allows **one local AI review run per handoff epoch**
-   (see `docs/local-ai-review.md` §6). Apply its actionable findings and commit
-   fixes with `LOCAL_AI_REVIEW_RUNNING=1` so no confirming review starts,
-   including when inherited metadata still has a larger budget.
+   guard. This workflow allows **one local AI review run in the current
+   handoff epoch** (see `docs/local-ai-review.md` §6): apply a single fix pass
+   for its actionable findings (`NIT_ONLY` handled per
+   `docs/local-ai-review.md` §7) and commit it normally. The hook skips that
+   commit because the epoch budget is used, so no confirming re-review runs —
+   do not wait for one.
    Wait for reviews under **this** worktree's `state/ai-reviews/` only.
 5. When local development is complete, push the branch to GitHub and create a
    PR. Include `Closes #<issue>` in the PR body so GitHub closes the Issue
-   automatically when the PR is merged. Also include the local AI review status
-   for each run, the actionable findings, and what was fixed. If a review did
-   not run or residual risk remains after the single review, state
-   that clearly.
+   automatically when the PR is merged. Also include the local AI review status,
+   the actionable findings, and what was fixed. State that the fix pass was not
+   AI-reviewed, and state clearly if the review did not run or residual risk
+   remains.
 
 ## Boundaries
 
@@ -95,7 +97,8 @@ Follow this workflow:
 - Do not skip the Issue worktree start gate. Do not commit on the primary clone.
 - Do not skip local AI review unless the repository instructions explicitly
   allow it.
-- Run only one local AI review per handoff epoch. Fix commits suppress further
-  review with `LOCAL_AI_REVIEW_RUNNING=1`; record unreviewed fixes in the PR.
+- Do not run a local AI review loop. This workflow allows one local AI review
+  run per handoff epoch; the fix pass is not re-reviewed, and the hook's epoch
+  budget enforces that.
 - Treat PR close as distinct from merge. Close a PR only when the user or the
   repository workflow explicitly asks to close it instead of merging it.
