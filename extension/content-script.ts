@@ -1,5 +1,16 @@
-import { collectionObservationInPage, structuralFingerprintInPage, type ObservationToken } from "../src/automation/collection-observation.js";
+import {
+  collectionObservationInPage,
+  structuralFingerprintInPage,
+  type ObservationToken,
+} from "../src/automation/collection-observation.js";
 import { scanInPage } from "../src/agent/scan.js";
+import {
+  EXTENSION_MESSAGE_VERSION,
+  isOriginInLeaseScope,
+  parseExtensionMessage,
+  type PageCommand,
+  type PageRejectedReason,
+} from "../src/shared/extension-messages.js";
 
 /** The exact in-page scanner used by the Playwright path. */
 export const scanPage = scanInPage;
@@ -104,7 +115,11 @@ async function execute(command: ContentCommand): Promise<unknown> {
   showAutomationBanner();
   switch (command.command) {
     case "captureCollectionObservation":
-      return collectionObservationInPage(scanPage, { kind: "capture", bindingEpoch: command.bindingEpoch }, structuralFingerprintInPage);
+      return collectionObservationInPage(
+        scanPage,
+        { kind: "capture", bindingEpoch: command.bindingEpoch },
+        structuralFingerprintInPage,
+      );
     case "checkCollectionObservation":
       return collectionObservationInPage(scanPage, { kind: "check", token: command.token });
     case "stop":
@@ -120,13 +135,11 @@ async function execute(command: ContentCommand): Promise<unknown> {
       return waitForReady();
     case "fill": {
       const element = elementForField(command.fieldId);
-      if (
-        !(
-          element instanceof HTMLInputElement ||
-          element instanceof HTMLTextAreaElement ||
-          element instanceof HTMLSelectElement
-        )
-      ) {
+      if (!(
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLTextAreaElement ||
+        element instanceof HTMLSelectElement
+      )) {
         throw new Error("field is not fillable");
       }
       element.value = command.value;
@@ -143,17 +156,123 @@ async function execute(command: ContentCommand): Promise<unknown> {
   }
 }
 
+interface ActiveLease {
+  leaseId: string;
+  epoch: number;
+  origin: string;
+  siteDomain?: string;
+}
+
+/** The single lease this page accepts commands for; set only by a worker `lease.bind`. */
+let activeLease: ActiveLease | undefined;
+
+/** Map a validated lease-protocol page command onto the unchanged DOM operations. */
+function toContentCommand(command: PageCommand): ContentCommand | undefined {
+  switch (command.command) {
+    case "goto":
+    case "currentUrl":
+      return undefined; // Tab-level commands are handled by the worker, never in the page.
+    case "fillField":
+      return { command: "fill", fieldId: command.fieldId, value: command.value };
+    case "readValues":
+      return {
+        command: "readValues",
+        ...(command.fieldIds === undefined ? {} : { fieldIds: command.fieldIds }),
+      };
+    case "readDisplayValues":
+      return {
+        command: "readDisplayValues",
+        ...(command.valueIds === undefined ? {} : { valueIds: command.valueIds }),
+      };
+    default:
+      return command;
+  }
+}
+
+function rejected(requestId: string, reason: PageRejectedReason): unknown {
+  return { version: EXTENSION_MESSAGE_VERSION, kind: "page.rejected", requestId, reason };
+}
+
+function requestIdOf(raw: unknown): string {
+  const id = (raw as { requestId?: unknown } | null)?.requestId;
+  return typeof id === "string" && id.length > 0 ? id : "unknown";
+}
+
+/**
+ * Handle one runtime message. Resolves with the response to send. Only the extension itself
+ * (worker bindings and direct Side Panel commands; no sender.tab) may bind, revoke, or command; everything else is rejected.
+ */
+export async function handleExtensionMessage(
+  raw: unknown,
+  sender: { id?: string; tab?: unknown },
+  extensionId: string | undefined,
+): Promise<unknown> {
+  if (extensionId === undefined || sender.id !== extensionId || sender.tab !== undefined)
+    return rejected(requestIdOf(raw), "untrusted-sender");
+  let message;
+  try {
+    message = parseExtensionMessage(raw);
+  } catch {
+    return rejected(requestIdOf(raw), "invalid-command");
+  }
+  switch (message.kind) {
+    case "lease.bind": {
+      if (!isOriginInLeaseScope(location.origin, message)) return { ok: false, error: "origin-out-of-scope" };
+      activeLease = {
+        leaseId: message.leaseId,
+        epoch: message.epoch,
+        origin: message.origin,
+        ...(message.siteDomain === undefined ? {} : { siteDomain: message.siteDomain }),
+      };
+      showAutomationBanner();
+      return { ok: true };
+    }
+    case "lease.revoke": {
+      if (activeLease?.leaseId === message.leaseId) {
+        activeLease = undefined;
+        hideAutomationBanner();
+      }
+      return { ok: true };
+    }
+    case "page.command": {
+      if (!activeLease) return rejected(message.requestId, "no-lease");
+      if (activeLease.leaseId !== message.leaseId) return rejected(message.requestId, "lease-mismatch");
+      if (activeLease.epoch !== message.epoch) return rejected(message.requestId, "stale-epoch");
+      if (!isOriginInLeaseScope(location.origin, activeLease))
+        return rejected(message.requestId, "origin-out-of-scope");
+      const content = toContentCommand(message.command);
+      if (!content) return rejected(message.requestId, "invalid-command");
+      try {
+        const payload = await execute(content);
+        return {
+          version: EXTENSION_MESSAGE_VERSION,
+          kind: "page.result",
+          requestId: message.requestId,
+          ok: true,
+          payload,
+        };
+      } catch (error) {
+        return {
+          version: EXTENSION_MESSAGE_VERSION,
+          kind: "page.result",
+          requestId: message.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : "command failed",
+        };
+      }
+    }
+    default:
+      return rejected(requestIdOf(raw), "invalid-command");
+  }
+}
+
 if (
   typeof chrome !== "undefined" &&
   !(globalThis as { __soroeruContentScriptInstalled?: boolean }).__soroeruContentScriptInstalled
 ) {
   (globalThis as { __soroeruContentScriptInstalled?: boolean }).__soroeruContentScriptInstalled = true;
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    void execute(message as ContentCommand)
-      .then((payload) => sendResponse({ ok: true, payload }))
-      .catch((error: unknown) =>
-        sendResponse({ ok: false, error: error instanceof Error ? error.message : "command failed" }),
-      );
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    void handleExtensionMessage(message, sender, chrome.runtime.id).then(sendResponse);
     return true;
   });
 }

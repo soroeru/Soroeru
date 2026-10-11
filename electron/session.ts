@@ -27,7 +27,7 @@ import {
 import type { SiteSession } from "../src/automation/page-driver.js";
 import type { ChromeBridgeTransport } from "../src/automation/extension-page-driver.js";
 import { openExtensionTabSession } from "../src/automation/extension-page-driver.js";
-import { VisibilityService } from "./visibility-service.js";
+import { VisibilityService } from "../src/automation/visibility-service.js";
 import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-page-importer.js";
 import { FileLogger } from "../src/logging/file-logger.js";
 import type { LogFields, LogLevel, Logger } from "../src/logging/logger.js";

@@ -11,9 +11,19 @@ export interface VaultPanelProps {
   session: VaultSession;
   started: Promise<unknown>;
   persistGranted: Promise<boolean>;
+  /** Content shown while unlocked (Issue #558: the Visibility ledger). */
+  unlockedContent?: React.ReactNode;
+  /** Replaces the direct lock so a running collection is stopped and saved first (Issue #558). */
+  onLock?: () => void | Promise<void>;
 }
 
-export function VaultPanel({ session, started, persistGranted }: VaultPanelProps): React.JSX.Element {
+export function VaultPanel({
+  session,
+  started,
+  persistGranted,
+  unlockedContent,
+  onLock,
+}: VaultPanelProps): React.JSX.Element {
   const [state, setState] = useState<VaultSessionState>(session.state);
   const [fatalError, setFatalError] = useState<string | undefined>();
   const [persistDenied, setPersistDenied] = useState(false);
@@ -24,6 +34,8 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
   // unlocked view never renders before the one-time recovery key is shown.
   const [creating, setCreating] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [locking, setLocking] = useState(false);
+  const [lockError, setLockError] = useState<string | undefined>();
 
   useEffect(
     () =>
@@ -102,11 +114,32 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
       <header className="flex items-center justify-between gap-2 border-b border-neutral-200 pb-2">
         <h1 className="text-base font-semibold text-orange-900">Soroeru</h1>
         {state === "unlocked" && (
-          <button type="button" onClick={() => session.lock()} className="text-sm underline">
+          <button
+            type="button"
+            disabled={locking}
+            onClick={() => {
+              setLocking(true);
+              setLockError(undefined);
+              void Promise.resolve()
+                .then(() => (onLock ? onLock() : session.lock()))
+                .catch(() => {
+                  setLockError(
+                    "保存できなかったため施錠していません。再試行するか、暗号化エクスポートで控えを保存してください。",
+                  );
+                })
+                .finally(() => setLocking(false));
+            }}
+            className="text-sm underline"
+          >
             施錠
           </button>
         )}
       </header>
+      {lockError && state === "unlocked" && (
+        <p role="alert" className="text-red-600">
+          {lockError}
+        </p>
+      )}
 
       {persistDenied && (
         <p className="rounded bg-amber-100 p-2 text-xs text-amber-900">
@@ -173,6 +206,7 @@ export function VaultPanel({ session, started, persistGranted }: VaultPanelProps
             vault
             は解錠されています。サイドパネルを閉じる、ブラウザを再起動する、または「施錠」を押すと鍵を破棄します。
           </p>
+          {unlockedContent}
           <button
             type="button"
             onClick={() => void downloadExport()}

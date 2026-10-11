@@ -15,5 +15,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["vite/client"]
   },
-  "include": ["src/renderer", "extension/**/*.tsx"]
+  "include": ["src/renderer", "extension/**/*.tsx", "extension/chrome.d.ts"]
 }

@@ -656,3 +656,87 @@ test("extension CSP allows WebAssembly for Argon2id but never unsafe-eval; Side 
   const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.match(pkg.scripts["build:extension"] ?? "", /extension\/sidepanel\.html/);
 });
+
+test("Visibility host retains unlocked records when lock save fails and allows retry", async () => {
+  const { VisibilityHost } = await import("../../extension/panel/visibility-host.js");
+  const factory = new FakeIdbFactory();
+  const session = newSession(factory);
+  await session.start();
+  await session.create(PASSPHRASE);
+  session.vault.put("siteAccount", siteAccount("unsaved", "Fake unsaved site"));
+  const host = new VisibilityHost({ session, leaseClient: {
+    onInvalidated: () => () => {}, releaseLease: async () => {}, close: () => {},
+  } as unknown as import("../../extension/panel/lease-client.js").LeaseClient });
+  factory.nextCommitFailure = new DOMException("fake quota", "QuotaExceededError");
+  await assert.rejects(() => host.lock(), VaultStorageQuotaError);
+  assert.equal(session.state, "unlocked");
+  assert.equal(session.vault.get("siteAccount", "unsaved")?.displayName, "Fake unsaved site");
+  assert.ok((await session.exportEncrypted()).includes("ciphertext"));
+  await host.lock();
+  assert.equal(session.state, "locked");
+  await session.unlock(PASSPHRASE);
+  assert.equal(session.vault.get("siteAccount", "unsaved")?.displayName, "Fake unsaved site");
+  await host.shutdown();
+});
+
+test("panel shutdown drops plaintext immediately and holds the writer lock until its full snapshot is stored", async () => {
+  const { VisibilityHost } = await import("../../extension/panel/visibility-host.js");
+  const factory = new FakeIdbFactory();
+  const locks = new FakeLockManager();
+  const persistence = idb(factory);
+  const session = new VaultSession({ persistence, lockManager: locks, kdfAlgo: "pbkdf2-sha512" });
+  await session.start();
+  await session.create(PASSPHRASE);
+  for (let i = 0; i < 3; i++) session.vault.put("siteAccount", siteAccount(`site-${i}`, `Fake ${i}`));
+  let entered!: () => void;
+  let release!: () => void;
+  const storing = new Promise<void>((resolve) => { entered = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const originalSave = persistence.save.bind(persistence);
+  persistence.save = async (data) => { entered(); await blocked; await originalSave(data); };
+  const host = new VisibilityHost({ session, leaseClient: {
+    onInvalidated: () => () => {}, releaseLease: async () => {}, close: () => {},
+  } as unknown as import("../../extension/panel/lease-client.js").LeaseClient });
+  const closing = host.shutdown();
+  try {
+    assert.throws(() => session.vault, VaultLockedError);
+    await storing;
+    assert.equal(locks.held, true);
+    release();
+    await closing;
+    assert.equal(locks.held, false);
+    assert.equal(session.state, "closed");
+    const next = newSession(factory, locks);
+    await next.start();
+    await next.unlock(PASSPHRASE);
+    assert.equal(next.vault.list("siteAccount").length, 3);
+    next.close();
+  } finally { release(); await closing; }
+});
+
+test("overlapping vault saves retain call order and newest records", async () => {
+  const factory = new FakeIdbFactory();
+  const persistence = idb(factory);
+  const vault = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
+  let entered!: () => void;
+  let release!: () => void;
+  const storing = new Promise<void>((resolve) => { entered = resolve; });
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const originalSave = persistence.save.bind(persistence);
+  let writes = 0;
+  persistence.save = async (data) => { if (writes++ === 0) { entered(); await blocked; } await originalSave(data); };
+  vault.put("siteAccount", siteAccount("first", "Fake first"));
+  const first = vault.save();
+  await storing;
+  vault.put("siteAccount", siteAccount("second", "Fake second"));
+  const second = vault.save();
+  try {
+    await Promise.resolve();
+    assert.equal(writes, 1);
+    release();
+    await Promise.all([first, second]);
+    const reopened = await VaultV2.open(persistence, PASSPHRASE);
+    assert.equal(reopened.list("siteAccount").length, 2);
+    reopened.lock();
+  } finally { release(); await Promise.all([first, second]); vault.lock(); }
+});

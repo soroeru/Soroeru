@@ -1,437 +1,448 @@
-import { isObservationToken, type ObservationToken } from "../src/automation/collection-observation.js";
+// Service worker: the lease router between the Side Panel (runtime host) and the content script
+// (Issue #558). It owns no page values and persists only lease metadata. The legacy Native
+// Messaging bridge lives in legacy-native-bridge.ts and starts only on an explicit popup request.
+
 import {
-  CHROME_BRIDGE_PROTOCOL_VERSION,
-  parseChromeBridgeMessage,
-  type ChromeBridgeCommand,
-  type ChromeBridgeResult,
-} from "../src/shared/chrome-bridge.js";
+  EXTENSION_MESSAGE_VERSION,
+  PANEL_PORT_NAME,
+  isOriginInLeaseScope,
+  parseExtensionMessage,
+  type ExtensionMessage,
+  type LeaseInvalidReason,
+  type LeaseOpen,
+  type PageCommand,
+  type PageCommandMessage,
+  type PageRejectedReason,
+} from "../src/shared/extension-messages.js";
+import { connectLegacyBridge } from "./legacy-native-bridge.js";
+import {
+  LeaseRegistry,
+  staleLeasesFromStorage,
+  type Lease,
+  type LeaseInvalidation,
+} from "./lease-registry.js";
 
-export const EXTENSION_COMMANDS = [
-  "goto",
-  "currentUrl",
-  "snapshot",
-  "captureCollectionObservation",
-  "checkCollectionObservation",
-  "readValues",
-  "readDisplayValues",
-  "fillField",
-  "click",
-  "waitForReady",
-  "unbind",
-  "listPermissions",
-  "removePermission",
-  "activeTab",
-  "stop",
-] as const;
-type ExtensionCommandName = (typeof EXTENSION_COMMANDS)[number];
+export {
+  ExtensionExecutionEpoch,
+  isAllowedExtensionOrigin,
+  isExpectedNavigationOrigin,
+  isSameSiteExtensionOrigin,
+  unbindMatchesBinding,
+  validateExtensionCommand,
+  withPageIdentity,
+} from "./legacy-native-bridge.js";
 
-interface CommandPayload {
-  tabId?: number;
-  token?: ObservationToken;
-  bindingEpoch?: number;
-  url?: string;
-  fieldId?: string;
-  value?: string;
-  selector?: string;
-  fieldIds?: string[];
-  valueIds?: string[];
-  siteDomain?: string;
-  origin?: string;
-}
+const LEASE_STORAGE_KEY = "soroeruLeases";
+const NAVIGATION_TIMEOUT_MS = 15_000;
 
-export function isAllowedExtensionOrigin(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.pathname === "/" && url.search === "" && url.hash === "";
-  } catch {
-    return false;
-  }
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function validateExtensionCommand(command: string, payload: unknown): CommandPayload {
-  if (!EXTENSION_COMMANDS.includes(command as ExtensionCommandName)) throw new Error("unknown command");
-  const controlCommand = ["listPermissions", "activeTab", "stop"].includes(command);
-  if (controlCommand && payload === undefined) return {};
-  if (!record(payload)) throw new Error("command payload must be an object");
-  const allowed = new Set(controlCommand ? [] : ["tabId"]);
-  if (command === "removePermission") allowed.add("origin");
-  if (command === "goto" || command === "unbind") allowed.add("siteDomain");
-  if (command === "goto") allowed.add("url");
-  if (command === "fillField") allowed.add("fieldId").add("value");
-  if (command === "click") allowed.add("selector");
-  if (command === "readValues") allowed.add("fieldIds");
-  if (command === "readDisplayValues") allowed.add("valueIds");
-  if (command === "captureCollectionObservation") {
-    allowed.add("bindingEpoch");
-    if (!Number.isSafeInteger(payload.bindingEpoch)) throw new Error("invalid binding epoch");
-  }
-  if (command === "checkCollectionObservation") {
-    allowed.add("token");
-    if (!isObservationToken(payload.token)) throw new Error("invalid observation token");
-  }
-  const unknown = Object.keys(payload).find((key) => !allowed.has(key));
-  if (unknown) throw new Error(`unknown payload field: ${unknown}`);
-  if (
-    !controlCommand &&
-    command !== "removePermission" &&
-    (typeof payload.tabId !== "number" || !Number.isInteger(payload.tabId) || payload.tabId < 1)
-  )
-    throw new Error("tabId must be a positive integer");
-  if (
-    command === "removePermission" &&
-    (typeof payload.origin !== "string" || !isAllowedExtensionOrigin(payload.origin))
-  )
-    throw new Error("origin must be HTTPS");
-  if (
-    command === "goto" &&
-    (typeof payload.url !== "string" || !isAllowedExtensionOrigin(new URL(payload.url).origin))
-  )
-    throw new Error("goto URL must be HTTPS");
-  for (const key of ["fieldId", "value", "selector"] as const) {
-    if (Object.hasOwn(payload, key) && typeof payload[key] !== "string")
-      throw new Error(`${key} must be a string`);
-  }
-  if (Object.hasOwn(payload, "siteDomain") && typeof payload.siteDomain !== "string") {
-    throw new Error("siteDomain must be a string");
-  }
-  for (const key of ["fieldIds", "valueIds"] as const) {
-    if (
-      Object.hasOwn(payload, key) &&
-      (!Array.isArray(payload[key]) || payload[key].some((value) => typeof value !== "string"))
-    )
-      throw new Error(`${key} must be a string array`);
-  }
-  if (command === "fillField" && (payload.fieldId === undefined || payload.value === undefined))
-    throw new Error("fillField requires fieldId and value");
-  if (command === "click" && payload.selector === undefined) throw new Error("click requires selector");
-  return payload as unknown as CommandPayload;
-}
-
-interface Binding {
-  tabId: number;
-  origin: string;
-  siteDomain?: string;
-}
-let nativePort: chrome.runtime.Port | undefined;
-let binding: Binding | undefined;
-const closedTabs = new Set<number>();
-export class ExtensionExecutionEpoch {
-  private generation = 0;
-
-  current(): number {
-    return this.generation;
-  }
-
-  stop(): number {
-    this.generation += 1;
-    return this.generation;
-  }
-
-  isCurrent(commandGeneration: number): boolean {
-    return commandGeneration === this.generation;
-  }
-}
-const executionEpoch = new ExtensionExecutionEpoch();
+type PanelPort = chrome.runtime.Port;
 
 function originOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const origin = new URL(url).origin;
-    return isAllowedExtensionOrigin(origin) ? origin : undefined;
+    // egress: target-site — validate the selected tab's HTTPS origin; this comparison sends no request.
+    return origin.startsWith("https://") ? origin : undefined;
   } catch {
     return undefined;
   }
 }
 
-async function permissionFor(origin: string): Promise<boolean> {
-  return chrome.permissions.contains({ origins: [`${origin}/*`] });
-}
+const versioned = <T extends object>(message: T): T & { version: typeof EXTENSION_MESSAGE_VERSION } => ({
+  version: EXTENSION_MESSAGE_VERSION,
+  ...message,
+});
 
-/** Match PageExplorer's site boundary: a domain and its subdomains, never a sibling domain. */
-export function isSameSiteExtensionOrigin(origin: string, siteDomain: string): boolean {
-  try {
-    const host = new URL(origin).hostname.toLowerCase().replace(/^www\./, "");
-    return host === siteDomain || host.endsWith(`.${siteDomain}`);
-  } catch {
-    return false;
-  }
-}
+/** Wire the lease router to the chrome.* APIs. Exported so tests can run it against a fake chrome. */
+export function startLeaseWorker(): { registry: LeaseRegistry<PanelPort> } {
+  const registry = new LeaseRegistry<PanelPort>({ bootId: crypto.randomUUID() });
+  const rebinding = new Map<string, Promise<void>>();
+  const livePorts = new Set<PanelPort>();
 
-/** A goto may land on its exact target origin, or on any same-site origin when the tab is site-scoped. */
-export function isExpectedNavigationOrigin(
-  url: string | undefined,
-  expectedOrigin: string,
-  siteDomain?: string,
-): boolean {
-  const origin = originOf(url);
-  if (!origin) return false;
-  return (
-    origin === expectedOrigin || (siteDomain !== undefined && isSameSiteExtensionOrigin(origin, siteDomain))
-  );
-}
-
-/** unbind needs no live tab: match the bound tabId and, when the binding is site-scoped, the same siteDomain. */
-export function unbindMatchesBinding(
-  binding: { tabId: number; siteDomain?: string } | undefined,
-  request: { tabId: number; siteDomain?: string },
-): boolean {
-  if (!binding || binding.tabId !== request.tabId) return false;
-  return binding.siteDomain === undefined || binding.siteDomain === request.siteDomain;
-}
-
-async function ensureContentScript(tabId: number): Promise<void> {
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["content-script.js"] });
-}
-
-function waitForNavigation(tabId: number, expectedOrigin: string, siteDomain?: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => finish(new Error("navigation timed out")), 15000);
-    const finish = (error?: Error): void => {
-      clearTimeout(timeout);
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      chrome.tabs.onRemoved.removeListener(onRemoved);
-      if (error) reject(error);
-      else resolve();
-    };
-    const onUpdated = (updatedTabId: number, changeInfo: { status?: string }, tab: chrome.tabs.Tab): void => {
-      if (updatedTabId !== tabId || changeInfo.status !== "complete") return;
-      if (!isExpectedNavigationOrigin(tab.url, expectedOrigin, siteDomain))
-        finish(new Error("navigation left the bound origin"));
-      else finish();
-    };
-    const onRemoved = (removedTabId: number): void => {
-      if (removedTabId === tabId) {
-        closedTabs.add(tabId);
-        finish(new Error("bound tab was closed"));
-      }
-    };
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    chrome.tabs.onRemoved.addListener(onRemoved);
-  });
-}
-
-function result(
-  command: ChromeBridgeCommand,
-  ok: boolean,
-  payload?: unknown,
-  error?: string,
-): ChromeBridgeResult {
-  return {
-    version: CHROME_BRIDGE_PROTOCOL_VERSION,
-    kind: "result",
-    requestId: command.requestId,
-    ok,
-    ...(payload === undefined ? {} : { payload }),
-    ...(error === undefined ? {} : { error }),
-  };
-}
-
-async function executeCommand(
-  command: ChromeBridgeCommand,
-  commandGeneration = executionEpoch.current(),
-): Promise<ChromeBridgeResult> {
-  let payload: CommandPayload;
-  try {
-    payload = validateExtensionCommand(command.command, command.payload);
-  } catch (error) {
-    return result(command, false, undefined, error instanceof Error ? error.message : "invalid command");
-  }
-  if (command.command === "listPermissions") {
-    const permissions = await chrome.permissions.getAll();
-    return result(command, true, { origins: permissions.origins ?? [] });
-  }
-  if (command.command === "removePermission") {
-    const removed = await chrome.permissions.remove({ origins: [`${payload.origin}/*`] });
-    return result(command, true, { removed });
-  }
-  if (command.command === "activeTab") {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const origin = originOf(tab?.url);
-    if (!tab?.id || !origin) return result(command, false, undefined, "active tab must be HTTPS");
-    return result(command, true, { tabId: tab.id, origin });
-  }
-  if (command.command === "stop") {
-    const tabId = binding?.tabId;
-    binding = undefined;
-    if (tabId) {
-      await chrome.tabs.sendMessage(tabId, { command: "stop" }).catch(() => undefined);
-      await chrome.action.setBadgeText({ tabId, text: "" });
-    }
-    return result(command, true);
-  }
-  if (!executionEpoch.isCurrent(commandGeneration))
-    return result(command, false, undefined, "execution stopped");
-  if (command.command === "unbind") {
-    // Must stay ahead of the live-tab checks: unbind is the release path when the bound tab is gone.
-    if (
-      !unbindMatchesBinding(binding, {
-        tabId: payload.tabId as number,
-        ...(payload.siteDomain === undefined ? {} : { siteDomain: payload.siteDomain }),
-      })
-    )
-      return result(command, false, undefined, "tab binding mismatch");
-    binding = undefined;
-    return result(command, true);
-  }
-  const tabId = payload.tabId as number;
-  const tab = await chrome.tabs.get(tabId);
-  if (!executionEpoch.isCurrent(commandGeneration))
-    return result(command, false, undefined, "execution stopped");
-  if (closedTabs.has(tabId))
-    return result(command, false, undefined, "bound tab was closed; select a new tab");
-  const currentOrigin = originOf(tab.url);
-  if (!currentOrigin) return result(command, false, undefined, "tab must be on an HTTPS origin");
-  if (command.command === "goto") {
-    const targetOrigin = new URL(payload.url as string).origin;
-    if (!(await permissionFor(targetOrigin)))
-      return result(command, false, undefined, "origin permission required");
-    if (!executionEpoch.isCurrent(commandGeneration))
-      return result(command, false, undefined, "execution stopped");
-    if (
-      binding &&
-      (binding.tabId !== tabId ||
-        binding.siteDomain !== payload.siteDomain ||
-        (binding.siteDomain
-          ? !isSameSiteExtensionOrigin(targetOrigin, binding.siteDomain)
-          : binding.origin !== targetOrigin))
-    )
-      return result(command, false, undefined, "tab binding mismatch");
-    if (payload.siteDomain && !isSameSiteExtensionOrigin(targetOrigin, payload.siteDomain))
-      return result(command, false, undefined, "goto URL outside the site domain");
-    binding ??= {
-      tabId,
-      origin: targetOrigin,
-      ...(payload.siteDomain === undefined ? {} : { siteDomain: payload.siteDomain }),
-    };
-    const navigation = waitForNavigation(tabId, targetOrigin, payload.siteDomain);
-    await chrome.tabs.update(tabId, { url: payload.url as string });
-    await navigation;
-    if (!executionEpoch.isCurrent(commandGeneration))
-      return result(command, false, undefined, "execution stopped");
-    await ensureContentScript(tabId);
-    // Report the post-navigation tab URL so same-site redirects update the driver cache
-    // (request URL alone would leave currentUrl stale until waitForReady/snapshot).
-    const landed = await chrome.tabs.get(tabId);
-    return result(command, true, { url: landed.url ?? "" });
-  }
-  if (!(await permissionFor(currentOrigin)))
-    return result(command, false, undefined, "origin permission required");
-  if (!executionEpoch.isCurrent(commandGeneration))
-    return result(command, false, undefined, "execution stopped");
-  if (
-    binding &&
-    (binding.tabId !== tabId ||
-      (binding.siteDomain
-        ? !isSameSiteExtensionOrigin(currentOrigin, binding.siteDomain)
-        : binding.origin !== currentOrigin))
-  )
-    return result(command, false, undefined, "tab binding mismatch");
-  binding ??= { tabId, origin: currentOrigin };
-  if (command.command === "currentUrl") return result(command, true, { url: tab.url ?? "" });
-  await ensureContentScript(tabId);
-  if (!executionEpoch.isCurrent(commandGeneration))
-    return result(command, false, undefined, "execution stopped");
-  const contentCommand =
-    command.command === "fillField"
-      ? { command: "fill", fieldId: payload.fieldId, value: payload.value }
-      : command.command === "click"
-        ? { command: "click", selector: payload.selector }
-        : { command: command.command, fieldIds: payload.fieldIds, valueIds: payload.valueIds, token: payload.token, bindingEpoch: payload.bindingEpoch };
-  const response = await chrome.tabs.sendMessage<{ ok: boolean; payload?: unknown; error?: string }>(
-    tabId,
-    contentCommand,
-  );
-  if (!executionEpoch.isCurrent(commandGeneration)) return result(command, false, undefined, "execution stopped");
-  if (!response.ok) return result(command, false, undefined, response.error ?? "content command failed");
-  if (command.command === "snapshot" || command.command === "waitForReady") {
-    // PageSnapshot requires the page URL and title, which the content script's
-    // scan result does not carry; attach the bound tab's actual values here,
-    // re-read after the scan so redirects during the command are reflected.
-    // The driver ignores the waitForReady payload today; both scan-shaped
-    // payloads are kept PageSnapshot-complete so a future consumer cannot
-    // reintroduce the missing-url failure (#360).
-    const scanned = await chrome.tabs.get(tabId);
-    return result(command, true, withPageIdentity(response.payload, scanned));
-  }
-  return result(command, true, response.payload);
-}
-
-/**
- * Attach the bound tab's URL/title to a content-script scan payload so it
- * satisfies the PageSnapshot shape the ExtensionPageDriver validates
- * (Issue #360: the scan result itself is structure-only and has neither).
- * The tab's values are authoritative and overwrite any payload keys.
- */
-export function withPageIdentity(
-  payload: unknown,
-  tab: { url?: string; title?: string },
-): Record<string, unknown> {
-  const base = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
-  return { ...base, url: tab.url ?? "", title: tab.title ?? "" };
-}
-
-function connect(): void {
-  nativePort = chrome.runtime.connectNative("jp.soroeru.bridge");
-  // persist: extension-connection-metadata
-  void chrome.storage.local.set({ chromeBridgeConnected: true });
-  void chrome.action.setBadgeText({ text: "ON" });
-  void chrome.action.setBadgeBackgroundColor({ color: "#7c2d12" });
-  nativePort.onMessage.addListener((raw) => {
+  function post(port: PanelPort, message: ExtensionMessage): void {
     try {
-      const message = parseChromeBridgeMessage(raw);
-      if (message.kind === "command") {
-        if (message.command === "stop") executionEpoch.stop();
-        const commandGeneration = executionEpoch.current();
-        void executeCommand(message, commandGeneration)
-          .catch((error: unknown) =>
-            result(message, false, undefined, error instanceof Error ? error.message : "command failed"),
-          )
-          .then((response) => nativePort?.postMessage(response));
-      }
+      port.postMessage(message);
     } catch {
-      nativePort?.postMessage({
-        version: CHROME_BRIDGE_PROTOCOL_VERSION,
-        kind: "error",
-        code: "invalid-message",
-        message: "invalid bridge message",
-      });
+      // The panel is gone; its disconnect handler invalidates the lease.
     }
-  });
-  nativePort.onDisconnect.addListener(() => {
-    nativePort = undefined;
-    binding = undefined;
-    // persist: extension-connection-metadata
-    void chrome.storage.local.set({ chromeBridgeConnected: false });
-    void chrome.action.setBadgeText({ text: "" });
-  });
-}
+  }
 
-if (typeof chrome !== "undefined") {
+  function persist(): void {
+    // persist: extension-connection-metadata — lease ids, tab ids, and origins only; never URLs or values
+    void chrome.storage.session.set({ [LEASE_STORAGE_KEY]: registry.snapshot() }).catch(() => undefined);
+  }
+
+  function drop(invalidations: LeaseInvalidation<PanelPort>[], notifyOwner = true): void {
+    for (const { lease, reason } of invalidations) {
+      rebinding.delete(lease.leaseId);
+      if (notifyOwner)
+        post(lease.ownerPort, versioned({ kind: "lease.invalidated", leaseId: lease.leaseId, reason }));
+      void chrome.tabs
+        .sendMessage(lease.tabId, versioned({ kind: "lease.revoke", leaseId: lease.leaseId }))
+        .catch(() => undefined);
+      void chrome.action.setBadgeText({ tabId: lease.tabId, text: "" }).catch(() => undefined);
+    }
+    if (invalidations.length > 0) persist();
+  }
+
+  async function permitted(origin: string): Promise<boolean> {
+    return chrome.permissions.contains({ origins: [`${origin}/*`] });
+  }
+
+  async function bindContentScript(lease: Lease<PanelPort>): Promise<boolean> {
+    await chrome.scripting.executeScript({ target: { tabId: lease.tabId }, files: ["content-script.js"] });
+    const response = await chrome.tabs.sendMessage<{ ok?: boolean } | undefined>(
+      lease.tabId,
+      versioned({
+        kind: "lease.bind",
+        leaseId: lease.leaseId,
+        epoch: lease.epoch,
+        origin: lease.origin,
+        ...(lease.siteDomain === undefined ? {} : { siteDomain: lease.siteDomain }),
+      }),
+    );
+    return response?.ok === true;
+  }
+
+  async function openLease(port: PanelPort, request: LeaseOpen): Promise<void> {
+    const refuse = (reason: LeaseInvalidReason): void =>
+      // No lease exists yet, so the refusal is keyed by the open nonce.
+      post(port, versioned({ kind: "lease.invalidated", leaseId: request.nonce, reason }));
+    const scope = {
+      origin: request.origin,
+      ...(request.siteDomain === undefined ? {} : { siteDomain: request.siteDomain }),
+    };
+    let tab: chrome.tabs.Tab;
+    try {
+      tab = await chrome.tabs.get(request.tabId);
+    } catch {
+      return refuse("tab-closed");
+    }
+    if (!livePorts.has(port)) return;
+    const tabOrigin = originOf(tab.url);
+    if (!tabOrigin || !isOriginInLeaseScope(tabOrigin, scope)) return refuse("navigated-out-of-scope");
+    if (!(await permitted(tabOrigin))) return refuse("permission-removed");
+    if (!livePorts.has(port)) return;
+
+    const { lease, superseded } = registry.open({
+      tabId: request.tabId,
+      origin: request.origin,
+      siteDomain: request.siteDomain,
+      ownerPort: port,
+    });
+    drop(superseded);
+    let bound = false;
+    try {
+      bound = await bindContentScript(lease);
+    } catch {
+      bound = false;
+    }
+    if (!livePorts.has(port) || registry.get(lease.leaseId) !== lease) {
+      // A late bind response can arrive after disconnect's first revoke.
+      const lost = registry.invalidate(lease.leaseId, "panel-closed");
+      if (lost) drop([lost], false);
+      await chrome.tabs
+        .sendMessage(lease.tabId, versioned({ kind: "lease.revoke", leaseId: lease.leaseId }))
+        .catch(() => undefined);
+      return;
+    }
+    if (!bound) {
+      const lost = registry.invalidate(lease.leaseId, "content-script-lost");
+      if (lost) drop([lost], false);
+      return refuse("content-script-lost");
+    }
+    void chrome.action.setBadgeText({ tabId: lease.tabId, text: "ON" }).catch(() => undefined);
+    persist();
+    post(
+      port,
+      versioned({
+        kind: "lease.opened",
+        nonce: request.nonce,
+        leaseId: lease.leaseId,
+        tabId: lease.tabId,
+        origin: lease.origin,
+        ...(lease.siteDomain === undefined ? {} : { siteDomain: lease.siteDomain }),
+        epoch: lease.epoch,
+        bootId: lease.bootId,
+      }),
+    );
+  }
+
+  /** Re-inject and rebind after a navigation, bumping the epoch so older commands are stale. */
+  function rebind(leaseId: string): Promise<void> {
+    const existing = rebinding.get(leaseId);
+    if (existing) return existing;
+    const task = (async () => {
+      const current = registry.bumpEpoch(leaseId);
+      if (!current) return;
+      const epoch = current.epoch;
+      let bound = false;
+      try {
+        bound = await bindContentScript(current);
+      } catch {
+        bound = false;
+      }
+      if (registry.verify(leaseId, epoch, current.ownerPort) !== "ok") {
+        if (!registry.get(leaseId))
+          await chrome.tabs
+            .sendMessage(current.tabId, versioned({ kind: "lease.revoke", leaseId }))
+            .catch(() => undefined);
+        return;
+      }
+      if (!bound) {
+        drop(registry.invalidateByTab(current.tabId, "content-script-lost"));
+        return;
+      }
+      const tab = await chrome.tabs.get(current.tabId).catch(() => undefined);
+      if (registry.verify(leaseId, epoch, current.ownerPort) !== "ok") return;
+      post(
+        current.ownerPort,
+        versioned({
+          kind: "page.event",
+          leaseId,
+          epoch: current.epoch,
+          event: "navigated",
+          url: tab?.url ?? "",
+        }),
+      );
+      persist();
+    })().finally(() => rebinding.delete(leaseId));
+    rebinding.set(leaseId, task);
+    return task;
+  }
+
+  function waitForNavigation(lease: Lease<PanelPort>): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => finish(new Error("navigation timed out")), NAVIGATION_TIMEOUT_MS);
+      const finish = (error?: Error): void => {
+        clearTimeout(timeout);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        chrome.tabs.onRemoved.removeListener(onRemoved);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onUpdated = (tabId: number, changeInfo: { status?: string }, tab: chrome.tabs.Tab): void => {
+        if (tabId !== lease.tabId || changeInfo.status !== "complete") return;
+        const origin = originOf(tab.url);
+        if (origin && isOriginInLeaseScope(origin, lease)) finish();
+        else finish(new Error("navigation left the bound origin"));
+      };
+      const onRemoved = (tabId: number): void => {
+        if (tabId === lease.tabId) finish(new Error("bound tab was closed"));
+      };
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      chrome.tabs.onRemoved.addListener(onRemoved);
+    });
+  }
+
+  function reject(requestId: string, reason: PageRejectedReason): ExtensionMessage {
+    return versioned({ kind: "page.rejected", requestId, reason });
+  }
+  function resultMessage(
+    requestId: string,
+    ok: boolean,
+    payload?: unknown,
+    error?: string,
+  ): ExtensionMessage {
+    return versioned({
+      kind: "page.result",
+      requestId,
+      ok,
+      ...(payload === undefined ? {} : { payload }),
+      ...(error === undefined ? {} : { error }),
+    });
+  }
+
+  async function runPageCommand(
+    lease: Lease<PanelPort>,
+    message: PageCommandMessage,
+  ): Promise<ExtensionMessage> {
+    const { requestId } = message;
+    const stopped = (): boolean => registry.verify(lease.leaseId, message.epoch, lease.ownerPort) !== "ok";
+    const tab = await chrome.tabs.get(lease.tabId);
+    if (
+      stopped() &&
+      !(
+        message.command.command === "waitForReady" &&
+        registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) === "ok"
+      )
+    )
+      return resultMessage(requestId, false, undefined, "execution stopped");
+    const pageOrigin = originOf(tab.url);
+    if (!pageOrigin || !isOriginInLeaseScope(pageOrigin, lease)) {
+      drop(registry.invalidateByTab(lease.tabId, "navigated-out-of-scope"));
+      return reject(requestId, "origin-out-of-scope");
+    }
+    const command: PageCommand = message.command;
+    if (command.command === "waitForReady") {
+      if (tab.status === "loading") await waitForNavigation(lease);
+      await rebinding.get(lease.leaseId);
+      const current = registry.get(lease.leaseId);
+      if (
+        !current ||
+        current.ownerPort !== lease.ownerPort ||
+        current.epoch < message.epoch ||
+        current.epoch > message.epoch + 1
+      ) {
+        return resultMessage(requestId, false, undefined, "execution stopped");
+      }
+      const readyEpoch = current.epoch;
+      const ready = await chrome.tabs.get(lease.tabId);
+      if (registry.verify(lease.leaseId, readyEpoch, lease.ownerPort) !== "ok")
+        return resultMessage(requestId, false, undefined, "execution stopped");
+      return resultMessage(requestId, true, { url: ready.url ?? "" });
+    }
+    if (command.command === "goto") {
+      const target = new URL(command.url).origin;
+      if (!isOriginInLeaseScope(target, lease)) return reject(requestId, "origin-out-of-scope");
+      if (!(await permitted(target)))
+        return resultMessage(requestId, false, undefined, "origin permission required");
+      if (stopped()) return resultMessage(requestId, false, undefined, "execution stopped");
+      const navigation = waitForNavigation(lease);
+      navigation.catch(() => undefined);
+      await chrome.tabs.update(lease.tabId, { url: command.url });
+      await navigation;
+      // The completion listener may already have advanced the epoch. Accept
+      // exactly this navigation's one transition, never a revoked or newer lease.
+      if (registry.verify(lease.leaseId, message.epoch, lease.ownerPort) === "ok") {
+        await rebind(lease.leaseId);
+      } else if (registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) === "ok") {
+        await rebinding.get(lease.leaseId);
+      }
+      const navigationStopped = (): boolean =>
+        registry.verify(lease.leaseId, message.epoch + 1, lease.ownerPort) !== "ok";
+      if (navigationStopped()) return resultMessage(requestId, false, undefined, "execution stopped");
+      const landed = await chrome.tabs.get(lease.tabId);
+      if (navigationStopped()) return resultMessage(requestId, false, undefined, "execution stopped");
+      return resultMessage(requestId, true, { url: landed.url ?? "" });
+    }
+    if (!(await permitted(pageOrigin)))
+      return resultMessage(requestId, false, undefined, "origin permission required");
+    if (command.command === "currentUrl") return resultMessage(requestId, true, { url: tab.url ?? "" });
+    return reject(requestId, "invalid-command");
+  }
+
+  async function onPanelMessage(port: PanelPort, raw: unknown): Promise<void> {
+    let message: ExtensionMessage;
+    try {
+      message = parseExtensionMessage(raw);
+    } catch {
+      const requestId = (raw as { requestId?: unknown } | null)?.requestId;
+      if (typeof requestId === "string" && requestId.length > 0)
+        post(port, reject(requestId, "invalid-command"));
+      return;
+    }
+    switch (message.kind) {
+      case "keepalive":
+        return; // Receiving the message is what resets the worker idle timer.
+      case "lease.open":
+        return openLease(port, message);
+      case "lease.release": {
+        const lease = registry.get(message.leaseId);
+        if (lease?.ownerPort === port) drop(registry.invalidateByOwner(port, "released"));
+        return;
+      }
+      case "page.command": {
+        let verdict = registry.verify(message.leaseId, message.epoch, port);
+        if (message.command.command === "waitForReady" && verdict === "stale-epoch")
+          verdict = registry.verify(message.leaseId, message.epoch + 1, port);
+        const lease = registry.get(message.leaseId);
+        if (verdict !== "ok" || !lease) {
+          post(port, reject(message.requestId, verdict === "ok" ? "no-lease" : verdict));
+          return;
+        }
+        let response: ExtensionMessage;
+        try {
+          response = await runPageCommand(lease, message);
+        } catch (error) {
+          response = resultMessage(
+            message.requestId,
+            false,
+            undefined,
+            error instanceof Error ? error.message : "command failed",
+          );
+        }
+        post(port, response);
+        return;
+      }
+      default:
+        return; // Worker-originated kinds are never accepted from the panel.
+    }
+  }
+
+  chrome.runtime.onConnect.addListener((port) => {
+    const sender = port.sender;
+    const trusted =
+      port.name === PANEL_PORT_NAME &&
+      sender?.id === chrome.runtime.id &&
+      sender.tab === undefined &&
+      sender.url === chrome.runtime.getURL("sidepanel.html");
+    if (!trusted) {
+      port.disconnect();
+      return;
+    }
+    livePorts.add(port);
+    port.onMessage.addListener((raw) => {
+      if (livePorts.has(port)) void onPanelMessage(port, raw);
+    });
+    port.onDisconnect.addListener(() => {
+      livePorts.delete(port);
+      drop(registry.invalidateByOwner(port, "panel-closed"), false);
+    });
+  });
+
   chrome.tabs.onRemoved.addListener((tabId) => {
-    if (binding?.tabId === tabId) {
-      closedTabs.add(tabId);
-      void chrome.action.setBadgeText({ tabId, text: "" });
+    drop(registry.invalidateByTab(tabId, "tab-closed"));
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    const lease = registry.byTab(tabId);
+    if (!lease || (changeInfo.status !== "complete" && changeInfo.url === undefined)) return;
+    const origin = originOf(changeInfo.url ?? tab.url);
+    if (!origin || !isOriginInLeaseScope(origin, lease)) {
+      drop(registry.invalidateByTab(tabId, "navigated-out-of-scope"));
+      return;
+    }
+    if (changeInfo.status === "complete") void rebind(lease.leaseId);
+  });
+
+  chrome.permissions.onRemoved.addListener((permissions) => {
+    for (const pattern of permissions.origins ?? []) {
+      // egress: target-site — recognize revoked host permission patterns to invalidate leases; no request is sent.
+      if (pattern === "https://*/*" || pattern === "<all_urls>") {
+        drop(registry.list().flatMap((lease) => registry.invalidateByTab(lease.tabId, "permission-removed")));
+        continue;
+      }
+      drop(registry.invalidateByPermissionOrigin(pattern.replace(/\/\*$/, "")));
     }
   });
+
+  // Leases from an earlier worker boot lost their panel port; revoke them in their tabs.
+  void chrome.storage.session
+    .get(LEASE_STORAGE_KEY)
+    .then((stored) => {
+      for (const stale of staleLeasesFromStorage(stored[LEASE_STORAGE_KEY], registry.bootId)) {
+        void chrome.tabs
+          .sendMessage(stale.tabId, versioned({ kind: "lease.revoke", leaseId: stale.leaseId }))
+          .catch(() => undefined);
+      }
+      persist();
+    })
+    .catch(() => undefined);
+
+  // The popup (not startup) is the only way to start the legacy Native Messaging bridge.
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const msg = message as { command?: string } | undefined;
-    if (msg && msg.command === "reconnect") {
-      if (!nativePort) {
-        try {
-          connect();
-          sendResponse({ ok: true });
-        } catch (err) {
-          sendResponse({ ok: false, error: err instanceof Error ? err.message : String(err) });
-        }
-      } else {
-        sendResponse({ ok: true, message: "already connected" });
-      }
-      return true; // Keep message channel open for asynchronous sendResponse
+    if (msg?.command !== "reconnect") return;
+    if (sender.id !== chrome.runtime.id || sender.tab !== undefined) {
+      sendResponse({ ok: false, error: "untrusted sender" });
+      return;
     }
+    sendResponse(connectLegacyBridge());
+    return true;
   });
-  connect();
+
+  return { registry };
 }
+
+if (typeof chrome !== "undefined" && typeof chrome.runtime?.onConnect !== "undefined") startLeaseWorker();

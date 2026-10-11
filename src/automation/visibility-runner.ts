@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { AiProvider } from "../agent/ai/provider.js";
 import type { CollectionGrant } from "../domain/collection-authorization.js";
 import { collectAiVisibility, type AiCollectionOptions } from "./ai-visibility-collector.js";
@@ -514,7 +513,7 @@ export class VisibilityRunner {
       }
 
       siteAccount = this.updateImportedDisplayName(siteAccount, snapshot);
-      const runId = randomUUID();
+      const runId = globalThis.crypto.randomUUID();
       const grant = this.options.collectionGrant?.({ siteAccountId, runId, epoch: 1 });
       if (grant && session.page.captureCollectionObservation && session.page.checkCollectionObservation &&
           this.options.domain.permitsAiCollection(grant, siteAccountId, runId, 1)) {
