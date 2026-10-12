@@ -15,6 +15,7 @@ async function start(t, options = {}) {
     budget: { consume: async () => true },
     tickets: new TicketAuthority(secret),
     feedback: { process: async () => ({ accepted: false }) },
+    telemetry: { insert: async () => {} },
     log: (e) => logs.push(e),
     ...options,
   });

@@ -1,6 +1,7 @@
 import { VertexStructureMapper, metadataAccessToken } from "./gemini.js";
 import { FirestoreSchemaRegistry } from "./schema-registry.js";
 import { SchemaFeedbackHandler } from "./schema-feedback.js";
+import { BigQueryTelemetryWriter } from "./telemetry.js";
 import { createCloudServer, type ServiceKind } from "./server.js";
 import { FirestoreDailyBudget } from "./budget.js";
 import { TicketAuthority } from "./tickets.js";
@@ -32,6 +33,15 @@ const server = createCloudServer({
             model: process.env.GEMINI_MODEL_ID,
           },
           metadataAccessToken,
+        ),
+      }
+    : {}),
+  ...(service === "api" && process.env.BIGQUERY_DATASET && process.env.BIGQUERY_TABLE
+    ? {
+        telemetry: new BigQueryTelemetryWriter(
+          process.env.GOOGLE_CLOUD_PROJECT ?? "",
+          process.env.BIGQUERY_DATASET,
+          process.env.BIGQUERY_TABLE,
         ),
       }
     : {}),

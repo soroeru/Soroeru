@@ -1,6 +1,7 @@
 import type { StructureMapper } from "./gemini.js";
 import type { SchemaRegistry } from "./schema-registry.js";
 import type { SchemaFeedbackHandler } from "./schema-feedback.js";
+import type { TelemetryWriter } from "./telemetry.js";
 import { isIP } from "node:net";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
@@ -31,6 +32,7 @@ export interface ServerOptions {
   schemas?: SchemaRegistry;
   feedback?: SchemaFeedbackHandler;
   mapper?: StructureMapper;
+  telemetry?: TelemetryWriter;
   budget: DailyBudget;
   tickets: TicketAuthority;
   log: (entry: SafeLog) => void;
@@ -166,7 +168,10 @@ export function createCloudServer(options: ServerOptions) {
           break;
         }
         case "outcome":
-          throw new HttpError(503, "unavailable");
+          if (!options.telemetry) throw new HttpError(503, "unavailable");
+          await options.telemetry.insert(body as CloudRequests["outcome"]);
+          send(res, 204);
+          break;
         case "mapStructure": {
           if (!(await options.budget.consume())) throw new HttpError(429, "budget-exhausted");
           if (!options.mapper) throw new HttpError(503, "unavailable");
