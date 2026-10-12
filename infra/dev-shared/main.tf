@@ -30,3 +30,21 @@ resource "google_service_account" "runner" {
   account_id   = "soroeru-${each.key}-dev"
   display_name = "Soroeru ${each.key} dev runner"
 }
+resource "google_project_iam_member" "api_datastore" {
+  project = var.project_id
+  role    = "roles/datastore.user"
+  member  = "serviceAccount:${google_service_account.runner["api"].email}"
+}
+resource "google_project_iam_member" "vertex" {
+  for_each = google_service_account.runner
+  project  = var.project_id
+  role     = "roles/aiplatform.user"
+  member   = "serviceAccount:${each.value.email}"
+}
+resource "google_secret_manager_secret_iam_member" "ticket" {
+  for_each  = google_service_account.runner
+  project   = var.project_id
+  secret_id = "tier3-ticket-key"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${each.value.email}"
+}
