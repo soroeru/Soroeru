@@ -9,6 +9,7 @@ import {
   CLOUD_LIMITS,
   validateCloudRequest,
   validateCloudResponse,
+  validateConsentedReadValues,
   validateStructureMappings,
   type CloudOperation,
   type CloudRequests,
@@ -193,7 +194,8 @@ export function createCloudServer(options: ServerOptions) {
             throw new HttpError(403, "invalid-ticket");
           if (!options.reader) throw new HttpError(503, "unavailable");
           const readResult = await options.reader.read(body as CloudRequests["readWithConsent"]);
-          validateCloudResponse("readWithConsent", readResult);
+          // Cross-check: reader cannot invent item IDs or return unrequested attribute keys.
+          validateConsentedReadValues(body as CloudRequests["readWithConsent"], readResult);
           send(res, 200, readResult);
           break;
         }

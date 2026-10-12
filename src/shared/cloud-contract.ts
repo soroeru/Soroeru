@@ -478,6 +478,19 @@ export function validateCloudResponse<K extends CloudOperation>(
   }
 }
 
+/** Cross-request validation: PII reader cannot invent item IDs or return unrequested attribute keys. */
+export function validateConsentedReadValues(
+  request: ConsentedReadPayload,
+  response: unknown,
+): asserts response is CloudResponses["readWithConsent"] {
+  validateCloudResponse("readWithConsent", response);
+  const allowedItemIds = new Set(request.items.map((i) => i.id));
+  const allowedKeys = new Set(request.requestedKeys as string[]);
+  for (const r of response.values) {
+    if (!allowedItemIds.has(r.itemId) || !allowedKeys.has(r.attributeKey)) throw new CloudContractError();
+  }
+}
+
 /** Cross-request validation: Gemini cannot invent IDs or duplicate item/key assignments. */
 export function validateStructureMappings(
   request: StructureSnapshot,
