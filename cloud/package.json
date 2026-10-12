@@ -17,7 +17,7 @@
     "@google-cloud/firestore": "^9.3.1"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.4",
     "typescript": "~7.0.2"
   }
 }
