@@ -66,7 +66,20 @@ Automated equivalents are Tier 2 unit, browser and Cloud tests.
 - [ ] Simulate resolve outage, Gemini 429/503 and invalid output. No raw-value
       fallback or automatic retry occurs in the current Tier 2 path.
 - [ ] With sharing enabled, inspect the encrypted feedback queue: anchors and keys
-      only. Sharing disabled records no new feedback. Delivery is still pending.
+      only. Sharing disabled records no new feedback.
+- [ ] **Offline cache freshness (Issue #567)**: with cloud assistance enabled, load
+      a page whose schema was cached more than 30 days ago (backdate `fetchedAt` in
+      the encrypted vault via a test script). Simulate offline. Confirm no schema
+      match and graceful null result. Restore `fetchedAt` to within 30 days; confirm
+      the cache is used again offline.
+- [ ] **Queue retry (Issue #567)**: with telemetry sharing on, trigger a Tier 2
+      resolve (no active schema). A feedback item should appear in the encrypted
+      queue. Disconnect the network and trigger another resolve to confirm the item
+      stays in the queue. Reconnect and trigger a fresh resolve; confirm the item is
+      delivered (queue empties). Verify delivered feedback contains only
+      structure/hashes (anchors, keys, fingerprint) — no personal values.
+- [ ] **Idempotency key preserved**: capture the queue item before delivery. After
+      retry delivery, confirm the `idempotencyKey` is identical to the original.
 
 ## Cloud deployment
 
@@ -78,6 +91,9 @@ Automated equivalents are Tier 2 unit, browser and Cloud tests.
 - [ ] Inspect both services' Cloud Logging/Trace: application entries contain only
       enum error category and latency, not bodies, values, IP, site, tokens or
       consent IDs. Inspect additional sinks as well as the configured exclusions.
+      Confirm Firestore `schemaFeedback/{id}/receipts/{key}` document exists after
+      delivery and a re-delivered identical key returns `accepted: true` without
+      incrementing counters.
 - [ ] Verify fallback has Vertex and specific ticket-secret access but no Firestore
       or BigQuery grant. Inspect budget counts after smoke; billing alerts notify
       at configured thresholds but do not cap spending.

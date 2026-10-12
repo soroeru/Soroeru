@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createCloudServer } from "../dist/cloud/src/server.js";
 import { TicketAuthority } from "../dist/cloud/src/tickets.js";
-import { OUTCOME_TELEMETRY_SCHEMA } from "../dist/cloud/src/telemetry.js";
+import { OUTCOME_TELEMETRY_SCHEMA, BigQueryTelemetryWriter } from "../dist/cloud/src/telemetry.js";
 
 const hash = "a".repeat(64);
 
@@ -86,6 +86,7 @@ const validOutcome = {
   clientVersion: "0.1.0",
   schemaFingerprint: hash,
   occurredAt: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
+  idempotencyKey: "11111111-1111-4111-8111-111111111111",
 };
 
 test("outcome endpoint accepts valid event and returns 204 with no body", async (t) => {
@@ -191,4 +192,44 @@ test("outcome endpoint writer storage failure returns body-free 503 without logg
   assert.equal(res.status, 503);
   assert.deepEqual(await res.json(), { error: "unavailable" });
   assert.doesNotMatch(JSON.stringify(logs), /private|example/);
+});
+
+test("outcome endpoint rejects missing idempotencyKey with 400", async (t) => {
+  const written = [];
+  const { post } = await startWithTelemetry(t, written);
+  const { idempotencyKey: _, ...noKey } = validOutcome;
+  const res = await post("/v1/telemetry/outcome", noKey);
+  assert.equal(res.status, 400);
+  assert.equal(written.length, 0);
+});
+
+test("outcome endpoint rejects invalid idempotencyKey with 400", async (t) => {
+  const written = [];
+  const { post } = await startWithTelemetry(t, written);
+  const res = await post("/v1/telemetry/outcome", { ...validOutcome, idempotencyKey: "not-a-uuid" });
+  assert.equal(res.status, 400);
+  assert.equal(written.length, 0);
+});
+
+test("BigQueryTelemetryWriter.insert passes idempotencyKey as insertId in raw mode", async () => {
+  const captured = [];
+  const fakeBq = {
+    dataset: () => ({
+      table: () => ({
+        insert: async (rows, opts) => {
+          captured.push({ rows, opts });
+        },
+      }),
+    }),
+  };
+  const writer = new BigQueryTelemetryWriter("fake-project", "fake-dataset", "fake-table", fakeBq);
+  await writer.insert(validOutcome);
+  assert.equal(captured.length, 1);
+  assert.deepEqual(captured[0].opts, { raw: true });
+  assert.equal(captured[0].rows.length, 1);
+  assert.equal(captured[0].rows[0].insertId, validOutcome.idempotencyKey);
+  // The json field must contain only §15.3 fields (no idempotencyKey in the row data).
+  assert.ok("json" in captured[0].rows[0]);
+  assert.equal(captured[0].rows[0].json.siteId, validOutcome.siteId);
+  assert.equal(captured[0].rows[0].json.idempotencyKey, undefined);
 });

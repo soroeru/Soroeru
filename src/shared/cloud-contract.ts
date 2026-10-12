@@ -100,6 +100,8 @@ export interface OutcomeEvent {
   clientVersion: string;
   schemaFingerprint: string;
   occurredAt: string;
+  /** Client-generated UUID so a retried delivery is applied at most once by BigQuery insertId. */
+  idempotencyKey: string;
 }
 export interface CloudRequests {
   resolve: ResolveRequest;
@@ -398,6 +400,7 @@ export function validateCloudRequest<K extends CloudOperation>(
         "clientVersion",
         "schemaFingerprint",
         "occurredAt",
+        "idempotencyKey",
       ]);
       site(o.siteId);
       identifier(o.formId);
@@ -411,6 +414,7 @@ export function validateCloudRequest<K extends CloudOperation>(
       hash(o.schemaFingerprint);
       pattern(o.occurredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:00:00\.000Z$/);
       check(new Date(o.occurredAt as string).toISOString() === o.occurredAt);
+      uuid(o.idempotencyKey);
       break;
     }
     default:

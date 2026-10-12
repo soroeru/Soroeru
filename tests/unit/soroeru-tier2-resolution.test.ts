@@ -253,3 +253,33 @@ test("partial Tier 1 keeps validated fields, sends only unresolved items and res
   assert.deepEqual(result?.unresolved, []);
   assert.equal(session.vault.get("cloudSettings", "cloud")!.queue.length, 0);
 });
+
+test("offline: mapStructure, readWithConsent and Tier 3 ticket are never called", async (t) => {
+  // When the cloud resolve call fails (offline), reachable stays false.
+  // All Tier 2 / Tier 3 paths must be unreachable.
+  const { session } = await fixture(t);
+  const forbiddenOps = new Set<string>();
+  const client = new CloudClient(
+    { apiBaseUrl: "https://api.example/", fallbackBaseUrl: "https://fallback.example/" },
+    async (url) => {
+      const op = String(url).split("/").pop() ?? "";
+      if (op !== "resolve") forbiddenOps.add(op);
+      throw new Error("fake offline");
+    },
+  );
+  const resolver = new ResolutionOrchestrator({
+    session,
+    client,
+    clientVersion: "0.1.2",
+    isActive: () => true,
+    sendPageCommand: async (c) => {
+      if (c.command === "schemaFingerprint") return hash;
+      if (c.command === "structureSnapshot")
+        return sanitizeStructure(page("fake@example.com"), "example.com", hash);
+      return { values: [], unresolved: [] };
+    },
+  });
+  await resolver.resolve("example.com");
+  assert.equal(forbiddenOps.size, 0, `Unexpected Tier 2/3 calls: ${[...forbiddenOps].join(", ")}`);
+  assert.equal(session.vault.get("cloudSettings", "cloud")!.queue.length, 0);
+});

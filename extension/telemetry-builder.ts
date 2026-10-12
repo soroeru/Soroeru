@@ -1,8 +1,4 @@
-import {
-  validateCloudRequest,
-  type OutcomeEvent,
-  type ErrorCategory,
-} from "../src/shared/cloud-contract.js";
+import { validateCloudRequest, type OutcomeEvent, type ErrorCategory } from "../src/shared/cloud-contract.js";
 
 export type { OutcomeEvent };
 export type OperationType = OutcomeEvent["operationType"];
@@ -56,6 +52,8 @@ export class TelemetryBuilder {
       clientVersion: input.clientVersion,
       schemaFingerprint: input.schemaFingerprint,
       occurredAt: new Date(hourMs).toISOString(),
+      // Client-generated key used as BigQuery insertId for deduplication on retry.
+      idempotencyKey: crypto.randomUUID(),
     };
     // Validate immediately so invalid inputs are caught at construction time, not at send time.
     validateCloudRequest("outcome", event);

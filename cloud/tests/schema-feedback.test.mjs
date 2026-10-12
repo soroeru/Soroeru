@@ -345,15 +345,36 @@ test("failed outcome increments failureCount and decrements distinctValidators i
   assert.equal(schema.failureCount, 1);
 });
 
-test("idempotency: same idempotencyKey is accepted without re-processing", async () => {
+test("idempotency: same idempotencyKey is accepted without re-processing (receipt-based)", async () => {
   const db = fakeDb({ [`formSchemas/${candidateId}`]: structuredClone(candidateBase) });
   const handler = new SchemaFeedbackHandler(SECRET, db);
   await handler.process(feedbackReq());
   const writesBefore = db.writes;
   const result = await handler.process(feedbackReq()); // same UUID
   assert.deepEqual(result, { accepted: true });
-  assert.equal(db.writes, writesBefore); // no additional writes
+  assert.equal(db.writes, writesBefore); // no additional writes — early exit via receipt
   assert.equal(db._store.get(`formSchemas/${candidateId}`).validationCount, 1); // not doubled
+  // Receipt document should be present.
+  assert.ok(db._store.has(`schemaFeedback/${candidateId}/receipts/${UUID}`));
+});
+
+test("A→B→A re-send does not double-count (receipt prevents repeated counting)", async () => {
+  const db = fakeDb({ [`formSchemas/${candidateId}`]: structuredClone(candidateBase) });
+  const handler = new SchemaFeedbackHandler(SECRET, db);
+  // A: first validated submission
+  await handler.process(feedbackReq({ idempotencyKey: UUID, outcome: "validated" }));
+  assert.equal(db._store.get(`formSchemas/${candidateId}`).validationCount, 1);
+  assert.equal(db._store.get(`formSchemas/${candidateId}`).distinctValidators, 1);
+  // B: same validator, different key — reports failure
+  await handler.process(feedbackReq({ idempotencyKey: UUID2, outcome: "failed" }));
+  assert.equal(db._store.get(`formSchemas/${candidateId}`).validationCount, 2);
+  assert.equal(db._store.get(`formSchemas/${candidateId}`).failureCount, 1);
+  // A again: re-delivery of the original UUID must not re-count
+  const countBefore = db._store.get(`formSchemas/${candidateId}`).validationCount;
+  const result = await handler.process(feedbackReq({ idempotencyKey: UUID, outcome: "validated" }));
+  assert.deepEqual(result, { accepted: true });
+  assert.equal(db._store.get(`formSchemas/${candidateId}`).validationCount, countBefore); // no increment
+  assert.equal(db._store.get(`formSchemas/${candidateId}`).failureCount, 1); // failure unchanged
 });
 
 test("same validator, different idempotencyKey: increments count but not distinctValidators again", async () => {
