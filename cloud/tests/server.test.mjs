@@ -14,6 +14,7 @@ async function start(t, options = {}) {
     service: "api",
     budget: { consume: async () => true },
     tickets: new TicketAuthority(secret),
+    feedback: { process: async () => ({ accepted: false }) },
     log: (e) => logs.push(e),
     ...options,
   });
