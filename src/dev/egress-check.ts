@@ -97,6 +97,7 @@ function* walkTsFiles(dir: string): Generator<string> {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
       yield* walkTsFiles(path);
     } else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
       yield path;
