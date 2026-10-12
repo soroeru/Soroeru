@@ -119,41 +119,13 @@ Follow this workflow:
 
 ## Development Terraform
 
-Use `infra/dev-shared/` and `infra/dev/` when an Issue requires verifying Cloud Run,
-Firestore, or Secret Manager behaviour with a real Google Cloud deployment. Use local
-unit tests instead whenever they are sufficient — do not apply dev Terraform for
-changes that can be validated locally.
-
-**When to use:** the Issue involves Cloud Run deployment, Firestore schema changes, or
-Secret Manager integration, and local tests cannot cover the behaviour.
-
-**dev-shared layer** — apply once per dev project (never per Issue):
-
-```bash
-terraform -chdir=infra/dev-shared init
-terraform -chdir=infra/dev-shared apply -var="project_id=<dev-project>"
-```
-
-**dev layer** — apply per Issue, destroy after verification (**destroy is required**):
-
-```bash
-cd infra/dev
-terraform init -backend-config="path=../../state/dev-i<issue_number>/terraform.tfstate"
-terraform apply \
-  -var="project_id=<dev-project>" \
-  -var="issue_number=<issue_number>" \
-  -var="image=<image>"
-
-# After verification:
-terraform destroy \
-  -var="project_id=<dev-project>" \
-  -var="issue_number=<issue_number>" \
-  -var="image=<image>"
-```
-
-- Always use a dedicated dev project, never the production project.
-- State files live under `state/dev-i<issue_number>/` (`.gitignore`d). Never commit them.
-- Do not add a CI/CD workflow for the dev layer.
+Use a dedicated dev project only when local tests cannot verify the Issue's
+Cloud Run, Firestore or Secret Manager behavior. Follow the setup/apply/destroy
+commands in [development](../../docs/development.md#isolated-development-cloud-resources).
+The shared layer is project-owned; never destroy it for one Issue. Per-Issue
+resources must be destroyed after verification. Keep state ignored and record
+verification/cleanup in the Issue/PR. Do not apply Cloud resources for documentation
+review or add a dev-layer CI/CD workflow.
 
 ## Boundaries
 
