@@ -1,5 +1,5 @@
 // PageExplorer: the multi-page exploration loop of the Visibility flow
-// (docs/design/visibility-exploration.md §3). Starting from the logged-in
+// (docs/architecture.md#resolution-and-validation). Starting from the logged-in
 // landing page it follows DecisionEngine-suggested profile/settings links,
 // yields a structure-only snapshot per page for downstream collection
 // (Phase 5), and pauses on a detected wall so the human can resolve it in the

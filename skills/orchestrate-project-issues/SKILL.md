@@ -159,7 +159,7 @@ related Issues' acceptance criteria; it never copies Issue bodies or diffs into 
 ## Optional: LangGraph StateGraph runner
 
 `node scripts/project-issue-graph.mjs --thread-id <id> …` runs this same workflow as an
-explicit checkpointed state machine (see `docs/development.md` §3.1): it pauses for route
+explicit checkpointed state machine (see the runner source in `scripts/project-issue-graph.mjs`): it pauses for route
 assignment, worker events, and every integration-gate verdict, and resumes with
 `--resume-json`. Resume payloads are validated against the verified route pool — the rules
 above (choose only from `workerRoutes`, fail closed on exhaustion, release only on the
@@ -171,7 +171,11 @@ it does not adopt Jev's risk, Size, mode, or route. Before first dispatch, a cha
 pool, or unverifiable route withdraws the assignment for a manual re-prompt (a failed
 route's model is excluded for the run). A fallback requires manual route
 assignment even with `--auto-assign`. `--triage assisted` requires the current live
-holdout report and explicit PO approval described in `docs/development.md`.
+holdout report at `state/triage-eval/assisted-evaluation.json` and explicit PO
+approval at `state/triage-eval/assisted-approval.json`, validated by
+`scripts/project-issue-triage-approval.mjs` against the report hash, labels,
+override review and current classifier fingerprint. Record the human decision
+in the Issue/PR; local artifacts are not a replacement for that decision.
 Do not create an approval record without the human decision. Private Issue sending
 requires the independent boolean `run.triage.allowPrivateIssues: true`, authorized by
 the operator; default is rejection. Only reviewed, non-personal development title/body

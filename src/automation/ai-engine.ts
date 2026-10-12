@@ -1,5 +1,5 @@
 // AiEngine: the optional AI fallback for the Visibility exploration
-// DecisionEngine (docs/design/visibility-exploration.md §8, Issue #276).
+// DecisionEngine (docs/architecture.md#resolution-and-validation, Issue #276).
 // Consulted only when the RuleEngine returns `confident: false`; every failure
 // mode (provider error, timeout, budget exhaustion, response validation
 // failure) resolves to `null` so DecisionEngine falls through to its safe

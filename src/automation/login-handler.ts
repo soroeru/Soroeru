@@ -1,4 +1,4 @@
-// LoginHandler (docs/design/visibility-exploration.md §7): drives a PageDriver
+// LoginHandler (docs/architecture.md#resolution-and-validation): drives a PageDriver
 // through login-page discovery, form detection, credential fill, submit, and
 // result judgement. Each decision is delegated to the DecisionEngine (rules
 // first, optional AI fallback); any detected wall pauses the flow for a human

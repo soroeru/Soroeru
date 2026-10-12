@@ -6,18 +6,13 @@ user-invocable: true
 
 # Architecture Review
 
-Review `docs/architecture.md` (or a diff to it) against the five criteria
-below. The criteria mirror `docs/development.md` §9.4 (Architecture Review);
-if either changes, update the other in the same commit.
+Review `docs/architecture.md` (or its diff) against the five criteria below.
+This skill owns the criteria; development links here without duplicating them.
 
-Judge everything against **Soroeru's actual context**: a single-user,
-local-first, OSS Electron desktop app with an encrypted local vault. Do not
-import server-scale expectations (horizontal scaling, HA clusters, fleet
-observability). Where a classic concern genuinely does not apply, say
-"not applicable" explicitly under Criterion coverage rather than inventing a
-finding. The non-negotiables in `docs/requirements.md` §8 are fixed inputs —
-review whether the architecture *satisfies* them, never whether they are
-right.
+Judge Soroeru's Chrome MV3 Side Panel client, encrypted local vault and Google
+Cloud form assistance against UX-first requirements. Distinguish implemented
+behavior from target design. Explicitly scoped Product Owner policy changes are
+review inputs, not automatically forbidden weakening of historical constraints.
 
 When the document names repository files, APIs, or implemented behavior,
 verify those claims against the current code before judging — a confirmed
@@ -27,14 +22,11 @@ finding.
 ## Review criteria (priority order)
 
 1. **Requirements and constraint fit** — every architectural choice satisfies
-   the non-negotiables (local-first encrypted vault, no telemetry / hosted
-   backend, restricted egress, never-bypass walls, AI-optional deterministic
-   default) and the quality attributes the requirements actually prioritize.
+   the current product/data-handling boundaries and the quality attributes the requirements actually prioritize.
    Make trade-off points explicit: which quality was sacrificed for which,
    and is that consistent with the requirements' priorities?
 2. **System boundaries and data flow** — process / trust boundaries are
-   drawn (main vs renderer vs automation browser vs external sites / AI
-   provider), and it is decidable where personal data may exist in what form
+   drawn (Side Panel vs worker vs content script vs sites vs Cloud/Vertex), and it is decidable where personal data may exist in what form
    (encrypted / in-memory / in a form field) and what every egress point is.
    Flag any component whose access to decrypted data is broader than its job.
 3. **Dependencies** — each significant dependency is justified against
@@ -44,12 +36,10 @@ finding.
 4. **Failure modes and data integrity** — crash, forced quit, disk-full, and
    interrupted-write behavior for the vault (the user's single source of
    truth) is designed: atomic writes, versioned schema with a migration
-   story, and detectable-not-silent corruption. Includes local
-   diagnosability: how a user or agent investigates a failure without
-   telemetry.
+   story, and detectable-not-silent corruption. Includes local diagnosability and bounded, value-free Cloud outcomes.
 5. **Decision records** — each significant decision is captured so it can be
-   revisited: context, considered alternatives, rationale, and what would
-   trigger reconsideration (ADR-style, whether or not in ADR files).
+   revisited: context, rationale and reconsideration triggers. Keep concise durable
+   decisions in architecture and implementation detail in the Issue/PR.
 
 Every criterion is judged: detailed findings go in the findings list (a few
 strong ones over many shallow ones), and the closing `## Criterion coverage`
@@ -59,11 +49,7 @@ minor/nit findings touch it), or that it is not applicable and why.
 
 ## Output format
 
-Follow the local AI review conventions
-(`.githooks/prompts/local-review-claude.md`). When reviewing the whole
-document rather than a diff, take only the output format and severity
-conventions from that file — its diff-scope restrictions do not apply, and
-citing repository code that confirms a finding is in scope.
+Record the review in the Issue/PR using this format:
 
 ```
 verdict: PASS | NEEDS_CHANGES | NIT_ONLY
@@ -87,21 +73,11 @@ at most `major`; `blocker` is reserved for what the document affirmatively
 chooses) · `minor` (clarity, small gaps) · `nit` (wording, optional). Verdict mapping: any
 `blocker`/`major` → `NEEDS_CHANGES`; only `minor`/`nit` → `NIT_ONLY`; no
 findings → `verdict: PASS` with a one-line reason. Cite doc line numbers (or
-post-image diff lines when reviewing a diff). Do not review embedded sample
-code as shipped code, per `.githooks/prompts/local-review-claude.md`,
-"Reviewing documentation diffs".
+post-image diff lines when reviewing a diff). Do not review embedded sample code as shipped code.
 
 ## Common mistakes
 
-- Applying server-side defaults: demanding scalability, uptime targets, or
-  cloud cost analysis from a single-user desktop app. Their local analogues
-  (UI responsiveness during automation, vault durability, disk/memory
-  footprint) belong under criteria 1 and 4 when the requirements make them
-  matter.
-- Re-litigating the non-negotiables (e.g. proposing a hosted service for
-  convenience) — they are inputs, not review targets.
-- Treating "not applicable" as a failure — an explicit, reasoned
-  non-applicability is a passing answer.
-- Flagging a missing formal ADR directory when the decision, alternatives,
-  and rationale are recorded in the doc itself — criterion 5 is about the
-  content, not the file format.
+- Treating the remaining Electron source as the target architecture.
+- Claiming a future consent, telemetry or migration path already ships.
+- Requiring a separate ADR/design directory instead of a concise decision in its owner.
+- Re-litigating an explicitly authorized UX policy change instead of reviewing its risks.

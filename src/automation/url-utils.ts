@@ -1,4 +1,4 @@
-// Shared URL helpers for the exploration flow (docs/design/visibility-exploration.md §0).
+// Shared URL helpers for the exploration flow (docs/architecture.md#resolution-and-validation).
 // RuleEngine and PageExplorer both use these for duplicate-visit detection: the
 // explorer keeps `visitedUrls` as a set of *normalized* URLs, so anything that
 // compares against that set must run the candidate through the same normalization.

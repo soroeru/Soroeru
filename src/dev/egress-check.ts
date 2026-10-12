@@ -1,5 +1,5 @@
 // PRIV-001 (#20) + Issue #564: static check for the network-egress allowlist
-// (docs/security.md §6) — the only allowed external destinations are (a) the
+// (docs/security.md#cloud-retention-and-egress) — the only allowed external destinations are (a) the
 // target sites the user acts on, (b) the user's configured AI provider
 // (non-extension code only), and (c) Soroeru Cloud (typed Cloud Run API).
 //
@@ -14,7 +14,7 @@
 // - Files under `extension/` must not use `// egress: ai-provider`; the
 //   extension routes AI calls via Soroeru Cloud only.
 // - Root `package.json` must not contain Google Cloud SDK packages; they
-//   belong exclusively in `cloud/package.json` (docs/security.md §15.6).
+//   belong exclusively in `cloud/package.json` (docs/security.md#development-and-release-checks).
 // - Extension source files must not contain GCP credential-like strings
 //   (service-account JSON fields, API key format `AIza…`).
 //
@@ -23,7 +23,7 @@
 //
 // Also flags any dependency in package.json whose name matches a
 // telemetry/analytics denylist, per the "no telemetry, analytics, crash
-// reporting, cloud sync" rule in docs/security.md §6.
+// reporting, cloud sync" rule in docs/security.md#cloud-retention-and-egress.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -70,7 +70,7 @@ const TELEMETRY_DENYLIST = [
 /**
  * Dependency name prefixes / exact names that indicate Google Cloud SDK packages.
  * These are allowed in `cloud/package.json` but must not appear in the root
- * `package.json` (docs/security.md §15.6).
+ * `package.json` (docs/security.md#development-and-release-checks).
  */
 const GOOGLE_CLOUD_SDK_PREFIXES = ["@google-cloud/", "google-cloud-"];
 const GOOGLE_CLOUD_SDK_EXACT = ["googleapis", "google-auth-library", "firebase-admin", "firebase-functions"];
@@ -136,7 +136,7 @@ function checkSourceFiles(repoRoot: string): EgressCheckResult {
         const category = getEgressCategory(lines, index);
         let msg: string;
         if (isExtensionDir && category === "ai-provider") {
-          msg = `${relFile}:${index + 1}: extension must not use "// egress: ai-provider"; route AI via soroeru-cloud (docs/security.md §6): ${line.trim()}`;
+          msg = `${relFile}:${index + 1}: extension must not use "// egress: ai-provider"; route AI via soroeru-cloud (docs/security.md#cloud-retention-and-egress): ${line.trim()}`;
         } else {
           msg = `${relFile}:${index + 1}: network call without "// egress: <allowed category>" annotation: ${line.trim()}`;
         }
@@ -172,7 +172,7 @@ function isGoogleCloudSdk(name: string): boolean {
 
 /**
  * Fail if the root `package.json` contains a Google Cloud SDK package.
- * GCP SDK packages belong exclusively in `cloud/package.json` (docs/security.md §15.6).
+ * GCP SDK packages belong exclusively in `cloud/package.json` (docs/security.md#development-and-release-checks).
  */
 function checkRootGcpSdkDenylist(repoRoot: string): string[] {
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
@@ -184,7 +184,7 @@ function checkRootGcpSdkDenylist(repoRoot: string): string[] {
   for (const name of names) {
     if (isGoogleCloudSdk(name)) {
       violations.push(
-        `package.json: Google Cloud SDK dependency "${name}" must only appear in cloud/package.json (docs/security.md §15.6)`,
+        `package.json: Google Cloud SDK dependency "${name}" must only appear in cloud/package.json (docs/security.md#development-and-release-checks)`,
       );
     }
   }
@@ -194,7 +194,7 @@ function checkRootGcpSdkDenylist(repoRoot: string): string[] {
 /**
  * Fail if any extension source file contains a GCP credential-like string
  * (service-account JSON fields or API key format), which would indicate a
- * credential has been embedded in the extension bundle (docs/security.md §6).
+ * credential has been embedded in the extension bundle (docs/security.md#cloud-retention-and-egress).
  */
 function checkExtensionCredentials(repoRoot: string): string[] {
   const violations: string[] = [];
@@ -205,7 +205,7 @@ function checkExtensionCredentials(repoRoot: string): string[] {
       const hit = GCP_CREDENTIAL_PATTERNS.find((re) => re.test(line));
       if (hit) {
         violations.push(
-          `${relFile}:${index + 1}: GCP credential-like string in extension source (docs/security.md §6): ${line.trim()}`,
+          `${relFile}:${index + 1}: GCP credential-like string in extension source (docs/security.md#cloud-retention-and-egress): ${line.trim()}`,
         );
       }
     });

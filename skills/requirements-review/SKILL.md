@@ -7,16 +7,14 @@ user-invocable: true
 # Requirements Review
 
 Review a diff to `docs/requirements.md` against the five criteria below. The
-criteria mirror `docs/development.md` §9.2 (Requirements Review); if either
-changes, update the other in the same commit.
+criteria are owned by this skill; development links here without duplicating them.
 
 ## Scope
 
 - **Review target: the diff to `docs/requirements.md` only.** Judge unchanged
   text only as context (e.g. a contradiction between new and existing text).
 - Do not review code diffs (`/code-review` owns that) and do not judge the
-  correctness of sample code embedded in the documentation (per
-  `.githooks/prompts/local-review-claude.md`, "Reviewing documentation diffs").
+  correctness of sample code embedded in the documentation.
 
 ## Review criteria (priority order)
 
@@ -27,9 +25,10 @@ changes, update the other in the same commit.
    requirement is met (by test, inspection, or measurement). Flag requirements
    with no observable pass/fail condition ("the UI should feel trustworthy").
 3. **Consistent** — the change contradicts neither the rest of
-   `docs/requirements.md` nor the product principles (agency / never delegate
-   judgment, never bypass walls, local-first encrypted storage, no telemetry).
-   A diff that silently weakens a non-negotiable is a `blocker`.
+   `docs/requirements.md` nor the UX-first product intent and the owning architecture/security policy.
+   Explicitly scoped Product Owner policy changes may replace old constraints;
+   review their concrete user benefit, residual risk and implementation gap.
+   An unacknowledged contradiction or secret-disclosure path is a `blocker`.
 4. **Failure paths specified** — where the diff introduces behavior, the
    failure / exception / interruption side is stated too (errors, walls such as
    CAPTCHA / MFA, cancellation, partial completion). Flag happy-path-only
@@ -45,8 +44,7 @@ that it is satisfied.
 
 ## Output format
 
-Follow the local AI review conventions
-(`.githooks/prompts/local-review-claude.md`):
+Record the review in the Issue/PR using this format:
 
 ```
 verdict: PASS | NEEDS_CHANGES | NIT_ONLY

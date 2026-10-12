@@ -53,7 +53,7 @@ collection, obtain the diagnostics log, and rank the failure causes.
    Prints collected/not-collected totals and the not-collected causes ranked by count
    (`--json` for machine-readable output, `--no-sites` to omit domain lists).
 
-3. **Report**: update `docs/collection-failure-analysis.md` with the new
+3. **Report**: record in the requesting Issue/PR the new
    ranking (categories and counts only — never the domain list, which reveals
    which services the user uses) and compare against the previous run to see
    whether fixes moved the collection rate.

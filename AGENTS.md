@@ -17,50 +17,18 @@ Agents cover implementation-side product clarification, design, programming, QA,
 release verification. Translate intent into concrete scope and risks, keep changes small, and
 report residual risk honestly.
 
-## Non-negotiable boundaries
+## Product and implementation boundaries
 
-- Automate toil, never judgment. Keep review/confirmation gates and Delegation Boundary rules
-  explicit and testable.
-- Never solve or bypass CAPTCHA, MFA, bot detection, rate limits, paywalls, or access controls.
-  Detect them, hand off in the same headed browser session, and resume afterward.
-- Apply the Three Guards: never perform checkout/payment except the explicitly approved
-  free-trial-to-subscription case, escalate high-risk clauses, and never auto-attest.
-- Never auto-attest eligibility or identity. Always confirm irreversible site withdrawal and
-  deletion of Soroeru-held data.
-- Surface automation-prohibiting terms as a Constraint for the user to decide; never silently
-  proceed and never circumvent an actively enforced control.
-- Keep personal data local and encrypted. Never add a hosted vault, telemetry containing
-  personal data, or another non-approved egress path. Never log decrypted values. Target
-  (Issue #554): Soroeru Cloud receives only structure, value-free Form Schemas, and typed
-  allowlisted outcome telemetry; Gemini receives structure only, except the per-fallback
-  consent-gated read, and never secrets (passwords, CVV, OTP, tokens, keys). Never write Tier 3
-  request/response content to cloud schemas, telemetry, logs, or traces. Current Electron build
-  only: Visibility collection (Issue #514) may send raw page values other than secrets to the
-  user's configured AI provider; every other AI use stays structure-only. In every build, never
-  send site passwords, CVV, or other secrets to any AI model.
-- Passwords and CVV stay stored in the local encrypted vault and are filled into forms only by
-  deterministic local code (Issue #572).
-- Never store the 12-digit My Number or the card PIN. A site-collected CVV may be stored
-  (Issue #516) but is read locally, never by a model; the canonical CVV remains most-sensitive
-  per `docs/security.md`.
-  Follow `docs/security.md` for identity, credential, card, encryption, and AI-provider handling.
-- Use fake data only in tests, fixtures, screenshots, and documentation.
-
-## Architecture constraints
-
-- Follow `docs/architecture.md`: the target is a Chrome MV3 extension (Side Panel runtime host,
-  service-worker router, content script) with an encrypted versioned local vault, plus Soroeru
-  Cloud (Cloud Run, Firestore, BigQuery, Gemini on Vertex AI) for shared non-personal form
-  intelligence (Issue #554). The Electron + Native Messaging build is the migration source.
-  Playwright is development-only after the staged cutover.
-- Deterministic/local resolution must keep working offline or with cloud assistance off.
-  Resolution order is shared Form Schema → structure-only Gemini → consent-gated Gemini read;
-  values are read and written locally in the first two tiers.
-- Do not add frameworks, build tools, package managers, test runners, dependencies, backend
-  services, AI providers, or cloud sync without explicit scope and the required Issue/RFC.
-- Keep storage, domain policy, definition/analysis, automation, and UI responsibilities separate.
-- Keep field classification and wall detection isolated and testable. Validate bounded AI
-  proposals against the observed page, same-site/read-only policy, budgets, and wall state.
+- Product/authorization decisions belong in `docs/requirements.md`, data handling in
+  `docs/security.md`, and component boundaries in `docs/architecture.md`. Read the relevant
+  owner before changing that area; do not copy the full policy into agent instructions.
+- Distinguish target policy from shipped behavior. A documentation change does not authorize
+  an unimplemented data path. Implement and test its scope, revocation and failure handling first.
+- Never bypass access controls, auto-attest identity/eligibility, or disclose secrets to AI.
+  Keep required consequential confirmations and local encrypted storage testable.
+- Use fake data only in tests, fixtures, screenshots and documentation. Never log decrypted values.
+- Do not introduce frameworks, dependencies, providers, services or vault sync without explicit
+  Issue scope. Keep domain policy, storage, classification, wall detection and UI separate.
 
 ## Repository workflow
 
@@ -76,8 +44,8 @@ report residual risk honestly.
 - Do not commit secrets, real personal data, local state, or generated caches.
 - Update user docs when behavior changes and technical docs when setup, commands, architecture,
   security, or workflow changes. `README.md` stays user-facing.
-- Read only the Issue-specific file under `docs/design/`, when one exists. Do not bulk-load the
-  directory.
+- Keep implementation plans, design detail, evaluations and review evidence in the Issue/PR.
+  Do not create per-Issue document files or archives; update owning docs only for durable decisions.
 
 ## Working agreements and quality gates
 
@@ -105,7 +73,7 @@ The canonical command details and targeted tests are in [`docs/development.md`](
 - `docs/development.md`: current setup, commands, quality gates, and implementation workflow
 - `docs/github-operations.md`: Issue/worktree/branch/PR workflow
 
-Apply the matching repository skill when requirements, architecture, a detailed design, tests, or
+Apply the matching repository skill when requirements, architecture, an Issue design, tests, or
 a single Issue implementation is created, changed, or reviewed.
 
 ## Codex-specific guidance

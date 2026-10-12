@@ -1,5 +1,5 @@
 // PRIV-002 (#21): local persistence is limited to reviewed, annotated write
-// sites (docs/security.md §3, §12.1). `checkLocalPersistence` is the static
+// sites (docs/security.md#data-handling). `checkLocalPersistence` is the static
 // check behind `npm run poc -- check-persistence`: every local-write site in
 // src/, run/, electron/, extension/, or native-host/ must carry a
 // `// persist: <category>` annotation from the ALLOWED_PERSIST_CATEGORIES

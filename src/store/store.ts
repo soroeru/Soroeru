@@ -518,7 +518,7 @@ export class PocStore {
   async save(): Promise<void> {
     const file = await this.serialize();
     await mkdir(dirname(this.filePath), { recursive: true });
-    // persist: encrypted-store — AES-256-GCM encrypted records only (docs/security.md §4)
+    // persist: encrypted-store — AES-256-GCM encrypted records only (docs/security.md#encryption-and-durability)
     await writeFile(this.filePath, JSON.stringify(file), "utf8");
   }
 

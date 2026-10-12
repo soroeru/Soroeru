@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Jev triage evaluation harness (#537, design §9 of docs/design/524-jev-issue-triage.md).
+ * Jev triage evaluation harness (#537, evaluation plan in GitHub Issue #537).
  *
  * Runs labeled fictional Issues through the production `evaluateTriage` boundary
  * with an injected transport: the deterministic keyword baseline for CI, or the

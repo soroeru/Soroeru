@@ -117,7 +117,7 @@ async function cmdMatrix(variantArg: string, enginesArg: string): Promise<void> 
     }
     await mkdir(STATE_ROOT, { recursive: true });
     const out = join(STATE_ROOT, `matrix-${Date.now()}.json`);
-    // persist: measurement-output — notes are masked via maskForArtifact (docs/security.md §3)
+    // persist: measurement-output — notes are masked via maskForArtifact (docs/security.md#data-handling)
     await writeFile(out, JSON.stringify(results, null, 2), "utf8");
     console.log(`\n詳細結果: ${out}`);
   }
@@ -214,7 +214,7 @@ function cmdCheckEgress(): void {
   const result = checkNetworkEgress(process.cwd());
   console.log(`network egress check: ${result.scannedFiles} file(s) scanned under ${formatScanDirs(EGRESS_SCAN_DIRS)}`);
   if (result.violations.length > 0) {
-    console.error("violations (see docs/security.md §6):");
+    console.error("violations (see docs/security.md#cloud-retention-and-egress):");
     for (const v of result.violations) console.error(`  - ${v}`);
     process.exitCode = 1;
     return;
@@ -229,7 +229,7 @@ function cmdCheckPersistence(): void {
   const result = checkLocalPersistence(process.cwd());
   console.log(`local persistence check: ${result.scannedFiles} file(s) scanned under ${formatScanDirs(PERSIST_SCAN_DIRS)}`);
   if (result.violations.length > 0) {
-    console.error("violations (see docs/security.md §3):");
+    console.error("violations (see docs/security.md#data-handling):");
     for (const v of result.violations) console.error(`  - ${v}`);
     process.exitCode = 1;
     return;
@@ -241,7 +241,7 @@ function cmdCheckPersistence(): void {
 function cmdCheckBypass(): void {
   const result = checkBypassDenylist(process.cwd());
   if (result.violations.length > 0) {
-    console.error("violations (see docs/security.md §7):");
+    console.error("violations (see docs/security.md#site-operation-and-interruption):");
     for (const v of result.violations) console.error(`  - ${v}`);
     process.exitCode = 1;
     return;

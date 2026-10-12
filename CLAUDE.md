@@ -10,11 +10,11 @@
   the current session.
 - Prefer dedicated file tools over shell-based file rewriting. Parallelize only independent work.
 - Confirm destructive or hard-to-reverse actions such as force pushes, branch deletion,
-  dependency removal, large rewrites, and CI changes.
+  dependency removal, large rewrites, and CI changes unless already explicitly authorized.
 
 ## Orchestration
 
-Use `orchestrate-project-issues` only when coordinating multiple Project Issues. Dispatch
+Use `orchestrate-project-issues` only when coordinating multiple GitHub Issues. Dispatch
 reasoning-heavy bounded work to `deep-reasoner` and mechanical, fully specified work to
 `fast-worker`; their definitions constrain their tools. Issue lifecycle skills remain
 authoritative regardless of the orchestrating model.

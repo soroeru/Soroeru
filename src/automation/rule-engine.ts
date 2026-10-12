@@ -1,5 +1,5 @@
 // RuleEngine: the deterministic side of the DecisionEngine
-// (docs/design/visibility-exploration.md §2). #245 implemented the
+// (docs/architecture.md#resolution-and-validation). #245 implemented the
 // exploration-specific decisions (find-profile-links, should-continue); #246
 // wired the login kinds (find-login-page, detect-login-form,
 // judge-login-result) to the heuristics shared with visibility-runner.ts,

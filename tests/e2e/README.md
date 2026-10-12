@@ -1,52 +1,11 @@
-# Real Visibility E2E
+# Browser E2E
 
-This directory is for local-only E2E harness code. Do not commit exported
-password-manager CSV files, session files, screenshots, or result JSON here.
+The extension fixture suites use fake data and disposable browser profiles.
+See [test strategy](../../docs/testing.md) and
+[commands](../../docs/development.md#quality-gates) for Tier 1/Tier 2 coverage.
 
-## Collection diagnostics run (Issue #317)
-
-`collection-diagnostics-run.ts` drives the packaged app unattended through the
-full Visibility batch (vault setup → CSV import → select all → collect → log
-download) and leaves the diagnostics log under
-`state/soroeru-poc/collection-diagnostics/<timestamp>/logs/soroeru.log`:
-
-```bash
-npm run diagnostics:collect
-npm run diagnostics:analyze -- state/soroeru-poc/collection-diagnostics/<timestamp>/logs/soroeru.log
-```
-
-See `skills/collection-diagnostics/SKILL.md` for the workflow and environment
-knobs (`SOROERU_DIAG_APP`, `SOROERU_DIAG_CSV`, `SOROERU_DIAG_MAX_SITES`,
-`SOROERU_DIAG_TIMEOUT_MIN`).
-
-Run the real-site Visibility check explicitly:
-
-```bash
-SOROERU_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visibility
-```
-
-The CSV contains real credentials, so it is gitignored. The test never runs in
-CI and never prints usernames, passwords, notes, or collected raw values.
-
-For faster local iteration, cap how many imported sites are run (defaults to
-all):
-
-```bash
-SOROERU_E2E_MAX_SITES=20 SOROERU_E2E_PASSWORD_CSV=tests/e2e/Google_Passwords.csv npm run e2e:real-visibility
-```
-
-The artifact under `state/soroeru-poc/e2e-real-visibility/` records counts only.
-Per-site `status` legend:
-
-- `collected` — logged in and collected at least one disclosure (success).
-- `login-failed` — a password field still remained and nothing was collected
-  (login did not take; recorded as a `login-incomplete` constraint).
-- `no-data` — reached the page but found no collectable form values (the page may
-  show values as plain text; recorded as a `no-collectable-data` constraint).
-- `unreachable` — navigation failed (DNS / timeout / TLS / connection; recorded as
-  an `access-unreachable` constraint). Includes defunct hosts and LAN-only devices.
-- `handoff` — a CAPTCHA / MFA / verification wall was detected. In this automated
-  E2E the handoff aborts (no human); the app/runtime uses the real resume path.
-- `skipped` — a non-web credential (e.g. an `android://` app entry); not collectable.
-
-Zero disclosures is never reported as `collected`.
+Retained Electron/real-site harnesses are migration tools, never CI prerequisites.
+Use the [collection-diagnostics skill](../../skills/collection-diagnostics/SKILL.md)
+only for an explicitly requested diagnostics run. Reports belong in the requesting
+Issue/PR as categories/counts; account domains and raw values stay out of reports.
+Do not commit password CSVs, session files, screenshots or generated result JSON.

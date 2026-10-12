@@ -1,6 +1,6 @@
 // SEC-002 (#23): static check that no dependency provides CAPTCHA-solving,
 // anti-bot / browser-fingerprint-evasion, or similar bypass-oriented tooling
-// (docs/security.md §7). `Soroeru` DETECTS CAPTCHA / MFA / bot-detection
+// (docs/security.md#site-operation-and-interruption). `Soroeru` DETECTS CAPTCHA / MFA / bot-detection
 // walls and hands off to the user in the same session — it must never solve,
 // bypass, hide, or outsource them (RFC-001 v3 §10b).
 //
@@ -8,7 +8,7 @@
 // `package.json` and `cloud/package.json` `dependencies` / `devDependencies`
 // for package names matching known CAPTCHA-solver or anti-bot/fingerprint-evasion
 // tooling (Issue #564). A match means a new, unreviewed bypass-oriented dependency
-// was added and must be reviewed against docs/security.md §7 before it is accepted.
+// was added and must be reviewed against docs/security.md#site-operation-and-interruption before it is accepted.
 
 import { readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -65,7 +65,7 @@ export function checkBypassDenylist(repoRoot: string): BypassCheckResult {
       const hit = BYPASS_DENYLIST.find((bad) => lower.includes(bad));
       if (hit) {
         violations.push(
-          `${relPath}: dependency "${name}" matches CAPTCHA-solving / bot-detection-evasion denylist entry "${hit}" (docs/security.md §7)`,
+          `${relPath}: dependency "${name}" matches CAPTCHA-solving / bot-detection-evasion denylist entry "${hit}" (docs/security.md#site-operation-and-interruption)`,
         );
       }
     }

@@ -8,7 +8,7 @@
     "dependencyPath": "appdmg (optionalDependency, os: darwin) > image-size",
     "reason": "No patched release exists (advisory range is \"<=2.0.2\", i.e. every published image-size version including the latest). appdmg is a build-time-only, darwin-only DMG packager invoked only by `npm run package:dmg`; it is never bundled into the shipped Electron app. Acceptance is scoped to this exact path (package.consumedBy) so the same advisory reached through any other, unaccepted dependency path still fails the gate.",
     "recordedAt": "2026-08-26",
-    "trackingDoc": "docs/security.md §12.0"
+    "trackingDoc": "docs/security.md#development-and-release-checks"
   },
   {
     "source": 1239766,
@@ -19,7 +19,7 @@
     "dependencyPath": "appdmg (optionalDependency, os: darwin) > image-size",
     "reason": "Same GHSA as source 1138808, re-issued by the npm advisory database with the revised range \">=0.6.3 <=2.0.2\". image-size 2.0.3+ is outside that range, but appdmg 0.6.6 (latest) pins image-size ^0.7.4 and calls require('image-size')(path, callback), which image-size v2's object export and buffer-only API do not support, so an override would break `npm run package:dmg`; npm's only suggested fix is an appdmg downgrade to 0.5.2. appdmg is a build-time-only, darwin-only DMG packager never bundled into the shipped Electron app. Acceptance is scoped to this exact path (package.consumedBy).",
     "recordedAt": "2026-09-27",
-    "trackingDoc": "docs/security.md §12.0"
+    "trackingDoc": "docs/security.md#development-and-release-checks"
   },
   {
     "source": 1138809,
@@ -30,6 +30,6 @@
     "dependencyPath": "appdmg (optionalDependency, os: darwin) > image-size",
     "reason": "No patched release exists (advisory range is \"<=2.0.2\", i.e. every published image-size version including the latest). appdmg is a build-time-only, darwin-only DMG packager invoked only by `npm run package:dmg`; it is never bundled into the shipped Electron app. Acceptance is scoped to this exact path (package.consumedBy) so the same advisory reached through any other, unaccepted dependency path still fails the gate.",
     "recordedAt": "2026-08-26",
-    "trackingDoc": "docs/security.md §12.0"
+    "trackingDoc": "docs/security.md#development-and-release-checks"
   }
 ]
