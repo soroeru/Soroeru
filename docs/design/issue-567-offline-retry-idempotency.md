@@ -64,9 +64,11 @@ Issue: #567
 
 | ファイル | 変更 |
 | --- | --- |
-| `extension/cloud-delivery-queue.ts`（新規） | 配送、バックオフ、破棄、鮮度判定の純関数と配送ループ |
-| `extension/resolution-orchestrator.ts` | キャッシュの 30 日判定、解決後の配送呼び出し、enqueue に `nextAttemptAt` を付与 |
-| `src/domain/entities.ts` | `CloudQueueItem.nextAttemptAt?: number`（任意項目で互換を保つ）。`schemaVersion` の要否は既存規約に合わせて確認 |
+| `extension/cloud-delivery-queue.ts`（新規） | 配送、バックオフ、破棄、鮮度判定の純関数と配送ループ。非 OK HTTP レスポンス（4xx を含む `schema-retired`、`schema-not-found` 等）は `CloudClient` が `cloud-unreachable` にマップするため、MAX_ATTEMPTS 回まで再試行される。 |
+| `extension/resolution-orchestrator.ts` | キャッシュの 30 日判定、解決後の配送呼び出し |
+| `extension/panel/visibility-host.ts` | `VisibilityHostOptions` に `deliveryClient` を追加し、セッションアンロック時に `deliverQueue` を fire-and-forget で呼び出す（§2.1 の unlock トリガー） |
+| `extension/sidepanel.tsx` | `VisibilityHost` に `deliveryClient: cloudClient` を追加 |
+| `src/domain/entities.ts` | `CloudQueueItem.nextAttemptAt?: number`（任意項目で互換を保つ）。新規エンキュー時は付与しない（`undefined` = 即時配送対象）；`isDue` はこの慣例に従い、`nextAttemptAt` が absent の場合は due とみなす。`schemaVersion` の要否は既存規約に合わせて確認 |
 | `src/shared/cloud-contract.ts` | `OutcomeEvent.idempotencyKey` の追加と検証 |
 | `cloud/src/schema-feedback.ts` | 受領記録による重複判定 |
 | `cloud/src/telemetry.ts` | `insertId` の設定 |

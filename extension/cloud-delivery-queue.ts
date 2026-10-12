@@ -17,6 +17,13 @@ export const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_DELIVERY_BATCH = 10;
 
 /**
+ * In-flight guard: at most one delivery pass per session may run at a time.
+ * Concurrent callers return immediately without starting a second pass, which
+ * prevents double-sends and stale `attempts` counts from overlapping snapshots.
+ */
+const inFlightPasses = new WeakMap<VaultSession, Promise<void>>();
+
+/**
  * Minimal client interface used by the delivery queue.
  * Only `feedback` and `outcome` operations are needed here.
  * `CloudClient` satisfies this interface.
@@ -101,11 +108,28 @@ function updateQueueItem(
  * - Skips items that are not yet due (backoff window not elapsed).
  * - Discards items that exceed MAX_ATTEMPTS or MAX_AGE_MS.
  * - Retries only on `cloud-unreachable` and `rate-limited`; discards on all other errors.
+ *   Note: `CloudClient` maps every non-OK HTTP response — including 4xx such as
+ *   `schema-retired` or `schema-not-found` — to `cloud-unreachable`, so those are
+ *   retried up to MAX_ATTEMPTS times before being discarded.
  * - `idempotencyKey` values are reused across retries — never regenerated.
- * - Cloud writes are only attempted when `cloudAssistEnabled` is true.
+ * - Cloud writes are only attempted when `cloudAssistEnabled` is true. The off switch
+ *   is re-checked before each individual `client.call` so that disabling cloud assistance
+ *   mid-pass takes effect immediately.
  * - Does not modify the queue when the session is not unlocked.
+ * - Only one pass per session runs at a time (see `inFlightPasses`).
  */
 export async function deliverQueue(session: VaultSession, client: DeliveryClient): Promise<void> {
+  if (inFlightPasses.has(session)) return;
+  const pass = doDeliverQueue(session, client);
+  inFlightPasses.set(session, pass);
+  try {
+    await pass;
+  } finally {
+    inFlightPasses.delete(session);
+  }
+}
+
+async function doDeliverQueue(session: VaultSession, client: DeliveryClient): Promise<void> {
   if (session.state !== "unlocked") return;
   const initial = session.vault.get("cloudSettings", "cloud");
   if (!initial?.cloudAssistEnabled || !initial.queue.length) return;
@@ -133,6 +157,9 @@ export async function deliverQueue(session: VaultSession, client: DeliveryClient
 
     try {
       validateCloudRequest(operation, item.body);
+      // Re-check the off switch immediately before each network call: the user may
+      // disable cloud assistance while a pass is in progress (after earlier awaits).
+      if (!session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled) break;
       await client.call(operation, item.body as CloudRequests[typeof operation]);
       outcome = "success";
     } catch (err) {

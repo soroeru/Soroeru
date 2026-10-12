@@ -1,4 +1,5 @@
 import { ResolutionOrchestrator, type ResolveClient } from "../resolution-orchestrator.js";
+import { deliverQueue, type DeliveryClient } from "../cloud-delivery-queue.js";
 /**
  * Side Panel runtime host for Visibility runs (Issue #558). It wires the unlocked
  * `VaultSession.vault` -> `DomainService` -> `VisibilityService`, and gives the service an
@@ -34,6 +35,12 @@ export function hostPermissionOrigins(domain: string): string[] {
 export interface VisibilityHostOptions {
   session: VaultSession;
   cloudClient?: ResolveClient;
+  /**
+   * Delivery client for draining the feedback/telemetry queue. May be the same
+   * `CloudClient` instance as `cloudClient`; `CloudClient` satisfies `DeliveryClient`.
+   * When present, `deliverQueue` is called fire-and-forget on every session unlock.
+   */
+  deliveryClient?: DeliveryClient;
   leaseClient: LeaseClient;
 }
 
@@ -49,6 +56,7 @@ export class VisibilityHost {
       session: options.session,
       clientVersion: "0.1.2",
       ...(options.cloudClient ? { client: options.cloudClient } : {}),
+      ...(options.deliveryClient ? { deliveryClient: options.deliveryClient } : {}),
       sendPageCommand: (command) => options.leaseClient.sendPageCommand(command),
       isActive: () => !this.stopping && options.leaseClient.isLeaseActive(),
     });
@@ -166,6 +174,12 @@ export class VisibilityHost {
       if (this.bound) return;
       this.service.setDomain(new DomainService(this.options.session.vault));
       this.bound = true;
+      // Fire-and-forget: drain the queue now that the vault is unlocked.
+      if (this.options.deliveryClient) {
+        deliverQueue(this.options.session, this.options.deliveryClient).catch(() => {
+          /* Queue delivery errors are non-fatal; items persist for the next attempt. */
+        });
+      }
       return;
     }
     if (!this.bound) return;
