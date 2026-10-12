@@ -1175,3 +1175,41 @@ Run root unit tests, `npm test --prefix cloud`, and
 closed responses, local validation and stale-page rejection. Live Vertex and
 Cloud log verification require the development project and the
 [manual checks](manual-test.md#tier-2-structure-mapping-561).
+
+### Development Terraform (Issue #598)
+
+Use the two-layer dev Terraform when validating Cloud Run or Firestore behaviour
+requires a real Google Cloud deployment. Skip it for changes verifiable with local unit
+tests alone.
+
+**dev-shared layer** — apply once per dev project to create shared resources (Firestore,
+service accounts, log exclusion). Never destroy the shared layer for individual Issues.
+
+```bash
+terraform -chdir=infra/dev-shared init
+terraform -chdir=infra/dev-shared apply -var="project_id=<dev-project>"
+```
+
+**dev layer** — apply per Issue, scope resource names with the Issue number, destroy
+after verification. Forgetting to destroy leaves billable Cloud Run services running.
+
+```bash
+# Apply (replace 597 with the actual Issue number)
+cd infra/dev
+terraform init -backend-config="path=../../state/dev-i597/terraform.tfstate"
+terraform apply \
+  -var="project_id=<dev-project>" \
+  -var="issue_number=597" \
+  -var="image=<image>"
+
+# Verify, then destroy — required
+terraform destroy \
+  -var="project_id=<dev-project>" \
+  -var="issue_number=597" \
+  -var="image=<image>"
+```
+
+The state files are stored under `state/dev-i<issue_number>/` which is already in
+`.gitignore`. Never commit state files. Always use a dedicated dev project — never
+the production project — to avoid service name collisions and accidental production
+side effects. Do not add a CI/CD workflow for the dev layer.
