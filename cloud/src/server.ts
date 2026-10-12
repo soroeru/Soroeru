@@ -1,5 +1,6 @@
 import type { StructureMapper } from "./gemini.js";
 import type { SchemaRegistry } from "./schema-registry.js";
+import type { SchemaFeedbackHandler } from "./schema-feedback.js";
 import { isIP } from "node:net";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
@@ -28,6 +29,7 @@ export interface SafeLog {
 export interface ServerOptions {
   service: ServiceKind;
   schemas?: SchemaRegistry;
+  feedback?: SchemaFeedbackHandler;
   mapper?: StructureMapper;
   budget: DailyBudget;
   tickets: TicketAuthority;
@@ -157,10 +159,12 @@ export function createCloudServer(options: ServerOptions) {
             send(res, 200, response);
           }
           break;
-        // Do not claim persistence or completed AI processing while those handlers remain stubs.
-        case "feedback":
-          send(res, 200, { accepted: false });
+        case "feedback": {
+          if (!options.feedback) throw new HttpError(503, "unavailable");
+          const result = await options.feedback.process(body as CloudRequests["feedback"]);
+          send(res, 200, result);
           break;
+        }
         case "outcome":
           throw new HttpError(503, "unavailable");
         case "mapStructure": {
