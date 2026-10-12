@@ -1,4 +1,4 @@
-// Phase 5 integration (docs/design/visibility-exploration.md §4, Issue #248):
+// Phase 5 integration (docs/architecture.md#resolution-and-validation, Issue #248):
 // the existing collectDisclosures logic runs against every page the Phase 4
 // PageExplorer visits, via collectDuringExploration. No new FieldCollector —
 // classification, card sanitization, and dynamic-attribute candidates are the

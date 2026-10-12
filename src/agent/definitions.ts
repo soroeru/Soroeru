@@ -1,7 +1,7 @@
 import { RAW_VALUE_PATTERNS } from "../shared/personal-value.js";
 // Shared site/form/field/wall/withdrawal definition matching, field-rule
 // application, and local-candidate validation (#80, RFC-001 v3 §8,
-// architecture.md §7.1). Definitions (official and local-candidate) share one
+// architecture.md#shared-schema-lifecycle-and-offline-behavior). Definitions (official and local-candidate) share one
 // schema (src/types.ts); this module is the matching/validation logic used by
 // both deterministic mode and AI mode.
 
@@ -40,7 +40,7 @@ export interface DefinitionMatch<T extends SiteDefinition = SiteDefinition> {
 }
 
 /**
- * Score how well `definition` matches the current page (architecture.md §7.1
+ * Score how well `definition` matches the current page (architecture.md#shared-schema-lifecycle-and-offline-behavior
  * step 2: domain, URL pattern, form signature, headings/buttons, wall
  * signals). Returns `undefined` if neither `match.domains` nor
  * `match.urlPatterns` matches — a definition must positively identify the
@@ -109,7 +109,7 @@ export function matchDefinitions<T extends SiteDefinition>(snapshot: PageSnapsho
 
 /**
  * Resolve the best definitions for the current page from checked-in official
- * definitions and this vault's local candidates (architecture.md §7.1 steps
+ * definitions and this vault's local candidates (architecture.md#shared-schema-lifecycle-and-offline-behavior steps
  * 1-4), best first. Candidates marked `rejected` are excluded.
  */
 export function resolveDefinitions(
@@ -166,7 +166,7 @@ function isValidProfileKey(key: ProfileKey): boolean {
 
 /**
  * Patterns that suggest a definition embeds a raw personal value rather than
- * structure (security.md §9: candidates must not contain raw profile values).
+ * structure (security.md#cloud-retention-and-egress: candidates must not contain raw profile values).
  * This is a heuristic defense-in-depth check, not a guarantee.
  */
 /** Every free-text/pattern string embedded in a definition, for the privacy scan. */
@@ -206,7 +206,7 @@ function collectPatterns(definition: LocalCandidateDefinition): string[] {
  * Validate a local candidate definition before it is stored / reused (#80).
  * Checks structural well-formedness (a site-identity rule is present, regex
  * patterns compile, profile keys are known/custom) and a privacy check for
- * embedded raw personal values (security.md §9). Does not mutate `definition`.
+ * embedded raw personal values (security.md#cloud-retention-and-egress). Does not mutate `definition`.
  */
 export function validateCandidateDefinition(definition: LocalCandidateDefinition): CandidateValidationResult {
   const errors: string[] = [];

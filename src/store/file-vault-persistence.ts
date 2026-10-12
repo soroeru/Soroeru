@@ -32,7 +32,7 @@ export class FileVaultPersistence implements VaultPersistence {
 
   async save(data: EncryptedVaultData): Promise<void> {
     // Owner-only perms: contents are encrypted, but a PII-bearing state file should not be world-readable.
-    // persist: encrypted-store — AES-256-GCM encrypted record vault only (docs/security.md §4)
+    // persist: encrypted-store — AES-256-GCM encrypted record vault only (docs/security.md#encryption-and-durability)
     await atomicWriteEncryptedStoreFile(this.filePath, JSON.stringify(data), { mode: 0o600 });
   }
 

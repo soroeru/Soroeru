@@ -1,6 +1,6 @@
 // PRIV-002 (#21): static check that local persistence is limited to the
 // encrypted storage abstraction, the encrypted export/import (SEC-003 / #44),
-// and the masked measurement output (docs/security.md §3).
+// and the masked measurement output (docs/security.md#data-handling).
 //
 // This scans `src/**/*.ts`, `run/**/*.ts`, `electron/**/*.ts`,
 // `extension/**/*.ts`, and `native-host/**/*.ts`
@@ -20,7 +20,7 @@ export const SCAN_DIRS = ["src", "run", "electron", "extension", "native-host"];
 
 /** Allowed `// persist: <category>` annotations for a flagged line. */
 export const ALLOWED_PERSIST_CATEGORIES = new Set([
-  "encrypted-store", // src/store/store.ts: AES-256-GCM encrypted store + recovery rekey (docs/security.md §4)
+  "encrypted-store", // src/store/store.ts: AES-256-GCM encrypted store + recovery rekey (docs/security.md#encryption-and-durability)
   "encrypted-export", // recovery export/import: same encrypted JSON shape as the on-disk store (§4)
   "measurement-output", // state/soroeru-poc/matrix-*.json, masked via maskForArtifact (§3)
   "diagnostics-log", // src/logging/file-logger.ts: unencrypted by design (Issue #314), structural facts only

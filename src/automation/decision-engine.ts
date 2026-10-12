@@ -1,5 +1,5 @@
 // DecisionEngine: the hybrid rule/AI decision layer for the Visibility
-// exploration flow (docs/design/visibility-exploration.md §1). Rules are tried
+// exploration flow (docs/architecture.md#resolution-and-validation). Rules are tried
 // first; when they cannot decide and the user has configured an AI provider,
 // the request is escalated to the AiEngine (§8, separate Issue); when neither
 // can decide, a per-kind safe default applies. Requests carry structure-only

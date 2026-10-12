@@ -1,4 +1,4 @@
-// Checked-in "official" site definitions (#80, architecture.md §7.1). These
+// Checked-in "official" site definitions (#80, architecture.md#shared-schema-lifecycle-and-offline-behavior). These
 // cover a few of the local Playwright test sites (`sites/defs.ts`) so the
 // shared definition model has concrete, testable examples. Real-site
 // definitions are added the same way once a site is supported; none of these

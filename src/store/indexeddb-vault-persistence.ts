@@ -49,7 +49,7 @@ export class IndexedDbVaultPersistence implements VaultPersistence {
     const text = JSON.stringify(data);
     const db = await this.open();
     await this.write(db, (store) => {
-      // persist: encrypted-store — AES-256-GCM encrypted Vault v2 document only (docs/security.md §4)
+      // persist: encrypted-store — AES-256-GCM encrypted Vault v2 document only (docs/security.md#encryption-and-durability)
       store.put(text, VAULT_DOCUMENT_KEY);
     });
   }

@@ -54,7 +54,7 @@ test("validatePlannerInput and validatePlannerOutput validate correctly", () => 
     planSummary: "Summary of plan",
     proposedSteps: ["Step 1", "Step 2"],
     estimatedRisk: "low" as const,
-    artifactReferences: ["docs/design/issue-441.md"],
+    artifactReferences: ["https://github.com/soroeru/Soroeru/issues/441"],
   };
   assert.deepEqual(validatePlannerOutput(output), output);
 });

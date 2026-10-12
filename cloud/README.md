@@ -1,4 +1,12 @@
-# Shared Form Schema Registry
+# Soroeru Cloud
+
+Setup/deployment commands are owned by [development](../docs/development.md#cloud-development-and-deployment),
+service/data boundaries by [architecture](../docs/architecture.md#cloud-contracts-and-operation)
+and [security](../docs/security.md#cloud-retention-and-egress).
+Schema resolution and structure mapping are implemented. Tier 3 inference,
+feedback aggregation and delivered telemetry remain pending despite existing contracts.
+
+## Shared Form Schema Registry
 
 `POST /v1/schemas/resolve` accepts only `{ site, pageFingerprint, clientVersion }`.
 It returns a value-free active schema or `{ schema: null, status: "none" }`.
@@ -9,7 +17,7 @@ value enters this API. Storage failures produce a body-free `503`.
 
 Schema writes are maintainer operations, not a public HTTP endpoint. Every write
 rejects unknown keys, non-positional selectors, and strings matching the same
-personal-value heuristics as local candidate definitions (#80). Counts must be
+personal-value heuristics as local candidate definitions. Counts must be
 non-negative integers; timestamps use UTC ISO strings. Changing an existing schema
 requires a higher version; reimporting an identical version is safe. These heuristics
 are defense in depth, not a semantic guarantee that arbitrary text is non-personal;
@@ -39,7 +47,7 @@ with `npm run build:extension && node --test dist/compiled/tests/e2e/tier1-*.e2e
 The extension test grants access only to the fake fixture host in a disposable copy
 of the manifest. Production permissions stay opt-in.
 
-## Tier 2 structure mapping (#561)
+## Tier 2 structure mapping
 
 `POST /v1/agent/map-structure` validates a `StructureSnapshot`, debits the daily
 budget, then makes one stateless Vertex AI `generateContent` call. The response

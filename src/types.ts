@@ -335,7 +335,7 @@ export interface WallDetection {
 
 /**
  * Shared site/form/field/wall/withdrawal definition model (#80, RFC-001 v3
- * §8, architecture.md §7.1). The same shape backs checked-in "official"
+ * §8, architecture.md#shared-schema-lifecycle-and-offline-behavior). The same shape backs checked-in "official"
  * definitions (`src/agent/official-definitions.ts`) and per-vault "local
  * candidate" definitions. Matching, field-rule application, and candidate
  * validation live in `src/agent/definitions.ts`; this file only defines the
@@ -405,10 +405,10 @@ export interface SiteDefinition {
   notes?: string;
 }
 
-/** Provenance of a local candidate definition (#80, security.md §9). */
+/** Provenance of a local candidate definition (#80, security.md#cloud-retention-and-egress). */
 export type CandidateSource = "ai" | "user" | "observation";
 
-/** Lifecycle status of a local candidate definition (architecture.md §7.1). */
+/** Lifecycle status of a local candidate definition (architecture.md#shared-schema-lifecycle-and-offline-behavior). */
 export type CandidateStatus = "candidate" | "validated" | "rejected" | "submitted";
 
 /**

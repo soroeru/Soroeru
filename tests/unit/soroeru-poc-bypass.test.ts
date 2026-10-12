@@ -1,7 +1,7 @@
 // SEC-002 (#23): `checkBypassDenylist` is the static check behind
 // `npm run poc -- check-bypass`: no `dependencies` / `devDependencies` entry
 // in package.json or cloud/package.json may match a CAPTCHA-solving or
-// anti-bot/fingerprint-evasion package name (docs/security.md §7, Issue #564).
+// anti-bot/fingerprint-evasion package name (docs/security.md#site-operation-and-interruption, Issue #564).
 
 import assert from "node:assert/strict";
 import { test } from "node:test";

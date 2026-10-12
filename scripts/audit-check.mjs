@@ -4,8 +4,8 @@
 // gate fails closed on any NEW high/critical advisory while not going
 // permanently red on advisories that are reviewed and accepted (no patched
 // release exists upstream) and recorded in accepted-advisories.json +
-// docs/security.md §12.0. See docs/dependency-security.md, "When the gate
-// legitimately must ignore a production advisory" for the acceptance process.
+// docs/security.md#development-and-release-checks. Keep each exception scoped
+// to its reviewed dependency path and upstream advisory.
 //
 // npm has no native audit allowlist, so this is the documented thin-wrapper
 // option: run the same audit npm audit runs, parse its JSON, and only fail on
@@ -94,7 +94,7 @@ if (unaccepted.length > 0) {
   }
   console.error(
     "\nReview and either fix, or record the acceptance in scripts/accepted-advisories.json + " +
-      "docs/security.md §12.0 per docs/dependency-security.md.",
+      "docs/security.md#development-and-release-checks per docs/dependency-security.md.",
   );
   process.exit(1);
 }

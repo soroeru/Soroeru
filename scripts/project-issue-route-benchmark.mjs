@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Route benchmark for RouteEvidence (#537, design §4/§9 of docs/design/524-jev-issue-triage.md).
+ * Route benchmark for RouteEvidence (#537, benchmark plan in GitHub Issue #537).
  *
  * Every exact model runs the same fictional tasks — ten per kind — in a throwaway
  * sandbox, and a fixed checker decides pass/fail. Only {kind, passed, durationMs}

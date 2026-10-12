@@ -756,7 +756,7 @@ test("deleteSiteAccount also removes any persisted session state for that site",
   }
 });
 
-// Dynamic-attribute candidates (docs/design/visibility-exploration.md §5): a
+// Dynamic-attribute candidates (docs/architecture.md#resolution-and-validation): a
 // site-unit vs. global-unit view of the same candidate schema. Exploration
 // Phase 4/5 can surface the same proposed key from more than one page on a
 // site, or from more than one site, before the user confirms it (Issue #250).

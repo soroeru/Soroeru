@@ -496,8 +496,8 @@ function roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }) {
       `Set up the Issue worktree with \`bash scripts/issue-worktree.sh ${
         skill === "handoff-issue" ? "handoff" : "create"
       } ${issueNumber} ...\` (see docs/github-operations.md §2), then work only inside the path it prints. Do not run issue-implementation or handoff-issue.`,
-      `Write the plan to docs/design/<slug>.md with an "Issue: #${issueNumber}" reference near the top and commit it.`,
-      "Report role-complete with role=planner when the plan is committed. Do not implement, push, or open a pull request.",
+      `Post the implementation plan and detailed design as a comment on Issue #${issueNumber} using gh issue comment. Do not create repository design/spec/report files.`,
+      "Report role-complete with role=planner when the plan comment is posted. Return its URL. Do not implement, commit, push, or open a pull request.",
     ];
   if (role === "reviewer") {
     const pass = reviewPass ?? 1;

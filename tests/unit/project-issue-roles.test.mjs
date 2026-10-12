@@ -263,6 +263,23 @@ test("the planner prefers a route distinct from the implementer's", () => {
   assert.equal(counterpartRole(ROLES.PLANNER), null);
 });
 
+test("the planner records its handoff plan on the Issue without a repository artifact", () => {
+  const prompt = buildWorkerPrompt({
+    issueNumber: 601,
+    agent: "Claude",
+    model: "sonnet",
+    releasePolicy: "pr-created",
+    nextMilestone: "plan-posted",
+    role: "planner",
+    skill: "issue-implementation",
+  });
+  assert.match(prompt, /comment on Issue #601 using gh issue comment/);
+  assert.match(prompt, /when the plan comment is posted/);
+  assert.match(prompt, /Return its URL/);
+  assert.match(prompt, /Do not implement, commit, push/);
+  assert.doesNotMatch(prompt, /docs\/design|plan is committed/);
+});
+
 test("the reviewer prompt names the pull request comment as the findings destination", () => {
   const prompt = buildWorkerPrompt({
     issueNumber: 482,

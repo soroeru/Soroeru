@@ -1,1215 +1,217 @@
 # Development
 
-This document owns **local development workflow, repository layout,
-implementation conventions, and the canonical quality gate list** for `Soroeru`.
-Commands in this document describe the current repository. Target architecture and staged
-migration decisions remain owned by [`architecture.md`](architecture.md); where current and target
-states differ, this document labels the transition explicitly.
+This document owns current setup, build/test commands and deployment verification.
+Use the [architecture status](architecture.md#implementation-status) to distinguish
+available features from target policy. Git/Issue/review workflow belongs in
+[GitHub operations](github-operations.md) and the repository skills.
 
-Out of scope here: application architecture (see [`architecture.md`](architecture.md)),
-product requirements (see [`requirements.md`](requirements.md)), test strategy
-(see [`testing.md`](testing.md)), and GitHub workflow rules (see
-[`github-operations.md`](github-operations.md)).
+## Local setup
 
-GitHub Issues now own work tracking (2026-10-11). The historical
-`project-issue-*` script names are retained, but active orchestration reads Issue
-numbers, labels and `Blocked by` relations only. It never reads or writes Projects.
-Use explicit `--issues`; no Project section, Project token, or GitHub App is required.
-The former automatic Project-defaults workflow is removed. Historical Project
-utilities and their tests remain available for compatibility, not active use.
-
-## 1. Development Policy
-
-- Keep changes small enough to review as one coherent behavior, document, or
-  workflow update.
-- Use Issue branches named `issue-<number>-<short-slug>` in matching
-  `.worktrees/issue-<number>-<short-slug>` worktrees.
-- Keep product requirements, application architecture, test strategy, and
-  security assumptions in the owning docs rather than repeating them in `README.md`.
-- Browser automation (the target extension front door, current migration-stage Playwright
-  path) and the user's configured AI provider are the
-  scope decision of the product direction (see [`requirements.md`](requirements.md));
-  do not introduce _other_ frameworks, dependencies, backend services, cloud sync,
-  telemetry, or AI providers without an explicit scope decision.
-- Keep field detection, field classification, wall detection (CAPTCHA / MFA),
-  the encrypted store, and UI concerns separated so they can be tested independently.
-- Automatic submission and acceptance of ordinary terms are allowed **only** after
-  the user approves the review-and-confirm gate, subject to the three guards.
-- Never implement CAPTCHA / MFA / bot-detection bypass, silently proceeding past a
-  detected automation-prohibiting ToS clause instead of surfacing it as a Constraint for
-  the user to decide, auto-attestation of eligibility, sending raw personal values to the
-  AI model, or storing data unencrypted.
-
-## 2. Environment Setup
-
-Required tools for `Soroeru` development:
-
-- `git`
-- `bash`
-- `jq`
-- `shasum` on macOS or `sha256sum`
-- Node.js 22 LTS for local development and macOS release packaging
-- npm
-- TypeScript
-- Playwright browser binaries (Chromium / Firefox / WebKit) for the agent
-  runtime and E2E tests
-
-MVP development targets Apple Silicon Macs running macOS 14 Sonoma or macOS 15 Sequoia.
-Other development hosts may be useful for code review or docs, but release and manual QA
-for the private beta must run on the supported Mac target.
-
-After cloning, install locked dependencies and the Playwright browsers used by the current runtime
-and development-only E2E suite. Issue #391 makes the Chrome extension the target production
-front door; a follow-up retirement Issue will remove production Playwright/browser packaging,
-but these commands remain current until that cutover lands:
+Use Git, bash, jq, Node from `.nvmrc` (22), npm and desktop Chrome. Run all work
+inside the Issue worktree created by `scripts/issue-worktree.sh`; the primary
+clone is human-only. With nvm installed:
 
 ```bash
+nvm install
+nvm use
 npm ci
-npx playwright install chromium firefox webkit
+npm ci --prefix cloud
 ```
 
-### Agent configuration
-
-`AGENTS.md` is the concise shared instruction source. `CLAUDE.md` imports it with `@AGENTS.md` and
-contains Claude-only session conventions; `.agents/rules/GEMINI.md` is a small Gemini CLI adapter,
-not a synchronized copy. Area-specific guidance lives in Claude path rules and nested `AGENTS.md`
-files so it loads only when relevant.
-
-Claude Code project hooks in `.claude/settings.json` block commits from the human-only primary
-clone and direct reads of the real-password CSV. These agent-layer guards complement, rather
-than replace, the Git hooks installed by `scripts/setup-hooks.sh`. Quality gates remain in the
-Git pre-commit hook rather than being duplicated in Claude settings.
-
-High-side-effect skills are manually invocable, and Issue lifecycle skills advertise their Issue
-number argument. Repository skills intentionally do not grant broad `allowed-tools`: their GitHub,
-Git, browser, and filesystem operations need the runtime's normal permission policy. The two
-Claude subagents use role-limited tool lists and intentionally have no persistent memory; durable
-decisions belong in reviewed Issues or repository documents. Add skill eval fixtures only with a
-separate acceptance baseline and owner, so generated eval results do not become unreviewed policy.
-
-Install local git hooks:
+Each worktree needs its own installs. Playwright is needed for browser tests:
 
 ```bash
-bash scripts/setup-hooks.sh
+npx playwright install chromium
 ```
 
-The Chrome extension bridge is the **target production browser front door** (decision #391),
-but the current implementation remains a migration-stage feature flag and is not yet the
-default. Developer validation may enable its Electron-side UNIX
-socket listener with `SOROERU_ENABLE_CHROME_BRIDGE=1`; the bridge still requires
-the native-host handshake token and rejects unknown commands. To route a
-Visibility run through `ExtensionPageDriver` (Issue #338) instead of Playwright,
-also set `SOROERU_CHROME_BRIDGE_TAB_ID` to the positive Chrome tab id already
-bound/authorized in the extension. This environment-variable tab selection is explicitly
-temporary: production requires an extension-created binding offer, exact-origin permission,
-Electron confirmation, and a memory-only tab lease. Without that env var the current
-Playwright path is unchanged; there is no silent fallback after the extension cutover.
+Use fake data and disposable browser profiles. Never load the real-password CSV
+for automated tests or publish local state. The existing Git hooks can be installed
+with `bash scripts/setup-hooks.sh`; agents still run applicable checks explicitly.
 
-## 3. Run Locally
-
-### 3.0 Issue-only orchestration
-
-The Project-defaults workflow is retired. No GitHub App secrets or Project
-permissions are needed. Create Issues with a type label, optional `priority:P0..P3`
-label and native `Blocked by` relations, using the `create-issue` skill. Do not
-configure Project items, iterations, statuses or Size.
-
-Multi-Issue orchestration is dry-run first. Feed only the minimal,
-sanitized Issue metadata schema to the deterministic planner; individual workers
-fetch their own Issue body and comments immediately before implementation:
-
-Copy `config/project-issue-orchestrator.example.yaml` to
-`state/project-issue-orchestrator.yaml` and fill in the run values. The
-CLI and `orchestrate-project-issues` skill discover that path automatically.
-Use `--config path/to/other.yaml` only when intentionally selecting another
-configuration file. Explicit CLI flags override YAML values.
-The run configuration accepts `unavailableModels` and `unavailableAgents` as
-either `none` or a YAML list; these exclusions are runtime hints for that run
-and are recomputed from fresh capability records on the next run.
-
-Dependency closure comes from each Issue's GitHub `Blocked by` relationships,
-not from Issue body text. A `CLOSED` blocker is treated as completed; an
-`OPEN` blocker stops the dry-run with a deterministic dependency reason.
+## Run the extension
 
 ```bash
-# Unconditional path: full re-discovery of every adapter (Codex → Claude → Grok → Gemini),
-# each gated by a real headless execution probe, not just an auth/model-list check.
-# Writes state/project-issue-capabilities.json atomically; do not hand-limit to Codex.
-node scripts/project-issue-capabilities.mjs
-# Optional: JSON on stdout only
-# node scripts/project-issue-capabilities.mjs --stdout
-
-# Normal path: the orchestrator reuses that cache file by default instead of
-# re-probing every adapter on every run. --refresh forces a full re-discovery;
-# --invalidate-agent drops and re-probes only the agent(s) that just failed at
-# dispatch time (see below), leaving the rest of the cache untouched.
-node scripts/project-issue-orchestrator.mjs \
-  --dry-run --issues 380,382,384,386,387 \
-  --unavailable-model MODEL --unavailable-agent Codex --existing-worktree 396 \
-  --parent-agent Codex --parent-model MODEL
-# node scripts/project-issue-orchestrator.mjs ... --refresh
-# node scripts/project-issue-orchestrator.mjs ... --invalidate-agent Grok
-# Optional override for tests / intentional non-default runs:
-#   --capabilities-file path/to/verified-capabilities.json
-# Optional: apply a milestone in memory only (still no state write) during dry-run:
-#   --simulate-milestone --milestone-json '{"issue":396,"type":"merged"}'
-node scripts/project-issue-orchestrator.mjs --input path/to/sanitized-plan.json \
-  --dry-run --max-parallel 2 --release-policy merged
-# Launch a selected external worker with the exact discovered selector:
-# node scripts/project-issue-dispatch.mjs \
-#   --route-json '{"agent":"Grok","model":"grok-4.5","selector":"…","selectable":true,"verifiable":true,"timeoutMs":30000}' \
-#   --issue 413 --release-policy merged --next-milestone pr-created \
-#   --role reviewer --execution-mode direct-review --review-pass 1
-#   (implementation roles add --skill issue-implementation | handoff-issue;
-#    a reviewer never gets one. A fix pass adds --fix-cycle <N>.)
-node --test tests/unit/project-issue-orchestrator.test.mjs \
-  tests/unit/project-issue-capabilities.test.mjs \
-  tests/unit/project-issue-defaults.test.mjs \
-  tests/unit/project-issue-graph.test.mjs \
-  tests/unit/project-issue-roles.test.mjs
+npm run build:extension
 ```
 
-Items carry no per-Issue agent/model assignment: the plan orders runnable
-Issues by Priority (P0 first) then Issue number under the dependency
-constraints, and the result includes `workerRoutes` — the run-scoped pool of
-verified worker capability records after `--unavailable-agent` /
-`--unavailable-model` exclusions and Parent-agent exclusion. The Parent agent
-runtime is excluded by agent identity, including all of its models and
-selectors: a Codex Parent means no Codex worker route. To let the calling
-Parent also work Issues, pass `--parent-as-worker` (to
-`project-issue-orchestrator.mjs` or `project-issue-graph.mjs`) or set
-`run.parentAsWorker: true` in the YAML config (Issue #589, default `false`);
-the Parent's verified worker records then join the pool. The orchestrating agent
-assigns each runnable Issue to one of the remaining routes at run time. If the
-remaining pool is smaller than `maxParallel`, the run proceeds with the
-available capacity; if Issues are runnable but the pool is empty the run stops
-with `no-worker-route-available` before any worktree mutation.
+In `chrome://extensions`, enable developer mode and **Load unpacked** from
+`dist/extension/`. Open Soroeru from the toolbar to show its Side Panel, create a
+vault, save the recovery key, add a fake account and select its HTTPS tab. Grant
+only that origin's permission. No Electron app or Native Messaging host is needed
+for this path. Rebuild and reload after changes.
 
-Capability discovery lives in `scripts/project-issue-capabilities.mjs` and
-`scripts/project-issue-runtime-adapters/` (fixed order Codex → Claude → Grok →
-Gemini; only the independent `gemini` CLI, with Antigravity `agy` excluded). An adapter that passes
-auth/model-list checks is still not enough: every selectable route also runs a
-**headless execution probe** for its exact model selector (`runHeadlessExecProbe` in
-`project-issue-runtime-adapters/shared.mjs`) — spawn the CLI with no TTY and a
-minimal, locally-generated tool-use task ("create this exact file with this
-exact marker" in a throwaway sandbox directory), then check the artifact. Only
-a route that actually completed that task under `DEFAULT_HEADLESS_PROBE_TIMEOUT_MS`
-(120s) becomes verified; the probe never persists the generated prompt, the
-marker, or stdout/stderr. Every adapter probes each candidate independently because
-model entitlement, quota, or usage-credit availability can differ within the
-same authenticated CLI; one successful model never verifies another. A known
-model substitution reported in CLI model metadata fails with `model-mismatch`.
-A matching artifact does not override a timeout or unsuccessful process exit.
-This is why `claude` and `grok` selectors
-include a permission-bypass flag (`--permission-mode bypassPermissions` /
-`--dangerously-skip-permissions`) and, for `grok`, `-p`/`--single` instead of a
-bare positional prompt — without them the CLI either stops at an edit-approval
-prompt with no human to answer it, or (for `grok`) tries to open an interactive
-session that requires a real TTY.
-
-For Jev integration (#534), `refreshWorkerRoutes(options)` always discovers a
-fresh pool without reading or writing the capability cache. It returns the
-usual discovery result plus `workerRoutes`, after applying `parentAgent`,
-`unavailableAgents`, and `unavailableModels`. Call it once per selection batch,
-again for reselection or handoff; only a caller within the same batch may share
-that result. The generic cache-aware API remains available for existing callers.
-Ordinary cache reads retain partial successes without re-probing the whole
-agent because one model failed; fully unavailable agents are still retried.
-Probe schema version 4 invalidates older probes, including cached Antigravity routes.
-
-Antigravity (`agy`) is excluded from worker discovery and dispatch following the
-Product Owner's cancellation (#534). Installed binaries and cached or explicitly supplied
-`Gemini`/`agy` selectors do not override this exclusion. Independent Gemini CLI routes still
-require successful per-model verification.
-
-`verifyWorkerRoute(route, options)` is the dispatch preflight API. It re-reads
-the selected agent's catalog, probes only that exact model, and compares the
-fresh selector against the selected route. It never executes an input selector.
-It returns `{ok:true, route, probedAt}` or `{ok:false, reason}` with a closed
-reason; a missing/excluded route or selector drift is `model-not-selectable`.
-Callers must reselect on failure rather than dispatching the old route.
-The graph's shadow triage path uses these APIs for fresh candidate discovery
-and exact-model preflight before initial dispatch; #538 adds explicitly approved assisted adoption.
-CLI-reported model metadata can reveal substitutions; a CLI that reports no
-actual model still proves only that its exact selector completed the probe,
-not independent attestation of which backend served it.
-
-Only verified routes enter the pool; closed diagnostic reasons include
-`cli-not-found`, `auth-unavailable`, `model-not-selectable`, `model-mismatch`,
-`verification-timeout`, `probe-failed`, and the headless-probe-specific
-`tty-required` (the CLI demanded a real terminal), `non-agentic-print-mode`
-(exited cleanly but never produced the artifact), and
-`headless-exec-failed` (any other unexplained failure, including a model-specific
-credit or quota rejection). Failed diagnostics contain only the closed reason
-and model label, never CLI response bodies. The `codex exec` command
-refuses to run outside a trusted/git directory, so the Codex probe passes
-`--skip-git-repo-check` (probe-only — real dispatch runs inside the Issue's
-git worktree and needs no such flag). Dispatch of a selected route reuses the same exact
-selector through `scripts/project-issue-dispatch.mjs`. Capability files use
-`agent` (Codex/Claude/…) rather than API-provider names. A capability may use
-`requestedModel` for the exact display label and `model` for the runtime's
-canonical model identifier, for example:
-
-```json
-{
-  "agent": "Grok",
-  "requestedModel": "Grok 4.5",
-  "model": "grok-4.5",
-  "role": "worker",
-  "selector": "grok --model grok-4.5",
-  "selectable": true,
-  "verifiable": true,
-  "timeoutMs": 30000
-}
-```
-
-The permission-bypass flags described above are baked into the **selector
-itself**, not just the probe invocation — `project-issue-dispatch.mjs`
-launches every real worker/parent for these agents with that exact same
-selector, so a dispatched Claude, Grok, or native Gemini worker always runs
-with permission prompts fully bypassed, the same way `codex exec` already
-does. This is required for unattended dispatch to work at all (there is no
-human present to answer an approval prompt), not a change specific to this
-repository's risk posture; the review-and-confirm gate, the three guards, and
-the never-bypass-walls rule for the Soroeru _product_ these workers implement
-are unaffected.
-
-`--parent-model` accepts the exact canonical model ID (`gpt-6.1-sol`) or its
-exact display name (`GPT-6.1-Sol`) from the same verified capability record.
-Model aliases and case normalization are not supported; both forms still
-require a selectable, verifiable parent route.
-
-The written capabilities file also carries `cli` (per-agent `{path, version}`
-from `--version`) and `probedAt`. `project-issue-orchestrator.mjs` uses those
-to decide whether to reuse the file as-is (default), targeted-re-probe only
-the agents whose CLI path/version drifted, that `--invalidate-agent` named, or
-whose last cached diagnostic was `"failed"` (never trusted as permanent), or
-(with `--refresh`) ignore the cache and re-probe every adapter. A dry run
-never writes the cache regardless of which of those three paths it took.
-`loadOrRefreshCapabilities` in `project-issue-capabilities.mjs` implements
-this; `discoverCapabilities` remains the unconditional "probe now" primitive
-it wraps.
-
-The LangGraph runner automatically sends the affected agent through this
-targeted invalidation path when an actual worker dispatch fails. The graph
-fan-in serializes refreshes from parallel dispatch failures, replaces its
-checkpointed capability pool with the merged refresh result, and then selects
-handoff routes. The failed model is excluded immediately for the current run,
-while the cache is also rewritten so a later run cannot reuse the pre-failure
-record. Sibling models remain available only when that probe verifies them
-again. If invalidation itself fails, orchestration fails closed instead of
-continuing with a cache it could not make safe.
-
-The requested label must still be explicitly present in the capability record;
-the canonical runtime identifier alone is not an alias or fallback. The legacy
-shape with only `model` remains supported when it already contains the exact
-requested model label.
-The `project-metadata` body marker carries only Priority / Size / Feature
-group via `scripts/project-issue-assignment.mjs`; legacy AI Assignee lines and
-the `implementation-assignment` block are ignored. The planner, GitHub fetch,
-and local state lock live in `project-issue-plan.mjs`,
-`project-issue-github.mjs`, and `project-issue-state.mjs`; the CLI entrypoint
-is `project-issue-orchestrator.mjs`.
-
-#### LangGraph StateGraph runner (Issue #439)
-
-`scripts/project-issue-graph.mjs` models the same orchestration as an explicit
-LangGraph `StateGraph` (config → capability discovery → Issue metadata fetch →
-dependency validation → plan → optional shadow triage → route assignment → `Send` fan-out dispatch →
-event wait → integration gate → dependent release → summary), with
-checkpointing and `thread_id`-based resume. It calls the same planning,
-capability, milestone, and dispatch functions as the classic CLI — runtime
-adapters, worktree lifecycle, and CLI process launch stay outside the graph.
-The classic `project-issue-orchestrator.mjs` CLI is unchanged and remains the
-dry-run/compatibility path.
-
-Judgment stays with the orchestrating agent: the run pauses (`interrupt`) for
-dynamic route assignment (unless `--auto-assign` picks deterministically from
-the verified pool), for every integration-gate verdict, and while waiting for
-worker events. Resume payloads are validated against deterministic state — an
-assignment or handoff proposal can only reference a verified worker route
-belonging to an agent other than the Parent, and an exhausted pool fails the
-run closed before any worktree mutation.
+To exercise Cloud resolution, build with the reviewed API origin:
 
 ```bash
-# Start a run: pauses at the first interrupt and prints the interrupt payload,
-# pending dispatch instructions, and a summary snapshot.
-node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
-  --issues 380,382 --max-parallel 2 --release-policy merged \
-  --parent-agent Codex --parent-model gpt-5 --auto-assign
-# Add --single-worker to disable role programs (one worker owns the Issue).
-# Add --triage shadow for opt-in reference-only Jev triage; assisted requires reviewed evaluation approval.
-# Resume the same thread with a worker event or a gate verdict:
-# node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
-#   --resume-json '{"type":"role-complete","issue":380,"role":"implementer"}'
-# node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
-#   --resume-json '{"type":"role-complete","issue":380,"role":"reviewer","verdict":"PASS"}'
-# node scripts/project-issue-graph.mjs --thread-id run-2026-07-22 \
-#   --resume-json '{"accepted":true}'
-# Other events: {"type":"worker-started","issue":380,"pid":1234}
-#               {"type":"worker-interrupted","issue":380,"reason":"timeout",
-#                "proposedRoute":{"agent":"Claude","model":"sonnet"}}
-#               {"type":"milestone","issue":380,"milestone":"merged"}
-#               {"type":"check"}   # lost-notification fallback: probe workers
-node --test tests/unit/project-issue-graph.test.mjs \
-  tests/unit/project-issue-roles.test.mjs
+VITE_SOROERU_CLOUD_API_URL=https://example-api.run.app npm run build:extension
 ```
 
-Each runnable Issue gets a deterministic execution mode and role program
-(`scripts/project-issue-roles.mjs`): `direct-review` runs `implementer` →
-`reviewer` for low-risk small work, and `plan-implement-review` runs `planner` →
-`implementer` → `reviewer` for anything above low risk or larger. Every role is
-a separate CLI process on its own verified route — `implementer` and `reviewer`
-differ whenever more than one route is verified — so a reviewer cannot see the
-implementer's reasoning. The reviewer is dispatched without `--skill` and works
-read-only in the existing worktree. The reviewer posts its findings as one pull
-request comment headed `role=reviewer pass=<N> verdict=<…>` (`gh pr comment`);
-only the verdict enters graph state. Review is bounded at two passes:
-`NEEDS_REVISION` buys one implementer fix cycle, `REJECTED` blocks, and an
-integration-gate rejection reopens the program under the same budget. A
-fix-cycle implementer is dispatched with `--fix-cycle <N>`, reads the findings
-with `gh pr view --comments`, pushes to the existing branch instead of opening a
-second PR, and records what it changed in a `role=implementer fix-cycle=<N>`
-comment. With a
-role program active, `pr-created` is reached by finishing the program (the
-reviewer's `PASS` opens the gate); reporting that milestone early is rejected
-with `role-program-active`. Under `--release-policy merged` the run keeps
-waiting for the external `merged` milestone after the program ends.
+Replace the example with the deployed HTTPS origin (no path, query or credentials).
+Enable cloud assistance in the unlocked panel; it defaults off. Tier 1/Tier 2
+are available; Tier 3, delivered feedback/outcomes and full settings are pending.
+See [extension notes](../extension/README.md) for the resolver's limits and
+[manual checks](manual-test.md) for failure paths.
 
-Checkpoints are stored per thread under `state/project-issue-graph/` by a
-file-backed saver (`project-issue-graph-checkpointer.mjs`) so a run survives a
-process restart; resume re-verifies recorded worker processes via a
-PID-reuse-safe probe (`{"type":"check"}`), never by PID alone. Graph state and
-checkpoints carry only non-sensitive orchestration data (Issue
-numbers/titles/URLs, routing labels, milestones, timestamps, exact usage) —
-never Issue bodies, prompts, diffs, or credentials. A worker interruption
-keeps the Issue worktree untouched and hands off on a remaining verified route
-from another agent in `handoff-issue` mode; the Parent agent is never a handoff
-target. Dependents are released only after the integration gate accepts the
-release-policy milestone.
+## Repository boundaries
 
-```bash
-npm run poc:serve                 # local 10-pattern test sites (http://127.0.0.1:4333/)
-npm run poc:matrix -- both        # measurement runs (deterministic + AI variants)
-npm run poc -- register 09-trial-card   # headed demo with the interactive gate
-npm run poc -- app                 # app-shell lifecycle smoke test (unlock/browser/lock)
-npm run poc -- ui                  # local browser web app UI (personal data, sites, settings, ...)
-npm run poc -- ui:cli              # legacy developer terminal UI fallback
-npm run poc -- check-egress        # PRIV-001 static network-egress allowlist check
-npm run poc -- check-persistence   # PRIV-002 static local-persistence allowlist check
-npm run poc -- check-bypass        # SEC-002 static CAPTCHA/anti-bot-evasion dependency denylist check
-npm run release:check              # beta privacy/security release gate (typecheck, unit, static hardening checks)
-```
+| Path | Responsibility |
+| --- | --- |
+| `extension/` | Side Panel UI/runtime, lease router and content script |
+| `src/domain/` | Accounts, disclosures, canonical attributes, policy and Evidence |
+| `src/store/` | Portable vault/crypto/session contracts and storage adapters |
+| `src/automation/`, `src/agent/` | Browser-neutral drivers, collection, classification and wall detection |
+| `src/shared/cloud-contract.ts` | Shared closed API validators |
+| `cloud/` | Independent Node package for Cloud Run and registry/inference services |
+| `infra/bootstrap/`, `infra/runtime/` | Foundation and runtime Terraform |
+| `tests/` | Node unit/integration tests and browser fixture suites |
+| `electron/`, `native-host/`, `src/renderer/` | Retained migration source and reusable UI |
 
-Each `npm run poc ...` invocation runs `npm run build` first. State (the
-encrypted store, measurement JSON) is written under `state/soroeru-poc/` and
-must not be committed.
+Keep domain policy independent of UI and transport. Keep classification, wall
+detection, persistence and AI validation separately testable. Avoid new frameworks,
+providers or dependencies without explicit Issue scope. Apply `writing-good-tests`
+when changing tests; assert user-visible effects and wait for conditions.
 
-### 3.2 Soroeru desktop app (architecture.md §1 scaffold, #158)
+## Quality gates
 
-The Soroeru Electron app (main / preload / renderer) lives alongside the PoC
-during the migration:
-
-```bash
-npm run dev            # build main + preload, start Vite dev server, launch Electron
-npm run build:app      # tsc (main) + Vite preload bundle + Vite renderer build
-npm run lint           # ESLint over electron/ and src/renderer/
-npm run format         # Prettier check over the new app sources
-npm run typecheck      # tsc for the node/main build AND the renderer build
-```
-
-Layout: `electron/` is the trusted main process (owns the Vault v2 lifecycle and
-the typed IPC bridge); `src/renderer/` is the untrusted React UI surface that
-reaches the vault only through `window.soroeru` (preload `contextBridge`). The
-renderer window runs with `contextIsolation: true`, `nodeIntegration: false`,
-and `sandbox: true`; the sandboxed preload is bundled to a self-contained
-CommonJS file (`vite build --mode preload`). The vault file defaults to
-`app.getPath("userData")/vault.json` (`.../Application Support/Soroeru`) and
-still honors the `SOROERU_STATE_ROOT` override. App build output under `dist/`
-is not committed.
-
-## 3.1 Mac Beta Packaging
-
-The Soroeru private-beta packaging path is an unsigned macOS DMG built with
-Electron Forge and `@electron-forge/maker-dmg` (architecture.md §2). It packages the
-Electron app, Vite renderer, compiled main/preload code, installed npm
-dependencies, and—until the #391 retirement stage—a hermetic Playwright Chromium browser so
-beta users do not need a system Node.js install.
-
-```bash
-nvm use            # Node 22 LTS (see .nvmrc); required for the DMG native deps
-npm ci
-npm run package:dmg
-```
-
-> **Node version matters for DMG packaging.** The maker chain
-> (`@electron-forge/maker-dmg` → `electron-installer-dmg` → `appdmg`) pulls in
-> `nan`-based native modules (`macos-alias`, `fs-xattr`) that do **not** compile
-> against Node 23+ V8 headers. Because `appdmg` is an _optional_ dependency, a
-> too-new Node silently skips it at install time and the build later fails with
-> `Cannot find module 'appdmg'`. Use Node 22 LTS (matches `.nvmrc` and CI). If
-> you previously ran `npm ci` under Node 23+, switch to Node 22 and re-run
-> `npm ci` so the native modules build. `npm run package:dmg` runs a preflight
-> (`scripts/check-node-version.mjs`) that fails fast with this guidance.
-
-The script writes:
-
-- `out/` Forge intermediate app / maker output
-- `release/Soroeru-<version>.dmg`
-
-`npm run package:dmg` runs `npm run build:app`, installs bundled Chromium with
-`PLAYWRIGHT_BROWSERS_PATH=0`, invokes Electron Forge for `darwin`, then copies
-the generated DMG to `release/Soroeru-<version>.dmg`. The package is unsigned
-and not notarized for the MVP.
-
-The packaged app name is `Soroeru.app`, with bundle identifier
-`app.soroeru.soroeru`; the repository/package identifier remains `soroeru`.
-The app uses Electron's embedded Node runtime. At runtime, packaged builds set
-`PLAYWRIGHT_BROWSERS_PATH` to the bundled
-`node_modules/playwright-core/.local-browsers` directory unless the environment
-already overrides it. The vault defaults to
-`~/Library/Application Support/Soroeru/vault.json`; `SOROERU_STATE_ROOT`
-remains available for local migration tests and user-selected local vault
-folders. Do not point it at shared cloud storage until a future encrypted-sync
-Issue defines the provider and egress controls.
-
-Runtime expectations for the first private beta:
-
-- Node.js is not required on the beta Mac.
-- The DMG is unsigned and not notarized until a later signing issue provides
-  Developer ID credentials and release automation. Beta install notes must
-  state this plainly.
-- Gatekeeper may block first launch. Use Finder right-click -> Open, or for
-  local testing only run `xattr -dr com.apple.quarantine /Applications/Soroeru.app`.
-- `out/` and `release/` are ignored by Git. Do not commit `.app`, DMG, logs,
-  vault files, or support bundles.
-- This package is Mac-only; Windows/Linux/App Store/auto-update packaging is out of scope.
-
-**Release automation.** Pushing a `v*` tag (e.g. `git tag v0.2 && git push origin v0.2`)
-triggers the `release-mac` GitHub Actions workflow on `macos-latest`. It runs the full
-release gate, builds the unsigned DMG, then uploads `release/Soroeru-<version>.dmg`
-to the GitHub release for that tag. If you create the release on the GitHub UI first
-(to write release notes), the workflow adds the artifact without overwriting your title
-or notes. If you push the tag without a pre-created release, the workflow creates one
-with auto-generated notes and marks it as a pre-release. No repository secrets are
-required; the workflow uses the built-in `GITHUB_TOKEN`.
-
-Before sharing any private beta build, run the release-candidate checklist in
-[`manual-test.md`](manual-test.md) §0. It is the owning checklist for release
-branch/tag/artifact steps, required local and GitHub checks, install/uninstall, first
-run, vault recovery, Add Site branches, registration, import, update, wall hand-off,
-support-bundle review, and beta release-note limitations. Keep this section focused on
-commands and packaging facts; keep the executable QA checklist in `manual-test.md`.
-
-## 3.2 Chrome Extension Front-Door Migration Setup
-
-The Chrome extension bridge is the **selected production direction** (Issue #391), currently
-still exercised through the developer setup from Issue #340. It enables automation via the
-user's actual Chrome profile instead of sandboxed Playwright Chromium. This setup is for
-development/parity evidence only; unpacked loading and environment-variable tab selection are
-not the supported product installation or binding UX.
-
-For the Issue #558 Side Panel demo, run `npm run build:extension`, load `dist/extension/`
-as an unpacked extension, and open Soroeru from the toolbar. Create/unlock the local vault,
-add a fake site, and grant access to its selected tab to run Visibility. This demo needs no
-Native Messaging host. DOM commands and page values travel directly between the panel and
-content script; the worker handles leases, navigation, and rebinding metadata. A failed save
-when locking keeps the vault unlocked so the user can retry or export. Closing the panel
-drops live plaintext immediately and retains its writer lock until the pending save settles;
-browser termination may interrupt that best-effort save. Manual checks are in §0.1a of
-[`manual-test.md`](manual-test.md).
-
-The following setup exercises the retained Electron/Native Messaging path. Start that bridge
-explicitly with the legacy popup's reconnect action:
-
-1. **Build the extension and the native-messaging host bundle:**
-
-   ```bash
-   npm run build:extension
-   npm run build:host
-   ```
-
-   `build:extension` bundles the extension to `dist/extension/`, including the React Side Panel
-   (`sidepanel.html` / `sidepanel.js` / `sidepanel.css`, Issue #557) that holds the IndexedDB
-   vault session; manual checks are in `docs/manual-test.md` §0.1a. `build:host` bundles the
-   native-messaging host relay into one self-contained file,
-   `dist/native-host/host.cjs` — required because setup copies a **single file** into
-   app-support and Chrome launches it from there (the per-module compiled output under
-   `dist/compiled/native-host/` cannot run standalone).
-
-2. **Load the extension in developer mode:**
-   - Open Chrome and navigate to `chrome://extensions/`.
-   - Enable **Developer mode** (toggle in the top right).
-   - Click **Load unpacked** and select the `dist/extension/` directory.
-   - Note the extension ID shown on the extension card (you will need it below).
-   - An unpacked extension's ID is derived from the **absolute directory path**: loading
-     `dist/extension/` from a different checkout or worktree produces a **different ID**.
-     After such a change, re-enter the new ID in settings and re-run step 4 (**host を登録して接続を始める**)
-     to update the native host manifest's `allowed_origins` with the latest stored ID (re-registration uses the latest stored ID without requiring an app restart).
-
-3. **Start the app and save the bridge settings:**
-
-   ```bash
-   npm run dev
-   ```
-
-   `npm run dev` also builds the host bundle and the dev app resolves it from
-   `dist/native-host/host.cjs` automatically, mirroring the packaged app;
-   `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an explicit override.
-
-   Open **設定 → Chrome と接続**, enter the extension ID from step 2, select
-   **Chrome 拡張ブリッジを有効にする**, and save. Restart Soroeru when the settings panel
-   asks you to; listener enablement and the extension ID are applied at process startup. The
-   non-sensitive setting is stored locally under Electron's Soroeru `userData` directory and is
-   available before vault unlock. It defaults to OFF.
-
-   `SOROERU_ENABLE_CHROME_BRIDGE` and `SOROERU_CHROME_EXTENSION_ID` remain developer overrides.
-   When present they take precedence over the saved value and the settings panel identifies the
-   overridden field. Both are strict and fail closed: enablement accepts only `0` or `1`, and the
-   extension ID must be 32 lowercase characters in Chrome's `a`–`p` alphabet. For example:
-
-   ```bash
-   SOROERU_ENABLE_CHROME_BRIDGE=1 SOROERU_CHROME_EXTENSION_ID=<extension-id-from-step-2> \
-   npm run dev
-   ```
-
-   In a **packaged app** (`npm run package:dmg`), the host bundle ships inside the DMG at
-   `Soroeru.app/Contents/Resources/native-host/host.cjs` and is used automatically;
-   `SOROERU_CHROME_BRIDGE_HOST_BINARY` remains an override. The bridge stays off by default until
-   the reachability, #381 invariant, binding, permission, packaging, and distribution gates in
-   `architecture.md` §2.2 pass.
-
-4. **In the app (order matters — register first, then reload the extension):**
-   - Go to **設定 → Chrome と接続** and select **host を登録して接続を始める**.
-   - The manifest is registered at
-     `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`,
-     pointing at the copy in `~/Library/Application Support/Soroeru/native-host/` (never
-     into `.app`, which App Translocation can relocate). Registration is what writes the
-     saved extension ID into the manifest's `allowed_origins`; reloading the extension
-     before this step reconnects against the stale manifest and fails.
-   - Then reload the extension (or restart its service worker) in `chrome://extensions`
-     so it reconnects to the freshly registered host.
-   - The handshake completes when the extension confirms the native-messaging connection.
-   - When done, choose **切断して登録物を掃除** to unregister and remove the host binary.
-   - Turning the bridge setting OFF runs the same cleanup first. OFF is saved only after listener,
-     permission, and native-host cleanup completes; failed or uncertain cleanup remains visible and
-     leaves the saved setting ON. Restart to make OFF the next startup state.
-
-**Troubleshooting the connection:**
-
-- Extension console shows `Unchecked runtime.lastError: Access to the specified native
-messaging host is forbidden.` — the extension's current ID is not in the registered
-  manifest's `allowed_origins` (stale registration, typically after the extension was
-  loaded from a new path or the ID in settings changed). Verify the saved ID matches the
-  card in `chrome://extensions`, re-run **host を登録して接続を始める**, then reload the
-  extension. Compare against
-  `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/jp.soroeru.bridge.json`.
-- App stays at 「接続中」 with no error — the extension has not (re)connected yet; reload
-  it in `chrome://extensions`, or use the extension popup's **アプリに再接続**. The
-  popup's reconnect cannot fix a stale manifest; only app-side registration rewrites it.
-- Connecting reports `feature-disabled` — the bridge listener or extension ID was not
-  active at process startup (settings apply on restart), or the dev host bundle
-  `dist/native-host/host.cjs` is missing (`npm run dev` builds it; `npm run build:host`
-  builds it standalone).
-- A successful registration writes `registering native host` /
-  `native host registered successfully` lines to the app log (**ログをダウンロード** in
-  the app, or `~/Library/Application Support/Soroeru/logs/soroeru.log`). If those lines
-  are absent, registration never ran in the current app instance.
-
-**Runtime caveat:** Chrome launches the installed host with launchd's minimal `PATH`, so
-an `env node` shebang would fail silently on most machines. Registration therefore
-rewrites the installed copy's shebang to an **absolute Node path** (resolved from the
-app's `PATH`, then `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`) and **fails with a
-clear error** when no Node runtime is found. If you later move or upgrade your Node
-install, re-run the connection setup so the shebang is re-resolved. A system Node is
-required only for the current migration-stage helper; the product helper must be
-self-contained before cutover.
-
-**Security note:** The unpacked extension ID is not stable across machines, so never commit
-a hardcoded development ID. Product cutover requires Chrome Web Store distribution, a stable
-allowlisted ID, and signed/notarized app/helper distribution beyond invited beta. The DMG
-bundles only the inert relay file; nothing is registered with Chrome until the user starts
-setup from settings.
-
-**Node transition:** keep Node 22 as the repository and DMG baseline while the current
-`appdmg` native dependency chain and bundled Playwright Chromium remain. Node 24 LTS is the
-candidate for extension/native-helper validation, but adopt it repository-wide only after the
-helper is self-contained, production Playwright packaging is retired, a Node-24-compatible DMG
-maker is selected, and host/typecheck/unit/native-handshake/DMG checks pass. Node 26 is not
-selected while it is Current rather than LTS.
-
-See [`manual-test.md`](manual-test.md) §0.1–0.2 for the full QA checklist, including
-permission verification, tab binding, cleanup, and policy compliance (`npm run poc -- check-egress` etc.).
-
-## 4. Project Structure
-
-Current repository shape:
-
-```text
-.
-├── .claude/
-│   └── skills/        # committed relative symlinks exposing each repo skill to Claude Code
-├── .github/
-│   ├── ISSUE_TEMPLATE/
-│   └── workflows/
-├── .githooks/
-├── docs/
-├── skills/            # repo-local agent skills (issue-implementation + writing-good-tests)
-├── scripts/
-│   ├── rename-dmg.mjs
-│   └── setup-hooks.sh
-├── website/           # static landing page for Mac beta download (website/index.html)
-├── sites/             # local 10-pattern test sites (defs.ts + server.ts)
-├── src/
-│   ├── agent/         # scanner, deterministic classifier, guards, gate, walls, filler, orchestration
-│   │   └── ai/        # AI mapper + provider abstraction
-│   ├── app/           # SoroeruApp / AppRunner / startWebUiServer / AppUI
-│   ├── dev/           # PRIV-001/002, SEC-002 static checks
-│   ├── store/         # encrypted store (crypto, recovery, store)
-│   ├── profile.ts
-│   └── types.ts
-├── run/               # measurement runner + CLI
-├── tests/
-│   └── unit/
-├── package.json
-├── package-lock.json
-├── out/               # Electron Forge intermediate output (gitignored)
-├── release/           # generated DMG artifacts (gitignored)
-└── tsconfig.json
-```
-
-Update this section when real directories are added or removed.
-
-The `.claude/skills/*` entries are committed relative symlinks into `skills/`
-(e.g. `.claude/skills/writing-good-tests -> ../../skills/writing-good-tests`),
-so a fresh clone restores them automatically — there is no manual setup step,
-and skill content has a single source of truth under `skills/`.
-
-## 5. Implementation Conventions
-
-- Keep DOM scanning and metadata extraction isolated from rendering.
-- Keep field classification rules isolated from automation-layer orchestration.
-- Keep wall detection (CAPTCHA / MFA) separate from field classification.
-- Keep storage access behind a small module so future migrations or encryption
-  do not require changes across UI and automation code.
-- Use typed profile field definitions (`src/types.ts`).
-- Treat page text, attributes, and URL data as untrusted input.
-- Keep the local web UI's styles scoped to its own server-rendered pages.
-- Prefer explicit, user-approved actions for filling and submission (the
-  review-and-confirm gate).
-- Use fake data in examples, tests, screenshots, and fixtures.
-- When writing or reviewing tests, use the repo-local **`writing-good-tests`** skill
-  ([`skills/writing-good-tests/SKILL.md`](../skills/writing-good-tests/SKILL.md)) for
-  _how_ to write them — behavior over implementation, "not too many, mostly integration",
-  condition-based waiting, and strategic mocking. The test **strategy** (what to test, by
-  layer) stays in [`testing.md`](testing.md) §1–§2.
-- Avoid committed generated output unless the project later documents a reason
-  to keep it under version control.
-
-## 6. Formatting And Linting
-
-Format and lint checks exist for the Electron app sources and supporting app
-configuration. Run them for code changes before committing, and use
-`npm run format:write` only as a mechanical cleanup step before re-running the
-check command.
-
-Format check:
+Before committing code:
 
 ```bash
 npm run format
-```
-
-Format write:
-
-```bash
-npm run format:write
-```
-
-Lint command:
-
-```bash
 npm run lint
-```
-
-## 7. Type Checking
-
-Typecheck command:
-
-```bash
 npm run typecheck
+npm test
 ```
 
-## 8. Quality Gates
+`format` is a check, not a rewrite; `format:write` updates the configured source
+set. For changed Markdown, inspect rendered headings/tables/code fences and
+relative links. Documentation-only work may use that review instead of code
+checks. A runtime prompt or other executable edit still needs relevant tests.
 
-For documentation-only changes, review the rendered Markdown and check for
-stale file references.
-
-For Mac beta scope, also confirm docs and release notes do not imply support for Windows,
-Linux, mobile apps, hosted vaults, telemetry, or additional-browser extension distribution.
-
-Before a private beta build is distributed, run the full Mac beta checklist in
-[`manual-test.md`](manual-test.md) §0 and record the tested commit SHA or beta tag in the
-release notes.
-
-For production privacy/security hardening, run:
-
-- `npm run release:check`
-
-This command is the beta release gate for typecheck, unit tests, network-egress
-allowlisting, local-persistence allowlisting, CAPTCHA / anti-bot bypass dependency
-denylisting, and the dependency-audit gate (`audit:check`, see below). Treat any failure
-as a release blocker; the owning policy is [`security.md`](security.md) §13.
-
-### 8.1 Local dependency-audit gate (shift-left)
-
-Dependency-vulnerability detection runs in CI (`SEC-003`, see
-[`dependency-security.md`](dependency-security.md)). To catch new advisories locally
-before CI, the same check is available as `npm run audit:check`
-(= `npm audit --omit=dev --audit-level=high`) and is wired into `npm run release:check`
-so the local release gate matches the CI gate.
-
-Decision (why this shape):
-
-- **Reuse, single source of truth.** Local and CI run the **same** `audit:check` script
-  with the same threshold (`high`) and scope (`--omit=dev`, production = runtime +
-  optional deps), so acceptance rules never drift between the two. Accepted build-time-
-  only advisories are excluded by scope and tracked in [`security.md`](security.md) §12.0
-  (no separate allowlist to maintain).
-- **Where it runs.** In `release:check` (the release gate), **not** on every commit:
-  `npm audit` needs the network and adds latency, so per-commit auditing would be noisy
-  and offline-hostile. A `pre-push` git hook is a reasonable opt-in addition; it is
-  intentionally not enabled by default.
-- **Offline behavior.** `audit:check` requires registry access. When offline it will
-  fail; that is acceptable for a release gate (a release should be audited online). For
-  ordinary offline development, run the other gates individually
-  (`npm run typecheck`, `npm test`, the `poc -- check-*` gates) and run `audit:check`
-  when back online. Do not add a network call to per-commit gates.
-- **Conclusion.** CI (#180) is the enforcing line of defense; this local hook is the
-  shift-left convenience that shares its exact command, so a developer sees the same
-  pass/fail before pushing.
-
-### 8.2 Pre-commit quality gate hook
-
-The `.githooks/pre-commit` hook automatically runs three gates before every
-commit:
-
-1. `npm run format` — Prettier format check
-2. `npm run lint` — ESLint
-3. `npm run typecheck` — TypeScript (main + renderer tsconfigs)
-
-If any gate fails, the commit is aborted with a message indicating which gate
-failed.
-
-`npm test` is intentionally excluded from the pre-commit hook because it
-includes a full build step and adds significant latency. Run `npm test` manually
-or via `npm run release:check` before pushing.
-
-**Skipping the hook:**
-
-- Include `[skip-hooks]` in the commit message — the hook reads
-  `.git/COMMIT_EDITMSG` and skips all gates. This leaves an auditable trace in
-  the commit history.
-- `git commit --no-verify` — git's built-in bypass (leaves no trace in the
-  message).
-
-The hook also skips automatically during merge, rebase, and cherry-pick
-operations.
-
-The hook is activated by `scripts/setup-hooks.sh` (sets
-`core.hooksPath=.githooks`). No additional setup is required.
-
-For code changes, run the available gates:
-
-- `npm run format`
-- `npm run lint`
-- `npm run typecheck`
-- `npm test`
-- focused manual tests for affected browser behavior
-- for changes touching network calls, AI provider config, or `package.json`
-  dependencies: `npm run poc -- check-egress` (PRIV-001, see
-  [`security.md`](security.md) §6)
-- for changes touching profile-value display/logging or local file writes:
-  `npm run poc -- check-persistence` and re-check the `maskValue` /
-  `maskForArtifact` policy (PRIV-002, see [`security.md`](security.md) §3)
-- for changes touching `package.json` dependencies or wall detection / handoff:
-  `npm run poc -- check-bypass` (SEC-002, see [`security.md`](security.md) §7)
-
-`npm test` runs the build and Node unit tests.
-
-Only report checks as run when the command actually exists and has been
-executed. If a command is not available yet, state that plainly in the PR.
-
-## 9. Review
-
-### 9.1 Code Review
-
-Code review (human or AI) prioritizes, in this order:
-
-1. **correctness** — bugs, off-by-one, null / empty handling, race conditions,
-   error paths that swallow failures
-2. **regressions** — behavior changes that break existing callers, tests, or
-   documented contracts
-3. **security** — input validation, auth, secrets in logs, command injection,
-   path traversal, permission bits on state files
-4. **missing tests** — new behavior or new branches that have no test coverage
-
-These criteria are mirrored in the reviewer role's review checklist; keep them in sync if any change.
-
-### 9.2 Requirements Review
-
-Requirements review targets diffs to `docs/requirements.md` and checks, in
-priority order:
-
-1. **unambiguous** — each changed statement allows exactly one interpretation
-   (no vague qualifiers, undefined terms, or inconsistent naming)
-2. **verifiable** — fulfillment can be objectively checked by test,
-   inspection, or measurement
-3. **consistent** — no contradiction with the rest of `docs/requirements.md`
-   or the product principles (agency, never bypass walls, local-first)
-4. **failure paths specified** — errors, walls, cancellation, and partial
-   completion are stated, not just the happy path
-5. **scope explicit** — out-of-scope and unstated assumptions are surfaced
-
-The criteria derive from ISO/IEC/IEEE 29148 requirement quality
-characteristics, prioritized by defect impact. They mirror
-`skills/requirements-review/SKILL.md`; keep the two in sync if either
-changes.
-
-### 9.3 Design Doc Review
-
-Design doc review targets `docs/design/*.md` implementation-session design
-docs and checks, in priority order:
-
-1. **traceability** — design elements map to requirements / Issue acceptance
-   criteria, with no orphan elements and no uncovered requirements
-2. **contracts and responsibilities** — component responsibilities, API /
-   interface contracts, and the data model are implementable without guessing
-3. **failure handling and state transitions** — error paths, wall hand-off,
-   interruption / resume, and state transitions are designed, not just the
-   happy path
-4. **alternatives considered** — rejected options and the rationale for the
-   chosen approach are recorded
-5. **test strategy** — how the design's behavior will be verified is stated
-
-The criteria mirror `skills/design-doc-review/SKILL.md`; keep the two in sync
-if either changes.
-
-### 9.4 Architecture Review
-
-Architecture review targets `docs/architecture.md` and checks, in priority
-order, judged against Soroeru's context (single-user, local-first Electron
-desktop app):
-
-1. **requirements and constraint fit** — choices satisfy the non-negotiables
-   and prioritized quality attributes, with trade-off points explicit
-2. **system boundaries and data flow** — trust boundaries, where personal
-   data may exist in what form, and every egress point
-3. **dependencies** — justified, maintained, license-compatible, security
-   surface understood, stack within the doc's own decisions
-4. **failure modes and data integrity** — vault durability under crash /
-   interruption, schema versioning / migration, local diagnosability
-5. **decision records** — significant decisions captured ADR-style with
-   alternatives, rationale, and reconsideration triggers
-
-A criterion that genuinely does not apply is answered "not applicable" with
-a reason, not forced. The criteria mirror
-`skills/architecture-review/SKILL.md`; keep the two in sync if either
-changes.
-
-## 10. Issue Implementation
-
-This section defines the repository-local single-Issue implementation workflow. The
-matching Codex Skill lives in
-[`skills/issue-implementation/SKILL.md`](../skills/issue-implementation/SKILL.md).
-
-When the user asks an agent to implement one GitHub Issue, use this workflow
-unless the user explicitly changes it:
-
-1. Inspect lifecycle state. Existing work uses `handoff-issue`; new work uses
-   `scripts/issue-worktree.sh create` through `issue-implementation`.
-2. Move every operation to the helper's absolute Issue worktree path.
-3. Implement the Issue there; the primary clone remains human-only.
-4. Push the finished local branch to GitHub and create a PR. Include
-   `Closes #<issue>` in the PR body so GitHub closes the Issue automatically
-   when the PR is merged.
-5. Dispatch a reviewer role from a different verified route
-   (via `node scripts/project-issue-dispatch.mjs --role reviewer --execution-mode direct-review
-   --review-pass 1`). The reviewer works read-only in the existing Issue worktree,
-   reads the PR diff and acceptance criteria, and posts a `role=reviewer pass=1 verdict=<...>`
-   comment to the PR. A `NEEDS_REVISION` verdict buys one implementer fix pass (push to the
-   same branch, post a `role=implementer fix-cycle=1` comment stating what changed per
-   finding). A `REJECTED` verdict blocks. Include the reviewer verdict and any actionable
-   findings in the PR description.
-
-If the user gives multiple Issue numbers, ask which single Issue to implement first.
-
-## 11. Operational Notes
-
-- `state/` is local state and must not be committed.
-- `out/` and `release/` contain generated `.app` / DMG artifacts and must not be committed.
-- `node_modules/`, build outputs, coverage, and common caches are ignored by
-  Git.
-- Keep durable workflow lessons near the owning document, Issue, or PR instead
-  of reintroducing a generic learning log without a clear owner.
-
-### Jev triage provider terms and activation
-
-Issue #535 adds the isolated adapter and contracts; #536 connects shadow mode to the graph.
-The classic dry-run remains text-free and makes no Jev request. The graph's opt-in
-`--triage shadow` refreshes exact CLI model availability for each new selection batch,
-then asks the isolated child to triage only currently dispatchable Issues. It shows
-the closed risk, Size, and route recommendation beside the legacy execution mode in
-the assignment interrupt and run summary (also when auto-assignment skips that interrupt).
-Shadow never adopts Jev's risk, Size, role program, or route recommendation. It does
-change the run in three bounded ways: new selections use the freshly verified CLI pool;
-before first dispatch the graph re-checks Issue metadata, the pool, and the exact route,
-and withdraws the assignment for a manual re-prompt on a mismatch (`stale-input`, or
-`route-unavailable`, which also excludes that model for the run); and the run fails closed
-with `triage-route-refresh-failed`, `no-worker-route-available`, or a repeated
-`stale-input`. A fallback requires an explicit route assignment even with `--auto-assign`.
-Later roles, fix cycles, and interrupted-worker handoff keep the existing pool and do not depend on a refresh.
-`--triage assisted` requires a current live holdout evaluation and explicit Product Owner approval; otherwise it fails with `triage-assisted-not-available`. The configuration
-loader accepts the following optional section, and the plan CLI accepts `--triage off|shadow|assisted`. CLI mode overrides YAML while preserving
-the pinned model and budget. Defaults are off, `jev-1.13.0`, and 20 attempts.
-
-```yaml
-run:
-  triage:
-    mode: off
-    model: jev-1.13.0
-    maxRequests: 20
-```
-
-For adapter callers, create one `createTriageRunner` per run with a durable `persistState`
-callback and reload its `{runId, reserved, providerUnavailable}` snapshot when resuming.
-The callback must finish saving before it resolves; save failure prevents the request.
-Reserve-before-send deliberately charges an attempt slot even when the child rejects
-input or the process is interrupted. Never recreate an empty counter under an existing
-run ID. The graph's file checkpoint persists a non-sensitive request fingerprint and
-the reservation before a child request; restart uses the same thread ID and will not
-replay a claimed request. `off` neither starts a child nor
-uses a slot. `TYPESAFE_API_KEY` belongs in the process environment, never YAML, argv,
-Issue content, checkpoint, telemetry, or worker environments.
-
-Only reviewed development Issue title/body text may be sent. Private Issues in
-`soroeru/Soroeru` additionally require explicit `run.triage.allowPrivateIssues: true`
-(default absent/false). The Product Owner authorized this opt-in on 2026-10-11.
-Do not put secrets or real personal values in any triage input. Use fake data in examples; the
-preflight detector is incomplete and cannot certify the absence of personal information.
-Unapproved private repositories, unknown visibility, changed revisions, obvious sensitive text, empty context, and large
-inputs return a fixed fallback reason without a provider call. Errors contain no raw
-provider body. A missing key falls back locally; 401/403 and 429/529 disable the provider
-for the run. Other errors consume their reserved slot with no retry. Usage is the API's
-validated integer count or `unavailable`; cost is not fabricated from missing data.
-
-**Terms reviewed 2026-09-27; no account settings changed or live paid requests made.**
-The [API reference](https://docs.typesafe.ai/api) specifies Bearer-authenticated structured
-questions and answers. We pin the resolved model, enforce the response contract, and use
-the fixed HTTPS endpoint with redirects disabled. This does not establish model quality;
-Japanese fixtures and routing evidence are evaluated separately in #537.
-
-The [Master Customer Agreement](https://typesafe.ai/legal/mca) dated 2026-09-23 permits API
-use subject to its documentation and limits. It requires customer authority over input;
-model training requires prior consent. It also permits continued use of input for deriving
-telemetry, fraud prevention, and legal compliance, and allows retention in standard backups.
-The [Privacy Policy](https://typesafe.ai/legal/privacy-policy) says input is not used for
-training and describes purpose-based retention rather than a fixed deletion period.
-The [DPA](https://typesafe.ai/legal/data-processing) likewise gives no general zero-day
-retention promise. [Zero data retention is an enterprise arrangement](https://docs.typesafe.ai/legal),
-not a guarantee inferred from possessing an API key. Before enabling shadow mode, the
-operator must check the terms and retention arrangement that apply to their own account,
-and decide whether the reviewed public Issue text is suitable for that processing.
-No code accepts terms, purchases credits, or changes billing settings for the operator.
-
-### Jev triage evaluation and RouteEvidence
-
-Issue #537 adds the measurement harnesses that decide whether assisted triage (#538) may be
-enabled. Results, gate status, and the Product Owner decision are recorded in
-[`design/537-jev-triage-evaluation.md`](design/537-jev-triage-evaluation.md).
-
-`scripts/project-issue-triage-eval.mjs` runs the fictional labeled dataset
-`tests/fixtures/jev-triage-eval/dataset-v1.json` through the production `evaluateTriage`
-boundary. Fixture title/body text is injected in place of the GitHub fetch, so the same
-sensitive-input tripwire, size limits, fixed endpoint, and response validation apply.
-Records and reports contain only case ids, label enums, probabilities, and counts.
+For security/privacy/release-sensitive changes:
 
 ```bash
-# Offline, deterministic: keyword/Size baseline (the design §11 comparison baseline). Never Jev quality.
-node scripts/project-issue-triage-eval.mjs --split holdout --now 2026-10-09T00:00:00Z
-node scripts/project-issue-triage-eval.mjs --split tune --format json
-# Opt-in, paid: live Jev. Refuses to start unless the budget covers the whole split.
-mkdir -p state/triage-eval && TYPESAFE_API_KEY=... node scripts/project-issue-triage-eval.mjs \
-  --transport live --split holdout --max-requests 80 --format json > state/triage-eval/holdout.json
-# Within shadow runs, outcomes split by whether the manual route agreed with the recommendation
-# (input: saved stdout JSON of graph runs). Shadow-vs-off is context only: it is confounded.
-node scripts/project-issue-triage-eval.mjs --compare-runs run-a.json --compare-runs run-b.json
-node --test tests/unit/project-issue-triage-eval.test.mjs
+npm run release:check
 ```
 
-Do not tune rubric text or thresholds on the `holdout` split; use `tune`. The assisted gate
-never reports `met` by itself: label confirmation, override-cause review, and the Product
-Owner decision stay `pending` until recorded. A live run stops sending after 401/403/429/529
-and is marked `complete: false`; rerun the whole split rather than using partial results.
-
-`scripts/project-issue-route-benchmark.mjs` produces `RouteEvidence`. Each freshly verified
-exact model runs the same 40 fictional tasks (10 each of docs, local-code, cross-component,
-security) in a throwaway sandbox; a fixed checker that the agent never sees decides pass/fail.
-Only `{kind, passed, durationMs}` leaves a task. A CLI that reports a different model, exits
-non-zero, or times out (quota, session limit, auth, crash) marks the route `model-mismatch`
-or `incomplete`, and its evidence is not written; rerun it in full. It requires `--live` because it spends each CLI's quota, and
-it writes the validated array to `state/route-evidence.json` (gitignored) by default:
+This runs typecheck, build/unit tests, egress/persistence/bypass static checks and
+`audit:check`. Static annotations are review aids, not proof of safe runtime data
+flow. Cloud changes also need:
 
 ```bash
-node scripts/project-issue-route-benchmark.mjs --live --only Claude,Codex --parent-agent Claude
+npm run typecheck --prefix cloud
+npm test --prefix cloud
+npm run audit --prefix cloud
+npm run build:extension
+node --test dist/compiled/tests/e2e/tier1-*.e2e.js
+node --test dist/compiled/tests/e2e/tier2-*.e2e.js
 ```
 
-Review that file (record shape, currently verified models, dates, `benchmarkVersion`) and
-record its SHA-256 in the evaluation report before #538 connects it to the graph's
-`triageEvidence` provider; until then shadow route answers always abstain. Evidence
-older than 30 days, from another `benchmarkVersion`, or for a model outside the current pool
-is ignored, and fewer than two comparable candidates or a tie yields `abstain`.
+Root `npm test` runs compiled TypeScript unit tests; development-tool `.test.mjs`
+files run separately, for example `node --test tests/unit/project-issue-*.test.mjs`.
+Run only the relevant manual scenarios from [manual-test.md](manual-test.md) and
+record any omissions in the PR. Requirements/architecture changes use their
+matching review skills; implementation plans and reviews belong in the Issue/PR.
+Do not generate per-Issue design/spec/report files.
 
-### Assisted triage adoption (Issue #538)
+## Cloud development and deployment
 
-The frozen `triage-v3` / `triage-rubric-538-v3` classifier meets the measured
-holdout floors; see [the evaluation record](triage-evaluation-538.md). The Product Owner approved the labels, cause analysis and limited assisted adoption
-on 2026-10-11. A local approval record is still required on each checkout; approval
-is not inferred from merging or copied to another classifier.
+The API uses ADC locally and attached service accounts on Cloud Run. Local unit
+tests inject fake transports and make no paid model calls. `cloud/README.md` owns
+seed import and Gemini model configuration. Terraform 1.14.3, gcloud and Docker
+are used by the current cloud workflow.
 
-Place the exact reviewed live JSON report at
-`state/triage-eval/assisted-evaluation.json`. After the human decision, record
-`state/triage-eval/assisted-approval.json` with these fields (never fabricate approval):
-`evaluationSha256`, optional `routeEvidenceSha256`, `labelsConfirmed: true`,
-`overrideCausesReviewed: true`, `decision: "approved"`,
-`reviewedBy: "Product Owner"`, and an ISO `reviewedAt` after the evaluation.
-Calculate the SHA-256 over the exact file bytes. These files stay ignored and local.
-The loader recomputes metrics and requires the deployed classifier fingerprint,
-policy, rubric, pinned model, full live holdout, and all measured safety floors.
-Changing any classifier input invalidates approval and requires shadow/evaluation again.
-A missing, malformed, outdated or unapproved artifact never enables assisted mode.
+Validate without applying resources:
 
-Before any role starts, `resolveTriage` interrupts even with `--auto-assign`.
-Resume with `triageDecisions`, one object per Issue containing the displayed
-`issue`, `issueUpdatedAt`, `policyVersion`, `routeSetHash`, `evidenceVersion`,
-and an `action` of `accept`, `override`, or `fallback`.
-Use reason `accepted` for accept, `legacy-fallback` for fallback, or one of
-`domain-review`, `insufficient-context`, `route-unavailable` for override.
-Override also supplies enum `riskCategory` and `size`; an optional `preferredRoute`
-contains a currently allowed `agent`/`model` pair. Missing decisions use legacy fallback
-and require manual route assignment. Uncertain risk or Size cannot be accepted.
-
-Adoption takes the maximum existing/adopted risk and Size, preserves dependencies
-and `changeScopeCount`, and recomputes provisional mode and role program.
-An explicit `modeOverride` stays separate and must fit the effective risk/Size;
-high/critical always use planner → implementer → independent reviewer.
-No Size or status is written to GitHub. Parent runtimes remain excluded unless the run opts them in (`parentAsWorker`).
-Single-worker requests expose `triage-single-worker-shadow` and do not adopt roles.
-
-Every assisted dispatch checks exact model availability; first dispatch also
-rechecks approval, Issue revision and reviewed route evidence. Route-only changes
-retain adopted risk/Size and request manual assignment without another Jev call.
-A stale Issue refreshes its current labels and dependency metadata (failure is
-`triage-metadata-refresh-failed`) and can be re-evaluated once before any role starts; subsequent changes
-use fallback/manual assignment. Started role programs and handoffs keep their
-program; reviewer selection discards implementer route recommendations.
-Unreviewed or incomplete RouteEvidence produces abstention, not a capability rank.
-
-### Private development Issue opt-in (Issue #538)
-
-The Product Owner also authorized private Issue support on 2026-10-11.
-In the ignored local `state/project-issue-orchestrator.yaml`, use:
-
-```yaml
-run:
-  maxParallel: 4
-  releasePolicy: merged
-  unavailableModels: none
-  unavailableAgents: none
-  triage:
-    mode: assisted
-    model: jev-1.13.0
-    maxRequests: 20
-    allowPrivateIssues: true
+```bash
+terraform fmt -check -recursive infra
+terraform -chdir=infra/bootstrap init -backend=false
+terraform -chdir=infra/bootstrap validate
+terraform -chdir=infra/runtime init -backend=false
+terraform -chdir=infra/runtime validate
+npm run build --prefix cloud
+docker build -f cloud/Dockerfile -t soroeru-cloud:test .
 ```
 
-`allowPrivateIssues` must be a boolean; omitted/false retains the original rejection.
-It permits only the fixed `soroeru/Soroeru` repository's title/body fetched by the
-isolated child, never other repositories, comments, attachments or linked pages.
-Only external-provider-suitable, non-personal development text belongs in these Issues.
-Review the selected Issues before running: the secret/PII tripwire is incomplete.
-Permission does not bypass secret rejection (including passwords, CVV, OTP and tokens),
-revision checks, input limits, request budgets, response validation or manual adoption.
-Unknown visibility still rejects. Body/provider text stays out of parent stdout, state,
-logs and worker environments. The flag is non-sensitive config and survives checkpoints.
-For new runs, set it to false to revoke private transmission; `--triage off` disables
-all Jev calls. Stop an existing run before revoking permission: checkpoints retain
-the original run configuration, so do not resume an old enabled checkpoint.
-The approval record only enables assisted's confirmation flow; private sending additionally
-requires this independent explicit flag. No new GitHub secret or Project token is needed.
+Foundation bootstrap is an intentional operator action that creates billable
+resources and applies Terraform. Configure `TF_VAR_project_id`,
+`TF_VAR_billing_account`, `TF_VAR_github_repository_id` and
+`TF_VAR_github_owner_id`, authenticate local ADC, then run
+`node scripts/bootstrap-cloud.mjs`. It first uses ignored local state under
+`state/cloud-bootstrap`, migrates to the project's bootstrap state bucket and
+creates a ticket-key secret version only if absent. Do not commit state, plans,
+credentials or keys. Inspect foundation IAM changes before applying.
 
-### Shared schemas (Issue #560)
+Configure the GitHub `soroeru-cloud` environment for main-only deployment with
+`GCP_PROJECT_ID`, `TF_STATE_BUCKET`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
+`GCP_DEPLOY_SERVICE_ACCOUNT`, `GEMINI_DAILY_LIMIT` and
+`TIER3_TICKET_SECRET_VERSION`. Values come from reviewed foundation outputs.
+The cloud workflow validates PRs; its main/deployment path publishes an image,
+uses its immutable digest, plans/applies runtime Terraform, then runs:
 
-The Firestore registry and its maintainer-only seed import are documented in
-[`cloud/README.md`](../cloud/README.md). The Side Panel Tier 1 path is configured
-with `VITE_SOROERU_CLOUD_API_URL` at extension build time and enabled by the user
-inside the unlocked panel; the default is off. See
-[`extension/README.md`](../extension/README.md#tier-1-shared-form-schemas-560).
+```bash
+node scripts/check-cloud-deployment.mjs <project-id>
+```
 
-Run `npm test --prefix cloud` for schema persistence validation and API routing.
-Run `npm run build:extension && node --test dist/compiled/tests/e2e/tier1-*.e2e.js`
-for the fake fixture, including per-field failure isolation, positional anchors,
-stale-page rejection, walls, and classic Content Script injection under a real
-extension lease. Root unit tests cover the typed request, encrypted
-cache, offline reuse, and Visibility ledger/checkpoint integration. Firestore SDK
-calls are isolated in tests; development-project deployment and real Chrome Side
-Panel verification remain in [`manual-test.md`](manual-test.md#tier-1-shared-schemas-560).
+The check invokes public smoke requests, verifies log exclusions, IAM, instance
+limits and Vertex logging/cache settings. It consumes test budget. It does not
+prove Gemini can map a form: the mapping smoke permits explicit unavailability.
+Run the fake-data manual Tier 2 scenario before enabling a release.
 
+Set runtime `gemini_model_id` explicitly to an available reviewed model; empty
+disables Tier 2. The current deployment workflow does not pass a Gemini model
+variable, so ensure the reviewed deployment configuration supplies it rather
+than assuming a successful deploy enabled inference. Cloud Billing alerts are
+notifications, not a spending cap. Do not deploy merely to review documentation.
 
-### Structure-only Gemini fallback (Issue #561)
+## Isolated development Cloud resources
 
-The existing extension cloud-assistance setting covers Tiers 1 and 2. Configure
-an explicit Vertex model through `gemini_model_id` (Terraform) or `GEMINI_MODEL_ID`
-(runtime); see [Cloud configuration](../cloud/README.md#tier-2-structure-mapping-561).
-Run root unit tests, `npm test --prefix cloud`, and
-`node --test dist/compiled/tests/e2e/tier2-schema.e2e.js` for sanitizer privacy,
-closed responses, local validation and stale-page rejection. Live Vertex and
-Cloud log verification require the development project and the
-[manual checks](manual-test.md#tier-2-structure-mapping-561).
-
-### Development Terraform (Issue #598)
-
-Use the two-layer dev Terraform when validating Cloud Run or Firestore behaviour
-requires a real Google Cloud deployment. Skip it for changes verifiable with local unit
-tests alone.
-
-**dev-shared layer** — apply once per dev project to create shared resources (Firestore,
-service accounts, log exclusion). Never destroy the shared layer for individual Issues.
+Use `infra/dev-shared` once per dedicated development project for Firestore,
+service accounts and log exclusions. Use `infra/dev` for Issue-suffixed Cloud Run
+resources only when local tests cannot verify the change. Keep production separate;
+never destroy the shared layer as part of an individual Issue's cleanup.
 
 ```bash
 terraform -chdir=infra/dev-shared init
 terraform -chdir=infra/dev-shared apply -var="project_id=<dev-project>"
+terraform -chdir=infra/dev init -backend-config="path=../../state/dev-i123/terraform.tfstate"
+terraform -chdir=infra/dev apply -var="project_id=<dev-project>" -var="issue_number=123" -var="image=<image>"
+# After verification, use the same Issue state and variables to remove its resources:
+terraform -chdir=infra/dev destroy -var="project_id=<dev-project>" -var="issue_number=123" -var="image=<image>"
 ```
 
-**dev layer** — apply per Issue, scope resource names with the Issue number, destroy
-after verification. Forgetting to destroy leaves billable Cloud Run services running.
+Replace 123 with the actual Issue number. State stays ignored under `state/`;
+never commit it. Apply creates billable resources, so record deployment and
+cleanup in the Issue/PR. Do not add a dev-layer CI/CD workflow or deploy merely
+for documentation review. Validate both dev modules with `init -backend=false`
+and `validate` when changing them, alongside recursive Terraform formatting.
 
-```bash
-# Apply (replace 597 with the actual Issue number)
-cd infra/dev
-terraform init -backend-config="path=../../state/dev-i597/terraform.tfstate"
-terraform apply \
-  -var="project_id=<dev-project>" \
-  -var="issue_number=597" \
-  -var="image=<image>"
+## Development-agent workflow
 
-# Verify, then destroy — required
-terraform destroy \
-  -var="project_id=<dev-project>" \
-  -var="issue_number=597" \
-  -var="image=<image>"
-```
+Use GitHub Issues, labels and native `Blocked by` relations only; no Projects or
+Project token. Invoke [issue-implementation](../skills/issue-implementation/SKILL.md)
+for new work and [handoff-issue](../skills/handoff-issue/SKILL.md) for existing work.
+Multi-Issue routing/configuration belongs in
+[orchestrate-project-issues](../skills/orchestrate-project-issues/SKILL.md).
+Route discovery is `node scripts/project-issue-capabilities.mjs`; historical
+`project-issue-*` names do not authorize Project access.
 
-The state files are stored under `state/dev-i<issue_number>/` which is already in
-`.gitignore`. Never commit state files. Always use a dedicated dev project — never
-the production project — to avoid service name collisions and accidental production
-side effects. Do not add a CI/CD workflow for the dev layer.
+Development Issue triage is optional and separate from product AI. Its isolated
+child may send reviewed development text to TypeSafe only under the orchestration
+skill's opt-in checks; no product vault, credentials or raw results enter parent
+state. Keep run state ignored and record decisions/review evidence in Issues/PRs.
+
+## Legacy migration entry points
+
+`npm run dev` runs the retained Electron source; `npm run build:app` builds it.
+`npm run build:host` builds the Native Messaging relay for explicit migration
+checks. For a bridge check, set the unpacked extension ID in the desktop Chrome
+connection settings, register the host, then reload the extension. A worktree path
+change changes that unpacked ID and requires registration again. Cleanup is the
+settings disconnect/unregister action; do not remove another worker's state.
+
+The desktop's default state is `~/Library/Application Support/Soroeru`;
+development state uses `state/soroeru-poc`, with `SOROERU_STATE_ROOT` available for
+isolated fixtures. `npm run package:dmg` remains a legacy packaging command and
+requires Node 22; it is not the Chrome extension distribution workflow. Preserve
+encrypted export compatibility and test migration before retirement. Detailed
+historical setup/release evidence is available through Git and GitHub.

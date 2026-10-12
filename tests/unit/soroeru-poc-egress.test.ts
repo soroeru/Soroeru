@@ -1,6 +1,6 @@
 // PRIV-001 (#20) + Issue #564: network egress is limited to (a) the target sites
 // the user acts on, (b) the user's configured AI provider (non-extension only),
-// and (c) Soroeru Cloud (docs/security.md §6).
+// and (c) Soroeru Cloud (docs/security.md#cloud-retention-and-egress).
 // `checkNetworkEgress` is the static check behind `npm run poc -- check-egress`:
 // every network-call site in src/, run/, electron/, extension/, cloud/, or
 // native-host/ must carry a `// egress: <allowed-category>` annotation, and no

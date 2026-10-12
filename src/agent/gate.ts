@@ -39,7 +39,7 @@ function maskPhone(value: string): string {
  * fields (name, address, company, account ID) are shown in full — the gate's
  * purpose is to let the user verify exactly what will be submitted, and the
  * "necessary minimum" principle for those fields is enforced instead at the
- * persisted-artifact boundary (`maskForArtifact`, docs/security.md §3).
+ * persisted-artifact boundary (`maskForArtifact`, docs/security.md#data-handling).
  */
 export function maskValue(key: ProfileKey, value: string): string {
   if (key === "card.number") return `**** **** **** ${value.slice(-4)}`;

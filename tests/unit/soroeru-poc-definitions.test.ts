@@ -1,5 +1,5 @@
 // Shared site/form/field/wall/withdrawal definition model (#80, RFC-001 v3
-// §8, architecture.md §7.1). Fake data only (docs/testing.md).
+// §8, architecture.md#shared-schema-lifecycle-and-offline-behavior). Fake data only (docs/testing.md).
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -184,7 +184,7 @@ test("validateCandidateDefinition allows custom.* profile keys", () => {
   assert.equal(validateCandidateDefinition(candidate).ok, true);
 });
 
-test("validateCandidateDefinition flags embedded raw personal values (security.md §9)", () => {
+test("validateCandidateDefinition flags embedded raw personal values (security.md#cloud-retention-and-egress)", () => {
   const withEmail = baseCandidate({ notes: "contact: someone@example.com" });
   assert.ok(validateCandidateDefinition(withEmail).errors.some((e) => e.includes("email address")));
 
