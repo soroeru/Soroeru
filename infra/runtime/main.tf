@@ -20,7 +20,16 @@ variable "gemini_daily_limit" {
     error_message = "Daily limit must be a positive integer."
   }
 }
+variable "gemini_model_id" {
+  type        = string
+  default     = ""
+  description = "Explicit regional Vertex Gemini model ID; empty disables Tier 2."
+}
 locals { region = "asia-northeast1" }
+resource "google_vertex_ai_cache_config" "privacy" {
+  project       = var.project_id
+  disable_cache = true
+}
 resource "google_firestore_database" "schemas" {
   project                 = var.project_id
   name                    = "(default)"
@@ -68,6 +77,18 @@ resource "google_cloud_run_v2_service" "service" {
       env {
         name  = "GEMINI_DAILY_LIMIT"
         value = tostring(var.gemini_daily_limit)
+      }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
+      }
+      env {
+        name  = "GEMINI_LOCATION"
+        value = local.region
+      }
+      env {
+        name  = "GEMINI_MODEL_ID"
+        value = var.gemini_model_id
       }
       env {
         name = "TIER3_TICKET_KEY"

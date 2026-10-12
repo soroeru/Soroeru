@@ -39,17 +39,17 @@ origin (no path, query, or credentials):
 VITE_SOROERU_CLOUD_API_URL=<api-origin> npm run build:extension
 ```
 
-After unlocking the Side Panel, enable **共有フォームスキーマを使う** to allow
+After unlocking the Side Panel, enable **クラウド支援を使う** to allow
 lookup. Assistance defaults to off and the preference is encrypted in the vault.
-This sends only the Site Account's normalized registrable domain, the #518
+Tier 1 lookup sends only the Site Account's normalized registrable domain, the #518
 structure-only fingerprint, and the client version. Configure the Site Account
 with the registrable domain; do not configure a personalized subdomain as its domain.
 
 The Content Script rechecks walls, automation-prohibiting terms, the page fingerprint,
 and each field's unique anchor and deterministic classification before reading.
 Values return directly to the Side Panel and stay local. A mismatch affects that
-field alone. Unresolved mappings produce an unknown-state constraint; Tier 2/3
-are follow-up Issues. Password/CVV collection is not added by this path, and schemas
+field alone. Unresolved mappings fall back to Tier 2 below; remaining unresolved
+fields produce an unknown-state constraint. Tier 3 is a follow-up Issue. Password/CVV collection is not added by this path, and schemas
 never authorize a fill or submission.
 
 Resolved schemas and retrieval times are saved in the encrypted `formSchemaCache`.
@@ -57,3 +57,21 @@ When assistance is off or Cloud is unreachable, matching cached schemas remain
 usable. A live `none` response does not reuse a potentially obsolete cache. A cache
 or server schema with confidence below 0.8 is not used. Cache and deterministic
 collection work even in builds without a configured Cloud origin.
+
+## Tier 2 structure fallback (#561)
+
+The cloud-assistance switch also enables structure-only Gemini mapping when the
+schema service is reachable and Tier 1 leaves fields unresolved. Sanitization
+runs in the leased Content Script. Only known structural name/id tokens and exact
+field-label/heading vocabulary survive; pattern-redacted ambiguous prose is
+omitted. Values, options, checked state and display text never leave the page.
+Value shapes are included only for locally classified non-secret inputs; unknown
+and secret items carry no value shape. This conservative vocabulary can leave
+unusual labels unresolved.
+
+Mappings are validated against sent IDs and then pass the same live local
+classifier, wall and anchor checks as Tier 1. A changed page or lease discards the
+proposal. Values are read locally; there is no fill, submit or Tier 3 path.
+When telemetry sharing is enabled, successful mappings are saved in the encrypted
+bounded feedback queue; telemetry off records none. Queue delivery and schema
+promotion remain follow-up work. Gemini outages never trigger a raw-value fallback.

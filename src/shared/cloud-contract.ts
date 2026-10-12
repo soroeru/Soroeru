@@ -473,3 +473,20 @@ export function validateCloudResponse<K extends CloudOperation>(
       throw new CloudContractError();
   }
 }
+
+/** Cross-request validation: Gemini cannot invent IDs or duplicate item/key assignments. */
+export function validateStructureMappings(
+  request: StructureSnapshot,
+  response: unknown,
+): asserts response is CloudResponses["mapStructure"] {
+  validateCloudRequest("mapStructure", request);
+  validateCloudResponse("mapStructure", response);
+  const ids = new Set<string>();
+  const keys = new Set<AttributeKey>();
+  for (const m of response.mappings) {
+    if (!request.items.some((i) => i.id === m.itemId) || ids.has(m.itemId) || keys.has(m.attributeKey))
+      throw new CloudContractError();
+    ids.add(m.itemId);
+    keys.add(m.attributeKey);
+  }
+}

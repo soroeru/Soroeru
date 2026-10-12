@@ -1,3 +1,4 @@
+import type { StructureMapper } from "./gemini.js";
 import type { SchemaRegistry } from "./schema-registry.js";
 import { isIP } from "node:net";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -6,6 +7,7 @@ import {
   CLOUD_LIMITS,
   validateCloudRequest,
   validateCloudResponse,
+  validateStructureMappings,
   type CloudOperation,
   type CloudRequests,
 } from "../../src/shared/cloud-contract.js";
@@ -26,6 +28,7 @@ export interface SafeLog {
 export interface ServerOptions {
   service: ServiceKind;
   schemas?: SchemaRegistry;
+  mapper?: StructureMapper;
   budget: DailyBudget;
   tickets: TicketAuthority;
   log: (entry: SafeLog) => void;
@@ -162,7 +165,11 @@ export function createCloudServer(options: ServerOptions) {
           throw new HttpError(503, "unavailable");
         case "mapStructure": {
           if (!(await options.budget.consume())) throw new HttpError(429, "budget-exhausted");
-          send(res, 200, { mappings: [], pagePurpose: "unknown" });
+          if (!options.mapper) throw new HttpError(503, "unavailable");
+          const request = body as CloudRequests["mapStructure"];
+          const response = await options.mapper.map(request);
+          validateStructureMappings(request, response);
+          send(res, 200, response);
           break;
         }
         case "tier3Ticket": {

@@ -148,7 +148,7 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
                 .catch(() => setError("設定を保存できませんでした。"));
             }}
           />{" "}
-          共有フォームスキーマを使う（送信はサイト名と構造ハッシュのみ）
+          クラウド支援を使う（サイト名・構造ハッシュ・値を含まないフォーム構造を送信）
         </label>
       )}
       <LedgerView sites={sites} results={results} busy={running} onRun={run} />

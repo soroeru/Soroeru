@@ -9,6 +9,10 @@ export async function verifyCloudEndpoints(services) {
       redirect: "error",
       signal: AbortSignal.timeout(30000),
     });
+    if (response.status === 503 && path === "/v1/agent/map-structure") {
+      assert.deepEqual(await response.json(), { error: "unavailable" }, "mapping-unavailable");
+      return undefined; // Model not configured or provider unavailable: fail closed.
+    }
     if (response.status === 429 && expected === "budgeted") {
       assert.deepEqual(await response.json(), { error: "budget-exhausted" }, `budget-status:${path}`);
       return undefined;

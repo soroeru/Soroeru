@@ -1,3 +1,4 @@
+import { VertexStructureMapper, metadataAccessToken } from "./gemini.js";
 import { FirestoreSchemaRegistry } from "./schema-registry.js";
 import { createCloudServer, type ServiceKind } from "./server.js";
 import { FirestoreDailyBudget } from "./budget.js";
@@ -12,6 +13,18 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("in
 const server = createCloudServer({
   service: service as ServiceKind,
   ...(service === "api" ? { schemas: new FirestoreSchemaRegistry() } : {}),
+  ...(service === "api" && process.env.GEMINI_MODEL_ID
+    ? {
+        mapper: new VertexStructureMapper(
+          {
+            project: process.env.GOOGLE_CLOUD_PROJECT ?? "",
+            location: process.env.GEMINI_LOCATION ?? "asia-northeast1",
+            model: process.env.GEMINI_MODEL_ID,
+          },
+          metadataAccessToken,
+        ),
+      }
+    : {}),
   cloudRunProxy: Boolean(process.env.K_SERVICE),
   // The fallback never initializes a Firestore client.
   budget: service === "api" ? new FirestoreDailyBudget(limit) : { consume: async () => false },

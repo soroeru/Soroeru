@@ -1164,3 +1164,14 @@ cache, offline reuse, and Visibility ledger/checkpoint integration. Firestore SD
 calls are isolated in tests; development-project deployment and real Chrome Side
 Panel verification remain in [`manual-test.md`](manual-test.md#tier-1-shared-schemas-560).
 
+
+### Structure-only Gemini fallback (Issue #561)
+
+The existing extension cloud-assistance setting covers Tiers 1 and 2. Configure
+an explicit Vertex model through `gemini_model_id` (Terraform) or `GEMINI_MODEL_ID`
+(runtime); see [Cloud configuration](../cloud/README.md#tier-2-structure-mapping-561).
+Run root unit tests, `npm test --prefix cloud`, and
+`node --test dist/compiled/tests/e2e/tier2-schema.e2e.js` for sanitizer privacy,
+closed responses, local validation and stale-page rejection. Live Vertex and
+Cloud log verification require the development project and the
+[manual checks](manual-test.md#tier-2-structure-mapping-561).

@@ -184,7 +184,7 @@ resource "google_project_iam_custom_role" "deploy_check" {
   project     = google_project.soroeru.project_id
   role_id     = "soroeruDeploymentCheck"
   title       = "Soroeru deployment IAM verification"
-  permissions = ["resourcemanager.projects.getIamPolicy"]
+  permissions = ["resourcemanager.projects.getIamPolicy", "aiplatform.cacheConfigs.get", "aiplatform.cacheConfigs.update"]
 }
 resource "google_project_iam_member" "deploy_check" {
   project = google_project.soroeru.project_id

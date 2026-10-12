@@ -534,3 +534,23 @@ and Chrome Side Panel checks still require the development environment.
       resolution. No schema value read occurs; hand off in the same tab. Never
       bypass the control. Change the page structure during the lookup and verify
       the stale schema cannot read values.
+
+## Tier 2 structure mapping (#561)
+
+Use only fake fixture data and a development Cloud project. Automated equivalents
+are `soroeru-tier2-resolution.test.ts`, `tier2-schema.e2e.ts`, and Cloud API tests.
+
+- [ ] Configure an explicit regional `GEMINI_MODEL_ID`, verify Vertex request/response
+      logging is disabled, and confirm no context caching or body traces exist.
+- [ ] Enable cloud assistance and run a fake profile page without an active schema.
+      Inspect the mapping POST: only domain/hash and sanitized structure, no email,
+      name, address, password, CVV, options or checked state. Confirm local collection.
+- [ ] Change DOM structure, navigate, lock the vault or invalidate the lease while
+      Gemini is pending. Discard the response. Add CAPTCHA/MFA or prohibiting terms:
+      hand off in the same tab, with no mapping read or bypass.
+- [ ] Disable cloud assistance or simulate resolve outage: use cached Tier 1/local
+      resolution only. Simulate Gemini 429/503: no retry or Tier 3 consent/read.
+- [ ] Enable sharing and inspect encrypted feedback queue: anchors/keys only, no
+      collected values. Disable sharing: no new feedback entries. No automatic send.
+- [ ] Inspect Cloud Logging, Trace and Firestore: no request/response bodies, values
+      or tokens. Only budget counts change; no automatic candidate activation.

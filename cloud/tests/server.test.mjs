@@ -210,3 +210,40 @@ test("resolve HTTP returns only a validated active registry response", async (t)
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: "active", schema });
 });
+
+test("map-structure: budgeted validated mapper, unknown IDs and provider error bodies never escape", async (t) => {
+  const body = {
+    site: "example.com",
+    pageFingerprint: hash,
+    purposeHint: "contact",
+    items: [{ id: "f-1", tag: "input", nameTokens: ["email"] }],
+  };
+  const good = {
+    mappings: [{ itemId: "f-1", attributeKey: "email", confidence: 0.9 }],
+    pagePurpose: "contact",
+  };
+  for (const mode of ["good", "unknown-id", "injection", "failure", "budget"]) {
+    let calls = 0;
+    const { post, logs } = await start(t, {
+      budget: { consume: async () => mode !== "budget" },
+      mapper: {
+        map: async (request) => {
+          calls++;
+          assert.deepEqual(request, body);
+          if (mode === "failure") throw new Error("fake-private-page-content");
+          if (mode === "unknown-id") return { ...good, mappings: [{ ...good.mappings[0], itemId: "f-99" }] };
+          if (mode === "injection") return { ...good, instruction: "fake-private-page-content" };
+          return good;
+        },
+      },
+    });
+    const response = await post("/v1/agent/map-structure", body);
+    assert.equal(response.status, mode === "good" ? 200 : mode === "budget" ? 429 : 503);
+    assert.deepEqual(
+      await response.json(),
+      mode === "good" ? good : { error: mode === "budget" ? "budget-exhausted" : "unavailable" },
+    );
+    assert.equal(calls, mode === "budget" ? 0 : 1);
+    assert.doesNotMatch(JSON.stringify(logs), /fake-private|example.com|f-1/);
+  }
+});
