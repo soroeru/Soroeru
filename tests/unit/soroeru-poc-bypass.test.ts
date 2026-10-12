@@ -1,11 +1,11 @@
 // SEC-002 (#23): `checkBypassDenylist` is the static check behind
 // `npm run poc -- check-bypass`: no `dependencies` / `devDependencies` entry
-// in package.json may match a CAPTCHA-solving or anti-bot/fingerprint-evasion
-// package name (docs/security.md §7).
+// in package.json or cloud/package.json may match a CAPTCHA-solving or
+// anti-bot/fingerprint-evasion package name (docs/security.md §7, Issue #564).
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +53,34 @@ test("flags an anti-bot/fingerprint-evasion devDependency", async () => {
 test("does not flag ordinary automation dependencies", async () => {
   await withFixture(async (root) => {
     await writeMinimalPackageJson(root, { dependencies: { playwright: "^1.60.0" }, devDependencies: { typescript: "^5.8.3" } });
+    const result = checkBypassDenylist(root);
+    assert.deepEqual(result.violations, []);
+  });
+});
+
+// Issue #564: cloud/package.json is also scanned
+
+test("flags a CAPTCHA-solving dependency in cloud/package.json (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await writeMinimalPackageJson(root);
+    await mkdir(join(root, "cloud"), { recursive: true });
+    await writeFile(
+      join(root, "cloud", "package.json"),
+      JSON.stringify({ name: "fixture-cloud", dependencies: { "capsolver-npm": "^1.0.0" }, devDependencies: {} }),
+      "utf8",
+    );
+
+    const result = checkBypassDenylist(root);
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0]!, /cloud\/package\.json/);
+    assert.match(result.violations[0]!, /capsolver-npm.*capsolver/);
+  });
+});
+
+test("does not fail when cloud/package.json is absent (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await writeMinimalPackageJson(root);
+    // no cloud/ directory — should not throw
     const result = checkBypassDenylist(root);
     assert.deepEqual(result.violations, []);
   });

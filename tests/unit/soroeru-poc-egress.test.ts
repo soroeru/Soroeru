@@ -1,9 +1,11 @@
-// PRIV-001 (#20): network egress is limited to (a) the target sites the user
-// acts on and (b) the user's configured AI provider (docs/security.md §6).
+// PRIV-001 (#20) + Issue #564: network egress is limited to (a) the target sites
+// the user acts on, (b) the user's configured AI provider (non-extension only),
+// and (c) Soroeru Cloud (docs/security.md §6).
 // `checkNetworkEgress` is the static check behind `npm run poc -- check-egress`:
-// every network-call site in src/ or run/ must carry a
-// `// egress: target-site|ai-provider` annotation, and no telemetry/analytics
-// dependency may be present in package.json.
+// every network-call site in src/, run/, electron/, extension/, cloud/, or
+// native-host/ must carry a `// egress: <allowed-category>` annotation, and no
+// telemetry/analytics dependency, no Google Cloud SDK in root package.json, and no
+// GCP credential-like string in extension source may be present.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -115,5 +117,182 @@ test("ignores sites/ (the local 127.0.0.1 PoC test-site server)", async () => {
     const result = checkNetworkEgress(root);
     assert.deepEqual(result.violations, []);
     assert.equal(result.scannedFiles, 0);
+  });
+});
+
+// Issue #564: extension/ must not use ai-provider annotation
+
+test("flags extension file annotated with ai-provider (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "extension"), { recursive: true });
+    await writeFile(
+      join(root, "extension/ai-caller.ts"),
+      [
+        "export async function callAi(url: string) {",
+        "  // egress: ai-provider — direct AI call from extension",
+        "  const res = await fetch(url);",
+        "  return res.text();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0]!, /ai-provider/);
+    assert.match(result.violations[0]!, /soroeru-cloud/);
+  });
+});
+
+test("allows extension file annotated with soroeru-cloud (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "extension"), { recursive: true });
+    await writeFile(
+      join(root, "extension/cloud-client.ts"),
+      [
+        "export async function callCloud(url: string) {",
+        "  // egress: soroeru-cloud — typed Cloud Run API",
+        "  const res = await fetch(url);",
+        "  return res.text();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.deepEqual(result.violations, []);
+  });
+});
+
+test("allows non-extension file annotated with ai-provider (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "src/agent"), { recursive: true });
+    await writeFile(
+      join(root, "src/agent/ai.ts"),
+      [
+        "export async function callAi(url: string) {",
+        "  // egress: ai-provider — Anthropic API",
+        "  const res = await fetch(url);",
+        "  return res.text();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.deepEqual(result.violations, []);
+  });
+});
+
+// Issue #564: Google Cloud SDK must not appear in root package.json
+
+test("flags Google Cloud SDK in root package.json (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await writeMinimalPackageJson(root, { dependencies: { "@google-cloud/firestore": "^9.0.0" } });
+
+    const result = checkNetworkEgress(root);
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0]!, /@google-cloud\/firestore/);
+    assert.match(result.violations[0]!, /cloud\/package\.json/);
+  });
+});
+
+test("does not flag Google Cloud SDK package in cloud/ scan dir (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    // cloud/src/ file with a soroeru-cloud annotated call passes; GCP SDK is only
+    // forbidden in the ROOT package.json, not detected by the source-file scan.
+    await mkdir(join(root, "cloud/src"), { recursive: true });
+    await writeFile(
+      join(root, "cloud/src/registry.ts"),
+      [
+        "export async function fetchSchema(url: string) {",
+        "  // egress: soroeru-cloud — internal Cloud Run endpoint",
+        "  const res = await fetch(url);",
+        "  return res.json();",
+        "}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.deepEqual(result.violations, []);
+  });
+});
+
+// Issue #564: GCP credential patterns must not appear in extension source
+
+test("flags GCP API key in extension source (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "extension"), { recursive: true });
+    await writeFile(
+      join(root, "extension/config.ts"),
+      ['export const API_KEY = "AIzaSyD-9tSrke72I6EjBcQN_H4ArWuNwE7IjZE";', ""].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0]!, /GCP credential/);
+    assert.match(result.violations[0]!, /config\.ts:1:/);
+  });
+});
+
+test("flags GCP service-account JSON marker in extension source (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "extension"), { recursive: true });
+    await writeFile(
+      join(root, "extension/creds.ts"),
+      ['const cred = { "type": "service_account", "project_id": "my-proj" };', ""].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0]!, /GCP credential/);
+  });
+});
+
+test("does not flag GCP credential patterns outside extension/ (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    // A cloud/ service file referencing its own service-account is outside the
+    // extension credential check scope.
+    await mkdir(join(root, "cloud/src"), { recursive: true });
+    await writeFile(
+      join(root, "cloud/src/auth.ts"),
+      ['const cred = { "type": "service_account" };', ""].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.deepEqual(result.violations, []);
+  });
+});
+
+// Issue #564: cloud/ is included in the egress scan
+
+test("flags unannotated network call in cloud/ source (Issue #564)", async () => {
+  await withFixture(async (root) => {
+    await mkdir(join(root, "cloud/src"), { recursive: true });
+    await writeFile(
+      join(root, "cloud/src/bad.ts"),
+      ["export async function call(url: string) {", "  const res = await fetch(url);", "  return res.text();", "}", ""].join("\n"),
+      "utf8",
+    );
+    await writeMinimalPackageJson(root);
+
+    const result = checkNetworkEgress(root);
+    assert.equal(result.violations.length, 1);
+    assert.match(result.violations[0]!, /cloud\/src\/bad\.ts:2:.*fetch\(url\)/);
   });
 });

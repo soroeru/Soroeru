@@ -219,7 +219,9 @@ function cmdCheckEgress(): void {
     process.exitCode = 1;
     return;
   }
-  console.log("ok: every network call is annotated (target-site / ai-provider); no telemetry/analytics dependency found");
+  console.log(
+    "ok: every network call is annotated; no telemetry/analytics dependency, no GCP SDK in root package.json, no GCP credentials in extension source",
+  );
 }
 
 /** PRIV-002 (#21): fail if a local-write site bypasses the encrypted storage abstraction unannotated. */
