@@ -53,6 +53,7 @@ function clientAddress(req: IncomingMessage, cloudRunProxy: boolean): string {
   const address = addresses.at(-1)?.trim();
   if (addresses.length > 32 || !address || !isIP(address)) throw new HttpError(400, "invalid-request");
   // URL parsing canonicalizes IPv6 spellings so one address cannot acquire multiple buckets.
+  // egress: soroeru-cloud — local URL construction for IPv6 normalization; no request is sent.
   return isIP(address) === 6 ? new URL(`http://[${address}]`).hostname : address;
 }
 /** Bounded in-memory per-client IP buckets; addresses never enter logs or persistence. */

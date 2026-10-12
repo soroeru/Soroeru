@@ -398,18 +398,21 @@ personal values, raw candidate evidence, or AI prompts. Conflict resolution, syn
 metadata, and provider authentication must be designed so they do not create plaintext
 shadow state.
 
-**Static enforcement (PRIV-001 / #20)**: `npm run poc -- check-egress`
+**Static enforcement (PRIV-001 / #20, Issue #564)**: `npm run poc -- check-egress`
 (`src/dev/egress-check.ts`, tested by
 `tests/unit/soroeru-poc-egress.test.ts`) scans
-`{src,run}/**/*.ts` for network-call sites and fails unless each one
-carries a `// egress: target-site` or `// egress: ai-provider` annotation, and fails if
-`package.json` gains a dependency matching a telemetry/analytics denylist (Sentry,
-Segment, Datadog, etc.). Issue #554 adds a `// egress: soroeru-cloud` class for the extension's
-Cloud Run client, extends the scan to `extension/` and `cloud/`, and allows Google Cloud SDKs
-only in `cloud/package.json`; the third-party telemetry denylist is unchanged. `sites/` (the local 127.0.0.1-only PoC
+`{src,run,electron,extension,cloud,native-host}/**/*.ts` for network-call sites and fails
+unless each one carries an allowed `// egress: <category>` annotation:
+`target-site` (the site the user acts on), `ai-provider` (user's AI provider —
+non-extension code only), or `soroeru-cloud` (typed Cloud Run API). Files under
+`extension/` must not use `ai-provider` — the extension routes AI calls via Soroeru Cloud.
+The check also fails if `package.json` gains a telemetry/analytics dependency (Sentry,
+Segment, Datadog, etc.), if the root `package.json` gains a Google Cloud SDK dependency
+(these belong only in `cloud/package.json`), or if extension source files contain
+GCP credential-like strings (service-account JSON fields, `AIza…` API key format). `sites/` (the local 127.0.0.1-only PoC
 test-site server) is out of scope — it is not external egress. A new, unannotated
-network destination — or a telemetry-shaped dependency — fails this check and must be
-reviewed against this section before it is annotated.
+network destination — or a denied dependency — fails this check and must be
+reviewed against this section before it is annotated or added.
 
 ## 7. Wall Safety Boundaries (non-negotiable)
 
@@ -1072,7 +1075,9 @@ notice that `requirements.md` §8 requires.
 
 ### 15.6 Release checklist additions
 
-- [ ] No Google Cloud credential, API key, or service-account material in the extension bundle.
+- [x] No Google Cloud credential, API key, or service-account material in the extension bundle
+  (automated: `npm run poc -- check-egress` detects GCP credential patterns in `extension/`
+  source via `egress-check.ts`, Issue #564).
 - [ ] Tier 3 service logs and traces contain no request/response bodies (manual check of Cloud
   Logging and Trace after a demo run with fake data).
 - [ ] BigQuery table schema equals §15.3 exactly.

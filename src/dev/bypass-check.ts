@@ -5,13 +5,13 @@
 // bypass, hide, or outsource them (RFC-001 v3 §10b).
 //
 // This is a dependency-denylist check, not a code-behavior check: it scans
-// package.json `dependencies` / `devDependencies` for package names matching
-// known CAPTCHA-solver or anti-bot/fingerprint-evasion tooling. A match means
-// a new, unreviewed bypass-oriented dependency was added and must be reviewed
-// against docs/security.md §7 before it is accepted.
+// `package.json` and `cloud/package.json` `dependencies` / `devDependencies`
+// for package names matching known CAPTCHA-solver or anti-bot/fingerprint-evasion
+// tooling (Issue #564). A match means a new, unreviewed bypass-oriented dependency
+// was added and must be reviewed against docs/security.md §7 before it is accepted.
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 /** Dependency-name substrings that indicate CAPTCHA-solving or anti-bot/fingerprint-evasion tooling. */
 const BYPASS_DENYLIST = [
@@ -40,24 +40,34 @@ export interface BypassCheckResult {
 
 /**
  * Run the SEC-002 dependency-denylist check against the repository at
- * `repoRoot`. `violations` is empty when no `dependencies` /
- * `devDependencies` entry in `package.json` matches a known CAPTCHA-solving
- * or anti-bot/fingerprint-evasion package name.
+ * `repoRoot`. Scans both `package.json` and `cloud/package.json` (Issue #564).
+ * `violations` is empty when no `dependencies` / `devDependencies` entry in
+ * either file matches a known CAPTCHA-solving or anti-bot/fingerprint-evasion
+ * package name.
  */
 export function checkBypassDenylist(repoRoot: string): BypassCheckResult {
-  const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")) as {
-    dependencies?: Record<string, string>;
-    devDependencies?: Record<string, string>;
-  };
-  const names = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
   const violations: string[] = [];
-  for (const name of names) {
-    const lower = name.toLowerCase();
-    const hit = BYPASS_DENYLIST.find((bad) => lower.includes(bad));
-    if (hit) {
-      violations.push(
-        `package.json: dependency "${name}" matches CAPTCHA-solving / bot-detection-evasion denylist entry "${hit}" (docs/security.md §7)`,
-      );
+  const pkgPaths = [join(repoRoot, "package.json"), join(repoRoot, "cloud", "package.json")];
+  for (const pkgPath of pkgPaths) {
+    let pkg: { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+    try {
+      pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+      };
+    } catch {
+      continue;
+    }
+    const relPath = relative(repoRoot, pkgPath);
+    const names = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {})];
+    for (const name of names) {
+      const lower = name.toLowerCase();
+      const hit = BYPASS_DENYLIST.find((bad) => lower.includes(bad));
+      if (hit) {
+        violations.push(
+          `${relPath}: dependency "${name}" matches CAPTCHA-solving / bot-detection-evasion denylist entry "${hit}" (docs/security.md §7)`,
+        );
+      }
     }
   }
   return { violations };
