@@ -1,4 +1,9 @@
-import { ResolutionOrchestrator, type ResolveClient } from "../resolution-orchestrator.js";
+import {
+  ResolutionOrchestrator,
+  type ResolveClient,
+  type Tier3ConsentCallback,
+  type Tier3ConsentParams,
+} from "../resolution-orchestrator.js";
 import { deliverQueue, type DeliveryClient } from "../cloud-delivery-queue.js";
 /**
  * Side Panel runtime host for Visibility runs (Issue #558). It wires the unlocked
@@ -50,16 +55,23 @@ export class VisibilityHost {
   private readonly stopStateWatch: () => void;
   private bound = false;
   private stopping = false;
+  private consentGateProvider: Tier3ConsentCallback | undefined;
+  private activeTabOrigin: string | undefined;
+  private readonly resolver: ResolutionOrchestrator;
 
   constructor(private readonly options: VisibilityHostOptions) {
-    const resolver = new ResolutionOrchestrator({
+    this.resolver = new ResolutionOrchestrator({
       session: options.session,
       clientVersion: "0.1.2",
       ...(options.cloudClient ? { client: options.cloudClient } : {}),
       ...(options.deliveryClient ? { deliveryClient: options.deliveryClient } : {}),
       sendPageCommand: (command) => options.leaseClient.sendPageCommand(command),
       isActive: () => !this.stopping && options.leaseClient.isLeaseActive(),
+      showConsentGate: (params: Tier3ConsentParams) => this.handleConsentGate(params),
+      // currentOrigin is omitted intentionally: origin is already supplied via
+      // consentGate params.origin and the worktree host has no static origin.
     });
+    const resolver = this.resolver;
     this.service = new VisibilityService({
       resolveSharedSchema: async (site) => {
         try {
@@ -107,6 +119,19 @@ export class VisibilityHost {
   onEvent(listener: (event: VisibilityEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Register the UI callback that shows the Tier 3 consent gate and returns the user's decision.
+   * Pass `undefined` to remove it (the panel unmounts or cloud assist is disabled).
+   */
+  setConsentGateProvider(provider: ((params: Tier3ConsentParams) => Promise<"approved" | "declined" | "timeout">) | undefined): void {
+    this.consentGateProvider = provider;
+  }
+
+  private async handleConsentGate(params: Tier3ConsentParams): Promise<"approved" | "declined" | "timeout"> {
+    if (!this.consentGateProvider) return "declined";
+    return this.consentGateProvider(params);
   }
 
   /** Ledger sites in the user's order; empty while the vault is locked. */

@@ -201,6 +201,9 @@ export interface Capability extends DomainRecord {
  * Inspectable decision evidence (RFC-002 §4.3). Stores references/hashes/masked
  * snippets only — never screenshot pixels, full HTML, cookies, tokens, or raw
  * values.
+ *
+ * Extended (design #554 §6.4): `kind: "tier3-consent"` records C6 consent events —
+ * time, site hash, attribute keys, result, payload byte count and SHA-256. No values duplicated.
  */
 export interface Evidence extends DomainRecord {
   siteAccountId?: string;
@@ -210,6 +213,21 @@ export interface Evidence extends DomainRecord {
   fieldType?: string;
   maskedSnippet?: string;
   normalizedHash?: string;
+  /** Discriminates Tier 3 consent audit records from ordinary field evidence. */
+  kind?: "tier3-consent";
+  /** Populated only when `kind === "tier3-consent"`. */
+  tier3Consent?: {
+    /** HMAC-SHA-256 hex of the site eTLD+1 (no raw site name stored). */
+    siteHash: string;
+    /** Attribute keys that were shown in the consent gate. */
+    attributeKeys: string[];
+    /** Outcome of the consent event. */
+    result: "approved" | "declined" | "timeout" | "error";
+    /** Wire-size of the consented payload in bytes. */
+    payloadBytes: number;
+    /** SHA-256 hex of the canonical payload JSON. */
+    payloadSha256: string;
+  };
 }
 
 /** Initial footprint or post-action change record (RFC-002 §4.1 / §5.1). */

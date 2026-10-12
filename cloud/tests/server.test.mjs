@@ -99,7 +99,8 @@ test("tickets bind site, consent and exact payload; replay and expiry fail close
     site: payload.site,
     payloadSha256: createHash("sha256").update(tier3PayloadJson(payload)).digest("hex"),
   }).ticket;
-  const { post } = await start(t, { service: "pii-fallback", tickets: authority });
+  const noopReader = { read: async () => ({ values: [] }) };
+  const { post } = await start(t, { service: "pii-fallback", tickets: authority, reader: noopReader });
   assert.equal(
     (await post("/v1/agent/read-with-consent", { ...payload, site: "other.example.com", ticket })).status,
     403,
@@ -162,7 +163,11 @@ test("deployment endpoint smoke accepts exhausted and one-unit budgets without b
   for (const remaining of [0, 1, 2]) {
     let units = remaining;
     const api = await start(t, { budget: { consume: async () => units > 0 && units-- > 0 } });
-    const fallback = await start(t, { service: "pii-fallback" });
+    // Smoke test needs a no-op reader so readWithConsent returns 200 (not 503) on a valid ticket.
+    const fallback = await start(t, {
+      service: "pii-fallback",
+      reader: { read: async () => ({ values: [] }) },
+    });
     await verifyCloudEndpoints({ api: api.url, "pii-fallback": fallback.url });
     assert.equal(units, 0);
   }
@@ -248,4 +253,73 @@ test("map-structure: budgeted validated mapper, unknown IDs and provider error b
     assert.equal(calls, mode === "budget" ? 0 : 1);
     assert.doesNotMatch(JSON.stringify(logs), /fake-private|example.com|f-1/);
   }
+});
+
+test("read-with-consent: validated reader response forwarded, body/values/site never escape logs", async (t) => {
+  let now = 1000000;
+  const authority = new TicketAuthority(secret, () => now);
+  const payload = {
+    consentId: uuid,
+    site: "example.com",
+    requestedKeys: ["email"],
+    items: [{ id: "d-1", text: "fake@example.com" }],
+  };
+  const payloadSha256 = createHash("sha256").update(tier3PayloadJson(payload)).digest("hex");
+  const good = { values: [{ itemId: "d-1", attributeKey: "email", value: "fake@example.com" }] };
+  for (const mode of ["good", "bad-item", "bad-key", "failure", "no-reader"]) {
+    let calls = 0;
+    const ticket = authority.issue({ consentId: uuid, site: payload.site, payloadSha256 }).ticket;
+    const { post, logs } = await start(t, {
+      service: "pii-fallback",
+      tickets: authority,
+      ...(mode !== "no-reader"
+        ? {
+            reader: {
+              read: async (req) => {
+                calls++;
+                if (mode === "failure") throw new Error("fake-private-pii-content");
+                if (mode === "bad-item")
+                  return { values: [{ itemId: "d-99", attributeKey: "email", value: "fake@example.com" }] };
+                if (mode === "bad-key")
+                  return {
+                    values: [{ itemId: "d-1", attributeKey: "name.full", value: "fake@example.com" }],
+                  };
+                assert.equal(req.site, payload.site);
+                return good;
+              },
+            },
+          }
+        : {}),
+    });
+    const response = await post("/v1/agent/read-with-consent", { ...payload, ticket });
+    const expectedStatus = mode === "good" ? 200 : 503;
+    assert.equal(response.status, expectedStatus, `mode=${mode}`);
+    if (mode === "good") {
+      assert.deepEqual(await response.json(), good);
+      assert.equal(calls, 1);
+    }
+    // Logs must never contain personal values, site names, or item IDs.
+    assert.doesNotMatch(JSON.stringify(logs), /fake-private|example.com|fake@/);
+  }
+});
+
+test("read-with-consent: missing reader returns 503 without leaking request body", async (t) => {
+  let now = 1000000;
+  const authority = new TicketAuthority(secret, () => now);
+  const payload = {
+    consentId: uuid,
+    site: "example.com",
+    requestedKeys: ["email"],
+    items: [{ id: "d-1", text: "fake@example.com" }],
+  };
+  const ticket = authority.issue({
+    consentId: uuid,
+    site: payload.site,
+    payloadSha256: createHash("sha256").update(tier3PayloadJson(payload)).digest("hex"),
+  }).ticket;
+  const { post, logs } = await start(t, { service: "pii-fallback", tickets: authority });
+  const response = await post("/v1/agent/read-with-consent", { ...payload, ticket });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "unavailable" });
+  assert.doesNotMatch(JSON.stringify(logs), /example.com|fake@/);
 });

@@ -2,10 +2,12 @@
 // wall hand-off card (instruction + Resume / Abort). It shows only the sanitized events and
 // counts from VisibilityService; collected values and hand-off credentials are never rendered.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteAccount } from "../../src/domain/entities.js";
 import type { VisibilityRunResultView } from "../../electron/ipc/contract.js";
 import type { VisibilityHost } from "./visibility-host.js";
+import { ConsentGate } from "./ConsentGate.js";
+import type { ConsentGateProps } from "./ConsentGate.js";
 
 export function HandoffCard(props: {
   instruction: string;
@@ -83,6 +85,9 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
   const [instruction, setInstruction] = useState<string | undefined>();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  // Tier 3 consent gate state. When set, the panel renders the gate instead of the ledger.
+  const [consentGate, setConsentGate] = useState<Omit<ConsentGateProps, "onApprove" | "onDecline"> | undefined>();
+  const consentResolve = useRef<((decision: "approved" | "declined") => void) | undefined>(undefined);
 
   useEffect(
     () =>
@@ -93,11 +98,26 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
         else {
           setRunning(false);
           setInstruction(undefined);
+          setConsentGate(undefined);
           setResults((prev) => ({ ...prev, [event.result.siteAccountId]: event.result }));
         }
       }),
     [host],
   );
+
+  // Wire up the consent gate callback into the VisibilityHost.
+  useEffect(() => {
+    host.setConsentGateProvider((params) => {
+      return new Promise<"approved" | "declined" | "timeout">((resolve) => {
+        consentResolve.current = (decision) => {
+          setConsentGate(undefined);
+          resolve(decision);
+        };
+        setConsentGate({ origin: params.origin, attributeKeys: params.attributeKeys });
+      });
+    });
+    return () => host.setConsentGateProvider(undefined);
+  }, [host]);
 
   const run = useCallback(
     (site: SiteAccount) => {
@@ -119,6 +139,7 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
         .finally(() => {
           setRunning(false);
           setInstruction(undefined);
+          setConsentGate(undefined);
         });
     },
     [host],
@@ -130,6 +151,14 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
         <p role="alert" className="text-red-600">
           {error}
         </p>
+      )}
+      {consentGate && (
+        <ConsentGate
+          origin={consentGate.origin}
+          attributeKeys={consentGate.attributeKeys}
+          onApprove={() => consentResolve.current?.("approved")}
+          onDecline={() => consentResolve.current?.("declined")}
+        />
       )}
       {instruction !== undefined && (
         <HandoffCard instruction={instruction} onResume={() => host.resume()} onAbort={() => host.abort()} />
@@ -151,7 +180,7 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
           クラウド支援を使う（サイト名・構造ハッシュ・値を含まないフォーム構造を送信）
         </label>
       )}
-      <LedgerView sites={sites} results={results} busy={running} onRun={run} />
+      {!consentGate && <LedgerView sites={sites} results={results} busy={running} onRun={run} />}
     </div>
   );
 }
