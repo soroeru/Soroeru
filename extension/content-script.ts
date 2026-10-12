@@ -6,6 +6,7 @@ import {
   type ObservationToken,
 } from "../src/automation/collection-observation.js";
 import { scanInPage } from "../src/agent/scan.js";
+import { secretCollectionItem } from "../src/automation/ai-visibility-contract.js";
 import {
   EXTENSION_MESSAGE_VERSION,
   isOriginInLeaseScope,
@@ -26,6 +27,7 @@ type ContentCommand =
   | { command: "readSchema"; schema: FormSchema }
   | { command: "readValues"; fieldIds?: string[] }
   | { command: "readDisplayValues"; valueIds?: string[] }
+  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[] }
   | { command: "fill"; fieldId: string; value: string }
   | { command: "click"; selector: string }
   | { command: "waitForReady" }
@@ -102,6 +104,112 @@ function readDisplayValues(valueIds?: string[]): Record<string, string> {
   return values;
 }
 
+/** Value shapes that are secret-like: 3–4 digits or 6–8 digits only. */
+const SECRET_DIGIT_PATTERN = /^\d{3,4}$|^\d{6,8}$/;
+
+function maskText(text: string): string {
+  return SECRET_DIGIT_PATTERN.test(text.trim()) ? "[SECRET]" : text;
+}
+
+/** Exported result type for `readRegionMasked`. */
+export interface MaskedRegionItem {
+  id: string;
+  label?: string;
+  text: string;
+}
+
+/**
+ * Read items from the subtrees containing the requested attributes (design #554 §5.3).
+ * C0 secrets are replaced with "[SECRET]" using the local classifier before the result
+ * leaves the page. Items already resolved by Tier 1/2 (passed via `resolvedIds`) are
+ * excluded to limit disclosure. The caller (Tier3PayloadBuilder) re-validates masking as
+ * defense-in-depth.
+ */
+export function readRegionMasked(requestedKeys: string[], resolvedIds?: string[]): { items: MaskedRegionItem[] } {
+  if (!document.body) return { items: [] };
+  const excludeIds = new Set(resolvedIds ?? []);
+  const result: MaskedRegionItem[] = [];
+  // Collect all labeled elements with data-af-id (scanner-assigned IDs).
+  const labeled = Array.from(document.querySelectorAll<HTMLElement>("[data-af-id]"));
+  // Limit to a reasonable scan window.
+  for (const element of labeled.slice(0, 400)) {
+    const id = element.dataset.afId ?? "";
+    if (!id.startsWith("f-") && !id.startsWith("d-")) continue;
+    // Exclude items already resolved by Tier 1/2 (B1: minimize disclosure).
+    if (excludeIds.has(id)) continue;
+
+    // Find a nearby label for this element.
+    let labelText: string | undefined;
+    const labelEl =
+      element instanceof HTMLInputElement && element.id
+        ? document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(element.id)}"]`)
+        : null;
+    if (labelEl) labelText = labelEl.textContent?.trim();
+    if (!labelText) {
+      // Walk up to find a wrapping label or dl/dd/tr label context.
+      let ancestor: Element | null = element.parentElement;
+      for (let depth = 0; depth < 5 && ancestor; depth++, ancestor = ancestor.parentElement) {
+        const dt = ancestor.querySelector("dt");
+        const th = ancestor.querySelector("th");
+        if (dt) { labelText = dt.textContent?.trim(); break; }
+        if (th) { labelText = th.textContent?.trim(); break; }
+        if (ancestor.tagName === "LABEL") {
+          const raw = (element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement)
+            ? (element.value ?? "")
+            : (element.textContent ?? "");
+          labelText = ancestor.textContent?.replace(raw, "").trim();
+          break;
+        }
+      }
+    }
+
+    // Compute the visible text value. Use local classifier (secretCollectionItem) for masking (S2).
+    let text: string;
+    const isFormControl =
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement;
+    if (isFormControl) {
+      // Build a minimal CollectionItem so the local classifier (secretCollectionItem) can check it.
+      const tag: "input" | "textarea" | "select" =
+        element instanceof HTMLInputElement ? "input" :
+        element instanceof HTMLTextAreaElement ? "textarea" : "select";
+      const inputEl = element instanceof HTMLInputElement ? element : null;
+      const minimalItem = {
+        id,
+        field: {
+          fieldId: id,
+          tag,
+          type: inputEl?.type ?? "text",
+          name: (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).name ?? "",
+          id: element.id,
+          autocomplete: inputEl?.autocomplete ?? "",
+          required: (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).required ?? false,
+          placeholder: inputEl?.placeholder ?? "",
+          labels: labelText ? [labelText] : [],
+          nearbyText: labelText ?? "",
+        },
+        value: (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value ?? "",
+      };
+      text = secretCollectionItem(minimalItem) ? "[SECRET]" : (minimalItem.value).trim();
+    } else {
+      text = (element.textContent ?? "").trim();
+      // Fail-closed: mask digit-only text that could be a code/CVV.
+      text = maskText(text);
+    }
+
+    // Drop items with empty text that contribute nothing.
+    if (!text) continue;
+
+    const item: MaskedRegionItem = { id, text };
+    if (labelText) item.label = labelText.slice(0, 64);
+    result.push(item);
+  }
+  return { items: result };
+}
+
 async function waitForReady(): Promise<ReturnType<typeof scanPage>> {
   let snapshot = scanPage();
   const deadline = Date.now() + 5000;
@@ -133,6 +241,7 @@ async function execute(command: ContentCommand): Promise<unknown> {
     case "schemaFingerprint": return schemaPageFingerprint();
     case "structureSnapshot": return structurePageSnapshot(command.site);
     case "readSchema": return readSchemaPage(command.schema);
+    case "readRegionMasked": return readRegionMasked(command.requestedKeys, command.resolvedIds);
     case "snapshot":
       return scanPage();
     case "readValues":
@@ -191,6 +300,12 @@ function toContentCommand(command: PageCommand): ContentCommand | undefined {
       return {
         command: "readDisplayValues",
         ...(command.valueIds === undefined ? {} : { valueIds: command.valueIds }),
+      };
+    case "readRegionMasked":
+      return {
+        command: "readRegionMasked",
+        requestedKeys: command.requestedKeys,
+        ...(command.resolvedIds !== undefined ? { resolvedIds: command.resolvedIds } : {}),
       };
     default:
       return command;

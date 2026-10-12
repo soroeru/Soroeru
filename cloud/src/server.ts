@@ -1,4 +1,4 @@
-import type { StructureMapper } from "./gemini.js";
+import type { StructureMapper, PiiReader } from "./gemini.js";
 import type { SchemaRegistry } from "./schema-registry.js";
 import type { SchemaFeedbackHandler } from "./schema-feedback.js";
 import type { TelemetryWriter } from "./telemetry.js";
@@ -9,6 +9,7 @@ import {
   CLOUD_LIMITS,
   validateCloudRequest,
   validateCloudResponse,
+  validateConsentedReadValues,
   validateStructureMappings,
   type CloudOperation,
   type CloudRequests,
@@ -32,6 +33,8 @@ export interface ServerOptions {
   schemas?: SchemaRegistry;
   feedback?: SchemaFeedbackHandler;
   mapper?: StructureMapper;
+  /** PII fallback reader; required when service === "pii-fallback". */
+  reader?: PiiReader;
   telemetry?: TelemetryWriter;
   budget: DailyBudget;
   tickets: TicketAuthority;
@@ -189,7 +192,11 @@ export function createCloudServer(options: ServerOptions) {
         case "readWithConsent": {
           if (!options.tickets.consume(body as CloudRequests["readWithConsent"]))
             throw new HttpError(403, "invalid-ticket");
-          send(res, 200, { values: [] });
+          if (!options.reader) throw new HttpError(503, "unavailable");
+          const readResult = await options.reader.read(body as CloudRequests["readWithConsent"]);
+          // Cross-check: reader cannot invent item IDs or return unrequested attribute keys.
+          validateConsentedReadValues(body as CloudRequests["readWithConsent"], readResult);
+          send(res, 200, readResult);
           break;
         }
       }

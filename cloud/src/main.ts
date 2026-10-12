@@ -1,4 +1,4 @@
-import { VertexStructureMapper, metadataAccessToken } from "./gemini.js";
+import { VertexStructureMapper, VertexPiiReader, metadataAccessToken } from "./gemini.js";
 import { FirestoreSchemaRegistry } from "./schema-registry.js";
 import { SchemaFeedbackHandler } from "./schema-feedback.js";
 import { BigQueryTelemetryWriter } from "./telemetry.js";
@@ -27,6 +27,18 @@ const server = createCloudServer({
   ...(service === "api" && process.env.GEMINI_MODEL_ID
     ? {
         mapper: new VertexStructureMapper(
+          {
+            project: process.env.GOOGLE_CLOUD_PROJECT ?? "",
+            location: process.env.GEMINI_LOCATION ?? "asia-northeast1",
+            model: process.env.GEMINI_MODEL_ID,
+          },
+          metadataAccessToken,
+        ),
+      }
+    : {}),
+  ...(service === "pii-fallback" && process.env.GEMINI_MODEL_ID
+    ? {
+        reader: new VertexPiiReader(
           {
             project: process.env.GOOGLE_CLOUD_PROJECT ?? "",
             location: process.env.GEMINI_LOCATION ?? "asia-northeast1",

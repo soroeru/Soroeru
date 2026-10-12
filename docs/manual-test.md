@@ -81,6 +81,36 @@ Automated equivalents are Tier 2 unit, browser and Cloud tests.
 - [ ] **Idempotency key preserved**: capture the queue item before delivery. After
       retry delivery, confirm the `idempotencyKey` is identical to the original.
 
+## Tier 3 consent gate and PII fallback (#562)
+
+Use only fake fixture data and a development Cloud project. Automated equivalents
+are `soroeru-tier3-resolution.test.ts` and Cloud API tests (`server.test.mjs`).
+
+- [ ] Enable cloud assistance, arrange a fake profile page with at least one field
+      Tier 1 and Tier 2 leave unresolved, and confirm the consent gate dialog appears
+      with the correct origin and the list of requested attribute keys.
+- [ ] Decline the consent gate: no `tier3-ticket` or `read-with-consent` request is
+      sent; the result carries the Tier 2 values with the unresolved field still missing.
+      Close the dialog via the X button and verify the same outcome.
+- [ ] Let the gate expire (or set the deadline to a short test value): no API call is
+      made; the result is the same as decline.
+- [ ] Approve the gate: `tier3-ticket` is called once, `read-with-consent` once.
+      Inspect both requests: no site name in plain text, no raw values, no passwords,
+      CVV, or OTP items in the payload. Confirm the consent ID is a fresh UUID each run.
+- [ ] Toggle cloud assistance off while the gate is open: the gate closes with
+      "declined" and no API call is made.
+- [ ] Inspect Cloud Logging and Trace for the `tier3-ticket` and `read-with-consent`
+      handlers: no request body content, no response values, no site name, and no
+      PII appear in log entries or trace spans. Only the consent ID, payload hash,
+      payload byte count, and budget-decrement event are logged.
+- [ ] Verify that the per-day budget counter increments on approval and that a second
+      approval on the same day uses the same counter record (idempotency key prevents
+      double-decrement on retry).
+- [ ] Confirm that password, CVV, and OTP fields (type=password, autocomplete=
+      current-password / new-password / one-time-code / cc-csc) are never included
+      in the `readRegionMasked` payload sent to the cloud, even if they appear on
+      the same page as the unresolved fields.
+
 ## Cloud deployment
 
 - [ ] Run `node scripts/check-cloud-deployment.mjs <project-id>` after runtime
