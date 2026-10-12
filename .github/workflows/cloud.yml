@@ -66,6 +66,7 @@ jobs:
           for SERVICE in api pii-fallback; do
             docker run --rm --mount "type=bind,source=${PWD}/cloud/tests/startup-smoke.mjs,target=/tmp/startup-smoke.mjs,readonly" \
               -e "SOROERU_SERVICE=${SERVICE}" -e TIER3_TICKET_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+              -e FEEDBACK_VALIDATOR_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
               soroeru-cloud:test node /tmp/startup-smoke.mjs
           done
   deploy:
