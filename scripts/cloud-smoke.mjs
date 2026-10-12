@@ -100,6 +100,6 @@ export async function verifyCloudEndpoints(services) {
       schemaFingerprint: hash,
       occurredAt: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
     },
-    503,
+    204,
   );
 }
