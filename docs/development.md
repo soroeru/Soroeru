@@ -163,6 +163,28 @@ variable, so ensure the reviewed deployment configuration supplies it rather
 than assuming a successful deploy enabled inference. Cloud Billing alerts are
 notifications, not a spending cap. Do not deploy merely to review documentation.
 
+## Isolated development Cloud resources
+
+Use `infra/dev-shared` once per dedicated development project for Firestore,
+service accounts and log exclusions. Use `infra/dev` for Issue-suffixed Cloud Run
+resources only when local tests cannot verify the change. Keep production separate;
+never destroy the shared layer as part of an individual Issue's cleanup.
+
+```bash
+terraform -chdir=infra/dev-shared init
+terraform -chdir=infra/dev-shared apply -var="project_id=<dev-project>"
+terraform -chdir=infra/dev init -backend-config="path=../../state/dev-i123/terraform.tfstate"
+terraform -chdir=infra/dev apply -var="project_id=<dev-project>" -var="issue_number=123" -var="image=<image>"
+# After verification, use the same Issue state and variables to remove its resources:
+terraform -chdir=infra/dev destroy -var="project_id=<dev-project>" -var="issue_number=123" -var="image=<image>"
+```
+
+Replace 123 with the actual Issue number. State stays ignored under `state/`;
+never commit it. Apply creates billable resources, so record deployment and
+cleanup in the Issue/PR. Do not add a dev-layer CI/CD workflow or deploy merely
+for documentation review. Validate both dev modules with `init -backend=false`
+and `validate` when changing them, alongside recursive Terraform formatting.
+
 ## Development-agent workflow
 
 Use GitHub Issues, labels and native `Blocked by` relations only; no Projects or
