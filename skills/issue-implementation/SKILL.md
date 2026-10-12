@@ -63,26 +63,59 @@ Follow this workflow:
    the named Issue branch/worktree. During a temporary fetch failure it may use
    an existing local `origin/main`, then local `main`; do not create either one
    with ad hoc Git commands.
-3. Implement the Issue (all edits and commits stay in the Issue worktree).
-4. Push the branch to GitHub and create a PR. Include `Closes #<issue>` in the
-   PR body so GitHub closes the Issue automatically when the PR is merged.
-5. Dispatch a reviewer role from a **different** verified route using
+3. Implement the Issue, run the applicable checks, and commit the changes (all
+   edits and commits stay in the Issue worktree). Prepare a local test summary.
+4. **Review before push or PR creation.** Dispatch a reviewer role from a
+   **different** verified route using
    `node scripts/project-issue-dispatch.mjs --role reviewer
    --execution-mode direct-review --review-pass 1` (plus the route, issue, release
    policy, and next-milestone flags). The reviewer works read-only in the existing
-   Issue worktree: it reads the Issue acceptance criteria, the PR diff, changed
-   file paths, and the test summary, then posts one PR comment whose first line is
-   `role=reviewer pass=1 verdict=<PASS|NEEDS_REVISION|REJECTED>`.
-   - **`PASS`**: review is complete. Include the verdict in the PR description.
-   - **`NEEDS_REVISION`**: apply one implementer fix pass — push to the same
-     branch and post a `role=implementer fix-cycle=1` PR comment stating what
-     changed per finding. The fix pass is **not** re-reviewed. Include the
-     verdict, findings, and fix summary in the PR description.
-   - **`REJECTED`**: block and report. Do not apply a fix pass.
+   Issue worktree: it reads the Issue acceptance criteria, changed file paths,
+   `git diff origin/main..HEAD`, and the local test summary. No PR exists yet.
+   Explicitly use `--next-milestone` to supply these pre-PR inputs and require an
+   **Issue comment**, overriding the adapter's existing PR-input/comment guidance;
+   do not change the dispatcher or runtime adapters for this workflow.
+   The reviewer posts one Issue comment (`gh issue comment <issue>`) whose first
+   line is `role=reviewer pass=1 verdict=<PASS|NEEDS_REVISION|REJECTED>`.
+   Read the verdict and findings with `gh issue view <issue> --comments`, matching
+   the current review pass and reviewed HEAD rather than an older session's verdict.
+   Include the reviewed HEAD and test summary location in the dispatch milestone
+   and the reviewed HEAD in the verdict comment.
+   - **`PASS`**: review is complete. Proceed to push and PR creation.
+   - **`NEEDS_REVISION`**: apply one implementer fix pass, run applicable checks,
+     and commit. Post a `role=implementer fix-cycle=1` **Issue comment** stating
+     what changed per finding. The fix pass is **not** re-reviewed. Then proceed
+     to push and PR creation.
+   - **`REJECTED`**: stop and report the findings in chat. Do not apply a fix
+     pass, push the branch, or create a PR.
 
    If no distinct route is available, run on a shared route and record
    `same-route-reviewer:*` in the PR description. If route discovery fails,
-   state that clearly and proceed without a reviewer pass.
+   state that clearly and proceed without a reviewer pass; record this exception
+   in the PR description.
+5. Push the branch to GitHub and create a PR. Include `Closes #<issue>` in the
+   PR body so GitHub closes the Issue automatically when the PR is merged.
+   Include the reviewer verdict and link to its Issue comment; for
+   `NEEDS_REVISION`, also include findings and the implementer fix summary.
+6. **Monitor CI/CD on the PR.** Initialize a CI fix counter to **0** (separate
+   from the single reviewer fix cycle). Wait for GitHub Actions checks on the
+   latest PR head to finish using `gh pr checks <pr> --watch` or equivalent.
+   If checks have not registered yet, wait for registration; an empty check list
+   is not evidence of success. After each push, verify checks belong to the new
+   head before assessing the result.
+   - When all checks are green, the workflow is complete. Report the PR and
+     verification results; this does not authorize merging.
+   - If any check fails, inspect the failed run for that head with
+     `gh run view <run-id> --log-failed`, identify the cause, and make a scoped
+     fix. Run applicable local checks, commit, and push to the same branch.
+     Increment the counter for each CI fix cycle, then monitor the new head.
+     CI fixes do **not** receive another reviewer pass.
+   - Allow at most **3 CI fix cycles**. If CI/CD still fails after the third
+     fix, stop without a fourth fix. Report in chat the failed check names,
+     log summary, branch name, and remaining branch commit count
+     (`git rev-list --count origin/main..HEAD`) for handoff. Preserve the
+     unmerged branch and PR. If a failure cannot be fixed within Issue scope,
+     report it and stop instead of expanding scope.
 
 ## Boundaries
 
@@ -91,5 +124,6 @@ Follow this workflow:
 - Do not skip the Issue worktree start gate. Do not commit on the primary clone.
 - Do not run an open-ended reviewer loop. This workflow allows one review pass
   and at most one implementer fix cycle; the fix pass is never re-reviewed.
+- Keep CI/CD fixes bounded to three cycles; do not re-review those fixes.
 - Treat PR close as distinct from merge. Close a PR only when the user or the
   repository workflow explicitly asks to close it instead of merging it.
