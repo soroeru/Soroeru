@@ -1,6 +1,24 @@
 import { looksLikePersonalValue } from "./personal-value.js";
 import { KNOWN_PROFILE_KEYS, type KnownProfileKey } from "../types.js";
 
+// ---------------------------------------------------------------------------
+// Branded identifier types — prevent accidental free-text at the call site.
+// A value must be explicitly cast (e.g. `"example.com" as SiteId`) or produced
+// by a validated path.  The runtime validator in `validateCloudRequest` is the
+// enforcement gate; these brands make the intent visible at the type level.
+// ---------------------------------------------------------------------------
+declare const _brand: unique symbol;
+type Brand<T, B> = T & { readonly [_brand]: B };
+
+/** eTLD+1 (registrable domain), validated by the `site()` rule. */
+export type SiteId = Brand<string, "SiteId">;
+/** SHA-256 hex digest (64 lowercase hex chars), validated by `hash()`. */
+export type FormId = Brand<string, "FormId">;
+/** Semver string ("1.2.3" or "1.2.3-pre.1"), validated by `version()`. */
+export type ClientVersion = Brand<string, "ClientVersion">;
+/** SHA-256 structural page fingerprint, validated by `hash()`. */
+export type SchemaFingerprint = Brand<string, "SchemaFingerprint">;
+
 export const CLOUD_PATHS = {
   resolve: "/v1/schemas/resolve",
   feedback: "/v1/schemas/feedback",
@@ -89,16 +107,20 @@ export interface ConsentedReadRequest extends ConsentedReadPayload {
   ticket: string;
 }
 export interface OutcomeEvent {
-  siteId: string;
-  formId: string;
+  /** eTLD+1 — branded type rejects free-text at compile time; runtime `site()` validates. */
+  siteId: SiteId;
+  /** SHA-256 hex digest — branded type rejects free-text; runtime `hash()` validates. */
+  formId: FormId;
   schemaVersion: number;
   operationType: "read" | "fill" | "update" | "withdraw" | "register";
   resolutionTier: "shared_schema" | "gemini_structure" | "gemini_pii_consent" | "local_only";
   result: "success" | "failure" | "handoff" | "declined";
   errorCategory: ErrorCategory;
   mappingConfidenceBucket: "low" | "medium" | "high" | "unknown";
-  clientVersion: string;
-  schemaFingerprint: string;
+  /** Semver string — branded type rejects free-text; runtime `version()` validates. */
+  clientVersion: ClientVersion;
+  /** SHA-256 structural page fingerprint — branded; runtime `hash()` validates. */
+  schemaFingerprint: SchemaFingerprint;
   occurredAt: string;
 }
 export interface CloudRequests {

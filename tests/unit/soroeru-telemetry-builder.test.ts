@@ -1,21 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TelemetryBuilder } from "../../extension/telemetry-builder.js";
+import {
+  TelemetryBuilder,
+  type TelemetryInput,
+  type SiteId,
+  type FormId,
+  type ClientVersion,
+  type SchemaFingerprint,
+} from "../../extension/telemetry-builder.js";
 import { CloudContractError } from "../../src/shared/cloud-contract.js";
 
 const hash = "a".repeat(64);
 
-const validInput = {
-  siteId: "example.com",
-  formId: hash,
+// Branded-type casts are explicit and intentional: the runtime validator in
+// TelemetryBuilder.build() is the enforcement gate.  The brands prevent
+// accidental assignment of arbitrary strings at other call sites.
+const validInput: TelemetryInput = {
+  siteId: "example.com" as SiteId,
+  formId: hash as FormId,
   schemaVersion: 1,
   operationType: "read" as const,
   resolutionTier: "local_only" as const,
   result: "success" as const,
   errorCategory: "unknown" as const,
   mappingConfidenceBucket: "high" as const,
-  clientVersion: "1.2.3",
-  schemaFingerprint: hash,
+  clientVersion: "1.2.3" as ClientVersion,
+  schemaFingerprint: hash as SchemaFingerprint,
 };
 
 test("TelemetryBuilder truncates timestamp to the hour", () => {
@@ -46,8 +56,9 @@ test("TelemetryBuilder produces a valid OutcomeEvent from typed inputs", () => {
 
 test("TelemetryBuilder throws CloudContractError for siteId with path (no URL paths allowed)", () => {
   const builder = new TelemetryBuilder();
+  // The cast exercises the runtime validator; the brand alone does not prevent invalid values.
   assert.throws(
-    () => builder.build({ ...validInput, siteId: "example.com/path" }),
+    () => builder.build({ ...validInput, siteId: "example.com/path" as SiteId }),
     CloudContractError,
   );
 });
@@ -55,7 +66,7 @@ test("TelemetryBuilder throws CloudContractError for siteId with path (no URL pa
 test("TelemetryBuilder throws CloudContractError for free-text formId (must be hash)", () => {
   const builder = new TelemetryBuilder();
   assert.throws(
-    () => builder.build({ ...validInput, formId: "free-text-value" }),
+    () => builder.build({ ...validInput, formId: "free-text-value" as FormId }),
     CloudContractError,
   );
 });
@@ -63,7 +74,7 @@ test("TelemetryBuilder throws CloudContractError for free-text formId (must be h
 test("TelemetryBuilder throws CloudContractError for invalid clientVersion", () => {
   const builder = new TelemetryBuilder();
   assert.throws(
-    () => builder.build({ ...validInput, clientVersion: "not-semver" }),
+    () => builder.build({ ...validInput, clientVersion: "not-semver" as ClientVersion }),
     CloudContractError,
   );
 });
@@ -72,7 +83,7 @@ test("TelemetryBuilder throws CloudContractError for personal-looking siteId (em
   const builder = new TelemetryBuilder();
   // Email addresses must be rejected by the site() validator (@ character)
   assert.throws(
-    () => builder.build({ ...validInput, siteId: "fake@example.com" }),
+    () => builder.build({ ...validInput, siteId: "fake@example.com" as SiteId }),
     CloudContractError,
   );
 });

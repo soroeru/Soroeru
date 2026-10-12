@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-export async function verifyCloudEndpoints(services) {
+/**
+ * Smoke-test every public endpoint.
+ *
+ * @param {Record<string, string>} services  Map of service name → base URL.
+ * @param {{ telemetryConfigured?: boolean }} [options]
+ *   `telemetryConfigured` (default `true`): set to `false` when the deployment
+ *   has no BIGQUERY_DATASET / BIGQUERY_TABLE configured so the server legitimately
+ *   returns 503 for POST /v1/telemetry/outcome.  The 204 assertion is skipped.
+ *   Gap: BigQuery dataset/table provisioning (BIGQUERY_DATASET / BIGQUERY_TABLE
+ *   env vars in infra/) is not in scope for Issue #563; the smoke assertion is
+ *   conditioned on those vars being present in the deployed service.
+ */
+export async function verifyCloudEndpoints(services, options = {}) {
+  const { telemetryConfigured = true } = options;
   const post = async (service, path, body, expected) => {
     const response = await fetch(services[service] + path, {
       method: "POST",
@@ -84,22 +97,28 @@ export async function verifyCloudEndpoints(services) {
     // Exhausted production budget is healthy. Complete ticket tests use an isolated local budget.
     await post("pii-fallback", "/v1/agent/read-with-consent", { ...payload, ticket: "abc.def" }, 403);
   }
-  await post(
-    "api",
-    "/v1/telemetry/outcome",
-    {
-      siteId: "example.com",
-      formId: hash,
-      schemaVersion: 1,
-      operationType: "read",
-      resolutionTier: "local_only",
-      result: "handoff",
-      errorCategory: "unknown",
-      mappingConfidenceBucket: "unknown",
-      clientVersion: "0.1.0",
-      schemaFingerprint: hash,
-      occurredAt: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
-    },
-    204,
-  );
+  // Outcome telemetry: assert 204 only when BIGQUERY_DATASET and BIGQUERY_TABLE are
+  // configured in the deployed service.  Without them, main.ts omits the telemetry
+  // writer and the server legitimately returns 503.  Pass telemetryConfigured: false
+  // when deploying without BigQuery (infra provisioning is out of scope for Issue #563).
+  if (telemetryConfigured) {
+    await post(
+      "api",
+      "/v1/telemetry/outcome",
+      {
+        siteId: "example.com",
+        formId: hash,
+        schemaVersion: 1,
+        operationType: "read",
+        resolutionTier: "local_only",
+        result: "handoff",
+        errorCategory: "unknown",
+        mappingConfidenceBucket: "unknown",
+        clientVersion: "0.1.0",
+        schemaFingerprint: hash,
+        occurredAt: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
+      },
+      204,
+    );
+  }
 }
