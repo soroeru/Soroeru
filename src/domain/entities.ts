@@ -313,8 +313,11 @@ export interface CloudQueueItem {
   kind: "feedback" | "telemetry";
   /** Typed, allowlisted, value-free event body (built by the cloud contract layer). */
   body: Record<string, unknown>;
+  /** Number of delivery failures so far. Absent before the first attempt. */
   attempts: number;
   enqueuedAt: number;
+  /** Epoch ms at which the next delivery attempt is due. Absent on newly enqueued items. */
+  nextAttemptAt?: number;
 }
 
 /**

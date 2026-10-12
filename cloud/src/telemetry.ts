@@ -38,23 +38,31 @@ export class BigQueryTelemetryWriter implements TelemetryWriter {
   }
   async insert(event: OutcomeEvent): Promise<void> {
     // Only the fixed §15.3 fields are inserted; no client id, IP, URL path, label, value, or DOM.
+    // insertId uses the event's idempotencyKey so BigQuery deduplicates retried deliveries within
+    // its short deduplication window (~1 min). Long-term deduplication is out of scope (§567 §5).
     await this.bq
       .dataset(this.dataset)
       .table(this.table)
-      .insert([
-        {
-          siteId: event.siteId,
-          formId: event.formId,
-          schemaVersion: event.schemaVersion,
-          operationType: event.operationType,
-          resolutionTier: event.resolutionTier,
-          result: event.result,
-          errorCategory: event.errorCategory,
-          mappingConfidenceBucket: event.mappingConfidenceBucket,
-          clientVersion: event.clientVersion,
-          schemaFingerprint: event.schemaFingerprint,
-          occurredAt: event.occurredAt,
-        },
-      ]);
+      .insert(
+        [
+          {
+            insertId: event.idempotencyKey,
+            json: {
+              siteId: event.siteId,
+              formId: event.formId,
+              schemaVersion: event.schemaVersion,
+              operationType: event.operationType,
+              resolutionTier: event.resolutionTier,
+              result: event.result,
+              errorCategory: event.errorCategory,
+              mappingConfidenceBucket: event.mappingConfidenceBucket,
+              clientVersion: event.clientVersion,
+              schemaFingerprint: event.schemaFingerprint,
+              occurredAt: event.occurredAt,
+            },
+          },
+        ],
+        { raw: true },
+      );
   }
 }

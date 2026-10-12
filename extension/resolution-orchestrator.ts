@@ -10,6 +10,10 @@ import {
 import type { VaultSession } from "../src/store/vault-session.js";
 import type { PageCommand } from "../src/shared/extension-messages.js";
 import { validateSchemaReadResult, type SchemaReadResult } from "../src/shared/schema-resolution.js";
+import { deliverQueue, type DeliveryClient } from "./cloud-delivery-queue.js";
+
+/** 30-day cache freshness window (§567 §2.2). */
+const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface ResolveClient {
   call<K extends "resolve" | "mapStructure">(
@@ -23,6 +27,8 @@ export class ResolutionOrchestrator {
     private readonly options: {
       session: VaultSession;
       client?: ResolveClient;
+      /** Separate delivery client for queue flushing; may be the same CloudClient instance. */
+      deliveryClient?: DeliveryClient;
       clientVersion: string;
       sendPageCommand: (command: PageCommand) => Promise<unknown>;
       isActive: () => boolean;
@@ -178,15 +184,24 @@ export class ResolutionOrchestrator {
         reachable();
         schema = response.schema;
         source = "cloud";
+        // Fire-and-forget: flush queued feedback/outcome items now that we know we're online.
+        if (o.deliveryClient) {
+          deliverQueue(o.session, o.deliveryClient).catch(() => {
+            /* Queue delivery errors are non-fatal; the queue persists for the next attempt. */
+          });
+        }
       } catch {
         /* No retries. Offline falls back to encrypted cached structure. */
       }
     }
     if (o.session.state !== "unlocked" || !o.isActive()) throw new Error("resolution-inactive");
     if (!schema && source === "cache") {
+      const now = Date.now();
       const matches: FormSchema[] = [];
       for (const entry of vault.list("formSchemaCache")) {
         try {
+          // Stale cache entries (older than 30 days) are ignored.
+          if (now - entry.fetchedAt > CACHE_MAX_AGE_MS) continue;
           validateFormSchema(entry.schema);
           if (
             entry.schema.site === site &&

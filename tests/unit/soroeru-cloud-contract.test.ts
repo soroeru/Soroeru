@@ -50,6 +50,7 @@ const fixtures: Record<CloudOperation, unknown> = {
     clientVersion: "0.1.0",
     schemaFingerprint: hash,
     occurredAt: "2026-10-11T01:00:00.000Z",
+    idempotencyKey: uuid,
   },
 };
 for (const operation of Object.keys(fixtures) as CloudOperation[]) {

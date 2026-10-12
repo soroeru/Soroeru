@@ -58,5 +58,9 @@ Mappings are validated against sent IDs and then pass the same live local
 classifier, wall and anchor checks as Tier 1. A changed page or lease discards the
 proposal. Values are read locally; there is no fill, submit or Tier 3 path.
 When telemetry sharing is enabled, successful mappings are saved in the encrypted
-bounded feedback queue; telemetry off records none. Queue delivery and schema
-promotion remain follow-up work. Gemini outages never trigger a raw-value fallback.
+bounded feedback queue; telemetry off records none. The queue is flushed
+automatically when cloud reachability is confirmed (Issue #567): items are delivered
+with exponential backoff (30 s / 60 s / 120 s), discarded after 4 failures or 7
+days, and idempotency keys are reused across retries so the server applies each
+event at most once. Schema promotion on the server side remains follow-up work.
+Gemini outages never trigger a raw-value fallback.

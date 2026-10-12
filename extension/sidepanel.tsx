@@ -35,7 +35,8 @@ const cloudClient = (() => {
 const host = new VisibilityHost({
   session,
   leaseClient: createChromeLeaseClient(),
-  ...(cloudClient ? { cloudClient } : {}),
+  // CloudClient satisfies both ResolveClient and DeliveryClient; pass it for both roles.
+  ...(cloudClient ? { cloudClient, deliveryClient: cloudClient } : {}),
 });
 
 // Closing the panel, reloading it, or quitting the browser aborts any run, releases the lease,

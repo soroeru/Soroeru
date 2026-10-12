@@ -174,6 +174,7 @@ export class SchemaFeedbackHandler {
     const schemaRef = this.db.collection("formSchemas").doc(schemaId);
     const feedbackBase = this.db.collection("schemaFeedback").doc(schemaId);
     const validatorRef = feedbackBase.collection("validators").doc(hmac);
+    const receiptRef = feedbackBase.collection("receipts").doc(req.idempotencyKey);
     const recentRefs = Array.from({ length: LIFECYCLE.WINDOW }, (_, i) =>
       feedbackBase.collection("recent").doc(String(i)),
     );
@@ -188,6 +189,15 @@ export class SchemaFeedbackHandler {
         const schema = schemaData as StoredFormSchema;
         if (schema.status === "retired") throw new Error("schema-retired");
 
+        // Receipt-based idempotency: any prior delivery with this exact key is accepted without
+        // re-counting. This prevents A→B→A re-send double-counting that the last-key comparison
+        // could not prevent.
+        const receiptSnap = await tx.get(receiptRef);
+        if (receiptSnap.exists) {
+          accepted = true;
+          return;
+        }
+
         const validatorSnap = await tx.get(validatorRef);
         const validatorData = validatorSnap.exists
           ? (validatorSnap.data() as {
@@ -195,11 +205,6 @@ export class SchemaFeedbackHandler {
               idempotencyKey: string;
             })
           : null;
-
-        if (validatorData?.idempotencyKey === req.idempotencyKey) {
-          accepted = true;
-          return;
-        }
 
         const recentSnaps = await Promise.all(recentRefs.map((r) => tx.get(r)));
 
@@ -260,6 +265,8 @@ export class SchemaFeedbackHandler {
           idempotencyKey: req.idempotencyKey,
           updatedAt: nowStr,
         });
+        // Write receipt so any re-delivery of this idempotencyKey is a no-op.
+        tx.set(receiptRef, { at: nowStr });
         tx.set(schemaRef, updated);
 
         // Retire the previous active schema for the same formKey if we just promoted.
