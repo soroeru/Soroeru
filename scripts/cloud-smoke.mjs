@@ -99,6 +99,7 @@ export async function verifyCloudEndpoints(services) {
       clientVersion: "0.1.0",
       schemaFingerprint: hash,
       occurredAt: new Date(Math.floor(Date.now() / 3600000) * 3600000).toISOString(),
+      idempotencyKey: randomUUID(),
     },
     204,
   );
