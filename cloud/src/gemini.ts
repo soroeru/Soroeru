@@ -30,8 +30,11 @@ export class VertexStructureMapper implements StructureMapper {
       config.location === "global"
         ? "aiplatform.googleapis.com"
         : `${config.location}-aiplatform.googleapis.com`;
+    // egress: soroeru-cloud — Vertex cache configuration read; no page content is sent.
     this.cacheEndpoint = `https://us-central1-aiplatform.googleapis.com/v1/projects/${config.project}/cacheConfig`;
+    // egress: soroeru-cloud — Vertex logging configuration read; no page content is sent.
     this.loggingEndpoint = `https://${host}/v1beta1/projects/${config.project}/locations/${config.location}/publishers/google/models/${config.model}:fetchPublisherModelConfig`;
+    // egress: soroeru-cloud — Vertex structure-only mapping under the Cloud data-class policy.
     this.endpoint = `https://${host}/v1/projects/${config.project}/locations/${config.location}/publishers/google/models/${config.model}:generateContent`;
   }
   async map(snapshot: StructureSnapshot): Promise<CloudResponses["mapStructure"]> {
@@ -157,7 +160,9 @@ async function boundedJson(response: Response): Promise<unknown> {
 }
 /** Cloud Run's attached service account; no keys or tokens are shipped to the extension. */
 export async function metadataAccessToken(): Promise<string> {
+  // egress: soroeru-cloud — Cloud Run metadata token for its attached service account.
   const response = await fetch(
+    // egress: soroeru-cloud — internal metadata service; no page content is sent.
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
     {
       headers: { "Metadata-Flavor": "Google" },
