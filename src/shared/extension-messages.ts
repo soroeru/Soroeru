@@ -57,7 +57,7 @@ export type PageCommand =
    * before leaving the page. The result is an input to Tier3PayloadBuilder, which
    * re-validates masking and enforces the 16 KiB limit before building the consent payload.
    */
-  | { command: "readRegionMasked"; requestedKeys: string[] };
+  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[] };
 export type PageCommandName = PageCommand["command"];
 
 interface Versioned {
@@ -261,11 +261,20 @@ export function parsePageCommand(value: unknown): PageCommand {
       rejectUnknownKeys(value, ["command", "selector"]);
       return { command: name, selector: requireString(value, "selector") };
     case "readRegionMasked": {
-      rejectUnknownKeys(value, ["command", "requestedKeys"]);
+      rejectUnknownKeys(value, ["command", "requestedKeys", "resolvedIds"]);
       const keys = value.requestedKeys;
       if (!Array.isArray(keys) || keys.length === 0 || keys.length > 50 || keys.some((k) => typeof k !== "string"))
         return fail("requestedKeys must be a non-empty string array");
-      return { command: name, requestedKeys: keys as string[] };
+      const resolvedIds = value.resolvedIds;
+      if (resolvedIds !== undefined) {
+        if (!Array.isArray(resolvedIds) || resolvedIds.length > 500 || resolvedIds.some((k) => typeof k !== "string"))
+          return fail("resolvedIds must be a string array");
+      }
+      return {
+        command: name,
+        requestedKeys: keys as string[],
+        ...(resolvedIds !== undefined ? { resolvedIds: resolvedIds as string[] } : {}),
+      };
     }
   }
   return fail(`unknown page command: ${name}`);

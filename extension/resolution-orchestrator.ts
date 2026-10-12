@@ -17,28 +17,68 @@ import { deliverQueue, type DeliveryClient } from "./cloud-delivery-queue.js";
 import { sha256Hex } from "../src/shared/sha256.js";
 import { buildTier3Payload, Tier3HandoffNeeded } from "./tier3-payload-builder.js";
 import type { MaskedRegionItem } from "./content-script.js";
+import { classifyFields } from "../src/agent/classifier.js";
+import { permittedCollectionItem } from "../src/automation/ai-visibility-contract.js";
+import type { CollectionItem } from "../src/automation/collection-observation.js";
+import type { FormField } from "../src/types.js";
 
 /** 30-day cache freshness window (§567 §2.2). */
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Local corroboration for Tier 3 responses (design #554 §5.3 / Issue #517 normalization rules).
- * The proposed value must be contained in the item text after NFC + whitespace normalization.
- * Phone and card numbers additionally strip spaces and hyphens before comparison.
- * Returns false for fabricated values, values from different items, or masked card numbers.
+ * Local corroboration for Tier 3 responses (design #554 §5.3 / Issue #517 rules).
+ *
+ * Applies the same checks as `corroborateProposal` in ai-visibility-contract.ts:
+ * 1. Local classifier (classifyFields) must agree with the proposed attribute key.
+ * 2. permittedCollectionItem must pass (id pattern, not forbidden).
+ * 3. Normalized equality — the proposed value must equal the item's text after NFC +
+ *    whitespace normalization; phone/card numbers additionally strip spaces and hyphens.
+ * 4. Masked card numbers (containing * • x X) never pass.
+ * Returns false for fabricated values, values from a different item, or masked card numbers.
  */
-function corroborateValue(proposed: string, itemText: string, key: AttributeKey): boolean {
-  if (!proposed || itemText === "[SECRET]") return false;
+function corroborateValue(
+  proposed: string,
+  item: MaskedRegionItem,
+  key: AttributeKey,
+): boolean {
+  if (!proposed || item.text === "[SECRET]") return false;
+
+  // Masked card numbers must never pass corroboration.
   const normalize = (s: string): string => {
     const nfc = s.normalize("NFC").replace(/\r\n?/g, "\n").trim();
     return key === "phone.full" || key === "card.number" ? nfc.replace(/[ -]/g, "") : nfc;
   };
-  const normalizedProposed = normalize(proposed);
-  const normalizedText = normalize(itemText);
-  if (!normalizedProposed) return false;
-  // Masked card numbers (containing * • x X) must never pass corroboration.
+  const normalizedText = normalize(item.text);
   if (key === "card.number" && /[*•xX]/.test(normalizedText)) return false;
-  return normalizedText.includes(normalizedProposed);
+
+  // Normalized equality (not substring includes).
+  const normalizedProposed = normalize(proposed);
+  if (!normalizedProposed) return false;
+  if (normalizedText !== normalizedProposed) return false;
+
+  // Build a minimal CollectionItem so we can run classifier + permittedCollectionItem checks.
+  const minimalField: FormField = {
+    fieldId: item.id,
+    tag: "input",
+    type: "text",
+    name: item.id,
+    id: item.id,
+    autocomplete: "",
+    required: false,
+    placeholder: "",
+    labels: item.label ? [item.label] : [],
+    nearbyText: item.label ?? "",
+  };
+  const minimalCollectionItem: CollectionItem = { id: item.id, field: minimalField, value: item.text };
+
+  // permittedCollectionItem rejects forbidden labels (マイナンバー, pin, etc.) and hidden fields.
+  if (!permittedCollectionItem(minimalCollectionItem)) return false;
+
+  // Local classifier must agree with the proposed attribute key.
+  const local = classifyFields([minimalField], []).entries[0]?.profileKey;
+  if (local !== key) return false;
+
+  return true;
 }
 
 /** Parameters shown to the user in the consent gate (design #554 §5.3). */
@@ -97,7 +137,10 @@ export class ResolutionOrchestrator {
       return tier1;
 
     // ---- Tier 2: structure-only Gemini mapping ----
+    // tier2Result is set when Tier 2 runs to completion.
+    // tier2FallbackResult is set when Tier 2 exits early (no items/mappings); Tier 3 may still fire.
     let tier2Result: (SchemaReadResult & { schema: FormSchema; source: "gemini" }) | null = null;
+    let tier2FallbackResult: (SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" }) | null = null;
     let snapshotReady = false;
     let localReadStarted = false;
     try {
@@ -110,121 +153,135 @@ export class ResolutionOrchestrator {
       )
         throw new Error("stale-structure-page");
       const resolvedKeys = new Set(tier1?.values.map((v) => v.attributeKey));
-      const resolvedIds = new Set(tier1?.values.map((v) => v.itemId));
-      snapshot.items = snapshot.items.filter((i) => !resolvedIds.has(i.id));
-      if (!snapshot.items.length) return tier1;
-      snapshotReady = true;
-      const response = await o.client.call("mapStructure", snapshot);
-      validateStructureMappings(snapshot, response);
-      active();
-      const fields = response.mappings
-        .filter((m) => m.confidence >= 0.8 && !resolvedKeys.has(m.attributeKey))
-        .map((m) => ({ anchor: m.itemId, attributeKey: m.attributeKey, required: true }));
-      if (!fields.length) return tier1;
-      // This ephemeral candidate grants no authority and is never cached or shared as active.
-      // readSchema applies the identical live-page/classifier/wall checks as Tier 1.
-      const schema: FormSchema = {
-        schemaId: snapshot.pageFingerprint,
-        site,
-        formKey: snapshot.pageFingerprint,
-        version: 1,
-        pageFingerprints: [snapshot.pageFingerprint],
-        fields,
-        confidence: 0.8,
-        status: "candidate",
-        provenance: "gemini_structure",
-      };
-      localReadStarted = true;
-      const local = await o.sendPageCommand({ command: "readSchema", schema });
-      validateSchemaReadResult(local, schema);
-      active();
-      const accepted = local.values.map((v) => ({ anchor: v.itemId, attributeKey: v.attributeKey }));
-      const settings = o.session.vault.get("cloudSettings", "cloud");
-      if (accepted.length && settings?.cloudAssistEnabled && settings.telemetryEnabled) {
-        const key = await crypto.subtle.importKey(
-          "raw",
-          new TextEncoder().encode(settings.validatorKey),
-          { name: "HMAC", hash: "SHA-256" },
-          false,
-          ["sign"],
-        );
-        const token = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(site)));
-        const siteValidatorToken = Array.from(token, (b) => b.toString(16).padStart(2, "0")).join("");
+      const resolvedItemIds = new Set(tier1?.values.map((v) => v.itemId));
+      snapshot.items = snapshot.items.filter((i) => !resolvedItemIds.has(i.id));
+      if (!snapshot.items.length) {
+        // B2: no items left for Tier 2, but Tier 3 may still run if Tier 1 has unresolved attrs.
+        tier2FallbackResult = tier1;
+      } else {
+        snapshotReady = true;
+        const response = await o.client.call("mapStructure", snapshot);
+        validateStructureMappings(snapshot, response);
         active();
-        // Re-read preferences after async work so an off switch takes effect immediately.
-        const current = o.session.vault.get("cloudSettings", "cloud");
-        if (current?.telemetryEnabled && current.cloudAssistEnabled) {
-          const body: CloudRequests["feedback"] = {
-            schemaId: null,
+        const fields = response.mappings
+          .filter((m) => m.confidence >= 0.8 && !resolvedKeys.has(m.attributeKey))
+          .map((m) => ({ anchor: m.itemId, attributeKey: m.attributeKey, required: true }));
+        if (!fields.length) {
+          // B2: no high-confidence mappings, but Tier 3 may still run if Tier 1 has unresolved attrs.
+          tier2FallbackResult = tier1;
+        } else {
+          // This ephemeral candidate grants no authority and is never cached or shared as active.
+          // readSchema applies the identical live-page/classifier/wall checks as Tier 1.
+          const schema: FormSchema = {
+            schemaId: snapshot.pageFingerprint,
             site,
-            pageFingerprint: snapshot.pageFingerprint,
-            pagePurpose: response.pagePurpose,
-            mappings: accepted,
-            outcome: "validated",
-            resolutionTier: "gemini_structure",
-            siteValidatorToken,
-            idempotencyKey: crypto.randomUUID(),
+            formKey: snapshot.pageFingerprint,
+            version: 1,
+            pageFingerprints: [snapshot.pageFingerprint],
+            fields,
+            confidence: 0.8,
+            status: "candidate",
+            provenance: "gemini_structure",
           };
-          validateCloudRequest("feedback", body);
-          o.session.vault.put("cloudSettings", {
-            ...current,
-            queue: [
-              ...current.queue,
-              {
-                idempotencyKey: body.idempotencyKey,
-                kind: "feedback" as const,
-                body: { ...body },
-                attempts: 0,
-                enqueuedAt: Date.now(),
-              },
-            ].slice(-100),
-            updatedAt: Date.now(),
-          });
-          await o.session.save();
+          localReadStarted = true;
+          const local = await o.sendPageCommand({ command: "readSchema", schema });
+          validateSchemaReadResult(local, schema);
           active();
+          const accepted = local.values.map((v) => ({ anchor: v.itemId, attributeKey: v.attributeKey }));
+          const settings = o.session.vault.get("cloudSettings", "cloud");
+          if (accepted.length && settings?.cloudAssistEnabled && settings.telemetryEnabled) {
+            const key = await crypto.subtle.importKey(
+              "raw",
+              new TextEncoder().encode(settings.validatorKey),
+              { name: "HMAC", hash: "SHA-256" },
+              false,
+              ["sign"],
+            );
+            const token = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(site)));
+            const siteValidatorToken = Array.from(token, (b) => b.toString(16).padStart(2, "0")).join("");
+            active();
+            // Re-read preferences after async work so an off switch takes effect immediately.
+            const current = o.session.vault.get("cloudSettings", "cloud");
+            if (current?.telemetryEnabled && current.cloudAssistEnabled) {
+              const body: CloudRequests["feedback"] = {
+                schemaId: null,
+                site,
+                pageFingerprint: snapshot.pageFingerprint,
+                pagePurpose: response.pagePurpose,
+                mappings: accepted,
+                outcome: "validated",
+                resolutionTier: "gemini_structure",
+                siteValidatorToken,
+                idempotencyKey: crypto.randomUUID(),
+              };
+              validateCloudRequest("feedback", body);
+              o.session.vault.put("cloudSettings", {
+                ...current,
+                queue: [
+                  ...current.queue,
+                  {
+                    idempotencyKey: body.idempotencyKey,
+                    kind: "feedback" as const,
+                    body: { ...body },
+                    attempts: 0,
+                    enqueuedAt: Date.now(),
+                  },
+                ].slice(-100),
+                updatedAt: Date.now(),
+              });
+              await o.session.save();
+              active();
+            }
+          }
+          const replaced = new Set(local.values.map((v) => v.attributeKey));
+          const attempted = new Set(fields.map((f) => f.attributeKey));
+          tier2Result = {
+            values: [...(tier1?.values ?? []), ...local.values],
+            unresolved: [
+              ...(tier1?.unresolved ?? []).filter(
+                (v) => !replaced.has(v.attributeKey) && !attempted.has(v.attributeKey),
+              ),
+              ...local.unresolved,
+            ],
+            schema: {
+              ...schema,
+              fields: [
+                ...(tier1?.schema.fields ?? []).filter((f) => !attempted.has(f.attributeKey)),
+                ...schema.fields,
+              ],
+            },
+            source: "gemini",
+          };
         }
       }
-      const replaced = new Set(local.values.map((v) => v.attributeKey));
-      const attempted = new Set(fields.map((f) => f.attributeKey));
-      tier2Result = {
-        values: [...(tier1?.values ?? []), ...local.values],
-        unresolved: [
-          ...(tier1?.unresolved ?? []).filter(
-            (v) => !replaced.has(v.attributeKey) && !attempted.has(v.attributeKey),
-          ),
-          ...local.unresolved,
-        ],
-        schema: {
-          ...schema,
-          fields: [
-            ...(tier1?.schema.fields ?? []).filter((f) => !attempted.has(f.attributeKey)),
-            ...schema.fields,
-          ],
-        },
-        source: "gemini",
-      };
     } catch {
       active();
       // API errors on Tier 2 never fall through to Tier 3 (design #554 §5).
-      if (snapshotReady && !localReadStarted) return tier1;
+      // B3: failures before snapshotReady (stale-structure-page, network) return null, not tier1,
+      // to prevent handing stale Tier 1 values to the runner on fingerprint mismatch.
+      if (!snapshotReady) return null;
       if (!localReadStarted) return tier1;
       // localReadStarted but threw: null signals a hard failure.
       return null;
     }
 
     // ---- Tier 3: explicit-consent Gemini PII read (read operations only) ----
+    // B2: fire Tier 3 even when Tier 2 exited early (no snapshot items / no mappings),
+    // as long as Tier 1 left required attributes unresolved.
+    const baseResult = tier2Result ?? tier2FallbackResult;
     if (
-      tier2Result.unresolved.length === 0 ||
+      !baseResult ||
+      baseResult.unresolved.length === 0 ||
       !o.showConsentGate ||
       !o.client
     )
-      return tier2Result;
+      return baseResult;
 
     try {
-      return await this.resolveTier3(site, tier2Result, active);
+      return await this.resolveTier3(site, baseResult, active);
     } catch {
       active();
-      return tier2Result;
+      return baseResult;
     }
   }
 
@@ -235,7 +292,7 @@ export class ResolutionOrchestrator {
    */
   private async resolveTier3(
     site: string,
-    tier2: SchemaReadResult & { schema: FormSchema; source: "gemini" },
+    tier2: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" },
     active: () => void,
   ): Promise<SchemaReadResult & { schema: FormSchema; source: "gemini_pii_consent" }> {
     const o = this.options;
@@ -247,6 +304,12 @@ export class ResolutionOrchestrator {
     const consentDecision = await o.showConsentGate({ origin, attributeKeys: unresolvedKeys });
     active();
 
+    // S6: re-check cloudAssistEnabled — the user may have toggled it during the gate wait.
+    if (!o.session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled) {
+      return { ...tier2, source: "gemini_pii_consent" as const };
+    }
+
+    // S5: siteHash is an unsalted sha256 of the registrable domain (no HMAC).
     const siteHash = sha256Hex(site);
 
     if (consentDecision !== "approved") {
@@ -269,10 +332,13 @@ export class ResolutionOrchestrator {
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
 
-    // Approved: build the minimal payload.
+    // Approved: build the minimal payload scoped to unresolved attributes only (B1).
+    // Pass already-resolved item IDs so the content script excludes them from the read.
+    const resolvedIds = tier2.values.map((v) => v.itemId);
     const rawRegion = await o.sendPageCommand({
       command: "readRegionMasked",
       requestedKeys: unresolvedKeys,
+      resolvedIds,
     });
     active();
 
@@ -353,14 +419,16 @@ export class ResolutionOrchestrator {
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
 
-    // Local corroboration: the proposed value must be contained in the item's text (design #554 §5.3).
+    // Local corroboration: proposed value must equal item text after normalization and pass
+    // classifier + permittedCollectionItem checks (design #554 §5.3 / Issue #517 rules).
     const requestedKeySet = new Set(unresolvedKeys);
-    const itemTextById = new Map(payload.items.map((i) => [i.id, i.text]));
+    const itemById = new Map(payload.items.map((i) => [i.id, i]));
     const corroboratedValues: { itemId: string; attributeKey: AttributeKey; value: string }[] = [];
     for (const proposed of readResponse.values) {
       if (!requestedKeySet.has(proposed.attributeKey as AttributeKey)) continue;
-      const itemText = itemTextById.get(proposed.itemId) ?? "";
-      if (!corroborateValue(proposed.value, itemText, proposed.attributeKey as AttributeKey)) continue;
+      const item = itemById.get(proposed.itemId);
+      if (!item) continue;
+      if (!corroborateValue(proposed.value, item, proposed.attributeKey as AttributeKey)) continue;
       corroboratedValues.push({
         itemId: proposed.itemId,
         attributeKey: proposed.attributeKey as AttributeKey,
@@ -376,7 +444,7 @@ export class ResolutionOrchestrator {
       tier3Consent: { siteHash, attributeKeys: unresolvedKeys, result: "approved", payloadBytes, payloadSha256 },
     });
 
-    // Write corroborated values to the vault. All-or-nothing: on failure nothing is stored.
+    // Corroborated values are stored by the runner via resolveSharedSchema; not persisted here.
     const acceptedKeys = new Set(corroboratedValues.map((v) => v.attributeKey));
     await o.session.save();
     active();

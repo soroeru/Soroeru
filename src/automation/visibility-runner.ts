@@ -524,12 +524,18 @@ export class VisibilityRunner {
         if (this.isCanceled()) return this.canceledResult(siteAccountId);
         if (resolved) {
           const safeUrl = new URL(snapshot.url).origin + "/";
+          // S1: Tier 3 (consent-gated Gemini read) uses "ai-driven" provenance, not "deterministic".
+          const resolvedSource = (resolved as { source?: string }).source;
+          const collectionTier = resolvedSource === "gemini_pii_consent" ? "ai-driven" : "deterministic";
+          const maskedSnippet = resolvedSource === "gemini_pii_consent"
+            ? "Consent-gated Gemini read (Tier 3)"
+            : "Locally validated shared schema";
           let disclosures = 0;
           for (const entry of resolved.values) {
             if (!entry.value || entry.attributeKey === "account.password" || entry.attributeKey === "card.cvv") continue;
-            const evidence = this.options.domain.addEvidence({ siteAccountId, pageUrl: safeUrl, observedAt: this.now(), maskedSnippet: "Locally validated shared schema" });
+            const evidence = this.options.domain.addEvidence({ siteAccountId, pageUrl: safeUrl, observedAt: this.now(), maskedSnippet });
             this.options.domain.addDisclosure({ siteAccountId, attributeKey: entry.attributeKey, siteHeldValue: entry.value,
-              observedAt: this.now(), sourcePageUrl: safeUrl, sourceKind: "profile-text", collectionTier: "deterministic", confidence: 1, evidenceIds: [evidence.id] });
+              observedAt: this.now(), sourcePageUrl: safeUrl, sourceKind: "profile-text", collectionTier, confidence: 1, evidenceIds: [evidence.id] });
             disclosures++;
           }
           if (resolved.unresolved.length) this.options.domain.addConstraint({ siteAccountId, kind: "unknown-state", detail: "Shared schema has unresolved fields; review required", evidenceIds: [] });

@@ -86,8 +86,8 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>();
   // Tier 3 consent gate state. When set, the panel renders the gate instead of the ledger.
-  const [consentGate, setConsentGate] = useState<Omit<ConsentGateProps, "onApprove" | "onDecline"> | undefined>();
-  const consentResolve = useRef<((decision: "approved" | "declined") => void) | undefined>(undefined);
+  const [consentGate, setConsentGate] = useState<Omit<ConsentGateProps, "onApprove" | "onDecline" | "onTimeout"> | undefined>();
+  const consentResolve = useRef<((decision: "approved" | "declined" | "timeout") => void) | undefined>(undefined);
 
   useEffect(
     () =>
@@ -109,7 +109,7 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
   useEffect(() => {
     host.setConsentGateProvider((params) => {
       return new Promise<"approved" | "declined" | "timeout">((resolve) => {
-        consentResolve.current = (decision) => {
+        consentResolve.current = (decision: "approved" | "declined" | "timeout") => {
           setConsentGate(undefined);
           resolve(decision);
         };
@@ -158,6 +158,7 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
           attributeKeys={consentGate.attributeKeys}
           onApprove={() => consentResolve.current?.("approved")}
           onDecline={() => consentResolve.current?.("declined")}
+          onTimeout={() => consentResolve.current?.("timeout")}
         />
       )}
       {instruction !== undefined && (

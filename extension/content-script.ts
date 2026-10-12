@@ -6,6 +6,7 @@ import {
   type ObservationToken,
 } from "../src/automation/collection-observation.js";
 import { scanInPage } from "../src/agent/scan.js";
+import { secretCollectionItem } from "../src/automation/ai-visibility-contract.js";
 import {
   EXTENSION_MESSAGE_VERSION,
   isOriginInLeaseScope,
@@ -26,7 +27,7 @@ type ContentCommand =
   | { command: "readSchema"; schema: FormSchema }
   | { command: "readValues"; fieldIds?: string[] }
   | { command: "readDisplayValues"; valueIds?: string[] }
-  | { command: "readRegionMasked"; requestedKeys: string[] }
+  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[] }
   | { command: "fill"; fieldId: string; value: string }
   | { command: "click"; selector: string }
   | { command: "waitForReady" }
@@ -103,25 +104,6 @@ function readDisplayValues(valueIds?: string[]): Record<string, string> {
   return values;
 }
 
-/**
- * C0 secret detection for `readRegionMasked` (design #554 §5.3).
- * Returns true for elements/text that must be replaced with "[SECRET]" before leaving the page.
- * Errs on the side of masking (fail-closed): ambiguous items are also masked.
- */
-function isSecretElement(element: Element): boolean {
-  if (element instanceof HTMLInputElement) {
-    const t = element.type.toLowerCase();
-    const ac = (element.autocomplete ?? "").toLowerCase();
-    if (t === "password") return true;
-    if (["current-password", "new-password", "one-time-code", "cc-csc"].includes(ac)) return true;
-  }
-  return false;
-}
-
-/** Labels that signal a nearby value must be treated as a secret. */
-const SECRET_LABEL_PATTERN =
-  /パスワード|password|pw\b|pwd|CVV|セキュリティコード|security\s*code|認証コード|確認コード|ワンタイム|OTP|one.time|pass\s*code/i;
-
 /** Value shapes that are secret-like: 3–4 digits or 6–8 digits only. */
 const SECRET_DIGIT_PATTERN = /^\d{3,4}$|^\d{6,8}$/;
 
@@ -137,12 +119,15 @@ export interface MaskedRegionItem {
 }
 
 /**
- * Read items from the subtrees most likely containing the requested attributes (design #554 §5.3).
- * C0 secrets are replaced with "[SECRET]" before the result leaves the page.
- * The caller (Tier3PayloadBuilder) re-validates masking as defense-in-depth.
+ * Read items from the subtrees containing the requested attributes (design #554 §5.3).
+ * C0 secrets are replaced with "[SECRET]" using the local classifier before the result
+ * leaves the page. Items already resolved by Tier 1/2 (passed via `resolvedIds`) are
+ * excluded to limit disclosure. The caller (Tier3PayloadBuilder) re-validates masking as
+ * defense-in-depth.
  */
-export function readRegionMasked(requestedKeys: string[]): { items: MaskedRegionItem[] } {
+export function readRegionMasked(requestedKeys: string[], resolvedIds?: string[]): { items: MaskedRegionItem[] } {
   if (!document.body) return { items: [] };
+  const excludeIds = new Set(resolvedIds ?? []);
   const result: MaskedRegionItem[] = [];
   // Collect all labeled elements with data-af-id (scanner-assigned IDs).
   const labeled = Array.from(document.querySelectorAll<HTMLElement>("[data-af-id]"));
@@ -150,18 +135,8 @@ export function readRegionMasked(requestedKeys: string[]): { items: MaskedRegion
   for (const element of labeled.slice(0, 400)) {
     const id = element.dataset.afId ?? "";
     if (!id.startsWith("f-") && !id.startsWith("d-")) continue;
-
-    // Compute the visible text value.
-    let text: string;
-    if (
-      element instanceof HTMLInputElement ||
-      element instanceof HTMLTextAreaElement ||
-      element instanceof HTMLSelectElement
-    ) {
-      text = isSecretElement(element) ? "[SECRET]" : (element.value ?? "").trim();
-    } else {
-      text = (element.textContent ?? "").trim();
-    }
+    // Exclude items already resolved by Tier 1/2 (B1: minimize disclosure).
+    if (excludeIds.has(id)) continue;
 
     // Find a nearby label for this element.
     let labelText: string | undefined;
@@ -178,17 +153,53 @@ export function readRegionMasked(requestedKeys: string[]): { items: MaskedRegion
         const th = ancestor.querySelector("th");
         if (dt) { labelText = dt.textContent?.trim(); break; }
         if (th) { labelText = th.textContent?.trim(); break; }
-        if (ancestor.tagName === "LABEL") { labelText = ancestor.textContent?.replace(text, "").trim(); break; }
+        if (ancestor.tagName === "LABEL") {
+          const raw = (element instanceof HTMLInputElement ||
+            element instanceof HTMLTextAreaElement ||
+            element instanceof HTMLSelectElement)
+            ? (element.value ?? "")
+            : (element.textContent ?? "");
+          labelText = ancestor.textContent?.replace(raw, "").trim();
+          break;
+        }
       }
     }
 
-    // Fail-closed: mask if the label looks like a secret label.
-    const nearLabel = labelText ?? "";
-    if (SECRET_LABEL_PATTERN.test(nearLabel)) {
-      text = "[SECRET]";
+    // Compute the visible text value. Use local classifier (secretCollectionItem) for masking (S2).
+    let text: string;
+    const isFormControl =
+      element instanceof HTMLInputElement ||
+      element instanceof HTMLTextAreaElement ||
+      element instanceof HTMLSelectElement;
+    if (isFormControl) {
+      // Build a minimal CollectionItem so the local classifier (secretCollectionItem) can check it.
+      const tag: "input" | "textarea" | "select" =
+        element instanceof HTMLInputElement ? "input" :
+        element instanceof HTMLTextAreaElement ? "textarea" : "select";
+      const inputEl = element instanceof HTMLInputElement ? element : null;
+      const minimalItem = {
+        id,
+        field: {
+          fieldId: id,
+          tag,
+          type: inputEl?.type ?? "text",
+          name: (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).name ?? "",
+          id: element.id,
+          autocomplete: inputEl?.autocomplete ?? "",
+          required: (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).required ?? false,
+          placeholder: inputEl?.placeholder ?? "",
+          labels: labelText ? [labelText] : [],
+          nearbyText: labelText ?? "",
+        },
+        value: (element as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value ?? "",
+      };
+      text = secretCollectionItem(minimalItem) ? "[SECRET]" : (minimalItem.value).trim();
+    } else {
+      text = (element.textContent ?? "").trim();
+      // Fail-closed: mask digit-only text that could be a code/CVV.
+      text = maskText(text);
     }
-    // Fail-closed: mask digit-only text that could be a code/CVV.
-    if (text !== "[SECRET]") text = maskText(text);
+
     // Drop items with empty text that contribute nothing.
     if (!text) continue;
 
@@ -230,7 +241,7 @@ async function execute(command: ContentCommand): Promise<unknown> {
     case "schemaFingerprint": return schemaPageFingerprint();
     case "structureSnapshot": return structurePageSnapshot(command.site);
     case "readSchema": return readSchemaPage(command.schema);
-    case "readRegionMasked": return readRegionMasked(command.requestedKeys);
+    case "readRegionMasked": return readRegionMasked(command.requestedKeys, command.resolvedIds);
     case "snapshot":
       return scanPage();
     case "readValues":
@@ -291,7 +302,11 @@ function toContentCommand(command: PageCommand): ContentCommand | undefined {
         ...(command.valueIds === undefined ? {} : { valueIds: command.valueIds }),
       };
     case "readRegionMasked":
-      return { command: "readRegionMasked", requestedKeys: command.requestedKeys };
+      return {
+        command: "readRegionMasked",
+        requestedKeys: command.requestedKeys,
+        ...(command.resolvedIds !== undefined ? { resolvedIds: command.resolvedIds } : {}),
+      };
     default:
       return command;
   }

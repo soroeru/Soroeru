@@ -58,6 +58,8 @@ export class VisibilityHost {
   private consentGateProvider: Tier3ConsentCallback | undefined;
   private activeTabOrigin: string | undefined;
   private readonly resolver: ResolutionOrchestrator;
+  /** Resolves the currently pending consent gate promise; set only while a gate is open. */
+  private pendingGateResolve: ((v: "approved" | "declined" | "timeout") => void) | undefined;
 
   constructor(private readonly options: VisibilityHostOptions) {
     this.resolver = new ResolutionOrchestrator({
@@ -124,14 +126,49 @@ export class VisibilityHost {
   /**
    * Register the UI callback that shows the Tier 3 consent gate and returns the user's decision.
    * Pass `undefined` to remove it (the panel unmounts or cloud assist is disabled).
+   * If a gate is pending when the provider is removed, the gate is resolved as "declined"
+   * so the orchestrator doesn't hang (B5).
    */
   setConsentGateProvider(provider: ((params: Tier3ConsentParams) => Promise<"approved" | "declined" | "timeout">) | undefined): void {
+    if (provider === undefined && this.pendingGateResolve) {
+      const resolve = this.pendingGateResolve;
+      this.pendingGateResolve = undefined;
+      resolve("declined");
+    }
     this.consentGateProvider = provider;
   }
 
   private async handleConsentGate(params: Tier3ConsentParams): Promise<"approved" | "declined" | "timeout"> {
+    // S4: no provider means the user hasn't configured a cloud provider, not that they declined.
+    // Return "declined" so the orchestrator treats the gate as unanswered (no API call).
     if (!this.consentGateProvider) return "declined";
-    return this.consentGateProvider(params);
+
+    // B5: the host enforces the 5-minute deadline independently of the UI countdown.
+    const DEADLINE_MS = 5 * 60 * 1000;
+    return new Promise<"approved" | "declined" | "timeout">((resolve) => {
+      this.pendingGateResolve = resolve;
+
+      const timer = setTimeout(() => {
+        if (this.pendingGateResolve === resolve) {
+          this.pendingGateResolve = undefined;
+          resolve("timeout");
+        }
+      }, DEADLINE_MS);
+
+      void this.consentGateProvider!(params).then((decision) => {
+        if (this.pendingGateResolve === resolve) {
+          clearTimeout(timer);
+          this.pendingGateResolve = undefined;
+          resolve(decision);
+        }
+      }).catch(() => {
+        if (this.pendingGateResolve === resolve) {
+          clearTimeout(timer);
+          this.pendingGateResolve = undefined;
+          resolve("declined");
+        }
+      });
+    });
   }
 
   /** Ledger sites in the user's order; empty while the vault is locked. */
@@ -161,6 +198,12 @@ export class VisibilityHost {
   }
 
   abort(): void {
+    // B5: resolve any pending consent gate as "declined" before aborting the run.
+    if (this.pendingGateResolve) {
+      const resolve = this.pendingGateResolve;
+      this.pendingGateResolve = undefined;
+      resolve("declined");
+    }
     this.service.abortRun();
   }
 

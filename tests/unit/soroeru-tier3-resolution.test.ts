@@ -9,10 +9,19 @@
  */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { buildTier3Payload, Tier3HandoffNeeded } from "../../extension/tier3-payload-builder.js";
 import type { MaskedRegionItem } from "../../extension/content-script.js";
 import { tier3PayloadJson, CLOUD_LIMITS } from "../../src/shared/cloud-contract.js";
+import { ResolutionOrchestrator } from "../../extension/resolution-orchestrator.js";
+import { CloudClient } from "../../extension/cloud-client.js";
+import { VaultSession } from "../../src/store/vault-session.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
+import { secretCollectionItem } from "../../src/automation/ai-visibility-contract.js";
+import type { CollectionItem } from "../../src/automation/collection-observation.js";
 
 // ---------------------------------------------------------------------------
 // Tier3PayloadBuilder
@@ -137,4 +146,270 @@ test("Tier3PayloadBuilder: items with no text after masking are dropped", () => 
   // Only d-3 has non-empty text.
   assert.ok(payload.items.every((i) => i.text.trim().length > 0));
   assert.equal(payload.items.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Orchestrator: Tier 3 gate paths (finding B6)
+// Tests verify: decline / close / timeout → 0 tier3Ticket / readWithConsent calls;
+// corroboration rejects fabricated values, cross-item values, and masked PANs.
+// ---------------------------------------------------------------------------
+
+const T3_HASH = "c".repeat(64);
+
+/** Schema with email (Tier 1 resolves) + phone.full (stays unresolved → triggers Tier 3). */
+const T3_SCHEMA_PHONE = {
+  schemaId: T3_HASH,
+  site: "example.com",
+  formKey: T3_HASH,
+  version: 1,
+  pageFingerprints: [T3_HASH],
+  fields: [
+    { anchor: "f-1", attributeKey: "email" as const, required: true },
+    { anchor: "f-2", attributeKey: "phone.full" as const, required: true },
+  ],
+  confidence: 1 as const,
+  status: "active" as const,
+  provenance: "official" as const,
+};
+
+/** Schema variant where card.number is the unresolved field (for masked-PAN corroboration test). */
+const T3_SCHEMA_CARD = {
+  ...T3_SCHEMA_PHONE,
+  schemaId: "d".repeat(64),
+  formKey: "d".repeat(64),
+  pageFingerprints: ["d".repeat(64)],
+  fields: [
+    { anchor: "f-1", attributeKey: "email" as const, required: true },
+    { anchor: "f-2", attributeKey: "card.number" as const, required: true },
+  ],
+};
+
+async function t3Session(t: TestContext) {
+  const dir = await mkdtemp(join(tmpdir(), "t3-"));
+  const path = join(dir, "vault.json");
+  const s = new VaultSession({
+    persistence: new FileVaultPersistence(path),
+    kdfAlgo: "pbkdf2-sha512",
+    lockManager: { tryAcquire: async () => ({ release() {} }) },
+  });
+  await s.start();
+  await s.create("fake-test-passphrase-long");
+  s.vault.put("cloudSettings", {
+    id: "cloud",
+    cloudAssistEnabled: true,
+    telemetryEnabled: false,
+    validatorKey: "fake-local-key",
+    queue: [],
+    updatedAt: 0,
+  });
+  t.after(async () => { s.close(); await rm(dir, { recursive: true, force: true }); });
+  return s;
+}
+
+type ConsentDecision = "approved" | "declined" | "timeout";
+
+/**
+ * Build a ResolutionOrchestrator wired for Tier 3 tests.
+ * Tier 2 is bypassed: the structureSnapshot returns only the already-resolved item (f-1),
+ * which is filtered out, leaving empty items → tier2FallbackResult = tier1 → Tier 3 fires.
+ */
+function t3Orchestrator(
+  session: VaultSession,
+  schema: typeof T3_SCHEMA_PHONE | typeof T3_SCHEMA_CARD,
+  calls: string[],
+  consentDecision: ConsentDecision,
+  readWithConsentValues: { itemId: string; attributeKey: string; value: string }[],
+  regionItems: MaskedRegionItem[],
+) {
+  const hash = schema.pageFingerprints[0]!;
+  const client = new CloudClient(
+    { apiBaseUrl: "https://api.example/", fallbackBaseUrl: "https://fallback.example/" },
+    async (url) => {
+      const urlStr = String(url);
+      if (urlStr.endsWith("/resolve")) {
+        calls.push("resolve");
+        return new Response(JSON.stringify({ status: "active", schema }));
+      }
+      if (urlStr.endsWith("/tier3-ticket")) {
+        calls.push("tier3-ticket");
+        return new Response(
+          JSON.stringify({ ticket: "fakeheader.fakepayload", expiresAt: "2099-01-01T00:00:00.000Z" }),
+        );
+      }
+      if (urlStr.endsWith("/read-with-consent")) {
+        calls.push("read-with-consent");
+        return new Response(JSON.stringify({ values: readWithConsentValues }));
+      }
+      // map-structure: not expected in these tests
+      calls.push(urlStr);
+      return new Response(JSON.stringify({ mappings: [], pagePurpose: "contact" }));
+    },
+  );
+  return new ResolutionOrchestrator({
+    session,
+    client,
+    clientVersion: "0.1.2",
+    isActive: () => true,
+    currentOrigin: "https://example.com",
+    showConsentGate: () => Promise.resolve(consentDecision),
+    sendPageCommand: async (command) => {
+      if (command.command === "schemaFingerprint") return hash;
+      if (command.command === "structureSnapshot") {
+        // Return one item; the resolved f-1 will be filtered out → empty → tier2FallbackResult
+        return { site: "example.com", pageFingerprint: hash, purposeHint: "unknown" as const, items: [{ id: "f-1", tag: "input" as const, nameTokens: ["email"] }] };
+      }
+      if (command.command === "readSchema") {
+        return {
+          values: [{ itemId: "f-1", attributeKey: "email" as const, value: "fake@example.com" }],
+          unresolved: [{ attributeKey: schema.fields[1]!.attributeKey, reason: "anchor-not-found" as const }],
+        };
+      }
+      if (command.command === "readRegionMasked") {
+        return { items: regionItems };
+      }
+      return null;
+    },
+  });
+}
+
+test("Tier 3 decline → 0 tier3Ticket / readWithConsent API calls", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const resolver = t3Orchestrator(
+    session,
+    T3_SCHEMA_PHONE,
+    calls,
+    "declined",
+    [],
+    [{ id: "d-2", label: "電話番号", text: "090-0000-0000" }],
+  );
+  const result = await resolver.resolve("example.com");
+  assert.ok(result !== null, "resolve should return a result");
+  assert.ok(!calls.includes("tier3-ticket"), "tier3Ticket must not be called on decline");
+  assert.ok(!calls.includes("read-with-consent"), "readWithConsent must not be called on decline");
+  assert.ok(result!.unresolved.some((u) => u.attributeKey === "phone.full"), "phone.full stays unresolved");
+});
+
+test("Tier 3 timeout → 0 tier3Ticket / readWithConsent API calls", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const resolver = t3Orchestrator(
+    session,
+    T3_SCHEMA_PHONE,
+    calls,
+    "timeout",
+    [],
+    [{ id: "d-2", label: "電話番号", text: "090-0000-0000" }],
+  );
+  const result = await resolver.resolve("example.com");
+  assert.ok(result !== null, "resolve should return a result");
+  assert.ok(!calls.includes("tier3-ticket"), "tier3Ticket must not be called on timeout");
+  assert.ok(!calls.includes("read-with-consent"), "readWithConsent must not be called on timeout");
+  assert.ok(result!.unresolved.some((u) => u.attributeKey === "phone.full"), "phone.full stays unresolved");
+});
+
+test("corroboration rejects fabricated value not present in item text", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  // Cloud proposes a value that does not appear in the item text.
+  const fabricatedValues = [{ itemId: "d-2", attributeKey: "phone.full", value: "099-9999-9999" }];
+  const resolver = t3Orchestrator(
+    session,
+    T3_SCHEMA_PHONE,
+    calls,
+    "approved",
+    fabricatedValues,
+    [{ id: "d-2", label: "電話番号", text: "090-0000-0000" }],
+  );
+  const result = await resolver.resolve("example.com");
+  assert.ok(calls.includes("tier3-ticket"), "tier3Ticket must be called on approval");
+  assert.ok(calls.includes("read-with-consent"), "readWithConsent must be called on approval");
+  // The fabricated value must not appear in the result.
+  assert.ok(!result!.values.some((v) => v.value === "099-9999-9999"), "fabricated value must be rejected");
+  assert.ok(result!.unresolved.some((u) => u.attributeKey === "phone.full"), "phone.full stays unresolved");
+});
+
+test("corroboration rejects value proposed for a different item (cross-item)", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  // Cloud proposes a value using an itemId that is not in the payload.
+  const crossItemValues = [{ itemId: "d-99", attributeKey: "phone.full", value: "090-0000-0000" }];
+  const resolver = t3Orchestrator(
+    session,
+    T3_SCHEMA_PHONE,
+    calls,
+    "approved",
+    crossItemValues,
+    [{ id: "d-2", label: "電話番号", text: "090-0000-0000" }],
+  );
+  const result = await resolver.resolve("example.com");
+  assert.ok(!result!.values.some((v) => v.attributeKey === "phone.full"), "cross-item value must be rejected");
+  assert.ok(result!.unresolved.some((u) => u.attributeKey === "phone.full"), "phone.full stays unresolved");
+});
+
+test("corroboration rejects masked PAN (card.number containing *)", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  // Masked PAN passes buildTier3Payload but must be rejected by corroborateValue.
+  const maskedPanValues = [{ itemId: "d-2", attributeKey: "card.number", value: "**** **** **** 1234" }];
+  const resolver = t3Orchestrator(
+    session,
+    T3_SCHEMA_CARD,
+    calls,
+    "approved",
+    maskedPanValues,
+    [{ id: "d-2", label: "カード番号", text: "**** **** **** 1234" }],
+  );
+  const result = await resolver.resolve("example.com");
+  assert.ok(!result!.values.some((v) => v.attributeKey === "card.number"), "masked PAN must be rejected");
+  assert.ok(result!.unresolved.some((u) => u.attributeKey === "card.number"), "card.number stays unresolved");
+});
+
+// ---------------------------------------------------------------------------
+// readRegionMasked delegation: secretCollectionItem masks secret field types
+// readRegionMasked delegates C0 masking to secretCollectionItem (design #554 §5.3 / Issue #572).
+// These tests verify that the underlying classifier correctly identifies secret fields.
+// ---------------------------------------------------------------------------
+
+function makeCollectionItem(type: string, autocomplete: string): CollectionItem {
+  return {
+    id: "f-1",
+    value: "any-value",
+    field: {
+      fieldId: "f-1",
+      tag: "input",
+      type,
+      name: "field1",
+      id: "field1",
+      autocomplete,
+      required: false,
+      placeholder: "",
+      labels: [],
+      nearbyText: "",
+    },
+  };
+}
+
+test("readRegionMasked delegation: type=password is masked via secretCollectionItem", () => {
+  assert.ok(secretCollectionItem(makeCollectionItem("password", "")));
+});
+
+test("readRegionMasked delegation: autocomplete=current-password is masked via secretCollectionItem", () => {
+  assert.ok(secretCollectionItem(makeCollectionItem("text", "current-password")));
+});
+
+test("readRegionMasked delegation: autocomplete=new-password is masked via secretCollectionItem", () => {
+  assert.ok(secretCollectionItem(makeCollectionItem("text", "new-password")));
+});
+
+test("readRegionMasked delegation: autocomplete=one-time-code is masked via secretCollectionItem", () => {
+  assert.ok(secretCollectionItem(makeCollectionItem("text", "one-time-code")));
+});
+
+test("readRegionMasked delegation: autocomplete=cc-csc is masked via secretCollectionItem", () => {
+  assert.ok(secretCollectionItem(makeCollectionItem("text", "cc-csc")));
+});
+
+test("readRegionMasked delegation: non-secret type=text with autocomplete=email is not masked", () => {
+  assert.ok(!secretCollectionItem(makeCollectionItem("text", "email")));
 });

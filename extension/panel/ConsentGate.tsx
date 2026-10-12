@@ -18,8 +18,12 @@ import { PROFILE_FIELD_LABELS } from "../../src/types.js";
 export interface ConsentGateProps {
   origin: string;
   attributeKeys: AttributeKey[];
+  /** Page type hint shown to the user (e.g. "プロフィール", "住所"). */
+  pageType?: string;
   onApprove: () => void;
   onDecline: () => void;
+  /** Called when the countdown reaches zero. Distinct from onDecline (user action). */
+  onTimeout: () => void;
   /** Timeout in milliseconds before the gate auto-resolves as "timeout". Default: 300 000 ms. */
   timeoutMs?: number;
 }
@@ -32,36 +36,38 @@ function attributeLabel(key: AttributeKey): string {
 export function ConsentGate({
   origin,
   attributeKeys,
+  pageType,
   onApprove,
   onDecline,
+  onTimeout,
   timeoutMs = 300_000,
 }: ConsentGateProps): React.JSX.Element {
   const [remaining, setRemaining] = useState<number>(Math.ceil(timeoutMs / 1000));
-  const declined = useRef(false);
+  const resolved = useRef(false);
 
   useEffect(() => {
     const deadline = Date.now() + timeoutMs;
     const timer = setInterval(() => {
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       setRemaining(left);
-      if (left === 0 && !declined.current) {
-        declined.current = true;
+      if (left === 0 && !resolved.current) {
+        resolved.current = true;
         clearInterval(timer);
-        onDecline(); // timeout resolves as decline from the gate's perspective
+        onTimeout(); // UI timer expired: notify host, which resolves as "timeout"
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [timeoutMs, onDecline]);
+  }, [timeoutMs, onTimeout]);
 
   const handleDecline = (): void => {
-    if (declined.current) return;
-    declined.current = true;
+    if (resolved.current) return;
+    resolved.current = true;
     onDecline();
   };
 
   const handleApprove = (): void => {
-    if (declined.current) return;
-    declined.current = true;
+    if (resolved.current) return;
+    resolved.current = true;
     onApprove();
   };
 
@@ -86,6 +92,12 @@ export function ConsentGate({
           <dt className="font-medium shrink-0">対象サイト:</dt>
           <dd className="break-all">{origin}</dd>
         </div>
+        {pageType && (
+          <div className="flex gap-2 mt-1">
+            <dt className="font-medium shrink-0">ページ種別:</dt>
+            <dd>{pageType}</dd>
+          </div>
+        )}
         <div className="flex gap-2 mt-1">
           <dt className="font-medium shrink-0">読み取りたい属性:</dt>
           <dd>{attributeKeys.map(attributeLabel).join("、")}</dd>
@@ -100,6 +112,9 @@ export function ConsentGate({
       </ul>
 
       <p className="text-xs text-neutral-500">残り {remaining} 秒で自動キャンセルされます。</p>
+      <p className="text-xs text-neutral-500">
+        送信しない場合は、サイトのプロフィールページを開いてから「保存したページを読み込む」機能で手動で読み取ることができます。
+      </p>
 
       <div className="flex gap-2">
         {/* Default: do not send. Tab order puts decline first so accidental approval is harder. */}
