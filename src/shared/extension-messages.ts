@@ -42,6 +42,7 @@ export type PageCommand =
   | { command: "currentUrl" }
   | { command: "snapshot" }
   | { command: "schemaFingerprint" }
+  | { command: "structureSnapshot"; site: string }
   | { command: "readSchema"; schema: FormSchema }
   | { command: "captureCollectionObservation"; bindingEpoch: number }
   | { command: "checkCollectionObservation"; token: ObservationToken }
@@ -221,6 +222,10 @@ export function parsePageCommand(value: unknown): PageCommand {
     case "waitForReady":
       rejectUnknownKeys(value, ["command"]);
       return { command: name };
+    case "structureSnapshot": {
+      rejectUnknownKeys(value, ["command", "site"]);
+      return { command: name, site: requireString(value, "site") };
+    }
     case "readSchema": {
       rejectUnknownKeys(value, ["command", "schema"]);
       validateFormSchema(value.schema);

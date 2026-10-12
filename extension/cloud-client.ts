@@ -2,6 +2,7 @@ import {
   CLOUD_PATHS,
   CLOUD_LIMITS,
   validateCloudRequest,
+  validateStructureMappings,
   validateCloudResponse,
   type CloudOperation,
   type CloudRequests,
@@ -66,10 +67,7 @@ export class CloudClient {
         operation === "outcome" && response.status === 204 ? undefined : await this.readResponse(response);
       validateCloudResponse(operation, body);
       if (operation === "mapStructure") {
-        const snapshot = payload as CloudRequests["mapStructure"];
-        const mappings = (body as CloudResponses["mapStructure"]).mappings;
-        if (mappings.some((m) => !snapshot.items.some((i) => i.id === m.itemId)))
-          throw new CloudClientError("ai-invalid-response");
+        validateStructureMappings(payload as CloudRequests["mapStructure"], body);
       }
       if (operation === "readWithConsent") {
         const sent = payload as CloudRequests["readWithConsent"];

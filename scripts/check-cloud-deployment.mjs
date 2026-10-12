@@ -43,8 +43,40 @@ for (const name of ["api", "pii-fallback"]) {
   );
   services[name] = service.status.url;
 }
+// Tokens stay in memory and never reach stdout, errors or repository files.
+const token = execFileSync("gcloud", ["auth", "print-access-token"], { encoding: "utf8" }).trim();
+const vertexGet = async (url) => {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    redirect: "error",
+    signal: AbortSignal.timeout(10000),
+  });
+  const body = await response.json();
+  return { response, body };
+};
+const cache = await vertexGet(
+  `https://us-central1-aiplatform.googleapis.com/v1/projects/${project}/cacheConfig`,
+);
+assert.ok(cache.response.ok && cache.body.disableCache === true, "vertex-cache-enabled");
+const apiEnv = gcloud("run", "services", "describe", "soroeru-api", "--region", "asia-northeast1").spec
+  .template.spec.containers[0].env;
+const model = apiEnv.find((e) => e.name === "GEMINI_MODEL_ID")?.value;
+if (model) {
+  assert.ok(/^gemini-[a-z0-9.-]{1,80}$/.test(model), "invalid-gemini-model");
+  const location = apiEnv.find((e) => e.name === "GEMINI_LOCATION")?.value ?? "asia-northeast1";
+  assert.ok(/^[a-z]+(?:-[a-z0-9]+)*$/.test(location), "invalid-gemini-location");
+  const host = location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`;
+  const log = await vertexGet(
+    `https://${host}/v1beta1/projects/${project}/locations/${location}/publishers/google/models/${model}:fetchPublisherModelConfig`,
+  );
+  assert.ok(
+    (log.response.status === 404 && log.body.error?.status === "NOT_FOUND") ||
+      (log.response.ok &&
+        log.body.loggingConfig?.enabled !== true &&
+        log.body.loggingConfig?.enableOtelLogging !== true),
+    "vertex-logging-enabled",
+  );
+}
 await verifyCloudEndpoints(services);
 console.log("PASS: Cloud Run privacy configuration and public endpoint checks.");
-console.log(
-  "Vertex AI is not called by #559 stubs. Recheck provider logging and caching before #561/#562 deploy.",
-);
+console.log("PASS: Vertex implicit caching disabled and configured-model logging checked.");

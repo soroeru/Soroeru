@@ -31,19 +31,20 @@ test("Tier 1 sends only structure identifiers, preserves per-field failures, sav
   const calls: unknown[] = [];
   const client = new CloudClient({ apiBaseUrl: "https://api.example/", fallbackBaseUrl: "https://fallback.example/" }, async (_url, init) => {
     calls.push(JSON.parse(String(init?.body)));
-    return new Response(JSON.stringify({ status: "active", schema }));
+    return calls.length > 1 ? new Response(JSON.stringify({ error: "unavailable" }), { status: 503 }) : new Response(JSON.stringify({ status: "active", schema }));
   });
   const commands: PageCommand[] = [];
-  const send = async (command: PageCommand) => { commands.push(command); return command.command === "schemaFingerprint" ? hash : structuredClone(local); };
+  const structure = { site: "example.com", pageFingerprint: hash, purposeHint: "unknown", items: [{ id: "f-2", tag: "input", nameTokens: ["phone"] }] };
+  const send = async (command: PageCommand) => { commands.push(command); return command.command === "schemaFingerprint" ? hash : command.command === "structureSnapshot" ? structuredClone(structure) : structuredClone(local); };
   const resolver = new ResolutionOrchestrator({ session: unlocked, client, clientVersion: "0.1.2", sendPageCommand: send, isActive: () => true });
   const result = await resolver.resolve("example.com");
   assert.deepEqual(result?.values, local.values); assert.deepEqual(result?.unresolved, local.unresolved);
-  assert.deepEqual(calls, [{ site: "example.com", pageFingerprint: hash, clientVersion: "0.1.2" }]);
+  assert.deepEqual(calls, [{ site: "example.com", pageFingerprint: hash, clientVersion: "0.1.2" }, structure]);
   const stored = await readFile(path, "utf8");
   assert.doesNotMatch(stored, /example\.com|fake@|formKey|pageFingerprints/);
   enable(unlocked, false);
   assert.equal((await resolver.resolve("example.com"))?.source, "cache");
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
   enable(unlocked, true);
   const offline = new ResolutionOrchestrator({ session: unlocked, client: { call: async () => { throw new Error("offline"); } }, clientVersion: "0.1.2", sendPageCommand: send, isActive: () => true });
   assert.equal((await offline.resolve("example.com"))?.source, "cache");
@@ -53,7 +54,7 @@ test("wrong-site, low-confidence, missing schema and locked session never author
   const { session: unlocked } = await session(t); enable(unlocked, true);
   let reads = 0;
   for (const returned of [{ ...schema, site: "other.example" }, { ...schema, confidence: 0.1 }, null]) {
-    const resolver = new ResolutionOrchestrator({ session: unlocked, client: { call: async () => ({ status: returned ? "active" : "none", schema: returned }) }, clientVersion: "0.1.2", isActive: () => true,
+    const resolver = new ResolutionOrchestrator({ session: unlocked, client: new CloudClient({ apiBaseUrl: "https://api.example/", fallbackBaseUrl: "https://fallback.example/" }, async () => new Response(JSON.stringify({ status: returned ? "active" : "none", schema: returned }))), clientVersion: "0.1.2", isActive: () => true,
       sendPageCommand: async command => { if (command.command === "readSchema") reads++; return hash; } });
     assert.equal(await resolver.resolve("example.com"), null);
   }
