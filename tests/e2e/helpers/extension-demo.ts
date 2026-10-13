@@ -235,6 +235,21 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
         );
       };
       snap("installed");
+      const checkedProp = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")!;
+      Object.defineProperty(HTMLInputElement.prototype, "checked", {
+        configurable: true,
+        get(this: HTMLInputElement) {
+          return checkedProp.get!.call(this) as boolean;
+        },
+        set(this: HTMLInputElement, value: boolean) {
+          const caller = (new Error().stack ?? "").split("\n").slice(2, 4).join(" < ").replace(/\s+/g, " ");
+          checkedProp.set!.call(this, value);
+          snap(`set(${String(value)}) by ${caller.slice(0, 160)}`);
+        },
+      });
+      for (const type of ["pointerdown", "mousedown", "mouseup", "input"]) {
+        document.addEventListener(type, () => snap(type), true);
+      }
       for (const type of ["click", "change"]) {
         document.addEventListener(
           type,
