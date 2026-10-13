@@ -44,37 +44,47 @@ test("TelemetryBuilder produces a valid OutcomeEvent from typed inputs", () => {
   assert.match(event.occurredAt, /^\d{4}-\d{2}-\d{2}T\d{2}:00:00\.000Z$/);
 });
 
+test("TelemetryBuilder creates no event when sharing is disabled", () => {
+  const builder = new TelemetryBuilder();
+  assert.equal(
+    builder.buildWhenEnabled(
+      {
+        siteId: "example.com",
+        formId: "a".repeat(64),
+        schemaVersion: 1,
+        operationType: "read",
+        resolutionTier: "local_only",
+        result: "success",
+        errorCategory: "unknown",
+        mappingConfidenceBucket: "high",
+        clientVersion: "1.2.3",
+        schemaFingerprint: "b".repeat(64),
+      },
+      false,
+    ),
+    null,
+  );
+});
+
 test("TelemetryBuilder throws CloudContractError for siteId with path (no URL paths allowed)", () => {
   const builder = new TelemetryBuilder();
-  assert.throws(
-    () => builder.build({ ...validInput, siteId: "example.com/path" }),
-    CloudContractError,
-  );
+  assert.throws(() => builder.build({ ...validInput, siteId: "example.com/path" }), CloudContractError);
 });
 
 test("TelemetryBuilder throws CloudContractError for free-text formId (must be hash)", () => {
   const builder = new TelemetryBuilder();
-  assert.throws(
-    () => builder.build({ ...validInput, formId: "free-text-value" }),
-    CloudContractError,
-  );
+  assert.throws(() => builder.build({ ...validInput, formId: "free-text-value" }), CloudContractError);
 });
 
 test("TelemetryBuilder throws CloudContractError for invalid clientVersion", () => {
   const builder = new TelemetryBuilder();
-  assert.throws(
-    () => builder.build({ ...validInput, clientVersion: "not-semver" }),
-    CloudContractError,
-  );
+  assert.throws(() => builder.build({ ...validInput, clientVersion: "not-semver" }), CloudContractError);
 });
 
 test("TelemetryBuilder throws CloudContractError for personal-looking siteId (email address)", () => {
   const builder = new TelemetryBuilder();
   // Email addresses must be rejected by the site() validator (@ character)
-  assert.throws(
-    () => builder.build({ ...validInput, siteId: "fake@example.com" }),
-    CloudContractError,
-  );
+  assert.throws(() => builder.build({ ...validInput, siteId: "fake@example.com" }), CloudContractError);
 });
 
 test("TelemetryBuilder throws for schemaVersion below minimum", () => {

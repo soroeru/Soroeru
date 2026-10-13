@@ -132,7 +132,7 @@ export async function deliverQueue(session: VaultSession, client: DeliveryClient
 async function doDeliverQueue(session: VaultSession, client: DeliveryClient): Promise<void> {
   if (session.state !== "unlocked") return;
   const initial = session.vault.get("cloudSettings", "cloud");
-  if (!initial?.cloudAssistEnabled || !initial.queue.length) return;
+  if (!initial?.cloudAssistEnabled || !initial.telemetryEnabled || !initial.queue.length) return;
 
   const now = Date.now();
   let processed = 0;
@@ -159,7 +159,8 @@ async function doDeliverQueue(session: VaultSession, client: DeliveryClient): Pr
       validateCloudRequest(operation, item.body);
       // Re-check the off switch immediately before each network call: the user may
       // disable cloud assistance while a pass is in progress (after earlier awaits).
-      if (!session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled) break;
+      const latest = session.vault.get("cloudSettings", "cloud");
+      if (!latest?.cloudAssistEnabled || !latest.telemetryEnabled) break;
       await client.call(operation, item.body as CloudRequests[typeof operation]);
       outcome = "success";
     } catch (err) {
@@ -173,6 +174,8 @@ async function doDeliverQueue(session: VaultSession, client: DeliveryClient): Pr
       // CloudContractError -> discard (default)
     }
 
+    const latestSettings = session.vault.get("cloudSettings", "cloud");
+    if (!latestSettings?.cloudAssistEnabled || !latestSettings.telemetryEnabled) break;
     if (outcome === "success") {
       removeFromQueue(session, item.idempotencyKey);
       mutated = true;

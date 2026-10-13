@@ -36,11 +36,7 @@ const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  * 4. Masked card numbers (containing * • x X) never pass.
  * Returns false for fabricated values, values from a different item, or masked card numbers.
  */
-function corroborateValue(
-  proposed: string,
-  item: MaskedRegionItem,
-  key: AttributeKey,
-): boolean {
+function corroborateValue(proposed: string, item: MaskedRegionItem, key: AttributeKey): boolean {
   if (!proposed || item.text === "[SECRET]") return false;
 
   // Masked card numbers must never pass corroboration.
@@ -87,7 +83,9 @@ export interface Tier3ConsentParams {
   attributeKeys: AttributeKey[];
 }
 /** Callback that shows the consent gate and resolves with the user's decision. */
-export type Tier3ConsentCallback = (params: Tier3ConsentParams) => Promise<"approved" | "declined" | "timeout">;
+export type Tier3ConsentCallback = (
+  params: Tier3ConsentParams,
+) => Promise<"approved" | "declined" | "timeout">;
 
 export interface ResolveClient {
   call<K extends "resolve" | "mapStructure" | "tier3Ticket" | "readWithConsent">(
@@ -95,6 +93,10 @@ export interface ResolveClient {
     request: CloudRequests[K],
     signal?: AbortSignal,
   ): Promise<CloudResponses[K]>;
+}
+export interface SharingPolicy {
+  enabled(): boolean;
+  epoch(): number;
 }
 /** Side Panel Tier 1 + 2 + 3 orchestrator. Values stay on the direct content->panel path and in the encrypted vault. */
 export class ResolutionOrchestrator {
@@ -104,6 +106,7 @@ export class ResolutionOrchestrator {
       client?: ResolveClient;
       /** Separate delivery client for queue flushing; may be the same CloudClient instance. */
       deliveryClient?: DeliveryClient;
+      sharingPolicy?: SharingPolicy;
       clientVersion: string;
       sendPageCommand: (command: PageCommand) => Promise<unknown>;
       isActive: () => boolean;
@@ -120,12 +123,22 @@ export class ResolutionOrchestrator {
     | null
   > {
     let reachable = false;
+    const initialSettings =
+      this.options.session.state === "unlocked"
+        ? this.options.session.vault.get("cloudSettings", "cloud")
+        : undefined;
+    const settingsVersion = initialSettings?.updatedAt;
     const tier1 = await this.resolveTier1(site, () => {
       reachable = true;
     });
     const o = this.options;
     const active = () => {
       if (o.session.state !== "unlocked" || !o.isActive()) throw new Error("resolution-inactive");
+    };
+    const cloudStillAuthorized = (): boolean => {
+      active();
+      const current = o.session.vault.get("cloudSettings", "cloud");
+      return current?.cloudAssistEnabled === true && current.updatedAt === settingsVersion;
     };
     active();
     if (
@@ -140,13 +153,14 @@ export class ResolutionOrchestrator {
     // tier2Result is set when Tier 2 runs to completion.
     // tier2FallbackResult is set when Tier 2 exits early (no items/mappings); Tier 3 may still fire.
     let tier2Result: (SchemaReadResult & { schema: FormSchema; source: "gemini" }) | null = null;
-    let tier2FallbackResult: (SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" }) | null = null;
+    let tier2FallbackResult: (SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" }) | null =
+      null;
     let snapshotReady = false;
     let localReadStarted = false;
     try {
       const snapshot = await o.sendPageCommand({ command: "structureSnapshot", site });
       validateCloudRequest("mapStructure", snapshot);
-      active();
+      if (!cloudStillAuthorized()) return tier1;
       if (
         snapshot.site !== site ||
         (tier1 && !tier1.schema.pageFingerprints.includes(snapshot.pageFingerprint))
@@ -162,7 +176,7 @@ export class ResolutionOrchestrator {
         snapshotReady = true;
         const response = await o.client.call("mapStructure", snapshot);
         validateStructureMappings(snapshot, response);
-        active();
+        if (!cloudStillAuthorized()) return tier1;
         const fields = response.mappings
           .filter((m) => m.confidence >= 0.8 && !resolvedKeys.has(m.attributeKey))
           .map((m) => ({ anchor: m.itemId, attributeKey: m.attributeKey, required: true }));
@@ -186,10 +200,11 @@ export class ResolutionOrchestrator {
           localReadStarted = true;
           const local = await o.sendPageCommand({ command: "readSchema", schema });
           validateSchemaReadResult(local, schema);
-          active();
+          if (!cloudStillAuthorized()) return tier1;
           const accepted = local.values.map((v) => ({ anchor: v.itemId, attributeKey: v.attributeKey }));
           const settings = o.session.vault.get("cloudSettings", "cloud");
           if (accepted.length && settings?.cloudAssistEnabled && settings.telemetryEnabled) {
+            const feedbackEpoch = o.sharingPolicy?.epoch();
             const key = await crypto.subtle.importKey(
               "raw",
               new TextEncoder().encode(settings.validatorKey),
@@ -197,12 +212,20 @@ export class ResolutionOrchestrator {
               false,
               ["sign"],
             );
-            const token = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(site)));
+            const token = new Uint8Array(
+              await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(site)),
+            );
             const siteValidatorToken = Array.from(token, (b) => b.toString(16).padStart(2, "0")).join("");
             active();
             // Re-read preferences after async work so an off switch takes effect immediately.
             const current = o.session.vault.get("cloudSettings", "cloud");
-            if (current?.telemetryEnabled && current.cloudAssistEnabled) {
+            if (
+              current?.telemetryEnabled &&
+              current.cloudAssistEnabled &&
+              current.updatedAt === settingsVersion &&
+              (feedbackEpoch === undefined ||
+                (o.sharingPolicy?.enabled() && o.sharingPolicy.epoch() === feedbackEpoch))
+            ) {
               const body: CloudRequests["feedback"] = {
                 schemaId: null,
                 site,
@@ -269,12 +292,7 @@ export class ResolutionOrchestrator {
     // B2: fire Tier 3 even when Tier 2 exited early (no snapshot items / no mappings),
     // as long as Tier 1 left required attributes unresolved.
     const baseResult = tier2Result ?? tier2FallbackResult;
-    if (
-      !baseResult ||
-      baseResult.unresolved.length === 0 ||
-      !o.showConsentGate ||
-      !o.client
-    )
+    if (!baseResult || baseResult.unresolved.length === 0 || !o.showConsentGate || !o.client)
       return baseResult;
 
     try {
@@ -299,13 +317,15 @@ export class ResolutionOrchestrator {
     if (!o.showConsentGate || !o.client) throw new Error("tier3-unavailable");
 
     const unresolvedKeys = tier2.unresolved.map((u) => u.attributeKey) as AttributeKey[];
+    const beforeConsent = o.session.vault.get("cloudSettings", "cloud");
     // egress: target-site — display origin of the user's selected site for the consent gate UI
     const origin = o.currentOrigin ?? `https://${site}`;
     const consentDecision = await o.showConsentGate({ origin, attributeKeys: unresolvedKeys });
     active();
 
     // S6: re-check cloudAssistEnabled — the user may have toggled it during the gate wait.
-    if (!o.session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled) {
+    const afterConsent = o.session.vault.get("cloudSettings", "cloud");
+    if (!afterConsent?.cloudAssistEnabled || afterConsent.updatedAt !== beforeConsent?.updatedAt) {
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
 
@@ -384,6 +404,8 @@ export class ResolutionOrchestrator {
       const ticketResponse = await o.client.call("tier3Ticket", ticketRequest);
       validateCloudResponse("tier3Ticket", ticketResponse);
       active();
+      if (o.session.vault.get("cloudSettings", "cloud")?.updatedAt !== afterConsent.updatedAt)
+        return { ...tier2, source: "gemini_pii_consent" as const };
       ticket = ticketResponse.ticket;
     } catch {
       active();
@@ -391,7 +413,13 @@ export class ResolutionOrchestrator {
         id: crypto.randomUUID(),
         observedAt: Date.now(),
         kind: "tier3-consent",
-        tier3Consent: { siteHash, attributeKeys: unresolvedKeys, result: "error", payloadBytes, payloadSha256 },
+        tier3Consent: {
+          siteHash,
+          attributeKeys: unresolvedKeys,
+          result: "error",
+          payloadBytes,
+          payloadSha256,
+        },
       });
       await o.session.save();
       active();
@@ -406,13 +434,21 @@ export class ResolutionOrchestrator {
       readResponse = await o.client.call("readWithConsent", readRequest);
       validateCloudResponse("readWithConsent", readResponse);
       active();
+      if (o.session.vault.get("cloudSettings", "cloud")?.updatedAt !== afterConsent.updatedAt)
+        return { ...tier2, source: "gemini_pii_consent" as const };
     } catch {
       active();
       o.session.vault.put("evidence", {
         id: crypto.randomUUID(),
         observedAt: Date.now(),
         kind: "tier3-consent",
-        tier3Consent: { siteHash, attributeKeys: unresolvedKeys, result: "error", payloadBytes, payloadSha256 },
+        tier3Consent: {
+          siteHash,
+          attributeKeys: unresolvedKeys,
+          result: "error",
+          payloadBytes,
+          payloadSha256,
+        },
       });
       await o.session.save();
       active();
@@ -441,7 +477,13 @@ export class ResolutionOrchestrator {
       id: crypto.randomUUID(),
       observedAt: Date.now(),
       kind: "tier3-consent",
-      tier3Consent: { siteHash, attributeKeys: unresolvedKeys, result: "approved", payloadBytes, payloadSha256 },
+      tier3Consent: {
+        siteHash,
+        attributeKeys: unresolvedKeys,
+        result: "approved",
+        payloadBytes,
+        payloadSha256,
+      },
     });
 
     // Corroborated values are stored by the runner via resolveSharedSchema; not persisted here.
@@ -452,7 +494,11 @@ export class ResolutionOrchestrator {
     return {
       values: [
         ...tier2.values,
-        ...corroboratedValues.map((v) => ({ itemId: v.itemId, attributeKey: v.attributeKey, value: v.value })),
+        ...corroboratedValues.map((v) => ({
+          itemId: v.itemId,
+          attributeKey: v.attributeKey,
+          value: v.value,
+        })),
       ],
       unresolved: tier2.unresolved.filter((u) => !acceptedKeys.has(u.attributeKey as AttributeKey)),
       schema: tier2.schema,

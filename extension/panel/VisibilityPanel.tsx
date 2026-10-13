@@ -8,6 +8,7 @@ import type { VisibilityRunResultView } from "../../electron/ipc/contract.js";
 import type { VisibilityHost } from "./visibility-host.js";
 import { ConsentGate } from "./ConsentGate.js";
 import type { ConsentGateProps } from "./ConsentGate.js";
+import { CloudSettingsPanel } from "./CloudSettingsPanel.js";
 
 export function HandoffCard(props: {
   instruction: string;
@@ -79,15 +80,18 @@ export function LedgerView(props: {
 }
 
 export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.Element {
-  const [cloudEnabled, setCloudEnabled] = useState(() => host.cloudAssistEnabled);
   const [sites, setSites] = useState<SiteAccount[]>(() => host.listSites());
   const [results, setResults] = useState<Record<string, VisibilityRunResultView>>({});
   const [instruction, setInstruction] = useState<string | undefined>();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | undefined>();
   // Tier 3 consent gate state. When set, the panel renders the gate instead of the ledger.
-  const [consentGate, setConsentGate] = useState<Omit<ConsentGateProps, "onApprove" | "onDecline" | "onTimeout"> | undefined>();
-  const consentResolve = useRef<((decision: "approved" | "declined" | "timeout") => void) | undefined>(undefined);
+  const [consentGate, setConsentGate] = useState<
+    Omit<ConsentGateProps, "onApprove" | "onDecline" | "onTimeout"> | undefined
+  >();
+  const consentResolve = useRef<((decision: "approved" | "declined" | "timeout") => void) | undefined>(
+    undefined,
+  );
 
   useEffect(
     () =>
@@ -164,23 +168,7 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
       {instruction !== undefined && (
         <HandoffCard instruction={instruction} onResume={() => host.resume()} onAbort={() => host.abort()} />
       )}
-      {host.cloudAvailable && (
-        <label className="text-sm">
-          <input
-            type="checkbox"
-            checked={cloudEnabled}
-            disabled={running}
-            onChange={(event) => {
-              const enabled = event.target.checked;
-              void host
-                .setCloudAssistEnabled(enabled)
-                .then(() => setCloudEnabled(enabled))
-                .catch(() => setError("設定を保存できませんでした。"));
-            }}
-          />{" "}
-          クラウド支援を使う（サイト名・構造ハッシュ・値を含まないフォーム構造を送信）
-        </label>
-      )}
+      <CloudSettingsPanel host={host} busy={running || Boolean(consentGate)} />
       {!consentGate && <LedgerView sites={sites} results={results} busy={running} onRun={run} />}
     </div>
   );

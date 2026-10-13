@@ -250,6 +250,28 @@ test("cloudAssistEnabled: false prevents delivery", async (t) => {
   assert.equal(called, false);
 });
 
+test("telemetryEnabled: false prevents delivery even when cloudAssistEnabled is true", async (t) => {
+  const session = await makeSession(t);
+  session.vault.put("cloudSettings", {
+    id: "cloud",
+    cloudAssistEnabled: true,
+    telemetryEnabled: false,
+    validatorKey: "fake-key",
+    queue: [feedbackItem()],
+    updatedAt: 0,
+  });
+  let called = false;
+  const client: DeliveryClient = {
+    call: async () => {
+      called = true;
+      return { accepted: true } as never;
+    },
+  };
+  await deliverQueue(session, client);
+  assert.equal(session.vault.get("cloudSettings", "cloud")!.queue.length, 1);
+  assert.equal(called, false);
+});
+
 test(`MAX_DELIVERY_BATCH (${MAX_DELIVERY_BATCH}) caps items processed per pass`, async (t) => {
   const session = await makeSession(t);
   const items: CloudQueueItem[] = Array.from({ length: MAX_DELIVERY_BATCH + 5 }, (_, i) => {
