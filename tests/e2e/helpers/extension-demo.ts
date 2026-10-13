@@ -210,7 +210,13 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     await fixture.goto(`${siteOrigin}/${page}`);
     const panel = await context.newPage();
     panel.on("console", (message) => {
-      if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
+      if (message.type() === "error" || message.type() === "warning")
+        diagnostics.push(`console.${message.type()}: ${message.text().slice(0, 200)}`);
+    });
+    panel.on("pageerror", (error) => diagnostics.push(`pageerror: ${error.message.slice(0, 200)}`));
+    context.on("requestfailed", (request) => {
+      if (request.url().startsWith(apiOrigin))
+        diagnostics.push(`requestfailed ${new URL(request.url()).pathname}: ${request.failure()?.errorText ?? ""}`);
     });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
     await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
@@ -224,17 +230,29 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       diagnostics,
       async run() {
         await fixture.bringToFront();
-        await panel.evaluate(async (targetUrl) => {
-          const permission = await chrome.permissions.contains({
-            origins: ["https://demo.example/*", "https://*.demo.example/*"],
-          });
-          if (!permission) throw new Error("fixture permission missing");
-          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (active?.url !== targetUrl) throw new Error(`wrong active tab: ${active?.url ?? "none"}`);
-          const button = document.querySelector<HTMLButtonElement>("li button");
-          if (!button) throw new Error("collect button missing");
-          button.click();
-        }, fixture.url());
+        const state = await panel.evaluate(
+          async ({ targetUrl, api }) => {
+            const permission = await chrome.permissions.contains({
+              origins: ["https://demo.example/*", "https://*.demo.example/*"],
+            });
+            if (!permission) throw new Error("fixture permission missing");
+            const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (active?.url !== targetUrl) throw new Error(`wrong active tab: ${active?.url ?? "none"}`);
+            const button = document.querySelector<HTMLButtonElement>("li button");
+            if (!button) throw new Error("collect button missing");
+            const box = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
+            let probe: string;
+            try {
+              probe = String((await fetch(`${api}/probe`, { method: "POST" })).status);
+            } catch (error) {
+              probe = String(error);
+            }
+            button.click();
+            return `checkbox=${String(box?.checked)} probe=${probe}`;
+          },
+          { targetUrl: fixture.url(), api: apiOrigin },
+        );
+        diagnostics.push(state);
       },
       async probeFingerprint() {
         return panel.evaluate(async (url) => {
@@ -262,6 +280,7 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
         }, fixture.url());
       },
       async inspect() {
+        for (const alert of await panel.getByRole("alert").allInnerTexts()) diagnostics.push(`alert: ${alert}`);
         await panel.close();
         const inspector = await context!.newPage();
         try {
