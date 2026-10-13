@@ -22,6 +22,9 @@ Each worktree needs its own installs. Playwright is needed for browser tests:
 
 ```bash
 npx playwright install chromium
+
+# Built extension demo against fake HTTPS pages and a mock Cloud HTTP boundary:
+npm run e2e:extension-demo
 ```
 
 Use fake data and disposable browser profiles. Never load the real-password CSV
@@ -47,8 +50,8 @@ VITE_SOROERU_CLOUD_API_URL=https://example-api.run.app npm run build:extension
 ```
 
 Replace the example with the deployed HTTPS origin (no path, query or credentials).
-Enable cloud assistance in the unlocked panel; it defaults off. Tier 1/Tier 2
-are available; Tier 3, delivered feedback/outcomes and full settings are pending.
+Enable cloud assistance in the unlocked panel; it defaults off. Tier 1/2 and
+per-fallback Tier 3 consent are available; full settings remain pending.
 See [extension notes](../extension/README.md) for the resolver's limits and
 [manual checks](manual-test.md) for failure paths.
 

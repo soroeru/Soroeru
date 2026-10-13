@@ -40,3 +40,5 @@ gha-creds-*.json
 
 /plan.log
 /apply.log
+test-results/
+playwright-report/

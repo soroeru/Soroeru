@@ -110,7 +110,8 @@ export class VisibilityHost {
       resolveSharedSchema: async (site) => {
         try {
           return await resolver.resolve(site.domain);
-        } catch {
+        } catch (error) {
+          console.error("resolution failed", error instanceof Error ? error.message : "unknown");
           return null;
         } // Deterministic collection retains its wall/lease gates.
       },

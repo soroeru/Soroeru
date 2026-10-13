@@ -254,6 +254,29 @@ test("CloudClient validates before egress and uses a separate fallback origin wi
   );
   assert.equal(requests.length, 1);
 });
+test("CloudClient's default transport calls fetch with the global receiver", async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  // Browsers throw "Illegal invocation" when fetch runs with any receiver other than the global.
+  globalThis.fetch = function (this: unknown) {
+    if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+    calls++;
+    return Promise.resolve(Response.json({ schema: null, status: "none" }));
+  } as typeof fetch;
+  try {
+    const client = new CloudClient({
+      apiBaseUrl: "https://api.example.com",
+      fallbackBaseUrl: "https://fallback.example.com",
+    });
+    await client.call(
+      "resolve",
+      fixtures.resolve as { site: string; pageFingerprint: string; clientVersion: string },
+    );
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
 test("CloudClient rejects malformed responses and never retries a failure", async () => {
   let calls = 0;
   const client = new CloudClient(

@@ -43,8 +43,13 @@ No paid AI call or live website is required for the unit suite.
 Playwright runs development browser fixtures using the Node test runner. Built
 extension tests cover actual panel/worker/content wiring, not only injected
 in-memory adapters. Tier 1 and Tier 2 suites live in `tests/e2e/`; install Chromium
-before running them. Retained Electron E2E suites are migration regression tools,
-not evidence of extension feature parity.
+before running them. The separate `npm run e2e:extension-demo` Playwright Test suite
+loads the built extension with a disposable encrypted vault and fake HTTPS fixture
+pages. It exercises shared-schema resolution, structure mapping, Tier 3 approval
+and decline, and wall hand-off against an HTTP mock of Cloud. It cannot establish
+that deployed Cloud Run, Gemini, logging, Trace, Firestore or BigQuery behave as
+configured; use the manual checks for those boundaries. Retained Electron E2E
+suites are migration regression tools, not evidence of extension feature parity.
 
 Manual release checks cover the actual Chrome permission UI, panel lifetime,
 Cloud IAM/logging configuration and model availability. Use the checklist in

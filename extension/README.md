@@ -25,7 +25,8 @@ origin (no path, query, or credentials):
 VITE_SOROERU_CLOUD_API_URL=<api-origin> npm run build:extension
 ```
 
-After unlocking the Side Panel, enable **クラウド支援を使う** to allow
+After unlocking the Side Panel, enable **クラウドのフォーム知識と Gemini を使う** under
+「クラウドと共有の設定」 to allow
 lookup. Assistance defaults to off and the preference is encrypted in the vault.
 Tier 1 lookup sends only the Site Account's normalized registrable domain, the structure-only fingerprint, and the client version. Configure the Site Account
 with the registrable domain; do not configure a personalized subdomain as its domain.

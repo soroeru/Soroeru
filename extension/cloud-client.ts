@@ -26,11 +26,23 @@ export class CloudClient {
   private policy: (() => { cloudAssistEnabled: boolean; telemetryEnabled: boolean }) | undefined;
   constructor(
     config: { apiBaseUrl: string; fallbackBaseUrl: string },
-    private readonly request: typeof fetch = fetch,
+    // A bare `fetch` stored on the instance would be invoked with `this` = CloudClient, which
+    // browsers reject as "Illegal invocation"; the wrapper keeps the global receiver.
+    // egress: soroeru-cloud
+    private readonly request: typeof fetch = (input, init) => fetch(input, init),
   ) {
     const base = (raw: string): string => {
       const u = new URL(raw);
-      if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.pathname !== "/")
+      const isLocalhostHttp =
+        u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1") && u.port !== "";
+      if (
+        (!isLocalhostHttp && u.protocol !== "https:") ||
+        u.username ||
+        u.password ||
+        u.search ||
+        u.hash ||
+        u.pathname !== "/"
+      )
         throw new Error("invalid-cloud-base-url");
       return u.origin;
     };

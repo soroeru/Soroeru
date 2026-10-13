@@ -117,8 +117,11 @@ are `soroeru-tier3-resolution.test.ts` and Cloud API tests (`server.test.mjs`).
 - [ ] Let the gate expire (or set the deadline to a short test value): no API call is
       made; the result is the same as decline.
 - [ ] Approve the gate: `tier3-ticket` is called once, `read-with-consent` once.
-      Inspect both requests: no site name in plain text, no raw values, no passwords,
-      CVV, or OTP items in the payload. Confirm the consent ID is a fresh UUID each run.
+      The ticket contains the site domain, consent ID and payload hash; the
+      approved read contains only the consented minimal region, including the
+      fake personal values needed for that read. Confirm password, CVV and OTP
+      raw values are excluded and secret items are `[SECRET]`. Confirm the
+      consent ID is a fresh UUID each run and the payload is at most 16 KiB.
 - [ ] Toggle cloud assistance off while the gate is open: the gate closes with
       "declined" and no API call is made.
 - [ ] Inspect Cloud Logging and Trace for the `tier3-ticket` and `read-with-consent`
@@ -130,8 +133,48 @@ are `soroeru-tier3-resolution.test.ts` and Cloud API tests (`server.test.mjs`).
       double-decrement on retry).
 - [ ] Confirm that password, CVV, and OTP fields (type=password, autocomplete=
       current-password / new-password / one-time-code / cc-csc) are never included
-      in the `readRegionMasked` payload sent to the cloud, even if they appear on
-      the same page as the unresolved fields.
+      as raw values in the `readRegionMasked` payload sent to the cloud, even if
+      they appear on the same page as the unresolved fields. Masked secret items
+      may appear as `[SECRET]`.
+
+## Tier 1 → 2 → 3 Cloud demo for #555
+
+Use the four fake pages in [`sites/extension-demo/`](../sites/extension-demo/)
+on a development HTTPS host. Use a disposable Chrome profile and development
+Cloud project only. Record the commit, extension build API origin, Cloud Run
+revisions, configured Gemini model and UTC time window in the PR. Run
+`npm run e2e:extension-demo` first; that command verifies the local browser
+path against a mock and does not call the deployed services.
+
+- [ ] Check both Cloud Run services, IAM, the ticket secret and daily budget,
+      approved Gemini model, disabled model request logging and implicit caching,
+      Cloud Logging exclusions and every extra log sink using the deployment
+      checklist below. Keep telemetry sharing off initially.
+- [ ] Import a reviewed active schema for the Tier 1 fake page into the
+      development schema registry. Load the extension with the reviewed API
+      origin, unlock a disposable fake vault and add the fake site. Collect the
+      Tier 1 page: confirm local values are recorded and no mapping or Tier 3
+      request occurs.
+- [ ] Collect the Tier 2 page without an active schema. Confirm the mapping
+      request contains only structure, then verify local values in the vault.
+      If the model is unavailable or returns invalid mappings, record that
+      result as a failed manual case rather than treating the mock as evidence.
+- [ ] Collect the Tier 3 page so one required attribute remains unresolved.
+      Decline once, then run again and approve once. Decline sends no ticket or
+      read. Approval sends one ticket followed by one bounded masked read;
+      verify raw fake password/CVV/OTP values are absent and locally
+      corroborated values alone enter the ledger. Use the wall page to confirm
+      the same-tab hand-off and stop further sends.
+- [ ] With sharing explicitly enabled, submit fake Tier 1/2 outcomes. Inspect
+      BigQuery outcome rows for typed fields only and confirm Tier 3 personal
+      values never enter schema learning. Inspect Firestore schema, budget and
+      feedback documents for structure/counts only.
+- [ ] Inspect Cloud Logging and Trace for both services during the recorded
+      UTC window, including additional sinks. Search for the fixture's fake
+      email, phone, name, password, CVV, OTP and page body. Record the inspected
+      services, datasets and time range, the observed absence or any finding,
+      and every skipped check in the PR. Do not attach bodies, values, prompts,
+      responses or screenshots containing them.
 
 ## Cloud deployment
 

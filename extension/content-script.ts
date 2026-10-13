@@ -243,7 +243,8 @@ async function execute(command: ContentCommand): Promise<unknown> {
     case "readSchema": return readSchemaPage(command.schema);
     case "readRegionMasked": return readRegionMasked(command.requestedKeys, command.resolvedIds);
     case "snapshot":
-      return scanPage();
+      // Direct Side Panel commands bypass the legacy worker-side page identity merge.
+      return { ...scanPage(), url: location.href, title: document.title };
     case "readValues":
       return readPageValues(command.fieldIds);
     case "readDisplayValues":
