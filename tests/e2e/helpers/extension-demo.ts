@@ -135,45 +135,40 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       return response;
     };
     server = createServer((request, response) => {
-        response.setHeader("Access-Control-Allow-Origin", "*");
-        response.setHeader("Access-Control-Allow-Headers", "Content-Type");
-        response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-        if (request.method === "OPTIONS") {
-          response.writeHead(204).end();
-          return;
+      response.setHeader("Access-Control-Allow-Origin", "*");
+      response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+      // Private Network Access: allow chrome-extension pages to reach localhost
+      response.setHeader("Access-Control-Allow-Private-Network", "true");
+      if (request.method === "OPTIONS") {
+        response.writeHead(204).end();
+        return;
+      }
+      const operation = paths[new URL(request.url ?? "/", apiOrigin).pathname];
+      if (!operation || request.method !== "POST") {
+        response.writeHead(404).end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        try {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as CloudRequests[CloudOperation];
+          response.writeHead(200, { "Content-Type": "application/json" });
+          response.end(JSON.stringify(respond(operation, body)));
+        } catch {
+          response.writeHead(400).end();
         }
-        const operation = paths[new URL(request.url ?? "/", apiOrigin).pathname];
-        if (!operation || request.method !== "POST") {
-          response.writeHead(404).end();
-          return;
-        }
-        const chunks: Buffer[] = [];
-        request.on("data", (chunk: Buffer) => chunks.push(chunk));
-        request.on("end", () => {
-          try {
-            const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as CloudRequests[CloudOperation];
-            response.writeHead(200, { "Content-Type": "application/json" });
-            response.end(JSON.stringify(respond(operation, body)));
-          } catch {
-            response.writeHead(400).end();
-          }
-        });
-      },
-    );
-    await new Promise<void>((resolve, reject) =>
-      server!.listen(43365, "127.0.0.1", () => resolve()).once("error", reject),
-    );
-    await context.route(`${apiOrigin}/**`, async (route) => {
-      const operation = paths[new URL(route.request().url()).pathname];
-      if (!operation || route.request().method() !== "POST") return route.abort();
-      const body = route.request().postDataJSON() as CloudRequests[CloudOperation];
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(respond(operation, body)),
       });
     });
-    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
+    // Listen on all interfaces (IPv4 + IPv6) so localhost resolves regardless of address family.
+    // Do NOT add a Playwright context.route() for apiOrigin: the route handler cannot reliably
+    // read postData from chrome-extension page requests, causing the fetch to hang until
+    // AbortSignal fires. The real HTTP server above handles all cloud mock traffic directly.
+    await new Promise<void>((resolve, reject) =>
+      server!.listen(43365, () => resolve()).once("error", reject),
+    );
+    const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 60_000 }));
     worker.on("close", () => diagnostics.push("worker-closed"));
     worker.on("console", (message) => {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
