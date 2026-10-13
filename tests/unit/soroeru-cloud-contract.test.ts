@@ -174,6 +174,64 @@ test("ticket hash serialization ignores wire ordering and excludes the ticket", 
     }),
   );
 });
+test("CloudClient setPolicy blocks all operations when cloudAssistEnabled is false", async () => {
+  const client = new CloudClient(
+    { apiBaseUrl: "https://api.example.com", fallbackBaseUrl: "https://fallback.example.com" },
+    async () => Response.json({ status: "none" }),
+  );
+  client.setPolicy(() => ({ cloudAssistEnabled: false, telemetryEnabled: true }));
+  await assert.rejects(
+    client.call("resolve", fixtures.resolve as Parameters<typeof client.call<"resolve">>[1]),
+    (e: unknown) => e instanceof CloudClientError && e.category === "cloud-unreachable",
+  );
+});
+
+test("CloudClient setPolicy blocks feedback and outcome when telemetryEnabled is false", async () => {
+  let calls = 0;
+  const client = new CloudClient(
+    { apiBaseUrl: "https://api.example.com", fallbackBaseUrl: "https://fallback.example.com" },
+    async () => {
+      calls++;
+      return Response.json({ status: "none" });
+    },
+  );
+  client.setPolicy(() => ({ cloudAssistEnabled: true, telemetryEnabled: false }));
+  await assert.rejects(
+    client.call("feedback", fixtures.feedback as Parameters<typeof client.call<"feedback">>[1]),
+    (e: unknown) => e instanceof CloudClientError && e.category === "cloud-unreachable",
+  );
+  await assert.rejects(
+    client.call("outcome", fixtures.outcome as Parameters<typeof client.call<"outcome">>[1]),
+    (e: unknown) => e instanceof CloudClientError && e.category === "cloud-unreachable",
+  );
+  // Other operations (resolve, mapStructure) are allowed when cloudAssistEnabled is true.
+  assert.equal(calls, 0, "no network call should have been made for blocked operations");
+});
+
+test("CloudClient revoke aborts in-flight cloud requests", async () => {
+  let aborted = false;
+  const client = new CloudClient(
+    { apiBaseUrl: "https://api.example.com", fallbackBaseUrl: "https://fallback.example.com" },
+    async (_url, init) => {
+      // Simulate a long request; detect abort via signal.
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    },
+  );
+  const callPromise = client.call(
+    "resolve",
+    fixtures.resolve as Parameters<typeof client.call<"resolve">>[1],
+  );
+  // Revoke while the request is in-flight.
+  client.revoke("cloud");
+  await assert.rejects(callPromise);
+  assert.equal(aborted, true, "in-flight request should have been aborted");
+});
+
 test("CloudClient validates before egress and uses a separate fallback origin without credentials/retries", async () => {
   const requests: { url: string; init: RequestInit | undefined }[] = [];
   const transport: typeof fetch = async (url, init) => {
