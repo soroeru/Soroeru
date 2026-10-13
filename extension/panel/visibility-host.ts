@@ -54,6 +54,7 @@ export class VisibilityHost {
   readonly service: VisibilityService;
   private readonly listeners = new Set<(event: VisibilityEvent) => void>();
   private readonly stopStateWatch: () => void;
+  private readonly stopCloudStateWatch: () => void;
   private bound = false;
   private stopping = false;
   private consentGateProvider: Tier3ConsentCallback | undefined;
@@ -124,7 +125,7 @@ export class VisibilityHost {
     options.leaseClient.onInvalidated(() => {
       this.service.abortRun();
     });
-    options.session.onStateChange((state) => {
+    this.stopCloudStateWatch = options.session.onStateChange((state) => {
       if (state === "locked" || state === "closed" || state === "in-use-elsewhere") {
         this.pendingGateResolve?.("declined");
         this.pendingGateResolve = undefined;
@@ -359,6 +360,7 @@ export class VisibilityHost {
   async shutdown(): Promise<void> {
     this.stopping = true;
     this.stopStateWatch();
+    this.stopCloudStateWatch();
     this.service.abortRun();
     void this.options.leaseClient.releaseLease();
     const saving = this.options.session.state === "unlocked" ? this.options.session.save() : undefined;
