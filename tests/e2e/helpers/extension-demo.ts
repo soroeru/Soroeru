@@ -2,7 +2,6 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type BrowserContext, type Page } from "@playwright/test";
-import { build } from "vite";
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { CloudOperation, CloudRequests, FormSchema } from "../../../src/shared/cloud-contract.js";
@@ -72,24 +71,6 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { host_permissions?: string[] };
     manifest.host_permissions = [`${siteOrigin}/*`, "https://*.demo.example/*", `${apiOrigin}/*`];
     await writeFile(manifestPath, JSON.stringify(manifest));
-    await build({
-      configFile: false,
-      logLevel: "silent",
-      build: {
-        outDir: extension,
-        emptyOutDir: false,
-        lib: {
-          entry: resolve("tests/e2e/helpers/seed-extension-vault.ts"),
-          name: "SeedExtensionVault",
-          formats: ["iife"],
-          fileName: () => "seed-vault.js",
-        },
-      },
-    });
-    await writeFile(
-      join(extension, "seed-vault.html"),
-      '<!doctype html><script src="seed-vault.js"></script>',
-    );
     context = await chromium.launchPersistentContext(join(dir, "profile"), {
       channel: "chromium",
       headless: true,
