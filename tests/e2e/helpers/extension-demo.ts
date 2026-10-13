@@ -222,6 +222,23 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
     await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
     await panel.getByText(`Demo ${page}`).waitFor({ timeout: 60_000 });
+    await panel.evaluate(() => {
+      const start = performance.now();
+      const log: string[] = [];
+      let last = "";
+      (window as unknown as { demoTimeline: string[] }).demoTimeline = log;
+      setInterval(() => {
+        const box = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
+        const alerts = [...document.querySelectorAll('[role="alert"]')].map((a) => a.textContent).join("|");
+        const now = `checked=${String(box?.checked)} disabled=${String(box?.disabled)} alerts=${alerts}`;
+        if (now !== last) log.push(`${Math.round(performance.now() - start)}ms ${now}`);
+        last = now;
+      }, 10);
+    });
+    const timeline = async (label: string): Promise<void> => {
+      const log = await panel.evaluate(() => (window as unknown as { demoTimeline: string[] }).demoTimeline);
+      diagnostics.push(`${label}: ${log.join(" ; ")}`);
+    };
     return {
       context,
       fixture,
@@ -229,7 +246,9 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       requests,
       diagnostics,
       async run() {
+        await timeline("before-front");
         await fixture.bringToFront();
+        await timeline("after-front");
         const state = await panel.evaluate(
           async ({ targetUrl, api }) => {
             const permission = await chrome.permissions.contains({
