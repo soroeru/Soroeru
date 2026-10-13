@@ -225,15 +225,31 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     await panel.evaluate(() => {
       const start = performance.now();
       const log: string[] = [];
-      let last = "";
       (window as unknown as { demoTimeline: string[] }).demoTimeline = log;
-      setInterval(() => {
+      const snap = (label: string): void => {
         const box = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
         const alerts = [...document.querySelectorAll('[role="alert"]')].map((a) => a.textContent).join("|");
-        const now = `checked=${String(box?.checked)} disabled=${String(box?.disabled)} alerts=${alerts}`;
-        if (now !== last) log.push(`${Math.round(performance.now() - start)}ms ${now}`);
-        last = now;
-      }, 10);
+        log.push(
+          `${Math.round(performance.now() - start)}ms ${label} checked=${String(box?.checked)} ` +
+            `vis=${document.visibilityState} focus=${String(document.hasFocus())} alerts=${alerts}`,
+        );
+      };
+      snap("installed");
+      for (const type of ["click", "change"]) {
+        document.addEventListener(
+          type,
+          (event) => {
+            const target = event.target as HTMLElement;
+            snap(`${type}:${target.tagName.toLowerCase()}`);
+            queueMicrotask(() => snap(`${type}+micro`));
+            setTimeout(() => snap(`${type}+task`), 0);
+          },
+          true,
+        );
+      }
+      new MutationObserver(() => {
+        if (document.querySelector('[role="alert"]')) snap("alert-mutation");
+      }).observe(document.body, { childList: true, subtree: true });
     });
     const timeline = async (label: string): Promise<void> => {
       const log = await panel.evaluate(() => (window as unknown as { demoTimeline: string[] }).demoTimeline);
