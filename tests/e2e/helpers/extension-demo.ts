@@ -24,7 +24,7 @@ export interface DemoBrowser {
   close(): Promise<void>;
 }
 
-const apiOrigin = "https://127.0.0.1:43365";
+const apiOrigin = "https://localhost:43365";
 const siteOrigin = "https://demo.example";
 const paths: Record<string, CloudOperation> = {
   "/v1/schemas/resolve": "resolve",
@@ -74,6 +74,8 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       "1",
       "-subj",
       "/CN=localhost",
+      "-addext",
+      "subjectAltName=DNS:localhost",
     ]);
     await cp(resolve("dist/extension"), extension, { recursive: true });
     // A directly opened extension tab has sender.tab; production accepts only a true Side Panel.
@@ -201,7 +203,7 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       },
     );
     await new Promise<void>((resolve, reject) =>
-      server!.listen(43365, "127.0.0.1", () => resolve()).once("error", reject),
+      server!.listen(43365, "localhost", () => resolve()).once("error", reject),
     );
     await context.route(`${apiOrigin}/**`, async (route) => {
       const operation = paths[new URL(route.request().url()).pathname];
