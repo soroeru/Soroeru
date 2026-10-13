@@ -59,4 +59,9 @@ export class TelemetryBuilder {
     validateCloudRequest("outcome", event);
     return event;
   }
+
+  /** User-settings boundary: disabled sharing produces no event. */
+  buildWhenEnabled(input: TelemetryInput, telemetryEnabled: boolean): OutcomeEvent | null {
+    return telemetryEnabled ? this.build(input) : null;
+  }
 }

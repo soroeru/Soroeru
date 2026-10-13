@@ -20,6 +20,7 @@ import { leasePageTransport, openExtensionTabSession } from "../../src/automatio
 import type { SiteSession } from "../../src/automation/page-driver.js";
 import { VisibilityService } from "../../src/automation/visibility-service.js";
 import type { VaultSession } from "../../src/store/vault-session.js";
+import type { CloudSettings } from "../../src/domain/entities.js";
 import type { LeaseClient } from "./lease-client.js";
 
 const TAB_LOAD_TIMEOUT_MS = 15_000;
@@ -53,11 +54,16 @@ export class VisibilityHost {
   readonly service: VisibilityService;
   private readonly listeners = new Set<(event: VisibilityEvent) => void>();
   private readonly stopStateWatch: () => void;
+  private readonly stopCloudStateWatch: () => void;
   private bound = false;
   private stopping = false;
   private consentGateProvider: Tier3ConsentCallback | undefined;
   private activeTabOrigin: string | undefined;
   private readonly resolver: ResolutionOrchestrator;
+  private settingsWrite: Promise<void> = Promise.resolve();
+  private pendingOff: { cloud: boolean; sharing: boolean } = { cloud: false, sharing: false };
+  private feedbackEpoch = 0;
+  private sharingOverride: boolean | undefined;
   /** Resolves the currently pending consent gate promise; set only while a gate is open. */
   private pendingGateResolve: ((v: "approved" | "declined" | "timeout") => void) | undefined;
 
@@ -67,11 +73,37 @@ export class VisibilityHost {
       clientVersion: "0.1.2",
       ...(options.cloudClient ? { client: options.cloudClient } : {}),
       ...(options.deliveryClient ? { deliveryClient: options.deliveryClient } : {}),
+      sharingPolicy: {
+        enabled: () =>
+          this.options.session.state === "unlocked" &&
+          (this.sharingOverride ??
+            this.options.session.vault.get("cloudSettings", "cloud")?.telemetryEnabled ??
+            false) &&
+          !this.pendingOff.sharing,
+        epoch: () => this.feedbackEpoch,
+      },
       sendPageCommand: (command) => options.leaseClient.sendPageCommand(command),
       isActive: () => !this.stopping && options.leaseClient.isLeaseActive(),
       showConsentGate: (params: Tier3ConsentParams) => this.handleConsentGate(params),
       // currentOrigin is omitted intentionally: origin is already supplied via
       // consentGate params.origin and the worktree host has no static origin.
+    });
+    const cloud = options.cloudClient as
+      | (ResolveClient & {
+          setPolicy?: (policy: () => { cloudAssistEnabled: boolean; telemetryEnabled: boolean }) => void;
+          revoke?: (kind: "cloud" | "sharing") => void;
+        })
+      | undefined;
+    cloud?.setPolicy?.(() => {
+      const settings =
+        options.session.state === "unlocked"
+          ? options.session.vault.get("cloudSettings", "cloud")
+          : undefined;
+      return {
+        cloudAssistEnabled: (settings?.cloudAssistEnabled ?? false) && !this.pendingOff.cloud,
+        telemetryEnabled:
+          (this.sharingOverride ?? settings?.telemetryEnabled ?? false) && !this.pendingOff.sharing,
+      };
     });
     const resolver = this.resolver;
     this.service = new VisibilityService({
@@ -94,6 +126,13 @@ export class VisibilityHost {
     options.leaseClient.onInvalidated(() => {
       this.service.abortRun();
     });
+    this.stopCloudStateWatch = options.session.onStateChange((state) => {
+      if (state === "locked" || state === "closed" || state === "in-use-elsewhere") {
+        this.pendingGateResolve?.("declined");
+        this.pendingGateResolve = undefined;
+        cloud?.revoke?.("cloud");
+      }
+    });
     this.stopStateWatch = options.session.onStateChange((state) => this.onSessionState(state));
     this.onSessionState(options.session.state);
   }
@@ -104,19 +143,113 @@ export class VisibilityHost {
   get cloudAssistEnabled(): boolean {
     return this.options.session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled ?? false;
   }
+  get telemetryEnabled(): boolean {
+    return this.options.session.vault.get("cloudSettings", "cloud")?.telemetryEnabled ?? false;
+  }
+  get settingsConfigured(): boolean {
+    return Boolean(this.options.session.vault.get("cloudSettings", "cloud"));
+  }
+  get settings(): Readonly<CloudSettings> | undefined {
+    const current = this.options.session.vault.get("cloudSettings", "cloud");
+    return current ? { ...current, queue: [...current.queue] } : undefined;
+  }
+  async configureSettings(): Promise<void> {
+    if (this.settingsConfigured) return;
+    await this.updateSettings({ cloudAssistEnabled: false, telemetryEnabled: false });
+  }
   async setCloudAssistEnabled(enabled: boolean): Promise<void> {
+    await this.updateSettings({ cloudAssistEnabled: enabled });
+  }
+  async setTelemetryEnabled(enabled: boolean): Promise<void> {
+    await this.updateSettings({ telemetryEnabled: enabled });
+  }
+  async regenerateValidatorKey(): Promise<void> {
+    await this.updateSettings({ validatorKey: crypto.randomUUID(), discardFeedback: true });
+  }
+  private async updateSettings(patch: Partial<CloudSettings> & { discardFeedback?: boolean }): Promise<void> {
     const session = this.options.session;
     const old = session.vault.get("cloudSettings", "cloud");
-    session.vault.put("cloudSettings", {
-      id: "cloud",
-      telemetryEnabled: false,
-      validatorKey: crypto.randomUUID(),
-      queue: [],
-      ...old,
-      cloudAssistEnabled: enabled,
-      updatedAt: Date.now(),
-    });
-    await session.save();
+    const revokingCloud = patch.cloudAssistEnabled === false && old?.cloudAssistEnabled;
+    const revokingSharing =
+      (patch.telemetryEnabled === false && old?.telemetryEnabled) || patch.discardFeedback === true;
+    const cloud = this.options.cloudClient as
+      (ResolveClient & { revoke?: (kind: "cloud" | "sharing") => void }) | undefined;
+    if (revokingCloud) cloud?.revoke?.("cloud");
+    if (revokingSharing) cloud?.revoke?.("sharing");
+    if (revokingCloud) this.pendingOff.cloud = true;
+    if (patch.telemetryEnabled === false && old?.telemetryEnabled) this.pendingOff.sharing = true;
+    if (patch.telemetryEnabled === false) this.sharingOverride = false;
+    if (patch.telemetryEnabled === true) this.sharingOverride = true;
+    if (patch.discardFeedback) {
+      this.feedbackEpoch++;
+      this.pendingOff.sharing = true;
+    }
+    if (!old) {
+      session.vault.put("cloudSettings", {
+        id: "cloud",
+        cloudAssistEnabled: false,
+        telemetryEnabled: false,
+        validatorKey: crypto.randomUUID(),
+        queue: [],
+        updatedAt: Date.now(),
+      });
+    }
+    // Off changes apply in memory before persistence. Clearing the queue here makes
+    // the revocation effective even if encrypted persistence later fails.
+    if (revokingCloud || (patch.telemetryEnabled === false && old?.telemetryEnabled)) {
+      const current = session.vault.get("cloudSettings", "cloud")!;
+      session.vault.put("cloudSettings", {
+        ...current,
+        cloudAssistEnabled: revokingCloud ? false : current.cloudAssistEnabled,
+        telemetryEnabled: patch.telemetryEnabled === false ? false : current.telemetryEnabled,
+        queue: revokingCloud
+          ? []
+          : current.queue.filter(
+              (item) => !(revokingSharing && (item.kind === "feedback" || item.kind === "telemetry")),
+            ),
+        updatedAt: Date.now(),
+      });
+    }
+    const write = this.settingsWrite
+      .catch(() => undefined)
+      .then(async () => {
+        const current = session.vault.get("cloudSettings", "cloud");
+        const { discardFeedback: _discardFeedback, ...values } = patch;
+        const queue =
+          current?.queue.filter(
+            (item) =>
+              !(
+                revokingCloud ||
+                (revokingSharing && (item.kind === "feedback" || item.kind === "telemetry"))
+              ),
+          ) ?? [];
+        const next = {
+          id: "cloud",
+          telemetryEnabled: false,
+          cloudAssistEnabled: false,
+          validatorKey: crypto.randomUUID(),
+          ...current,
+          ...values,
+          queue,
+          updatedAt: Date.now(),
+        };
+        if (revokingCloud && patch.cloudAssistEnabled === false) next.cloudAssistEnabled = false;
+        if (revokingSharing && patch.telemetryEnabled === false) next.telemetryEnabled = false;
+        session.vault.put("cloudSettings", {
+          ...next,
+        });
+        await session.save();
+        if (patch.cloudAssistEnabled === true) this.pendingOff.cloud = false;
+        if (patch.telemetryEnabled === true) this.pendingOff.sharing = false;
+        if (patch.cloudAssistEnabled === false) this.pendingOff.cloud = false;
+        if (patch.telemetryEnabled === false) this.pendingOff.sharing = false;
+      });
+    this.settingsWrite = write;
+    await write;
+  }
+
+  get sharingEpoch(): number {
+    return this.feedbackEpoch;
   }
 
   onEvent(listener: (event: VisibilityEvent) => void): () => void {
@@ -130,7 +263,9 @@ export class VisibilityHost {
    * If a gate is pending when the provider is removed, the gate is resolved as "declined"
    * so the orchestrator doesn't hang (B5).
    */
-  setConsentGateProvider(provider: ((params: Tier3ConsentParams) => Promise<"approved" | "declined" | "timeout">) | undefined): void {
+  setConsentGateProvider(
+    provider: ((params: Tier3ConsentParams) => Promise<"approved" | "declined" | "timeout">) | undefined,
+  ): void {
     if (provider === undefined && this.pendingGateResolve) {
       const resolve = this.pendingGateResolve;
       this.pendingGateResolve = undefined;
@@ -156,19 +291,21 @@ export class VisibilityHost {
         }
       }, DEADLINE_MS);
 
-      void this.consentGateProvider!(params).then((decision) => {
-        if (this.pendingGateResolve === resolve) {
-          clearTimeout(timer);
-          this.pendingGateResolve = undefined;
-          resolve(decision);
-        }
-      }).catch(() => {
-        if (this.pendingGateResolve === resolve) {
-          clearTimeout(timer);
-          this.pendingGateResolve = undefined;
-          resolve("declined");
-        }
-      });
+      void this.consentGateProvider!(params)
+        .then((decision) => {
+          if (this.pendingGateResolve === resolve) {
+            clearTimeout(timer);
+            this.pendingGateResolve = undefined;
+            resolve(decision);
+          }
+        })
+        .catch(() => {
+          if (this.pendingGateResolve === resolve) {
+            clearTimeout(timer);
+            this.pendingGateResolve = undefined;
+            resolve("declined");
+          }
+        });
     });
   }
 
@@ -224,6 +361,7 @@ export class VisibilityHost {
   async shutdown(): Promise<void> {
     this.stopping = true;
     this.stopStateWatch();
+    this.stopCloudStateWatch();
     this.service.abortRun();
     void this.options.leaseClient.releaseLease();
     const saving = this.options.session.state === "unlocked" ? this.options.session.save() : undefined;

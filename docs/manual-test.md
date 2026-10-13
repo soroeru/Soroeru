@@ -35,6 +35,28 @@ policy. Pending features below are release criteria, not currently available UI.
 - [ ] Cancel a run and verify already saved observations remain, with no later
       sends/writes attributed to the cancelled request.
 
+## Cloud settings panel (#568)
+
+Use a development environment with fake vault records only.
+
+- [ ] Open the Side Panel after unlocking the vault. The「クラウドと共有の設定」section
+      appears with both toggles off and the four-category description visible. The
+      section renders even when the cloud API is unconfigured (shows a notice).
+- [ ] Toggle「クラウドのフォーム知識と Gemini を使う」on and off: confirm the saved notice
+      or stop notice appears, and no network call is made while the API is unconfigured.
+      Toggle on while collection is running: confirm the toggle remains operable (not disabled).
+- [ ] Toggle「改善用の動作データを送る」off with a queued item in the encrypted vault:
+      confirm the queue is emptied immediately and the stop notice appears.
+      Toggle sharing back on requires a successful save before network calls resume.
+- [ ] Simulate a save failure (disconnect IndexedDB or intercept the vault write):
+      confirm the error message「設定を暗号化保存できませんでした」appears, the toggle
+      stays at the in-memory off value, and an enable toggle fails closed (does not
+      send data).
+- [ ] Click「識別用キーを再生成」with a queued feedback item: confirm the item is
+      discarded from the queue and the notice about past data not being affected appears.
+      Confirm the key itself is not logged, displayed in plaintext, or sent to any
+      cloud endpoint.
+
 ## Tier 1 shared schemas
 
 Use `cloud/seeds/profile.html`, the reviewed seed import command in

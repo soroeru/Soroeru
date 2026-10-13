@@ -21,6 +21,9 @@ export class CloudClientError extends Error {
 export class CloudClient {
   private readonly api: string;
   private readonly fallback: string;
+  private readonly requests = new Set<AbortController>();
+  private readonly sharingRequests = new Set<AbortController>();
+  private policy: (() => { cloudAssistEnabled: boolean; telemetryEnabled: boolean }) | undefined;
   constructor(
     config: { apiBaseUrl: string; fallbackBaseUrl: string },
     // A bare `fetch` stored on the instance would be invoked with `this` = CloudClient, which
@@ -46,12 +49,31 @@ export class CloudClient {
     this.api = base(config.apiBaseUrl);
     this.fallback = base(config.fallbackBaseUrl);
   }
+  setPolicy(policy: (() => { cloudAssistEnabled: boolean; telemetryEnabled: boolean }) | undefined): void {
+    this.policy = policy;
+  }
+  revoke(kind: "cloud" | "sharing"): void {
+    if (kind === "cloud") for (const request of this.requests) request.abort();
+    if (kind === "sharing") for (const request of this.sharingRequests) request.abort();
+  }
   async call<K extends CloudOperation>(
     operation: K,
     payload: CloudRequests[K],
     signal?: AbortSignal,
   ): Promise<CloudResponses[K]> {
     validateCloudRequest(operation, payload);
+    const settings = this.policy?.();
+    if (
+      settings &&
+      (!settings.cloudAssistEnabled ||
+        ((operation === "feedback" || operation === "outcome") && !settings.telemetryEnabled))
+    ) {
+      throw new CloudClientError("cloud-unreachable");
+    }
+    const controller = new AbortController();
+    this.requests.add(controller);
+    const isSharing = operation === "feedback" || operation === "outcome";
+    if (isSharing) this.sharingRequests.add(controller);
     try {
       // egress: soroeru-cloud
       const response = await this.request(
@@ -63,7 +85,11 @@ export class CloudClient {
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000),
+          signal: AbortSignal.any([
+            controller.signal,
+            ...(signal ? [signal] : []),
+            AbortSignal.timeout(30000),
+          ]),
         },
       );
       if (response.status === 429) {
@@ -98,6 +124,9 @@ export class CloudClient {
           ? "ai-invalid-response"
           : "cloud-unreachable",
       );
+    } finally {
+      this.requests.delete(controller);
+      this.sharingRequests.delete(controller);
     }
   }
   private async readResponse(response: Response): Promise<unknown> {
