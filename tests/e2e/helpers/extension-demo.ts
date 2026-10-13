@@ -210,69 +210,12 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     await fixture.goto(`${siteOrigin}/${page}`);
     const panel = await context.newPage();
     panel.on("console", (message) => {
-      if (message.type() === "error" || message.type() === "warning")
-        diagnostics.push(`console.${message.type()}: ${message.text().slice(0, 200)}`);
-    });
-    panel.on("pageerror", (error) => diagnostics.push(`pageerror: ${error.message.slice(0, 200)}`));
-    context.on("requestfailed", (request) => {
-      if (request.url().startsWith(apiOrigin))
-        diagnostics.push(`requestfailed ${new URL(request.url()).pathname}: ${request.failure()?.errorText ?? ""}`);
+      if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
     await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
     await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
     await panel.getByText(`Demo ${page}`).waitFor({ timeout: 60_000 });
-    await panel.evaluate(() => {
-      const start = performance.now();
-      const log: string[] = [];
-      (window as unknown as { demoTimeline: string[] }).demoTimeline = log;
-      const snap = (label: string): void => {
-        const box = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
-        const alerts = [...document.querySelectorAll('[role="alert"]')].map((a) => a.textContent).join("|");
-        log.push(
-          `${Math.round(performance.now() - start)}ms ${label} checked=${String(box?.checked)} ` +
-            `vis=${document.visibilityState} focus=${String(document.hasFocus())} alerts=${alerts}`,
-        );
-      };
-      snap("installed");
-      const checkedProp = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "checked")!;
-      Object.defineProperty(HTMLInputElement.prototype, "checked", {
-        configurable: true,
-        get(this: HTMLInputElement) {
-          return checkedProp.get!.call(this) as boolean;
-        },
-        set(this: HTMLInputElement, value: boolean) {
-          const caller = (new Error().stack ?? "").split("\n").slice(2, 4).join(" < ").replace(/\s+/g, " ");
-          checkedProp.set!.call(this, value);
-          snap(`set(${String(value)}) by ${caller.slice(0, 160)}`);
-        },
-      });
-      for (const type of ["pointerdown", "mousedown", "mouseup", "input"]) {
-        document.addEventListener(type, () => snap(type), true);
-      }
-      for (const type of ["click", "change"]) {
-        document.addEventListener(
-          type,
-          (event) => {
-            const target = event.target as HTMLInputElement;
-            snap(
-              `${type}:${target.tagName.toLowerCase()}:${target.type} trusted=${String(event.isTrusted)} ` +
-                `target-checked=${String(target.checked)} same=${String(target === document.querySelector('input[type="checkbox"]'))}`,
-            );
-            queueMicrotask(() => snap(`${type}+micro`));
-            setTimeout(() => snap(`${type}+task`), 0);
-          },
-          true,
-        );
-      }
-      new MutationObserver(() => {
-        if (document.querySelector('[role="alert"]')) snap("alert-mutation");
-      }).observe(document.body, { childList: true, subtree: true });
-    });
-    const timeline = async (label: string): Promise<void> => {
-      const log = await panel.evaluate(() => (window as unknown as { demoTimeline: string[] }).demoTimeline);
-      diagnostics.push(`${label}: ${log.join(" ; ")}`);
-    };
     return {
       context,
       fixture,
@@ -280,65 +223,18 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       requests,
       diagnostics,
       async run() {
-        diagnostics.push(
-          await panel.getByRole("checkbox", { name: /クラウド支援/ }).evaluate(
-            (el) =>
-              `locator-is-first=${String(el === document.querySelector('input[type="checkbox"]'))} ` +
-              `locator-checked=${String((el as HTMLInputElement).checked)} inputs=` +
-              [...document.querySelectorAll("input")]
-                .map((i) => `${i.type}:${String(i.checked)}:${i.isConnected ? "c" : "d"}`)
-                .join(","),
-          ),
-        );
-        diagnostics.push(
-          await panel.evaluate(() => {
-            const path = (el: Element): string => {
-              const parts: string[] = [];
-              for (let n: Element | null = el; n && n !== document.body; n = n.parentElement)
-                parts.push(n.id ? `${n.tagName}#${n.id}` : n.tagName);
-              return parts.reverse().join(">");
-            };
-            const root = document.getElementById("root");
-            return (
-              `roots=${document.querySelectorAll("#root").length} main=${document.querySelectorAll("main").length} ` +
-              `rootChildren=${root?.children.length ?? -1} bodyChildren=${document.body.children.length} ` +
-              [...document.querySelectorAll('input[type="checkbox"]')]
-                .map(
-                  (c, i) =>
-                    `[cb${i} visible=${String((c as HTMLElement).checkVisibility())} ` +
-                    `label=${(c.closest("label")?.textContent ?? "").slice(0, 12)} path=${path(c)}]`,
-                )
-                .join(" ") +
-              ` sites=${document.querySelectorAll("li").length}`
-            );
-          }),
-        );
-        await timeline("before-front");
         await fixture.bringToFront();
-        await timeline("after-front");
-        const state = await panel.evaluate(
-          async ({ targetUrl, api }) => {
-            const permission = await chrome.permissions.contains({
-              origins: ["https://demo.example/*", "https://*.demo.example/*"],
-            });
-            if (!permission) throw new Error("fixture permission missing");
-            const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (active?.url !== targetUrl) throw new Error(`wrong active tab: ${active?.url ?? "none"}`);
-            const button = document.querySelector<HTMLButtonElement>("li button");
-            if (!button) throw new Error("collect button missing");
-            const box = document.querySelector<HTMLInputElement>('input[type="checkbox"]');
-            let probe: string;
-            try {
-              probe = String((await fetch(`${api}/probe`, { method: "POST" })).status);
-            } catch (error) {
-              probe = String(error);
-            }
-            button.click();
-            return `checkbox=${String(box?.checked)} probe=${probe}`;
-          },
-          { targetUrl: fixture.url(), api: apiOrigin },
-        );
-        diagnostics.push(state);
+        await panel.evaluate(async (targetUrl) => {
+          const permission = await chrome.permissions.contains({
+            origins: ["https://demo.example/*", "https://*.demo.example/*"],
+          });
+          if (!permission) throw new Error("fixture permission missing");
+          const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (active?.url !== targetUrl) throw new Error(`wrong active tab: ${active?.url ?? "none"}`);
+          const button = document.querySelector<HTMLButtonElement>("li button");
+          if (!button) throw new Error("collect button missing");
+          button.click();
+        }, fixture.url());
       },
       async probeFingerprint() {
         return panel.evaluate(async (url) => {
@@ -366,7 +262,6 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
         }, fixture.url());
       },
       async inspect() {
-        for (const alert of await panel.getByRole("alert").allInnerTexts()) diagnostics.push(`alert: ${alert}`);
         await panel.close();
         const inspector = await context!.newPage();
         try {

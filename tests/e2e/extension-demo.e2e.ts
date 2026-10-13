@@ -11,9 +11,9 @@ function requests(browser: DemoBrowser, operation: CapturedRequest["operation"])
 test("Tier 1 reads a shared schema locally", async () => {
   const browser = await openDemo("tier1");
   try {
-    await expect(browser.panel.getByRole("checkbox", { name: /クラウド支援/ })).not.toBeChecked();
-    await browser.panel.getByRole("checkbox", { name: /クラウド支援/ }).click();
-    await expect(browser.panel.getByRole("checkbox", { name: /クラウド支援/ })).toBeChecked();
+    await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).not.toBeChecked();
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).toBeChecked();
     await browser.run();
     await expect(
       browser.panel
@@ -38,8 +38,8 @@ test("Tier 1 reads a shared schema locally", async () => {
 test("Tier 2 sends structure only and reads mapped values locally", async () => {
   const browser = await openDemo("tier2");
   try {
-    await browser.panel.getByRole("checkbox", { name: /クラウド支援/ }).click();
-    await expect(browser.panel.getByRole("checkbox", { name: /クラウド支援/ })).toBeChecked();
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).toBeChecked();
     await browser.run();
     await expect(
       browser.panel
@@ -59,8 +59,8 @@ test("Tier 2 sends structure only and reads mapped values locally", async () => 
 test("Tier 3 decline keeps Tier 2 observations and sends no PII request", async () => {
   const browser = await openDemo("tier3");
   try {
-    await browser.panel.getByRole("checkbox", { name: /クラウド支援/ }).click();
-    await expect(browser.panel.getByRole("checkbox", { name: /クラウド支援/ })).toBeChecked();
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).toBeChecked();
     await browser.run();
     const gate = browser.panel.getByRole("dialog", { name: /Gemini/ });
     await expect(gate).toBeVisible();
@@ -85,8 +85,8 @@ test("Tier 3 decline keeps Tier 2 observations and sends no PII request", async 
 test("Tier 3 approval binds a masked, bounded payload to one ticket", async () => {
   const browser = await openDemo("tier3");
   try {
-    await browser.panel.getByRole("checkbox", { name: /クラウド支援/ }).click();
-    await expect(browser.panel.getByRole("checkbox", { name: /クラウド支援/ })).toBeChecked();
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).toBeChecked();
     await browser.run();
     const gate = browser.panel.getByRole("dialog", { name: /Gemini/ });
     await expect(gate).toBeVisible();
@@ -136,8 +136,8 @@ test("Tier 3 approval binds a masked, bounded payload to one ticket", async () =
 test("wall fixture stops at same-tab handoff", async () => {
   const browser = await openDemo("wall");
   try {
-    await browser.panel.getByRole("checkbox", { name: /クラウド支援/ }).click();
-    await expect(browser.panel.getByRole("checkbox", { name: /クラウド支援/ })).toBeChecked();
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).toBeChecked();
     await browser.run();
     await expect(browser.panel.getByRole("alert").filter({ hasText: "確認が必要です" })).toBeVisible();
     expect(browser.fixture.url()).toBe("https://demo.example/wall");
