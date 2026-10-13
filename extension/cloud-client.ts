@@ -27,7 +27,16 @@ export class CloudClient {
   ) {
     const base = (raw: string): string => {
       const u = new URL(raw);
-      if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash || u.pathname !== "/")
+      const isLocalhostHttp =
+        u.protocol === "http:" && (u.hostname === "localhost" || u.hostname === "127.0.0.1") && u.port !== "";
+      if (
+        (!isLocalhostHttp && u.protocol !== "https:") ||
+        u.username ||
+        u.password ||
+        u.search ||
+        u.hash ||
+        u.pathname !== "/"
+      )
         throw new Error("invalid-cloud-base-url");
       return u.origin;
     };

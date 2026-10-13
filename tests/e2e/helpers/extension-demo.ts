@@ -4,9 +4,7 @@ import { join, resolve } from "node:path";
 import { chromium, type BrowserContext, type Page } from "@playwright/test";
 import { build } from "vite";
 import { createHash } from "node:crypto";
-import { createServer, type Server } from "node:https";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { createServer, type Server } from "node:http";
 import type { CloudOperation, CloudRequests, FormSchema } from "../../../src/shared/cloud-contract.js";
 
 export type DemoPage = "tier1" | "tier2" | "tier3" | "wall";
@@ -24,7 +22,7 @@ export interface DemoBrowser {
   close(): Promise<void>;
 }
 
-const apiOrigin = "https://localhost:43365";
+const apiOrigin = "http://localhost:43365";
 const siteOrigin = "https://demo.example";
 const paths: Record<string, CloudOperation> = {
   "/v1/schemas/resolve": "resolve",
@@ -58,25 +56,6 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
   let context: BrowserContext | undefined;
   let server: Server | undefined;
   try {
-    const keyPath = join(dir, "key.pem");
-    const certPath = join(dir, "cert.pem");
-    await promisify(execFile)("openssl", [
-      "req",
-      "-x509",
-      "-newkey",
-      "rsa:2048",
-      "-nodes",
-      "-keyout",
-      keyPath,
-      "-out",
-      certPath,
-      "-days",
-      "1",
-      "-subj",
-      "/CN=localhost",
-      "-addext",
-      "subjectAltName=DNS:localhost",
-    ]);
     await cp(resolve("dist/extension"), extension, { recursive: true });
     // A directly opened extension tab has sender.tab; production accepts only a true Side Panel.
     // Playwright cannot automate Chrome's Side Panel surface, so relax only this sender-shape
@@ -174,9 +153,7 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       else response = {};
       return response;
     };
-    server = createServer(
-      { key: await readFile(keyPath), cert: await readFile(certPath) },
-      (request, response) => {
+    server = createServer((request, response) => {
         response.setHeader("Access-Control-Allow-Origin", "*");
         response.setHeader("Access-Control-Allow-Headers", "Content-Type");
         response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -203,7 +180,7 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       },
     );
     await new Promise<void>((resolve, reject) =>
-      server!.listen(43365, "localhost", () => resolve()).once("error", reject),
+      server!.listen(43365, "127.0.0.1", () => resolve()).once("error", reject),
     );
     await context.route(`${apiOrigin}/**`, async (route) => {
       const operation = paths[new URL(route.request().url()).pathname];
