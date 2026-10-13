@@ -23,7 +23,10 @@ export class CloudClient {
   private readonly fallback: string;
   constructor(
     config: { apiBaseUrl: string; fallbackBaseUrl: string },
-    private readonly request: typeof fetch = fetch,
+    // A bare `fetch` stored on the instance would be invoked with `this` = CloudClient, which
+    // browsers reject as "Illegal invocation"; the wrapper keeps the global receiver.
+    // egress: soroeru-cloud
+    private readonly request: typeof fetch = (input, init) => fetch(input, init),
   ) {
     const base = (raw: string): string => {
       const u = new URL(raw);

@@ -212,15 +212,6 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     panel.on("console", (message) => {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
-    // Playwright's CDP network interception replaces window.fetch after init scripts run.
-    // When sidepanel.js captures `fetch` via `constructor(e, t=fetch)`, it captures the
-    // CDP-patched version, which fails to transmit requests from chrome-extension:// pages
-    // to http:// origins. Binding fetch here before CDP replaces it preserves the native
-    // version that actually works.
-    await panel.addInitScript(() => {
-      const orig = window.fetch.bind(window);
-      window.fetch = orig;
-    });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
     await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
     await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
