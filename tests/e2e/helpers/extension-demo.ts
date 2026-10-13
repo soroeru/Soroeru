@@ -168,15 +168,20 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     await new Promise<void>((resolve, reject) =>
       server!.listen(43365, () => resolve()).once("error", reject),
     );
+    process.stderr.write(`[ext-demo:${page}] server up; waiting for service worker\n`);
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 60_000 }));
     worker.on("close", () => diagnostics.push("worker-closed"));
     worker.on("console", (message) => {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
     const extensionId = new URL(worker.url()).host;
+    process.stderr.write(`[ext-demo:${page}] worker up (${extensionId}); loading seed page\n`);
     const seed = await context.newPage();
     await seed.goto(`chrome-extension://${extensionId}/seed-vault.html?page=${page}`);
+    process.stderr.write(`[ext-demo:${page}] seed page loaded; evaluating demoSeed\n`);
+    await seed.waitForFunction(() => window.demoSeed !== undefined, null, { timeout: 30_000 });
     await seed.evaluate(() => window.demoSeed);
+    process.stderr.write(`[ext-demo:${page}] seed done; loading fixture and panel\n`);
     await seed.close();
     const fixture = await context.newPage();
     await fixture.goto(`${siteOrigin}/${page}`);
@@ -185,9 +190,11 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
-    await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565");
-    await panel.getByRole("button", { name: "解錠", exact: true }).click();
-    await panel.getByText(`Demo ${page}`).waitFor();
+    process.stderr.write(`[ext-demo:${page}] panel loaded; filling passphrase\n`);
+    await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
+    await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
+    process.stderr.write(`[ext-demo:${page}] unlock clicked; waiting for Demo text\n`);
+    await panel.getByText(`Demo ${page}`).waitFor({ timeout: 60_000 });
     return {
       context,
       fixture,
