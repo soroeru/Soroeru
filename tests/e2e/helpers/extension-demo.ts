@@ -254,8 +254,11 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
         document.addEventListener(
           type,
           (event) => {
-            const target = event.target as HTMLElement;
-            snap(`${type}:${target.tagName.toLowerCase()}`);
+            const target = event.target as HTMLInputElement;
+            snap(
+              `${type}:${target.tagName.toLowerCase()}:${target.type} trusted=${String(event.isTrusted)} ` +
+                `target-checked=${String(target.checked)} same=${String(target === document.querySelector('input[type="checkbox"]'))}`,
+            );
             queueMicrotask(() => snap(`${type}+micro`));
             setTimeout(() => snap(`${type}+task`), 0);
           },
@@ -277,6 +280,16 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       requests,
       diagnostics,
       async run() {
+        diagnostics.push(
+          await panel.getByRole("checkbox", { name: /クラウド支援/ }).evaluate(
+            (el) =>
+              `locator-is-first=${String(el === document.querySelector('input[type="checkbox"]'))} ` +
+              `locator-checked=${String((el as HTMLInputElement).checked)} inputs=` +
+              [...document.querySelectorAll("input")]
+                .map((i) => `${i.type}:${String(i.checked)}:${i.isConnected ? "c" : "d"}`)
+                .join(","),
+          ),
+        );
         await timeline("before-front");
         await fixture.bringToFront();
         await timeline("after-front");
