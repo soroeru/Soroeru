@@ -123,8 +123,13 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     context.on("request", (request) => {
       if (request.url().startsWith(apiOrigin)) diagnostics.push(new URL(request.url()).pathname);
     });
-    // Playwright uses the most recently registered route first.
-    await context.route(/https:\/\/.*/, (route) => route.abort());
+    // Use a URL predicate so this catch-all never fires for apiOrigin or siteOrigin,
+    // regardless of whether Playwright evaluates routes LIFO or FIFO (the latter
+    // applies to Chrome extension service workers).
+    await context.route(
+      (url) => !url.href.startsWith(apiOrigin) && !url.href.startsWith(siteOrigin),
+      (route) => route.abort(),
+    );
     await context.route(`${siteOrigin}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname.slice(1);
       if (!/^(tier1|tier2|tier3|wall)$/.test(path)) return route.abort();
