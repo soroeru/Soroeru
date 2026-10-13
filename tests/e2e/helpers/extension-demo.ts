@@ -290,6 +290,29 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
                 .join(","),
           ),
         );
+        diagnostics.push(
+          await panel.evaluate(() => {
+            const path = (el: Element): string => {
+              const parts: string[] = [];
+              for (let n: Element | null = el; n && n !== document.body; n = n.parentElement)
+                parts.push(n.id ? `${n.tagName}#${n.id}` : n.tagName);
+              return parts.reverse().join(">");
+            };
+            const root = document.getElementById("root");
+            return (
+              `roots=${document.querySelectorAll("#root").length} main=${document.querySelectorAll("main").length} ` +
+              `rootChildren=${root?.children.length ?? -1} bodyChildren=${document.body.children.length} ` +
+              [...document.querySelectorAll('input[type="checkbox"]')]
+                .map(
+                  (c, i) =>
+                    `[cb${i} visible=${String((c as HTMLElement).checkVisibility())} ` +
+                    `label=${(c.closest("label")?.textContent ?? "").slice(0, 12)} path=${path(c)}]`,
+                )
+                .join(" ") +
+              ` sites=${document.querySelectorAll("li").length}`
+            );
+          }),
+        );
         await timeline("before-front");
         await fixture.bringToFront();
         await timeline("after-front");
