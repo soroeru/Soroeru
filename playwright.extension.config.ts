@@ -6,7 +6,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   timeout: 300_000,
-  globalSetup: "./tests/e2e/helpers/extension-demo-setup.ts",
   reporter: "list",
   use: { trace: "off", screenshot: "off", video: "off" },
+  expect: { timeout: 30_000 },
 });

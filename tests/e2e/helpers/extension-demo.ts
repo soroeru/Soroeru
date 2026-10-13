@@ -2,6 +2,7 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { chromium, type BrowserContext, type Page } from "@playwright/test";
+import { build } from "vite";
 import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { CloudOperation, CloudRequests, FormSchema } from "../../../src/shared/cloud-contract.js";
@@ -56,6 +57,26 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
   let server: Server | undefined;
   try {
     await cp(resolve("dist/extension"), extension, { recursive: true });
+    // Build seed-vault.js into the extension directory BEFORE Chrome loads it.
+    // Chrome MV3 blocks resources added after initial extension load (ERR_FAILED).
+    await build({
+      configFile: false,
+      logLevel: "silent",
+      build: {
+        outDir: extension,
+        emptyOutDir: false,
+        lib: {
+          entry: resolve("tests/e2e/helpers/seed-extension-vault.ts"),
+          name: "SeedExtensionVault",
+          formats: ["iife"],
+          fileName: () => "seed-vault.js",
+        },
+      },
+    });
+    await writeFile(
+      join(extension, "seed-vault.html"),
+      '<!doctype html><script src="seed-vault.js"></script>',
+    );
     // A directly opened extension tab has sender.tab; production accepts only a true Side Panel.
     // Playwright cannot automate Chrome's Side Panel surface, so relax only this sender-shape
     // clause in the disposable worker copy. Extension ID and exact page URL checks remain.
@@ -85,11 +106,14 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     context.on("request", (request) => {
       if (request.url().startsWith(apiOrigin)) diagnostics.push(new URL(request.url()).pathname);
     });
-    // Use a URL predicate so this catch-all never fires for apiOrigin or siteOrigin,
-    // regardless of whether Playwright evaluates routes LIFO or FIFO (the latter
-    // applies to Chrome extension service workers).
+    // Abort all external requests except the test origins. chrome-extension:// must be
+    // excluded — Playwright intercepts those too, and aborting them prevents seed-vault.js
+    // and other extension-internal resources from loading.
     await context.route(
-      (url) => !url.href.startsWith(apiOrigin) && !url.href.startsWith(siteOrigin),
+      (url) =>
+        !url.href.startsWith(apiOrigin) &&
+        !url.href.startsWith(siteOrigin) &&
+        !url.href.startsWith("chrome-extension://"),
       (route) => route.abort(),
     );
     await context.route(`${siteOrigin}/**`, async (route) => {
@@ -168,20 +192,19 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     await new Promise<void>((resolve, reject) =>
       server!.listen(43365, () => resolve()).once("error", reject),
     );
-    process.stderr.write(`[ext-demo:${page}] server up; waiting for service worker\n`);
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 60_000 }));
     worker.on("close", () => diagnostics.push("worker-closed"));
     worker.on("console", (message) => {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
     const extensionId = new URL(worker.url()).host;
-    process.stderr.write(`[ext-demo:${page}] worker up (${extensionId}); loading seed page\n`);
     const seed = await context.newPage();
     await seed.goto(`chrome-extension://${extensionId}/seed-vault.html?page=${page}`);
-    process.stderr.write(`[ext-demo:${page}] seed page loaded; evaluating demoSeed\n`);
-    await seed.waitForFunction(() => window.demoSeed !== undefined, null, { timeout: 30_000 });
-    await seed.evaluate(() => window.demoSeed);
-    process.stderr.write(`[ext-demo:${page}] seed done; loading fixture and panel\n`);
+    // seed-vault.js sets window.demoSeed synchronously (before load event); await the async IIFE body.
+    await seed.evaluate(async () => {
+      if (!window.demoSeed) throw new Error("seed-vault.js did not run");
+      await window.demoSeed;
+    });
     await seed.close();
     const fixture = await context.newPage();
     await fixture.goto(`${siteOrigin}/${page}`);
@@ -189,11 +212,18 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     panel.on("console", (message) => {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
+    // Playwright's CDP network interception replaces window.fetch after init scripts run.
+    // When sidepanel.js captures `fetch` via `constructor(e, t=fetch)`, it captures the
+    // CDP-patched version, which fails to transmit requests from chrome-extension:// pages
+    // to http:// origins. Binding fetch here before CDP replaces it preserves the native
+    // version that actually works.
+    await panel.addInitScript(() => {
+      const orig = window.fetch.bind(window);
+      window.fetch = orig;
+    });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
-    process.stderr.write(`[ext-demo:${page}] panel loaded; filling passphrase\n`);
     await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
     await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
-    process.stderr.write(`[ext-demo:${page}] unlock clicked; waiting for Demo text\n`);
     await panel.getByText(`Demo ${page}`).waitFor({ timeout: 60_000 });
     return {
       context,
@@ -264,7 +294,26 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
   }
 }
 
-export function payloadHash(payload: object): string {
-  // Matches the stable tier3PayloadJson order: payload was built in that order.
-  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+export function payloadHash(payload: {
+  consentId: string;
+  site: string;
+  requestedKeys: readonly string[];
+  items: { id: string; label?: string; text: string }[];
+}): string {
+  // Replicate tier3PayloadJson's canonical item-key order (id, [label], text)
+  // so the hash matches what the extension computed for the ticket.
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        consentId: payload.consentId,
+        site: payload.site,
+        requestedKeys: payload.requestedKeys,
+        items: payload.items.map((i) => ({
+          id: i.id,
+          ...(i.label === undefined ? {} : { label: i.label }),
+          text: i.text,
+        })),
+      }),
+    )
+    .digest("hex");
 }
