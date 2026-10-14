@@ -169,7 +169,7 @@ related Issues' acceptance criteria; it never copies Issue bodies or diffs into 
 explicit checkpointed state machine (see the runner source in `scripts/project-issue-graph.mjs`): it pauses for route
 assignment, worker events, and every integration-gate verdict, and resumes with
 `--resume-json`. Resume payloads are validated against the verified route pool — the rules
-above (choose only from `workerRoutes`, fail closed on exhaustion, release only on the
+above (choose only from `workerRoutes`, or `handoffRoutes` for a handoff, fail closed on exhaustion, release only on the
 configured milestone, preserve worktrees on handoff) are enforced by the graph itself.
 The classic `project-issue-orchestrator.mjs` dry-run remains the default planning path.
 With `--triage shadow`, the graph refreshes each CLI model before building the Jev
