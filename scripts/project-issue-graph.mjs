@@ -59,6 +59,7 @@ import {
   buildRunPlan,
   buildUsageReport,
   parseProjectItems,
+  selectHandoffRoutes,
   selectProjectItems,
   selectWorkerRoutes,
   validateCapabilities,
@@ -297,6 +298,16 @@ function parentPoolOptions(config) {
 function currentPool(state) {
   return selectWorkerRoutes(state.capabilities ?? [], {
     ...parentPoolOptions(state.config),
+    unavailableAgents: state.unavailableAgents,
+    unavailableModels: state.unavailableModels,
+  });
+}
+
+/** Handoff recipients (Issue #617): the worker pool plus the parent's verified routes unless `parent.asHandoff` is false. */
+function handoffPool(state) {
+  return selectHandoffRoutes(state.capabilities ?? [], {
+    ...parentPoolOptions(state.config),
+    parentAsHandoff: state.config.parent.asHandoff !== false,
     unavailableAgents: state.unavailableAgents,
     unavailableModels: state.unavailableModels,
   });
@@ -1444,7 +1455,7 @@ function returnToWorkerNode(state) {
 }
 
 function selectHandoffRouteNode(state) {
-  const pool = currentPool(state);
+  const pool = handoffPool(state);
   const assignments = [];
   const updatedRoleStates = [];
   for (const entry of state.pendingInterrupted ?? []) {
@@ -1508,7 +1519,7 @@ function selectHandoffRouteNode(state) {
   }
   return {
     assignments,
-    workerRoutes: pool,
+    workerRoutes: currentPool(state),
     pendingInterrupted: null,
     ...(updatedRoleStates.length ? { roleStates: updatedRoleStates } : {}),
   };
@@ -1812,6 +1823,10 @@ export function parseGraphCliArgs(argv) {
       options.parentAsWorker = true;
       continue;
     }
+    if (flag === "--no-parent-as-handoff") {
+      options.parentAsHandoff = false;
+      continue;
+    }
     const key = valueFlags.get(flag);
     if (!key) throw new Error(`unknown-flag:${flag}`);
     const value = argv[++index];
@@ -1861,6 +1876,7 @@ async function buildStartInput(cli, repositoryRoot) {
         ["unavailableModels", cli.unavailableModels],
         ["unavailableAgents", cli.unavailableAgents],
         ["parentAsWorker", cli.parentAsWorker],
+        ["parentAsHandoff", cli.parentAsHandoff],
         ["triage", cli.triage],
       ].filter(([, value]) => value !== undefined),
     ),
@@ -1876,7 +1892,7 @@ async function buildStartInput(cli, repositoryRoot) {
       releasePolicy: merged.releasePolicy,
       unavailableAgents: merged.unavailableAgents ?? [],
       unavailableModels: merged.unavailableModels ?? [],
-      parent: { agent: cli.parentAgent, model: cli.parentModel, ...(merged.parentAsWorker === true ? { asWorker: true } : {}) },
+      parent: { agent: cli.parentAgent, model: cli.parentModel, ...(merged.parentAsWorker === true ? { asWorker: true } : {}), ...(merged.parentAsHandoff === false ? { asHandoff: false } : {}) },
       selectors: {
         issues: cli.issues,
         priority: cli.priority,

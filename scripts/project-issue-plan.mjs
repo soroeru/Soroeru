@@ -257,6 +257,22 @@ export function selectWorkerRoutes(
   return routes;
 }
 
+/**
+ * Handoff-only route pool (Issue #617): the worker pool plus the parent
+ * agent's verified worker records, so an interrupted worker can be continued
+ * by the parent runtime even while the parent stays out of initial
+ * assignment. Parent routes come last, so the parent is the fallback
+ * recipient and an automatic pick prefers the regular workers.
+ * `parentAsHandoff: false` restores the worker pool exactly. Run-scoped
+ * unavailable lists and retired-runtime exclusions still apply.
+ */
+export function selectHandoffRoutes(capabilities, { parentAsHandoff = true, parentAsWorker = false, ...options } = {}) {
+  const workers = selectWorkerRoutes(capabilities, { ...options, parentAsWorker });
+  if (parentAsWorker === true || parentAsHandoff === false) return workers;
+  const withParent = selectWorkerRoutes(capabilities, { ...options, parentAsWorker: true });
+  return [...workers, ...withParent.filter((route) => !workers.includes(route))];
+}
+
 function reasonFromReadiness(readiness) {
   if (readiness.detail !== undefined) return `${readiness.kind}:${readiness.detail}`;
   return readiness.kind;

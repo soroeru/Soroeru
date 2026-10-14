@@ -22,6 +22,7 @@ import {
   buildRunPlan,
   buildUsageReport,
   parseProjectItems,
+  selectHandoffRoutes,
   selectProjectItems,
   selectWorkerRoutes,
   validateCapabilities,
@@ -38,6 +39,7 @@ export {
   parseProjectMetadata,
   selectProjectItems,
   selectProjectConfig,
+  selectHandoffRoutes,
   selectWorkerRoutes,
   validateCapabilities,
   validateProjectItems,
@@ -68,7 +70,9 @@ export {
  * Agent/model routing is run-scoped: the plan carries no per-Issue assignment.
  * The orchestrating agent assigns each runnable Issue to one of the returned
  * `workerRoutes`, and re-runs with `--unavailable-agent` / `--unavailable-model`
- * when a route is lost mid-run (session limit, interruption).
+ * when a route is lost mid-run (session limit, interruption). The handoff
+ * recipient for an interrupted worker is chosen from `handoffRoutes`, which
+ * also holds the parent agent's verified routes unless opted out (Issue #617).
  */
 export async function runOrchestration(input) {
   const items = parseProjectItems(input?.items, { completed: input?.state?.completed ?? [] });
@@ -116,12 +120,20 @@ export async function runOrchestration(input) {
     unavailableModels: options.unavailableModels,
   });
   if (plan.runnable.length && !workerRoutes.length) throw new Error("no-worker-route-available");
+  const handoffRoutes = selectHandoffRoutes(options.capabilities ?? [], {
+    parentAgent: parent.agent,
+    parentAsWorker: parent.asWorker === true,
+    parentAsHandoff: parent.asHandoff !== false,
+    unavailableAgents: options.unavailableAgents,
+    unavailableModels: options.unavailableModels,
+  });
   return {
     dryRun,
     ...(options.triage === undefined ? {} : { triage: normalizeTriageConfig(options.triage) }),
     ...(input.fetchedBytes === undefined ? {} : { fetchedBytes: input.fetchedBytes }),
     plan,
     workerRoutes,
+    handoffRoutes,
     state: nextState,
     usage: buildUsageReport(
       nextState.usage,
@@ -182,6 +194,10 @@ export function parseCliArgs(argv) {
     }
     if (flag === "--parent-as-worker") {
       options.parentAsWorker = true;
+      continue;
+    }
+    if (flag === "--no-parent-as-handoff") {
+      options.parentAsHandoff = false;
       continue;
     }
     // Forces a full re-discovery of every adapter, ignoring any cached
@@ -290,6 +306,7 @@ async function main() {
       ...(cli.unavailableModels === undefined ? {} : { unavailableModels: cli.unavailableModels }),
       ...(cli.unavailableAgents === undefined ? {} : { unavailableAgents: cli.unavailableAgents }),
       ...(cli.parentAsWorker === undefined ? {} : { parentAsWorker: cli.parentAsWorker }),
+      ...(cli.parentAsHandoff === undefined ? {} : { parentAsHandoff: cli.parentAsHandoff }),
     },
   });
   const effectiveCli = {
@@ -303,6 +320,7 @@ async function main() {
     ...(merged.unavailableModels === undefined ? {} : { unavailableModels: merged.unavailableModels }),
     ...(merged.unavailableAgents === undefined ? {} : { unavailableAgents: merged.unavailableAgents }),
     ...(merged.parentAsWorker === undefined ? {} : { parentAsWorker: merged.parentAsWorker }),
+    ...(merged.parentAsHandoff === undefined ? {} : { parentAsHandoff: merged.parentAsHandoff }),
   };
   const input = await readInput(effectiveCli);
   if (cli.milestoneJson) input.milestone = JSON.parse(cli.milestoneJson);
@@ -359,7 +377,7 @@ async function main() {
     ...(cli.existingWorktrees === undefined ? {} : { existingWorktrees: cli.existingWorktrees }),
     ...(capabilities === undefined ? {} : { capabilities }),
     ...(cli.parentAgent && cli.parentModel
-      ? { parent: { agent: cli.parentAgent, model: cli.parentModel, ...(effectiveCli.parentAsWorker === true ? { asWorker: true } : {}) } }
+      ? { parent: { agent: cli.parentAgent, model: cli.parentModel, ...(effectiveCli.parentAsWorker === true ? { asWorker: true } : {}), ...(effectiveCli.parentAsHandoff === false ? { asHandoff: false } : {}) } }
       : {}),
   };
   if ((cli.parentAgent && !cli.parentModel) || (!cli.parentAgent && cli.parentModel))
