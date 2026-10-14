@@ -5,7 +5,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { VaultGate, type VaultGateSubmit } from "../src/renderer/components/VaultGate.js";
 import type { VaultSession, VaultSessionState } from "../src/store/vault-session.js";
-import { vaultErrorMessage } from "./sidepanel-messages.js";
+import { saveVaultBackup, type BackupPicker, type VaultBackupResult } from "./vault-backup.js";
+import { importFailureMessage, vaultErrorMessage } from "./sidepanel-messages.js";
 
 export interface VaultPanelProps {
   session: VaultSession;
@@ -29,6 +30,17 @@ export function VaultPanel({
   const [persistDenied, setPersistDenied] = useState(false);
   const [recoveryKey, setRecoveryKey] = useState<string | null>(null);
   const [exportRecommended, setExportRecommended] = useState(session.exportRecommended);
+  const [downloadPending, setDownloadPending] = useState(false);
+  const [pendingDownload, setPendingDownload] = useState<Extract<
+    VaultBackupResult,
+    { outcome: "download" }
+  > | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importSecret, setImportSecret] = useState("");
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+  const [importMessage, setImportMessage] = useState<string>();
   const [exportError, setExportError] = useState<string | undefined>();
   // True from submitting setup until the recovery key is in state, so the
   // unlocked view never renders before the one-time recovery key is shown.
@@ -89,22 +101,32 @@ export function VaultPanel({
 
   const downloadExport = useCallback(async () => {
     setExportError(undefined);
+    setPendingDownload(null);
+    setDownloadPending(false);
     try {
-      const exported = await session.exportEncrypted();
-      const url = URL.createObjectURL(new Blob([exported], { type: "application/json" }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      // persist: encrypted-export — same AES-256-GCM encrypted Vault v2 shape as the stored document
-      anchor.download = `soroeru-vault-${new Date().toISOString().slice(0, 10)}.json`;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-      session.markExported();
+      setExporting(true);
+      const result = await saveVaultBackup(window as BackupPicker, () => session.exportEncrypted());
+      if (result.outcome === "saved") session.markExported();
+      else setPendingDownload(result);
     } catch (err) {
-      setExportError(vaultErrorMessage(err));
+      if (!(err instanceof DOMException && err.name === "AbortError")) setExportError(vaultErrorMessage(err));
     } finally {
+      setExporting(false);
       setExportRecommended(session.exportRecommended);
     }
   }, [session]);
+
+  const startFallbackDownload = useCallback(() => {
+    if (!pendingDownload) return;
+    const url = URL.createObjectURL(pendingDownload.blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = pendingDownload.name;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setPendingDownload(null);
+    setDownloadPending(true);
+  }, [pendingDownload]);
 
   const showRecoveryKey = state === "unlocked" && recoveryKey !== null;
   const showUnlocked = state === "unlocked" && !showRecoveryKey && !creating;
@@ -170,12 +192,84 @@ export function VaultPanel({
         </div>
       )}
 
-      {(state === "absent" || state === "locked") && (
+      {!fatalError && !importing && (state === "absent" || state === "locked") && (
         <VaultGate
           mode={state === "absent" ? "setup" : "unlock"}
           onSuccess={() => undefined}
           submit={submit}
         />
+      )}
+
+      {(state === "absent" || state === "locked") && (
+        <form
+          className="flex flex-col gap-2 rounded border p-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!importFile || importing || (state === "locked" && !replaceConfirmed)) return;
+            setImporting(true);
+            setImportMessage(undefined);
+            void importFile
+              .text()
+              .then((text) => session.importEncrypted(text, importSecret, replaceConfirmed))
+              .then(
+                () => {
+                  setFatalError(undefined);
+                  setImportMessage("取り込みました。元のパスフレーズで解錠して内容を確認してください。");
+                  setImportFile(null);
+                  setReplaceConfirmed(false);
+                },
+                (err: unknown) => setImportMessage(importFailureMessage(err)),
+              )
+              .finally(() => {
+                setImportSecret("");
+                setImporting(false);
+              });
+          }}
+        >
+          <h2 className="font-semibold">暗号化バックアップを取り込む</h2>
+          <p>拡張または旧 Mac 版の Vault v2 エクスポートを選び、元のパスフレーズを入力してください。</p>
+          <label>
+            暗号化ファイル
+            <input
+              type="file"
+              accept=".json,application/json"
+              disabled={importing}
+              onChange={(event) => {
+                setImportFile(event.target.files?.[0] ?? null);
+                setReplaceConfirmed(false);
+                setImportMessage(undefined);
+              }}
+            />
+          </label>
+          <label>
+            元のパスフレーズ
+            <input
+              type="password"
+              autoComplete="off"
+              value={importSecret}
+              disabled={importing}
+              onChange={(event) => setImportSecret(event.target.value)}
+            />
+          </label>
+          {state === "locked" && (
+            <label>
+              <input
+                type="checkbox"
+                checked={replaceConfirmed}
+                disabled={importing}
+                onChange={(event) => setReplaceConfirmed(event.target.checked)}
+              />
+              現在の Soroeru 内データをすべて削除し、このファイルの内容に置き換えます
+            </label>
+          )}
+          <button
+            type="submit"
+            disabled={importing || !importFile || !importSecret || (state === "locked" && !replaceConfirmed)}
+          >
+            {importing ? "検証して取り込んでいます…" : "暗号化ファイルを取り込む"}
+          </button>
+          {importMessage && <p role="status">{importMessage}</p>}
+        </form>
       )}
 
       {showRecoveryKey && (
@@ -209,11 +303,37 @@ export function VaultPanel({
           {unlockedContent}
           <button
             type="button"
+            disabled={exporting}
             onClick={() => void downloadExport()}
             className="self-start rounded border border-neutral-300 px-3 py-1"
           >
             暗号化エクスポートを保存
           </button>
+          {pendingDownload && (
+            <div>
+              <p>
+                このブラウザは保存先の選択に対応していません。ダウンロードして、ファイルを安全な場所に保存してください。
+              </p>
+              <button type="button" onClick={startFallbackDownload}>
+                ダウンロード
+              </button>
+            </div>
+          )}
+          {downloadPending && (
+            <div>
+              <p>ダウンロードしたファイルを安全な場所に保存し、保存できたことを確認してください。</p>
+              <button
+                type="button"
+                onClick={() => {
+                  session.markExported();
+                  setDownloadPending(false);
+                  setExportRecommended(false);
+                }}
+              >
+                ファイルを保存できました
+              </button>
+            </div>
+          )}
           {exportError && (
             <p role="alert" className="text-red-600">
               {exportError}
