@@ -13,6 +13,11 @@ elsewhere". Open it from Chrome's side panel menu. The manifest adds
 `sidePanel`, `unlimitedStorage`, and a CSP allowing `wasm-unsafe-eval` (for the
 Argon2id WebAssembly KDF) but never `unsafe-eval`.
 
+Encrypted import accepts every record schema version this build can open and
+preserves the original encrypted document. Requesting an import during unlock
+cancels that unlock; a successful import leaves the panel locked. Unlock again
+with the imported vault's passphrase or recovery key.
+
 The content script reuses the structure-only scanner used by Playwright. Raw
 field/display values are returned only for an explicit command and are not logged; accepted disclosures are encrypted in the panel vault.
 
