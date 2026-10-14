@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import { createPanelSoroeruApi, type PanelVisibilityHost } from "../../extension/panel/panel-api.js";
 import { createFrameSavedPageRenderer } from "../../extension/panel/saved-page-frame-renderer.js";
 import { SAVED_PAGE_FRAME_MESSAGES } from "../../extension/saved-page-frame-protocol.js";
-import type { VisibilityRunResultView, VisibilityStatusView } from "../../electron/ipc/contract.js";
+import type {
+  VisibilityEvent,
+  VisibilityRunResultView,
+  VisibilityStatusView,
+} from "../../electron/ipc/contract.js";
 import type { RenderedSavedPage, SavedPageRenderer } from "../../src/automation/saved-page-core.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import type { SiteAccount } from "../../src/domain/entities.js";
@@ -76,8 +80,14 @@ class FakeHost implements PanelVisibilityHost {
   abort(): void {
     this.aborted++;
   }
-  onEvent(): () => void {
-    return () => undefined;
+  private readonly listeners = new Set<(event: VisibilityEvent) => void>();
+  onEvent(listener: (event: VisibilityEvent) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+  /** What `VisibilityService` emits during a run started from any screen. */
+  emit(event: VisibilityEvent): void {
+    for (const listener of this.listeners) listener(event);
   }
 }
 
@@ -272,6 +282,49 @@ test("the exported panel log carries counts and redacts value-shaped text", asyn
   assert.equal(lines[0]?.["category"], "csv-import");
   assert.equal(lines[0]?.["importedCredentials"], 2);
   assert.doesNotMatch(exported.content ?? "", /fake-user@example\.test|4111 1111|fake-password/);
+});
+
+test("runs started outside the adapter are logged once, without hand-off text or credentials", async (t) => {
+  const session = await unlockedSession(t);
+  const { api, host } = panelApi(session);
+  await api.csv.import(CSV);
+  const site = host.listSites().find((candidate) => candidate.domain === "shop.example.test")!;
+
+  // The collection tab calls the host directly, bypassing the adapter's `run`.
+  host.emit({ type: "run-started", siteAccountId: site.id });
+  host.emit({
+    type: "handoff",
+    siteAccountId: site.id,
+    instruction: "fake-instruction-text",
+    evidence: "fake-evidence-text",
+    credential: { username: "fake-user@example.test", password: "fake-password-1" },
+  } as VisibilityEvent);
+  host.emit({
+    type: "run-finished",
+    result: { siteAccountId: site.id, status: "collected", disclosures: 3, relationships: 1, constraints: 0 },
+  });
+
+  const content = (await api.logs.export()).content ?? "";
+  const visibility = content
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .filter((line) => line["category"] === "visibility");
+  assert.deepEqual(
+    visibility.map((line) => [line["message"], line["domain"]]),
+    [
+      ["run-started", "shop.example.test"],
+      ["handoff", "shop.example.test"],
+      ["run-finished", "shop.example.test"],
+    ],
+  );
+  assert.equal(visibility[2]?.["disclosures"], 3);
+  assert.doesNotMatch(content, /fake-instruction-text|fake-evidence-text|fake-user@example|fake-password/);
+
+  // A run through the adapter is not logged a second time.
+  await api.visibility.run(site.id);
+  const after = ((await api.logs.export()).content ?? "").match(/"category":"visibility"/g) ?? [];
+  assert.equal(after.length, 3);
 });
 
 test("the memory logger keeps only the newest lines", () => {

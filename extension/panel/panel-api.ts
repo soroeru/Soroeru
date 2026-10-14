@@ -75,6 +75,24 @@ export function createPanelSoroeruApi(options: PanelApiOptions): SoroeruApi {
   });
   const siteById = (siteAccountId: string): SiteAccount | undefined =>
     options.host.listSites().find((site) => site.id === siteAccountId);
+  // Log every run, whichever screen started it, at the host's event boundary. Only the
+  // event type, site domain, status, and counts are kept — never hand-off instruction or
+  // evidence text, and never a credential.
+  options.host.onEvent((event) => {
+    const siteAccountId = event.type === "run-finished" ? event.result.siteAccountId : event.siteAccountId;
+    const domain = siteById(siteAccountId)?.domain;
+    const fields =
+      event.type === "run-finished"
+        ? {
+            domain,
+            status: event.result.status,
+            disclosures: event.result.disclosures,
+            relationships: event.result.relationships,
+            constraints: event.result.constraints,
+          }
+        : { domain };
+    options.logger.info("visibility", event.type, fields);
+  });
   const emptyResult = (
     siteAccountId: string,
     status: VisibilityRunResultView["status"],
@@ -149,13 +167,7 @@ export function createPanelSoroeruApi(options: PanelApiOptions): SoroeruApi {
         if (importing) return emptyResult(siteAccountId, "busy");
         const site = siteById(siteAccountId);
         if (!site) return emptyResult(siteAccountId, "skipped");
-        const result = await options.host.run(site);
-        options.logger.info("visibility", "run finished", {
-          domain: site.domain,
-          status: result.status,
-          disclosures: result.disclosures,
-        });
-        return result;
+        return options.host.run(site);
       },
       resume: async () => (options.host.resume() ? { ok: true } : { ok: false, error: "no-active-handoff" }),
       abort: async () => {

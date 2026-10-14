@@ -24,8 +24,6 @@ export function PanelShell({ host }: { host: VisibilityHost }): React.JSX.Elemen
   const [tab, setTab] = useState<Tab>("collect");
   const [reloadToken, setReloadToken] = useState(0);
   const [ledgerBusy, setLedgerBusy] = useState(false);
-  // Mounted on first visit, then kept (hidden and inert) so batch and hand-off state survive.
-  const [ledgerMounted, setLedgerMounted] = useState(false);
   const [collectRunning, setCollectRunning] = useState(false);
   const bumpReload = useCallback(() => setReloadToken((token) => token + 1), []);
 
@@ -50,7 +48,8 @@ export function PanelShell({ host }: { host: VisibilityHost }): React.JSX.Elemen
   const select = (next: Tab): void => {
     if (next === tab || busy) return;
     if (tab === "collect") bumpReload();
-    if (next === "ledger") setLedgerMounted(true);
+    // Leaving is only possible while the ledger is idle; it unmounts with its run state.
+    setLedgerBusy(false);
     setTab(next);
   };
 
@@ -80,18 +79,14 @@ export function PanelShell({ host }: { host: VisibilityHost }): React.JSX.Elemen
         </p>
       )}
 
-      {ledgerMounted && (
-        <div
-          className={tab === "ledger" ? undefined : "hidden"}
-          aria-hidden={tab !== "ledger"}
-          {...(tab !== "ledger" ? { inert: true as const } : {})}
-        >
-          <LedgerPanel
-            reloadToken={reloadToken}
-            onCollected={bumpReload}
-            onCollectionBusyChange={setLedgerBusy}
-          />
-        </div>
+      {/* Mounted only while shown: it follows every Visibility event, so a hidden ledger would
+          adopt a hand-off from the collection tab. Switching away is blocked while it is busy. */}
+      {tab === "ledger" && (
+        <LedgerPanel
+          reloadToken={reloadToken}
+          onCollected={bumpReload}
+          onCollectionBusyChange={setLedgerBusy}
+        />
       )}
       {/* Mounted only while shown: it registers the Tier 3 consent gate, which must never open unseen. */}
       {tab === "collect" && <VisibilityPanel host={host} />}
