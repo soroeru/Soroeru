@@ -63,7 +63,7 @@ export interface CsvImportInput {
 export function importPasswordCsv(domain: DomainService, input: CsvImportInput): CsvImportSummary {
   // 1. Validate byte size before doing anything else.
   const byteLength =
-    typeof input.data === "string" ? Buffer.byteLength(input.data, "utf8") : input.data.byteLength;
+    typeof input.data === "string" ? new TextEncoder().encode(input.data).byteLength : input.data.byteLength;
   if (byteLength > MAX_CSV_BYTES) {
     if (input.data instanceof Uint8Array) input.data.fill(0);
     throw new CsvImportError("too-large", `CSV exceeds the ${MAX_CSV_BYTES}-byte limit`);
@@ -74,7 +74,8 @@ export function importPasswordCsv(domain: DomainService, input: CsvImportInput):
   if (typeof input.data === "string") {
     csvText = input.data;
   } else {
-    csvText = Buffer.from(input.data).toString("utf8");
+    // ignoreBOM keeps a leading BOM in the text; the header check below strips it.
+    csvText = new TextDecoder("utf-8", { ignoreBOM: true }).decode(input.data);
     input.data.fill(0); // best-effort: do not leave plaintext credentials in the buffer
   }
 
