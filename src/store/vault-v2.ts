@@ -285,7 +285,7 @@ export class VaultV2 {
         throw new VaultCorruptError("encrypted export has an invalid record envelope");
       }
       const supported = RECORD_SCHEMA_VERSIONS[env.entityKind as EntityKind];
-      if (!Number.isInteger(env.schemaVersion) || env.schemaVersion !== supported) {
+      if (!Number.isInteger(env.schemaVersion) || env.schemaVersion < 1 || env.schemaVersion > supported) {
         throw new VaultFormatError(
           `vault record ${env.recordId} has unsupported ${env.entityKind} schema version ${String(env.schemaVersion)}`,
         );

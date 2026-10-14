@@ -77,6 +77,7 @@ export class VaultSession {
   private starting: Promise<VaultSessionState> | null = null;
   private exportDue = false;
   private importing = false;
+  private transitions: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(state: VaultSessionState) => void>();
 
   constructor(private readonly options: VaultSessionOptions) {}
@@ -157,7 +158,11 @@ export class VaultSession {
    * Create a new vault, set up its recovery key, and save it. Returns the
    * recovery key for one-time display; the caller must not log or persist it.
    */
-  async create(passphrase: string): Promise<string> {
+  create(passphrase: string): Promise<string> {
+    return this.transition(() => this.runCreate(passphrase));
+  }
+
+  private async runCreate(passphrase: string): Promise<string> {
     this.requireState("absent", "create a vault");
     if (passphrase.length < MIN_PASSPHRASE_LENGTH) throw new PassphraseTooShortError();
     // Never overwrite stored data that appeared since start() (fail closed).
@@ -196,7 +201,11 @@ export class VaultSession {
     }
   }
 
-  async unlock(passphrase: string): Promise<void> {
+  unlock(passphrase: string): Promise<void> {
+    return this.transition(() => this.runUnlock(passphrase));
+  }
+
+  private async runUnlock(passphrase: string): Promise<void> {
     this.requireState("locked", "unlock");
     this.adopt(
       await VaultV2.open(this.options.persistence, passphrase, this.options.kdfAlgo ?? "argon2id", {
@@ -205,7 +214,11 @@ export class VaultSession {
     );
   }
 
-  async unlockWithRecoveryKey(recoveryKey: string): Promise<void> {
+  unlockWithRecoveryKey(recoveryKey: string): Promise<void> {
+    return this.transition(() => this.runUnlockWithRecoveryKey(recoveryKey));
+  }
+
+  private async runUnlockWithRecoveryKey(recoveryKey: string): Promise<void> {
     this.requireState("locked", "unlock");
     this.adopt(
       await VaultV2.openWithRecoveryKey(this.options.persistence, recoveryKey, { extractableKey: false }),
@@ -239,6 +252,17 @@ export class VaultSession {
       throw new VaultSessionStateError(expected, "import");
     }
     this.importing = true;
+    // Reserve the import immediately: an earlier open must discard its key
+    // rather than expose a snapshot that is about to be replaced.
+    return this.transition(() => this.runImportEncrypted(exported, passphrase, overwrite, expected));
+  }
+
+  private async runImportEncrypted(
+    exported: string,
+    passphrase: string,
+    overwrite: boolean,
+    expected: VaultSessionState,
+  ): Promise<void> {
     const persistence: VaultPersistence = {
       load: () => this.options.persistence.load(),
       save: async (data) => {
@@ -286,13 +310,23 @@ export class VaultSession {
   }
 
   private adopt(vault: VaultV2): void {
-    if (this.stateValue !== "locked") {
+    if (this.importing || this.stateValue !== "locked") {
       // Closed while the KDF ran: do not resurrect a key on a closed panel.
       vault.lock();
       throw new VaultSessionStateError(this.stateValue, "unlock");
     }
     this.vaultValue = vault;
     this.setState("unlocked");
+  }
+
+  /** Keep the chain usable after a failed authentication or cancelled transition. */
+  private transition<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.transitions.then(operation);
+    this.transitions = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
   }
 
   private dropVault(): void {

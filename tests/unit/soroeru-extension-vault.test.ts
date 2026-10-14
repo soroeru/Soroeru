@@ -839,6 +839,14 @@ test("failed imports and unconfirmed replacement preserve existing browser ciphe
         VaultFormatError,
       );
     }
+    for (const schemaVersion of [undefined, 0, RECORD_SCHEMA_VERSIONS.siteAccount + 1]) {
+      const invalid = structuredClone(data);
+      invalid.records[0]!.schemaVersion = schemaVersion as number;
+      await assert.rejects(
+        () => session.importEncrypted(JSON.stringify(invalid), PASSPHRASE, true),
+        VaultFormatError,
+      );
+    }
     const futureRecord = structuredClone(data);
     futureRecord.records[0]!.schemaVersion = RECORD_SCHEMA_VERSIONS.siteAccount + 1;
     await assert.rejects(
@@ -938,4 +946,76 @@ test("a Vault v2 file written by the file backend imports into IndexedDB", async
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+for (const recovery of [false, true]) {
+  test(`confirmed import supersedes an overlapping ${recovery ? "recovery" : "passphrase"} unlock`, async () => {
+    const factory = new FakeIdbFactory();
+    const persistence = idb(factory);
+    const source = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
+    const recoveryKey = await source.setupRecoveryKey(PASSPHRASE);
+    source.put("siteAccount", siteAccount("old", "Fake old"));
+    await source.save();
+    const replacement = await VaultV2.open(idb(new FakeIdbFactory()), PASSPHRASE, "pbkdf2-sha512");
+    replacement.put("siteAccount", siteAccount("imported", "Fake imported"));
+    const exported = await replacement.exportEncrypted();
+    const session = new VaultSession({ persistence, lockManager: new FakeLockManager() });
+    await session.start();
+    let entered!: () => void;
+    let release!: () => void;
+    const loaded = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const load = persistence.load.bind(persistence);
+    let first = true;
+    persistence.load = async () => {
+      const data = await load();
+      if (first) {
+        first = false;
+        entered();
+        await blocked;
+      }
+      return data;
+    };
+    const unlocking = recovery ? session.unlockWithRecoveryKey(recoveryKey) : session.unlock(PASSPHRASE);
+    const rejected = assert.rejects(unlocking, VaultSessionStateError);
+    await loaded;
+    const importing = session.importEncrypted(exported, PASSPHRASE, true);
+    release();
+    await Promise.all([rejected, importing]);
+    assert.deepEqual(await load(), JSON.parse(exported));
+    assert.equal(session.state, "locked");
+    assert.throws(() => session.vault, VaultLockedError);
+    session.close();
+    assert.deepEqual(await load(), JSON.parse(exported));
+    source.lock();
+    replacement.lock();
+  });
+}
+
+test("import preserves and opens a supported schema 1 workflow checkpoint", async () => {
+  const persistence = idb(new FakeIdbFactory());
+  const source = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
+  source.put("workflowCheckpoint", {
+    id: "visibility:fake",
+    workflow: "visibility",
+    siteAccountId: "fake",
+    step: "collect",
+    status: "handoff",
+    updatedAt: 1,
+  });
+  const document = JSON.parse(await source.exportEncrypted()) as EncryptedVaultData;
+  document.records[0]!.schemaVersion = 1;
+  const factory = new FakeIdbFactory();
+  const session = newSession(factory);
+  await session.start();
+  await session.importEncrypted(JSON.stringify(document), PASSPHRASE);
+  assert.deepEqual(await idb(factory).load(), document);
+  await session.unlock(PASSPHRASE);
+  assert.equal(session.vault.get("workflowCheckpoint", "visibility:fake")?.step, "collect");
+  session.close();
+  source.lock();
 });
