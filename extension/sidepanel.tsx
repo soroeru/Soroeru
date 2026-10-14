@@ -9,8 +9,12 @@ import { IndexedDbVaultPersistence } from "../src/store/indexeddb-vault-persiste
 import { VaultSession, webLockManager } from "../src/store/vault-session.js";
 import { VaultPanel } from "./VaultPanel.js";
 import { createChromeLeaseClient } from "./panel/lease-client.js";
-import { VisibilityHost } from "./panel/visibility-host.js";
-import { VisibilityPanel } from "./panel/VisibilityPanel.js";
+import { VisibilityHost, hostPermissionOrigins } from "./panel/visibility-host.js";
+import { PanelShell } from "./panel/PanelShell.js";
+import { createPanelSoroeruApi } from "./panel/panel-api.js";
+import { createFrameSavedPageRenderer } from "./panel/saved-page-frame-renderer.js";
+import { MemoryLogger } from "../src/logging/memory-logger.js";
+import { configureSurface } from "../src/renderer/surface.js";
 import "./sidepanel.css";
 
 const persistence = new IndexedDbVaultPersistence();
@@ -39,6 +43,29 @@ const host = new VisibilityHost({
   ...(cloudClient ? { cloudClient, deliveryClient: cloudClient } : {}),
 });
 
+// The ledger, insights, and settings screens are shared with the Electron renderer and call
+// `window.soroeru`; here that API is the panel adapter over this page's vault (Issue #569).
+configureSurface({ sessionPersistence: false, chromeBridge: false });
+const panelApi = createPanelSoroeruApi({
+  session,
+  host,
+  logger: new MemoryLogger(),
+  savedPageRenderer: createFrameSavedPageRenderer({
+    document,
+    window,
+    origin: location.origin,
+    frameUrl: chrome.runtime.getURL("saved-page-frame.html"),
+    createNonce: () => crypto.randomUUID(),
+  }),
+  originsForSite: (site) => hostPermissionOrigins(site.domain),
+  requestOrigins: async (origins) =>
+    (await chrome.permissions.contains({ origins })) || chrome.permissions.request({ origins }),
+  openTab: async (url) => {
+    await chrome.tabs.create({ url });
+  },
+});
+Object.defineProperty(window, "soroeru", { value: panelApi, configurable: false, writable: false });
+
 // Closing the panel, reloading it, or quitting the browser aborts any run, releases the lease,
 // saves best-effort, and drops the key and the Web Lock.
 window.addEventListener("pagehide", () => {
@@ -55,7 +82,7 @@ createRoot(container).render(
     session={session}
     started={started}
     persistGranted={persistGranted}
-    unlockedContent={<VisibilityPanel host={host} />}
+    unlockedContent={<PanelShell host={host} />}
     onLock={() => host.lock()}
   />,
 );

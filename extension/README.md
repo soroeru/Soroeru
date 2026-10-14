@@ -18,6 +18,18 @@ preserves the original encrypted document. Requesting an import during unlock
 cancels that unlock; a successful import leaves the panel locked. Unlock again
 with the imported vault's passphrase or recovery key.
 
+Once unlocked, the panel shows the screens shared with the Electron renderer
+(Issue #569): the disclosure ledger with batch collection, insights, and
+settings (CSV import, log export), plus the extension's own "collect in this
+tab" panel with Tier 3 consent and Cloud settings. The shared screens call the
+same `window.soroeru` API as Electron; in the panel it is an adapter over the
+panel's vault and Visibility host. Batch collection asks once for host access to
+all selected sites. Runs started from the ledger never open the Tier 3 consent
+gate, so they send no values to Cloud. The saved-page import renders the file
+in a hidden extension frame whose CSP blocks all network loads and page
+scripts. The log export holds only this panel session's redacted operational
+events and is discarded when the panel closes.
+
 The content script reuses the structure-only scanner used by Playwright. Raw
 field/display values are returned only for an explicit command and are not logged; accepted disclosures are encrypted in the panel vault.
 

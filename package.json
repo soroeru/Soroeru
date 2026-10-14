@@ -7,7 +7,7 @@
   "main": "dist/compiled/electron/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "build:extension": "npm run build && vite build --config extension/vite.config.mjs && cp extension/manifest.json extension/popup.html extension/popup.js extension/sidepanel.html dist/extension/",
+    "build:extension": "npm run build && vite build --config extension/vite.config.mjs && cp extension/manifest.json extension/popup.html extension/popup.js extension/sidepanel.html extension/saved-page-frame.html dist/extension/",
     "build:host": "vite build --config native-host/vite.config.mjs",
     "build:preload": "vite build --mode preload",
     "build:renderer": "vite build",

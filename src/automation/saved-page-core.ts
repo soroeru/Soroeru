@@ -9,6 +9,8 @@ import type { DomainService } from "../domain/domain-service.js";
 import type { SiteAccount } from "../domain/entities.js";
 import { collectDisclosures, displayValueToSyntheticField } from "./disclosure-collector.js";
 
+export { readDisplayValues, readFieldValues } from "./saved-page-readers.js";
+
 export const MAX_SAVED_PAGE_BYTES = 5 * 1024 * 1024;
 
 /** What a renderer returns after scanning the saved page with `scanInPage`. */
@@ -86,36 +88,6 @@ export async function importSavedPageWith(
     sourceHash,
     recommendSourceDeletion: true,
   };
-}
-
-/** Browser-only: form-field values stamped by `scanInPage`. Runs in the rendered page's realm. */
-export function readFieldValues(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const el of Array.from(document.querySelectorAll("[data-af-id]"))) {
-    const id = el.getAttribute("data-af-id");
-    if (!id || !id.startsWith("f")) continue;
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-      if (el instanceof HTMLInputElement && (el.type === "radio" || el.type === "checkbox")) {
-        if (el.checked) out[id] = el.value;
-        continue;
-      }
-      if (typeof el.value === "string" && el.value !== "") out[id] = el.value;
-    }
-  }
-  return out;
-}
-
-/** Browser-only: read-only display values stamped by `scanInPage`. Runs in the rendered page's realm. */
-export function readDisplayValues(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const el of Array.from(document.querySelectorAll("[data-af-id]"))) {
-    const id = el.getAttribute("data-af-id");
-    if (!id || !id.startsWith("d")) continue;
-    const value = el instanceof HTMLInputElement ? el.value : (el.textContent ?? "");
-    const trimmed = value.trim();
-    if (trimmed !== "") out[id] = trimmed;
-  }
-  return out;
 }
 
 export function savedFromUrl(html: string): string | undefined {

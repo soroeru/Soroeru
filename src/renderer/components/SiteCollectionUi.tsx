@@ -64,7 +64,8 @@ export function BatchCollectionBar({
   disabled: boolean;
   onStart: () => void;
   onCancel: () => void;
-  onEnableSessionPersistence: () => void;
+  /** Omitted where session persistence does not apply (extension Side Panel, Issue #569). */
+  onEnableSessionPersistence?: () => void;
   sessionPersistenceBulkRunning: boolean;
   sessionPersistenceBulkError: string | undefined;
   onDeleteSelected?: () => void;
@@ -87,14 +88,16 @@ export function BatchCollectionBar({
         >
           選択したサイトを収集
         </button>
-        <button
-          type="button"
-          disabled={selectedCount === 0 || bulkBusy}
-          onClick={onEnableSessionPersistence}
-          className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {sessionPersistenceBulkRunning ? "設定中…" : "選択したサイトのログインセッションを保持する"}
-        </button>
+        {onEnableSessionPersistence && (
+          <button
+            type="button"
+            disabled={selectedCount === 0 || bulkBusy}
+            onClick={onEnableSessionPersistence}
+            className="rounded border border-neutral-300 px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {sessionPersistenceBulkRunning ? "設定中…" : "選択したサイトのログインセッションを保持する"}
+          </button>
+        )}
         {onDeleteSelected && (
           <button
             type="button"

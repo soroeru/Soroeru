@@ -6,6 +6,7 @@ import tailwindcss from "@tailwindcss/vite";
 const ENTRY_FILE_NAMES = {
   worker: "worker.js",
   sidepanel: "sidepanel.js",
+  "saved-page-frame": "saved-page-frame.js",
 };
 
 export default defineConfig({
@@ -41,6 +42,7 @@ export default defineConfig({
       input: {
         worker: resolve(process.cwd(), "extension/worker.ts"),
         sidepanel: resolve(process.cwd(), "extension/sidepanel.tsx"),
+        "saved-page-frame": resolve(process.cwd(), "extension/saved-page-frame.ts"),
       },
       output: {
         // Fixed names referenced by manifest.json / sidepanel.html; an unmapped entry fails the build.

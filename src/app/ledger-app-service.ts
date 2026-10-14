@@ -15,7 +15,11 @@ import {
   type SiteAccount,
   type Sensitivity,
 } from "../domain/entities.js";
-import { importSavedPageWith, MAX_SAVED_PAGE_BYTES, type SavedPageRenderer } from "../automation/saved-page-core.js";
+import {
+  importSavedPageWith,
+  MAX_SAVED_PAGE_BYTES,
+  type SavedPageRenderer,
+} from "../automation/saved-page-core.js";
 import { noopLogger, type Logger } from "../logging/logger.js";
 import type { VaultV2 } from "../store/vault-v2.js";
 import type {
@@ -430,7 +434,10 @@ export class LedgerAppService {
     const dynamicLabels = new Map<string, string>();
     for (const candidate of dynamicCandidates) {
       dynamicLabels.set(candidate.proposedAttributeKey, candidate.label);
-      dynamicLabels.set(candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."), candidate.label);
+      dynamicLabels.set(
+        candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."),
+        candidate.label,
+      );
     }
     const pendingAttributeCandidates: PendingAttributeCandidateView[] = dynamicCandidates
       .filter(
