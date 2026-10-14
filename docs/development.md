@@ -50,8 +50,8 @@ VITE_SOROERU_CLOUD_API_URL=https://example-api.run.app npm run build:extension
 ```
 
 Replace the example with the deployed HTTPS origin (no path, query or credentials).
-Enable cloud assistance in the unlocked panel; it defaults off. Tier 1/2 and
-per-fallback Tier 3 consent are available; full settings remain pending.
+Enable cloud assistance in the unlocked panel; it defaults off. Tier 1/2,
+run-scoped Tier 3 consent, and the separate cloud/sharing settings are available.
 See [extension notes](../extension/README.md) for the resolver's limits and
 [manual checks](manual-test.md) for failure paths.
 

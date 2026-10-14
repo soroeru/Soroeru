@@ -161,3 +161,94 @@ test("VisibilityHost: delivery is skipped when no deliveryClient is configured",
 
   await host.shutdown();
 });
+
+test("cloud assistance and sharing stay off when settings are absent", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "vh-defaults-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const session = new VaultSession({
+    persistence: new FileVaultPersistence(join(dir, "vault.json")),
+    kdfAlgo: "pbkdf2-sha512",
+    lockManager: { tryAcquire: async () => ({ release() {} }) },
+  });
+  await session.start();
+  await session.create(PASSPHRASE);
+  const host = new VisibilityHost({ session, leaseClient: makeStubLeaseClient() });
+  assert.equal(host.cloudAssistEnabled, false);
+  assert.equal(host.telemetryEnabled, false);
+  await host.configureSettings();
+  assert.equal(host.settings?.cloudAssistEnabled, false);
+  assert.equal(host.settings?.telemetryEnabled, false);
+  await host.shutdown();
+});
+
+test("turning sharing or cloud assistance off discards the queue and stays off if save fails", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "vh-revoke-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const session = new VaultSession({
+    persistence: new FileVaultPersistence(join(dir, "vault.json")),
+    kdfAlgo: "pbkdf2-sha512",
+    lockManager: { tryAcquire: async () => ({ release() {} }) },
+  });
+  await session.start();
+  await session.create(PASSPHRASE);
+  session.vault.put("cloudSettings", {
+    id: "cloud",
+    cloudAssistEnabled: true,
+    telemetryEnabled: true,
+    validatorKey: "fake-validator-key",
+    queue: [
+      {
+        idempotencyKey: FEEDBACK_UUID,
+        kind: "feedback",
+        body: {
+          schemaId: null,
+          site: "example.com",
+          pageFingerprint: PAGE_FINGERPRINT,
+          pagePurpose: "contact",
+          mappings: [{ anchor: "f-1", attributeKey: "email" }],
+          outcome: "validated",
+          resolutionTier: "gemini_structure",
+          siteValidatorToken: "b".repeat(64),
+          idempotencyKey: FEEDBACK_UUID,
+        },
+        attempts: 0,
+        enqueuedAt: Date.now(),
+      },
+    ],
+    updatedAt: Date.now(),
+  } satisfies CloudSettings);
+  await session.save();
+
+  const revoked: string[] = [];
+  let policy: (() => { cloudAssistEnabled: boolean; telemetryEnabled: boolean }) | undefined;
+  const host = new VisibilityHost({
+    session,
+    leaseClient: makeStubLeaseClient(),
+    cloudClient: {
+      call: async () => {
+        throw new Error("unexpected cloud call");
+      },
+      setPolicy: (next: () => { cloudAssistEnabled: boolean; telemetryEnabled: boolean }) => {
+        policy = next;
+      },
+      revoke: (kind: "cloud" | "sharing") => revoked.push(kind),
+    } as never,
+  });
+
+  await host.setTelemetryEnabled(false);
+  assert.equal(session.vault.get("cloudSettings", "cloud")?.queue.length, 0);
+  assert.equal(session.vault.get("cloudSettings", "cloud")?.telemetryEnabled, false);
+  assert.equal(revoked.includes("sharing"), true);
+  assert.equal(policy?.().telemetryEnabled, false);
+
+  const save = session.save.bind(session);
+  session.save = async () => {
+    throw new Error("disk full");
+  };
+  await assert.rejects(() => host.setCloudAssistEnabled(false));
+  assert.equal(session.vault.get("cloudSettings", "cloud")?.cloudAssistEnabled, false);
+  assert.equal(policy?.().cloudAssistEnabled, false);
+  assert.equal(revoked.includes("cloud"), true);
+  session.save = save;
+  await host.shutdown();
+});

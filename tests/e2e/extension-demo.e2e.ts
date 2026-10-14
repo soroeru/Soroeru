@@ -133,6 +133,36 @@ test("Tier 3 approval binds a masked, bounded payload to one ticket", async () =
   }
 });
 
+test("Tier 3 run consent shows its limits and the next collection asks again", async () => {
+  const browser = await openDemo("tier3");
+  try {
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /改善用の動作データを送る/ })).not.toBeChecked();
+    await browser.run();
+    const gate = browser.panel.getByRole("dialog", { name: /Gemini/ });
+    await expect(gate).toBeVisible();
+    await expect(gate.getByText(/最大 20 件/)).toBeVisible();
+    await expect(gate.getByText(/15 分/)).toBeVisible();
+    await expect(gate.getByText("Soroeru Cloud（Google Cloud）経由の Gemini")).toBeVisible();
+    await gate.getByRole("button", { name: "この収集だけ許可する" }).click();
+    await expect(
+      browser.panel
+        .getByText(/Demo tier3/)
+        .locator("..")
+        .getByText(/開示/),
+    ).toBeVisible();
+    expect(requests(browser, "tier3Ticket")).toHaveLength(1);
+    expect(requests(browser, "readWithConsent")).toHaveLength(1);
+    await browser.run();
+    await expect(browser.panel.getByRole("dialog", { name: /Gemini/ })).toBeVisible();
+    expect(requests(browser, "tier3Ticket")).toHaveLength(1);
+    await browser.panel.getByRole("button", { name: "送信しない" }).click();
+    expect(requests(browser, "readWithConsent")).toHaveLength(1);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("wall fixture stops at same-tab handoff", async () => {
   const browser = await openDemo("wall");
   try {

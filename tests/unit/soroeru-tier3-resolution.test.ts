@@ -206,7 +206,21 @@ async function t3Session(t: TestContext) {
   return s;
 }
 
-type ConsentDecision = "approved" | "declined" | "timeout";
+type ConsentDecision = "single" | "run" | "approved" | "declined" | "timeout";
+type HttpScript = number | "network" | "budget" | "rate";
+
+interface T3HarnessOptions {
+  decisions?: ConsentDecision[];
+  purposeHints?: Array<"profile" | "address" | "payment" | "contact" | "security" | "unknown">;
+  unresolvedKeys?: string[];
+  now?: () => number;
+  isActive?: () => boolean;
+  statuses?: HttpScript[];
+  onRead?: () => void | Promise<void>;
+  onGate?: () => void;
+  gateCalls?: { count: number };
+  fingerprint?: () => string;
+}
 
 /**
  * Build a ResolutionOrchestrator wired for Tier 3 tests.
@@ -217,11 +231,27 @@ function t3Orchestrator(
   session: VaultSession,
   schema: typeof T3_SCHEMA_PHONE | typeof T3_SCHEMA_CARD,
   calls: string[],
-  consentDecision: ConsentDecision,
+  consentDecision: ConsentDecision | ConsentDecision[],
   readWithConsentValues: { itemId: string; attributeKey: string; value: string }[],
   regionItems: MaskedRegionItem[],
+  options: T3HarnessOptions = {},
 ) {
   const hash = schema.pageFingerprints[0]!;
+  const decisions = options.decisions ?? (Array.isArray(consentDecision) ? consentDecision : [consentDecision]);
+  let decisionIndex = 0;
+  let hintIndex = 0;
+  let httpIndex = 0;
+  const gateCalls = options.gateCalls ?? { count: 0 };
+  const httpResponse = (): Response | Promise<Response> => {
+    const script = options.statuses?.[httpIndex++] ?? 200;
+    if (script === "network") return Promise.reject(new TypeError("offline"));
+    if (script === "budget") {
+      return new Response(JSON.stringify({ error: "budget-exhausted" }), { status: 429 });
+    }
+    if (script === "rate") return new Response(JSON.stringify({ error: "rate-limited" }), { status: 429 });
+    if (script !== 200) return new Response(JSON.stringify({ error: "unavailable" }), { status: script });
+    return new Response(JSON.stringify({ ok: true }));
+  };
   const client = new CloudClient(
     { apiBaseUrl: "https://api.example/", fallbackBaseUrl: "https://fallback.example/" },
     async (url) => {
@@ -232,16 +262,22 @@ function t3Orchestrator(
       }
       if (urlStr.endsWith("/tier3-ticket")) {
         calls.push("tier3-ticket");
+        const response = await httpResponse();
+        if (!response.ok) return response;
         return new Response(
           JSON.stringify({ ticket: "fakeheader.fakepayload", expiresAt: "2099-01-01T00:00:00.000Z" }),
         );
       }
       if (urlStr.endsWith("/read-with-consent")) {
         calls.push("read-with-consent");
+        await options.onRead?.();
+        const response = await httpResponse();
+        if (!response.ok) return response;
         return new Response(JSON.stringify({ values: readWithConsentValues }));
       }
-      // map-structure: not expected in these tests
       calls.push(urlStr);
+      const failed = await httpResponse();
+      if (!failed.ok) return failed;
       return new Response(JSON.stringify({ mappings: [], pagePurpose: "contact" }));
     },
   );
@@ -249,19 +285,34 @@ function t3Orchestrator(
     session,
     client,
     clientVersion: "0.1.2",
-    isActive: () => true,
+    isActive: options.isActive ?? (() => true),
     currentOrigin: "https://example.com",
-    showConsentGate: () => Promise.resolve(consentDecision),
+    ...(options.now ? { now: options.now } : {}),
+    showConsentGate: () => {
+      gateCalls.count += 1;
+      options.onGate?.();
+      const decision = decisions[Math.min(decisionIndex, decisions.length - 1)] ?? "declined";
+      decisionIndex += 1;
+      return Promise.resolve(decision);
+    },
     sendPageCommand: async (command) => {
-      if (command.command === "schemaFingerprint") return hash;
+      if (command.command === "schemaFingerprint") return options.fingerprint?.() ?? hash;
       if (command.command === "structureSnapshot") {
+        const purposeHint = options.purposeHints?.[Math.min(hintIndex, (options.purposeHints?.length ?? 1) - 1)] ?? "unknown";
+        hintIndex += 1;
         // Return one item; the resolved f-1 will be filtered out → empty → tier2FallbackResult
-        return { site: "example.com", pageFingerprint: hash, purposeHint: "unknown" as const, items: [{ id: "f-1", tag: "input" as const, nameTokens: ["email"] }] };
+        return {
+          site: "example.com",
+          pageFingerprint: hash,
+          purposeHint,
+          items: [{ id: "f-1", tag: "input" as const, nameTokens: ["email"] }],
+        };
       }
       if (command.command === "readSchema") {
+        const keys = options.unresolvedKeys ?? [schema.fields[1]!.attributeKey];
         return {
           values: [{ itemId: "f-1", attributeKey: "email" as const, value: "fake@example.com" }],
-          unresolved: [{ attributeKey: schema.fields[1]!.attributeKey, reason: "anchor-not-found" as const }],
+          unresolved: keys.map((attributeKey) => ({ attributeKey, reason: "anchor-not-found" as const })),
         };
       }
       if (command.command === "readRegionMasked") {
@@ -345,6 +396,244 @@ test("corroboration rejects value proposed for a different item (cross-item)", a
   const result = await resolver.resolve("example.com");
   assert.ok(!result!.values.some((v) => v.attributeKey === "phone.full"), "cross-item value must be rejected");
   assert.ok(result!.unresolved.some((u) => u.attributeKey === "phone.full"), "phone.full stays unresolved");
+});
+
+const PHONE_REGION: MaskedRegionItem[] = [{ id: "d-2", label: "電話番号", text: "090-0000-0000" }];
+const PHONE_VALUE = [{ itemId: "d-2", attributeKey: "phone.full", value: "090-0000-0000" }];
+
+function callCount(calls: string[], name: string): number {
+  return calls.filter((call) => call === name).length;
+}
+
+test("run approval is reused for the same site, page kind, and attributes", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const gates = { count: 0 };
+  const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, "run", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    gateCalls: gates,
+  });
+  const first = await resolver.resolve("example.com");
+  const second = await resolver.resolve("example.com");
+  assert.equal(gates.count, 1);
+  assert.equal(callCount(calls, "tier3-ticket"), 2);
+  assert.equal(callCount(calls, "read-with-consent"), 2);
+  assert.ok(first?.values.some((value) => value.value === "090-0000-0000"));
+  assert.ok(second?.values.some((value) => value.value === "090-0000-0000"));
+});
+
+test("a new page kind or attribute asks again and decline sends nothing more", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const gates = { count: 0 };
+  const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, ["run", "declined"], PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact", "payment"],
+    gateCalls: gates,
+  });
+  await resolver.resolve("example.com");
+  await resolver.resolve("example.com");
+  assert.equal(gates.count, 2);
+  assert.equal(callCount(calls, "tier3-ticket"), 1);
+
+  const expandedSchema = {
+    ...T3_SCHEMA_PHONE,
+    fields: [...T3_SCHEMA_PHONE.fields],
+  };
+  const expanded = ["phone.full"];
+  const calls2: string[] = [];
+  const gates2 = { count: 0 };
+  const again = t3Orchestrator(session, expandedSchema, calls2, ["run", "declined"], PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    unresolvedKeys: expanded,
+    gateCalls: gates2,
+  });
+  await again.resolve("example.com");
+  (
+    expandedSchema.fields as { anchor: string; attributeKey: string; required: boolean }[]
+  ).push({ anchor: "f-3", attributeKey: "name.full", required: true });
+  expanded.push("name.full");
+  await again.resolve("example.com");
+  assert.equal(gates2.count, 2);
+  assert.equal(callCount(calls2, "read-with-consent"), 1);
+});
+
+test("run approval stops at 20 requests and at 15 minutes", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const gates = { count: 0 };
+  const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, ["run", "declined"], PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    gateCalls: gates,
+  });
+  for (let i = 0; i < 20; i++) await resolver.resolve("example.com");
+  assert.equal(gates.count, 1);
+  assert.equal(callCount(calls, "read-with-consent"), 20);
+  await resolver.resolve("example.com");
+  assert.equal(gates.count, 2);
+  assert.equal(callCount(calls, "read-with-consent"), 20);
+
+  let now = 1_000_000;
+  const timedCalls: string[] = [];
+  const timedGates = { count: 0 };
+  const timed = t3Orchestrator(session, T3_SCHEMA_PHONE, timedCalls, ["run", "declined"], PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    gateCalls: timedGates,
+    now: () => now,
+  });
+  await timed.resolve("example.com");
+  now += 15 * 60 * 1000;
+  await timed.resolve("example.com");
+  assert.equal(timedGates.count, 2);
+  assert.equal(callCount(timedCalls, "tier3-ticket"), 1);
+});
+
+test("transport and 5xx retry once under run approval and consume a fresh ticket", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, "run", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    statuses: [200, 500, 200, 200],
+  });
+  const result = await resolver.resolve("example.com");
+  assert.equal(callCount(calls, "tier3-ticket"), 2);
+  assert.equal(callCount(calls, "read-with-consent"), 2);
+  assert.ok(result?.values.some((value) => value.value === "090-0000-0000"));
+
+  const networkCalls: string[] = [];
+  const network = t3Orchestrator(session, T3_SCHEMA_PHONE, networkCalls, "run", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    statuses: ["network", 200, 200],
+  });
+  await network.resolve("example.com");
+  assert.equal(callCount(networkCalls, "tier3-ticket"), 2);
+  assert.equal(callCount(networkCalls, "read-with-consent"), 1);
+});
+
+test("single approval does not retry, and 429, budget, and 4xx never retry", async (t) => {
+  const session = await t3Session(t);
+  const singleCalls: string[] = [];
+  const single = t3Orchestrator(session, T3_SCHEMA_PHONE, singleCalls, "single", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    statuses: [200, 500],
+  });
+  await single.resolve("example.com");
+  assert.equal(callCount(singleCalls, "tier3-ticket"), 1);
+  assert.equal(callCount(singleCalls, "read-with-consent"), 1);
+
+  for (const status of ["rate", "budget", 400] as const) {
+    const calls: string[] = [];
+    const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, "run", PHONE_VALUE, PHONE_REGION, {
+      purposeHints: ["contact"],
+      statuses: status === 400 || status === "budget" ? [status] : [200, status],
+    });
+    await resolver.resolve("example.com");
+    assert.equal(callCount(calls, "tier3-ticket"), 1, String(status));
+    assert.equal(callCount(calls, "read-with-consent"), status === "rate" ? 1 : 0, String(status));
+  }
+});
+
+test("run approval is refused when the page kind is unknown", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, "run", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["unknown"],
+  });
+  const result = await resolver.resolve("example.com");
+  assert.equal(callCount(calls, "tier3-ticket"), 0);
+  assert.ok(result?.unresolved.some((item) => item.attributeKey === "phone.full"));
+});
+
+test("turning cloud assistance off during the gate sends nothing", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const resolver = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, "run", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    onGate: () => {
+      const current = session.vault.get("cloudSettings", "cloud");
+      if (!current) return;
+      session.vault.put("cloudSettings", { ...current, cloudAssistEnabled: false, updatedAt: current.updatedAt + 1 });
+    },
+  });
+  await resolver.resolve("example.com");
+  assert.equal(callCount(calls, "tier3-ticket"), 0);
+  assert.equal(callCount(calls, "read-with-consent"), 0);
+});
+
+test("a response after revocation or navigation is not returned", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const hash = T3_SCHEMA_PHONE.pageFingerprints[0]!;
+  let print = hash;
+  let revoked: ResolutionOrchestrator | undefined;
+  revoked = t3Orchestrator(session, T3_SCHEMA_PHONE, calls, "run", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    onRead: () => revoked?.revokeConsent(),
+    fingerprint: () => print,
+  });
+  const revokedResult = await revoked.resolve("example.com");
+  assert.ok(!revokedResult?.values.some((value) => value.attributeKey === "phone.full"));
+
+  print = hash;
+  const movedCalls: string[] = [];
+  const moved = t3Orchestrator(session, T3_SCHEMA_PHONE, movedCalls, "single", PHONE_VALUE, PHONE_REGION, {
+    purposeHints: ["contact"],
+    fingerprint: () => print,
+    onRead: () => {
+      print = "e".repeat(64);
+    },
+  });
+  const movedResult = await moved.resolve("example.com");
+  assert.equal(callCount(movedCalls, "read-with-consent"), 1);
+  assert.ok(!movedResult?.values.some((value) => value.value === "090-0000-0000"));
+});
+
+test("Tier 2 transport failure does not open Tier 3", async (t) => {
+  const session = await t3Session(t);
+  const calls: string[] = [];
+  const hash = T3_SCHEMA_PHONE.pageFingerprints[0]!;
+  const client = new CloudClient(
+    { apiBaseUrl: "https://api.example/", fallbackBaseUrl: "https://fallback.example/" },
+    async (url) => {
+      const urlStr = String(url);
+      if (urlStr.endsWith("/resolve")) {
+        calls.push("resolve");
+        return new Response(JSON.stringify({ status: "active", schema: T3_SCHEMA_PHONE }));
+      }
+      calls.push("map-structure");
+      return new Response(JSON.stringify({ error: "unavailable" }), { status: 500 });
+    },
+  );
+  const resolver = new ResolutionOrchestrator({
+    session,
+    client,
+    clientVersion: "0.1.2",
+    isActive: () => true,
+    showConsentGate: () => {
+      calls.push("gate");
+      return Promise.resolve("run");
+    },
+    sendPageCommand: async (command) => {
+      if (command.command === "schemaFingerprint") return hash;
+      if (command.command === "structureSnapshot") {
+        return {
+          site: "example.com",
+          pageFingerprint: hash,
+          purposeHint: "contact" as const,
+          items: [{ id: "f-2", tag: "input" as const, nameTokens: ["phone"] }],
+        };
+      }
+      if (command.command === "readSchema") {
+        return {
+          values: [{ itemId: "f-1", attributeKey: "email" as const, value: "fake@example.com" }],
+          unresolved: [{ attributeKey: "phone.full" as const, reason: "anchor-not-found" as const }],
+        };
+      }
+      return null;
+    },
+  });
+  await resolver.resolve("example.com");
+  assert.equal(calls.includes("gate"), false);
+  assert.equal(calls.includes("tier3-ticket"), false);
 });
 
 test("corroboration rejects masked PAN (card.number containing *)", async (t) => {

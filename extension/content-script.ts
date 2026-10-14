@@ -1,4 +1,4 @@
-import { schemaPageFingerprint, readSchemaPage, structurePageSnapshot } from "./schema-page.js";
+import { assertReadablePage, schemaPageFingerprint, readSchemaPage, structurePageSnapshot } from "./schema-page.js";
 import type { FormSchema } from "../src/shared/cloud-contract.js";
 import {
   collectionObservationInPage,
@@ -126,7 +126,7 @@ export interface MaskedRegionItem {
  * defense-in-depth.
  */
 export function readRegionMasked(requestedKeys: string[], resolvedIds?: string[]): { items: MaskedRegionItem[] } {
-  if (!document.body) return { items: [] };
+  assertReadablePage();
   const excludeIds = new Set(resolvedIds ?? []);
   const result: MaskedRegionItem[] = [];
   // Collect all labeled elements with data-af-id (scanner-assigned IDs).

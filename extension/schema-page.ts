@@ -10,10 +10,14 @@ export type { SchemaReadResult } from "../src/shared/schema-resolution.js";
 import type { SchemaReadResult } from "../src/shared/schema-resolution.js";
 let structureObservation:
   { url: string; fingerprint: string; observer: MutationObserver; invalidated: boolean } | undefined;
-export function schemaPageFingerprint(): string {
+/** Wall, terms, and missing-document checks shared by fingerprint and Tier 3 reads. */
+export function assertReadablePage(): void {
   const snapshot = { ...scanInPage(), url: location.href, title: document.title };
   if (detectWall(snapshot) || new WallDetectionService().detectTosProhibition(snapshot) || !document.body)
     throw new Error("wall-or-page-unavailable");
+}
+export function schemaPageFingerprint(): string {
+  assertReadablePage();
   const print = structuralFingerprintInPage(document.body);
   if (!print) throw new Error("page-too-large");
   return print;

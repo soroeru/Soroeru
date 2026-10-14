@@ -40,11 +40,17 @@ export function CloudSettingsPanel({
         setNotice(enabled ? "設定を保存しました。" : "停止しました。未送信データを破棄しました。");
       })
       .catch(() => {
-        if (kind === "cloud" && enabled) setCloud(false);
-        if (kind === "sharing" && enabled) setSharing(false);
-        setError(
-          "設定を暗号化保存できませんでした。オンへの変更は有効になっていません。再試行してください。",
-        );
+        if (enabled) {
+          if (kind === "cloud") setCloud(false);
+          else setSharing(false);
+          setError(
+            "設定を暗号化保存できませんでした。オンへの変更は有効になっていません。再試行してください。",
+          );
+          return;
+        }
+        if (kind === "cloud") setCloud(false);
+        else setSharing(false);
+        setError("停止は反映しましたが、設定を暗号化保存できませんでした。再試行してください。");
       })
       .finally(() => setSaving(false));
   };

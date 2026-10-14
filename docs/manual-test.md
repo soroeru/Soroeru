@@ -116,12 +116,23 @@ are `soroeru-tier3-resolution.test.ts` and Cloud API tests (`server.test.mjs`).
       Close the dialog via the X button and verify the same outcome.
 - [ ] Let the gate expire (or set the deadline to a short test value): no API call is
       made; the result is the same as decline.
-- [ ] Approve the gate: `tier3-ticket` is called once, `read-with-consent` once.
-      The ticket contains the site domain, consent ID and payload hash; the
-      approved read contains only the consented minimal region, including the
-      fake personal values needed for that read. Confirm password, CVV and OTP
-      raw values are excluded and secret items are `[SECRET]`. Confirm the
-      consent ID is a fresh UUID each run and the payload is at most 16 KiB.
+- [ ] Approve「この1回だけ送信する」: `tier3-ticket` is called once,
+      `read-with-consent` once. The ticket contains the site domain, consent ID
+      and payload hash; the approved read contains only the consented minimal
+      region, including the fake personal values needed for that read. Confirm
+      password, CVV and OTP raw values are excluded and secret items are
+      `[SECRET]`. Confirm the consent ID is a fresh UUID and the payload is at
+      most 16 KiB. A failed one-fallback attempt does not retry.
+- [ ] Approve「この収集だけ許可する」 and confirm the gate shows the site, page
+      kind, attributes, Gemini via Soroeru Cloud, 16 KiB, 20 requests, and 15
+      minutes, with nothing preselected. The same scope in that collection does
+      not ask again. A new page kind or attribute asks again. The 21st request
+      and a request after 15 minutes do not send under the old approval.
+      Transport or HTTP 5xx failure retries once with a new ticket. HTTP 429,
+      budget exhaustion, and other 4xx responses do not retry.
+- [ ] Use「Gemini への送信を止める」, a wall hand-off, resume, lock, panel close,
+      or cloud assistance off. Each ends the approval. The next collection asks
+      again. Decline, close, and timeout still send nothing.
 - [ ] Toggle cloud assistance off while the gate is open: the gate closes with
       "declined" and no API call is made.
 - [ ] Inspect Cloud Logging and Trace for the `tier3-ticket` and `read-with-consent`
@@ -202,9 +213,6 @@ path against a mock and does not call the deployed services.
 Apply these when the corresponding implementation is available, and record any
 missing feature as untested rather than passing it:
 
-- [ ] Tier 3 decline/close/timeout sends nothing; scoped run approval bounds sites,
-      page kinds, keys, 20 requests and 15 minutes. Expansion, expiry, wall hand-off,
-      lock, close and restart end authority. Retry is bounded with a fresh ticket.
 - [ ] No password/CVV/OTP or ambiguous secret-like value reaches Gemini. Oversized
       regions hand off; fabricated, cross-item and expanded masked values fail
       corroboration. Tier 3 never enters schema learning or logs.
