@@ -9,10 +9,12 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { vaultErrorMessage } from "../../extension/sidepanel-messages.js";
+import { importFailureMessage, vaultErrorMessage } from "../../extension/sidepanel-messages.js";
+import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import { exportKeyRaw } from "../../src/store/crypto.js";
 import { IndexedDbVaultPersistence } from "../../src/store/indexeddb-vault-persistence.js";
@@ -265,7 +267,7 @@ test("IndexedDB: unreadable stored data fails closed and is never overwritten", 
     await assert.rejects(VaultV2.open(idb(factory), PASSPHRASE), VaultCorruptError);
     const session = newSession(factory);
     await assert.rejects(session.start(), VaultCorruptError);
-    assert.equal(session.state, "starting");
+    assert.equal(session.state, "locked");
     await assert.rejects(session.create(PASSPHRASE), VaultSessionStateError);
     assert.deepEqual(factory.stored(), raw);
   }
@@ -331,7 +333,9 @@ test("new record kinds round-trip; workflowCheckpoint v2 adds resolutionStage; v
     telemetryEnabled: false,
     cloudAssistEnabled: false,
     validatorKey: "fake-validator-key",
-    queue: [{ idempotencyKey: "k-1", kind: "telemetry", body: { result: "success" }, attempts: 0, enqueuedAt: 1 }],
+    queue: [
+      { idempotencyKey: "k-1", kind: "telemetry", body: { result: "success" }, attempts: 0, enqueuedAt: 1 },
+    ],
     updatedAt: 1,
   });
   vault.put("workflowCheckpoint", {
@@ -362,7 +366,10 @@ test("new record kinds round-trip; workflowCheckpoint v2 adds resolutionStage; v
   assert.ok(checkpoint);
   checkpoint.schemaVersion = 1;
   await persistence.save(stored);
-  assert.equal((await VaultV2.open(persistence, PASSPHRASE)).get("workflowCheckpoint", "visibility:acct-1")?.step, "collect");
+  assert.equal(
+    (await VaultV2.open(persistence, PASSPHRASE)).get("workflowCheckpoint", "visibility:acct-1")?.step,
+    "collect",
+  );
   checkpoint.schemaVersion = RECORD_SCHEMA_VERSIONS.workflowCheckpoint + 1;
   await persistence.save(stored);
   await assert.rejects(VaultV2.open(persistence, PASSPHRASE), VaultFormatError);
@@ -483,10 +490,10 @@ test("VaultSession: refuses to create over data that appeared after start", asyn
   const factory = new FakeIdbFactory();
   const session = newSession(factory);
   assert.equal(await session.start(), "absent");
-  factory.setStored("{\"vaultVersion\":2,\"records\":[]}");
+  factory.setStored('{"vaultVersion":2,"records":[]}');
   await assert.rejects(session.create(PASSPHRASE), VaultSessionStateError);
   assert.equal(session.state, "locked");
-  assert.equal(factory.stored(), "{\"vaultVersion\":2,\"records\":[]}");
+  assert.equal(factory.stored(), '{"vaultVersion":2,"records":[]}');
 });
 
 test("VaultSession: a failed save keeps the previous version and the session usable", async () => {
@@ -630,6 +637,19 @@ test("side panel error messages never echo error text", async () => {
   assert.match(vaultErrorMessage(new VaultCorruptError("fake-secret-detail")), /読み取れません/);
   assert.doesNotMatch(vaultErrorMessage(new Error("fake-secret-detail")), /fake-secret-detail/);
   assert.match(vaultErrorMessage(new PassphraseTooShortError()), /8文字以上/);
+  const refused = importFailureMessage(
+    new Error("refusing to overwrite an existing vault (pass { overwrite: true } to replace it)"),
+  );
+  assert.match(refused, /置き換えの確認がないため/);
+  assert.doesNotMatch(refused, /overwrite|fake-secret-detail/);
+  assert.match(
+    importFailureMessage(new VaultFormatError("fake-secret-detail")),
+    /Vault v2 として読み取れない/,
+  );
+  assert.doesNotMatch(
+    importFailureMessage(new VaultCorruptError("fake-secret-detail")),
+    /fake-secret-detail/,
+  );
 });
 
 // --- Manifest / CSP / build ---
@@ -653,7 +673,9 @@ test("extension CSP allows WebAssembly for Argon2id but never unsafe-eval; Side 
   assert.doesNotMatch(html, /<script>(?!<)/, "no inline scripts");
   const config = await readFile(join(REPO_ROOT, "extension", "vite.config.mjs"), "utf8");
   assert.match(config, /sidepanel\.tsx/);
-  const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  const pkg = JSON.parse(await readFile(join(REPO_ROOT, "package.json"), "utf8")) as {
+    scripts: Record<string, string>;
+  };
   assert.match(pkg.scripts["build:extension"] ?? "", /extension\/sidepanel\.html/);
 });
 
@@ -664,9 +686,14 @@ test("Visibility host retains unlocked records when lock save fails and allows r
   await session.start();
   await session.create(PASSPHRASE);
   session.vault.put("siteAccount", siteAccount("unsaved", "Fake unsaved site"));
-  const host = new VisibilityHost({ session, leaseClient: {
-    onInvalidated: () => () => {}, releaseLease: async () => {}, close: () => {},
-  } as unknown as import("../../extension/panel/lease-client.js").LeaseClient });
+  const host = new VisibilityHost({
+    session,
+    leaseClient: {
+      onInvalidated: () => () => {},
+      releaseLease: async () => {},
+      close: () => {},
+    } as unknown as import("../../extension/panel/lease-client.js").LeaseClient,
+  });
   factory.nextCommitFailure = new DOMException("fake quota", "QuotaExceededError");
   await assert.rejects(() => host.lock(), VaultStorageQuotaError);
   assert.equal(session.state, "unlocked");
@@ -690,13 +717,26 @@ test("panel shutdown drops plaintext immediately and holds the writer lock until
   for (let i = 0; i < 3; i++) session.vault.put("siteAccount", siteAccount(`site-${i}`, `Fake ${i}`));
   let entered!: () => void;
   let release!: () => void;
-  const storing = new Promise<void>((resolve) => { entered = resolve; });
-  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const storing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const originalSave = persistence.save.bind(persistence);
-  persistence.save = async (data) => { entered(); await blocked; await originalSave(data); };
-  const host = new VisibilityHost({ session, leaseClient: {
-    onInvalidated: () => () => {}, releaseLease: async () => {}, close: () => {},
-  } as unknown as import("../../extension/panel/lease-client.js").LeaseClient });
+  persistence.save = async (data) => {
+    entered();
+    await blocked;
+    await originalSave(data);
+  };
+  const host = new VisibilityHost({
+    session,
+    leaseClient: {
+      onInvalidated: () => () => {},
+      releaseLease: async () => {},
+      close: () => {},
+    } as unknown as import("../../extension/panel/lease-client.js").LeaseClient,
+  });
   const closing = host.shutdown();
   try {
     assert.throws(() => session.vault, VaultLockedError);
@@ -711,7 +751,10 @@ test("panel shutdown drops plaintext immediately and holds the writer lock until
     await next.unlock(PASSPHRASE);
     assert.equal(next.vault.list("siteAccount").length, 3);
     next.close();
-  } finally { release(); await closing; }
+  } finally {
+    release();
+    await closing;
+  }
 });
 
 test("overlapping vault saves retain call order and newest records", async () => {
@@ -720,11 +763,21 @@ test("overlapping vault saves retain call order and newest records", async () =>
   const vault = await VaultV2.open(persistence, PASSPHRASE, "pbkdf2-sha512");
   let entered!: () => void;
   let release!: () => void;
-  const storing = new Promise<void>((resolve) => { entered = resolve; });
-  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  const storing = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   const originalSave = persistence.save.bind(persistence);
   let writes = 0;
-  persistence.save = async (data) => { if (writes++ === 0) { entered(); await blocked; } await originalSave(data); };
+  persistence.save = async (data) => {
+    if (writes++ === 0) {
+      entered();
+      await blocked;
+    }
+    await originalSave(data);
+  };
   vault.put("siteAccount", siteAccount("first", "Fake first"));
   const first = vault.save();
   await storing;
@@ -738,5 +791,151 @@ test("overlapping vault saves retain call order and newest records", async () =>
     const reopened = await VaultV2.open(persistence, PASSPHRASE);
     assert.equal(reopened.list("siteAccount").length, 2);
     reopened.lock();
-  } finally { release(); await Promise.all([first, second]); vault.lock(); }
+  } finally {
+    release();
+    await Promise.all([first, second]);
+    vault.lock();
+  }
+});
+
+for (const algo of ["argon2id", "pbkdf2-sha512"]) {
+  test(`Electron ${algo} export restores into a separate browser profile with recovery`, async () => {
+    const fixture = JSON.parse(
+      await readFile(join(REPO_ROOT, "tests", "fixtures", "vault-v2", `legacy-${algo}.json`), "utf8"),
+    ) as { vault: EncryptedVaultData; fakeRecoveryKey: string };
+    const exported = JSON.stringify(fixture.vault);
+    const session = newSession(new FakeIdbFactory());
+    try {
+      await session.start();
+      await session.importEncrypted(exported, FIXTURE_PASSPHRASE);
+      assert.equal(session.state, "locked");
+      await session.unlock(FIXTURE_PASSPHRASE);
+      assert.ok(session.vault.list("personalAttribute").length > 0);
+      session.lock();
+      await session.unlockWithRecoveryKey(fixture.fakeRecoveryKey);
+      assert.equal(session.vault.get("siteAccount", "acct-fixture")?.domain, "shop.example.test");
+    } finally {
+      session.close();
+    }
+  });
+}
+
+test("failed imports and unconfirmed replacement preserve existing browser ciphertext", async () => {
+  const factory = new FakeIdbFactory();
+  const session = newSession(factory);
+  try {
+    await session.start();
+    await session.create(PASSPHRASE);
+    session.vault.put("siteAccount", siteAccount("original", "Fake original"));
+    await session.save();
+    const exported = await session.exportEncrypted();
+    session.lock();
+    const before = await idb(factory).load();
+    await assert.rejects(() => session.importEncrypted(exported, PASSPHRASE));
+    const data = JSON.parse(exported) as EncryptedVaultData;
+    for (const version of [0, 1, 3, "2"]) {
+      await assert.rejects(
+        () => session.importEncrypted(JSON.stringify({ ...data, vaultVersion: version }), PASSPHRASE, true),
+        VaultFormatError,
+      );
+    }
+    const futureRecord = structuredClone(data);
+    futureRecord.records[0]!.schemaVersion = RECORD_SCHEMA_VERSIONS.siteAccount + 1;
+    await assert.rejects(
+      () => session.importEncrypted(JSON.stringify(futureRecord), PASSPHRASE, true),
+      VaultFormatError,
+    );
+    await assert.rejects(
+      () =>
+        session.importEncrypted(
+          JSON.stringify({ version: 1, kdf: data.kdf, records: data.records }),
+          PASSPHRASE,
+          true,
+        ),
+      VaultFormatError,
+    );
+    await assert.rejects(() => session.importEncrypted("{broken", PASSPHRASE, true));
+    await assert.rejects(() => session.importEncrypted(exported, "fake-wrong-passphrase", true));
+    data.records[0]!.ciphertext = "broken";
+    await assert.rejects(() => session.importEncrypted(JSON.stringify(data), PASSPHRASE, true));
+    factory.nextCommitFailure = new DOMException("fake quota", "QuotaExceededError");
+    await assert.rejects(() => session.importEncrypted(exported, PASSPHRASE, true), VaultStorageQuotaError);
+    assert.deepEqual(await idb(factory).load(), before);
+    assert.equal(session.state, "locked");
+    await session.importEncrypted(exported, PASSPHRASE, true);
+    await session.unlock(PASSPHRASE);
+    assert.equal(session.vault.get("siteAccount", "original")?.displayName, "Fake original");
+    await assert.rejects(() => session.importEncrypted(exported, PASSPHRASE, true), VaultSessionStateError);
+  } finally {
+    session.close();
+  }
+});
+
+test("closing during import authentication prevents replacement", async () => {
+  const factory = new FakeIdbFactory();
+  const source = await VaultV2.open(idb(new FakeIdbFactory()), PASSPHRASE, "pbkdf2-sha512");
+  const exported = await source.exportEncrypted();
+  source.lock();
+  const session = newSession(factory);
+  await session.start();
+  const importing = session.importEncrypted(exported, PASSPHRASE);
+  session.close();
+  await assert.rejects(() => importing, VaultSessionStateError);
+  assert.equal(await idb(factory).load(), null);
+  assert.equal(session.state, "closed");
+});
+
+test("import is refused when this profile does not hold the vault lock", async () => {
+  const session = newSession(new FakeIdbFactory(), { tryAcquire: async () => null });
+  assert.equal(await session.start(), "in-use-elsewhere");
+  await assert.rejects(() => session.importEncrypted("{}", PASSPHRASE), VaultSessionStateError);
+  assert.equal(session.state, "in-use-elsewhere");
+});
+
+test("confirmed import replaces unreadable IndexedDB bytes and leaves the session locked", async () => {
+  const clean = new FakeIdbFactory();
+  const source = newSession(clean);
+  await source.start();
+  await source.create(PASSPHRASE);
+  source.vault.put("siteAccount", siteAccount("restored", "Restored fake"));
+  await source.save();
+  const exported = await source.exportEncrypted();
+  source.close();
+
+  const factory = new FakeIdbFactory();
+  factory.setStored("{not json");
+  const session = newSession(factory);
+  await assert.rejects(session.start(), VaultCorruptError);
+  assert.equal(session.state, "locked");
+  await assert.rejects(() => session.importEncrypted(exported, PASSPHRASE));
+  assert.equal(factory.stored(), "{not json");
+  await session.importEncrypted(exported, PASSPHRASE, true);
+  assert.equal(session.state, "locked");
+  assert.throws(() => session.vault, VaultLockedError);
+  await session.unlock(PASSPHRASE);
+  assert.equal(session.vault.get("siteAccount", "restored")?.displayName, "Restored fake");
+  session.close();
+});
+
+test("a Vault v2 file written by the file backend imports into IndexedDB", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-vault-transfer-"));
+  const path = join(dir, "vault.json");
+  try {
+    const fileVault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE, "pbkdf2-sha512");
+    fileVault.put("siteAccount", siteAccount("from-file", "Fake file account"));
+    await fileVault.save();
+    const exported = await readFile(path, "utf8");
+    fileVault.lock();
+    assert.match(exported, /"vaultVersion":2/);
+    assert.doesNotMatch(exported, /Fake file account/);
+
+    const session = newSession(new FakeIdbFactory());
+    await session.start();
+    await session.importEncrypted(exported, PASSPHRASE);
+    await session.unlock(PASSPHRASE);
+    assert.equal(session.vault.get("siteAccount", "from-file")?.displayName, "Fake file account");
+    session.close();
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

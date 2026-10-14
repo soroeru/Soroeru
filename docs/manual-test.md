@@ -5,6 +5,15 @@ Record the commit, build configuration, results and omissions in the Issue/PR.
 [Development](development.md) owns setup/commands; [security](security.md) owns
 policy. Pending features below are release criteria, not currently available UI.
 
+## 暗号化バックアップ・移行
+
+- [ ] 架空の vault をエクスポートし、保存先選択のキャンセルと保存失敗では案内が残り、保存完了後に消えることを確認する。
+- [ ] 保存先 API 非対応時は「ダウンロード」のあと、保存確認ボタンを押すまで案内が残ることを確認する。
+- [ ] 別の使い捨てプロファイルで取り込み、元のパスフレーズとリカバリーキーで解錠し、架空の台帳データを比較する。
+- [ ] 旧 Mac 版 Vault v2 の架空データを同じ手順で取り込む。元のファイルは残す。
+- [ ] 既存データの置換チェックを外すと実行できないこと、誤パスフレーズ・壊れたファイル・新しい形式では既存データを保持することを確認する。
+- [ ] 取り込み検証中にパネルを閉じ、再度開いて既存データが残ることを確認する。
+
 ## Vault and panel lifetime
 
 - [ ] Build/load the unpacked extension and open the Side Panel without Electron

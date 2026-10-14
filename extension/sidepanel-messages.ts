@@ -11,6 +11,24 @@ import {
 } from "../src/store/vault-errors.js";
 import { PassphraseTooShortError, VaultSessionStateError } from "../src/store/vault-session.js";
 
+/** Import failures must say the file was refused and the previous ciphertext remains. */
+export function importFailureMessage(err: unknown): string {
+  if (err instanceof VaultUnlockError) {
+    return "パスフレーズが正しくないため、取り込みを中止しました。以前のデータは残っています。";
+  }
+  if (err instanceof VaultCorruptError || err instanceof VaultFormatError) {
+    return "このファイルは Vault v2 として読み取れないため、取り込みを中止しました。以前のデータは残っています。";
+  }
+  if (err instanceof VaultStorageQuotaError) {
+    return "保存容量が不足しているため、取り込みを中止しました。以前のデータは残っています。";
+  }
+  if (err instanceof VaultSessionStateError) return vaultErrorMessage(err);
+  if (err instanceof Error && err.message.startsWith("refusing to overwrite")) {
+    return "置き換えの確認がないため、取り込みを中止しました。以前のデータは残っています。";
+  }
+  return "取り込みに失敗しました。以前のデータは残っています。";
+}
+
 export function vaultErrorMessage(err: unknown): string {
   if (err instanceof PassphraseTooShortError) {
     return `パスフレーズは${MIN_PASSPHRASE_LENGTH}文字以上で設定してください。`;
