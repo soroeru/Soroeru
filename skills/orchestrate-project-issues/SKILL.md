@@ -83,6 +83,13 @@ strengths and the user's run-scoped hints. Rules:
   with `--parent-as-worker` (both orchestrator CLIs) or YAML `run.parentAsWorker: true`
   (Issue #589); its verified `role: worker` records then join `workerRoutes`, while run-scoped
   unavailable lists and the different-runtime reviewer rule still apply.
+- The Parent agent **can receive handoffs by default** (Issue #617). The plan's `handoffRoutes`
+  is `workerRoutes` followed by the Parent agent's verified `role: worker` records, so the
+  Parent is the fallback recipient after the regular workers. It never widens initial
+  assignment. The recipient is a separate CLI process launched through
+  `project-issue-dispatch.mjs` with `handoff-issue`, not the orchestrating session itself.
+  Opt out with `--no-parent-as-handoff` (both orchestrator CLIs) or YAML
+  `run.parentAsHandoff: false`.
 - Record the chosen route (agent + model labels only) in run state and in the dispatch message.
 - Exclusions are run-scoped: YAML `run.unavailableAgents` / `run.unavailableModels` and their
   `--unavailable-agent` / `--unavailable-model` CLI overrides affect only the current run, and
@@ -128,7 +135,7 @@ Do not embed hidden rationale or repeat repository-wide instructions that the wo
   receives `--fix-cycle <N>`, is told a PR already exists, reads the findings with
   `gh pr view --comments`, pushes to the same branch, and posts its own PR comment headed
   `role=implementer fix-cycle=<N>` stating what it changed per finding.
-- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `workerRoutes` (which excludes the Parent agent unless the run opted it in; there is no preassigned sub assignee). Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
+- Session limit, CLI interruption, rate limit, or agent change: stop dispatching new work for that Issue, terminate only that worker process tree, add the interrupted agent to the run's `--unavailable-agent` list, and choose the handoff recipient **at that moment** from the remaining `handoffRoutes` (the remaining `workerRoutes`, then the Parent agent's verified routes unless the run opted out; there is no preassigned sub assignee). Keep the recipient distinct from the Issue's other role route; an interrupted Parent-runtime recipient is excluded like any other agent. Route the recipient through `handoff-issue` in the same worktree. Preserve inherited WIP; never stash, reset, clean, copy, or create a duplicate worktree.
 - A route that fails at actual dispatch (not just at discovery) is a signal the cached capability record no longer reflects reality. Pass `--invalidate-agent <name>` on the *next* orchestrator invocation (in addition to this run's `--unavailable-agent`) so that agent is dropped from the capability cache and re-probed instead of being trusted as "ok" indefinitely.
 
 Workers return only `started`, `blocked`, `role-complete`, `pr-created`, `merged`, or `failed`,

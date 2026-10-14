@@ -58,8 +58,12 @@ Codex-only file for ordinary orchestration; discovery (fresh or cached) is the s
    from the run's worker pool; they never trigger substitution. Re-run discovery next time.
 4. Require a positive `timeoutMs` in every external CLI capability record. On timeout, emit a failure
    milestone, terminate only that CLI process (via `project-issue-dispatch.mjs` / the matching
-   adapter), and preserve the Issue worktree; pick a handoff recipient from the remaining routes for
-   `handoff-issue`.
+   adapter), and preserve the Issue worktree; pick a handoff recipient from the remaining
+   `handoffRoutes` for `handoff-issue`.
+5. `handoffRoutes` is `workerRoutes` followed by the Parent agent's verified `role: worker`
+   records (Issue #617). The Parent is excluded from initial assignment but may receive a handoff,
+   as a separate CLI process through the same adapter. `--no-parent-as-handoff` /
+   `run.parentAsHandoff: false` makes `handoffRoutes` equal `workerRoutes`.
 
 ## Dispatch
 

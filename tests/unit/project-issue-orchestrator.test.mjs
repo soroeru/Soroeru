@@ -19,6 +19,7 @@ import {
   runOrchestration,
   selectProjectItems,
   selectProjectConfig,
+  selectHandoffRoutes,
   selectWorkerRoutes,
   transitionBacklogToReady,
   validateCapabilities,
@@ -547,6 +548,52 @@ test("parentAsWorker opts the parent agent back into the worker route pool (Issu
   );
 });
 
+test("handoff pool adds the parent agent's verified routes by default (Issue #617)", () => {
+  const capabilities = [
+    workerRoute("Codex", "gpt-5"),
+    workerRoute("Claude", "sonnet"),
+    { ...workerRoute("Claude", "opus"), verifiable: false },
+    workerRoute("Grok", "grok-4"),
+  ];
+  const labels = (routes) => routes.map(({ agent, model }) => `${agent}:${model}`);
+  // Parent routes are appended, so the regular workers stay the first pick.
+  assert.deepEqual(labels(selectHandoffRoutes(capabilities, { parentAgent: "Claude" })), [
+    "Codex:gpt-5",
+    "Grok:grok-4",
+    "Claude:sonnet",
+  ]);
+  // Opting out restores the worker pool exactly.
+  assert.deepEqual(
+    labels(selectHandoffRoutes(capabilities, { parentAgent: "Claude", parentAsHandoff: false })),
+    labels(selectWorkerRoutes(capabilities, { parentAgent: "Claude" })),
+  );
+  // An interrupted parent-runtime handoff is excluded like any other agent.
+  assert.deepEqual(
+    labels(
+      selectHandoffRoutes(capabilities, {
+        parentAgent: "Claude",
+        unavailableAgents: ["Codex", "Claude"],
+        unavailableModels: ["grok-4"],
+      }),
+    ),
+    [],
+  );
+  assert.throws(() => selectHandoffRoutes(capabilities, { parentAgent: "agy" }), /runtime-retired/);
+});
+
+test("orchestration returns a separate handoff pool without widening initial assignment", async () => {
+  const input = await load("linear.json");
+  const options = { ...runOptions, dryRun: true };
+  const result = await runOrchestration({ ...input, options });
+  assert.ok(!result.workerRoutes.some(({ agent }) => agent === "Codex"));
+  assert.ok(result.handoffRoutes.some(({ agent }) => agent === "Codex"));
+  const optedOut = await runOrchestration({
+    ...input,
+    options: { ...options, parent: { ...options.parent, asHandoff: false } },
+  });
+  assert.deepEqual(optedOut.handoffRoutes, optedOut.workerRoutes);
+});
+
 test("does not treat retired agy as an eligible Gemini runtime alias", () => {
   const capabilities = [workerRoute("Gemini", "fixture"), workerRoute("Claude", "sonnet")];
   assert.throws(() => selectWorkerRoutes(capabilities, { parentAgent: "agy" }), /runtime-retired/);
@@ -884,11 +931,16 @@ test("loads and normalizes the orchestrator YAML config", async () => {
     unavailableModels: [],
     unavailableAgents: ["Codex"],
     parentAsWorker: false,
+    parentAsHandoff: true,
   });
   await writeFile(configPath, "run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  parentAsWorker: true\n");
   assert.equal((await loadOrchestratorConfig(configPath, { cwd: directory })).parentAsWorker, true);
   await writeFile(configPath, "run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  parentAsWorker: yes please\n");
   await assert.rejects(loadOrchestratorConfig(configPath, { cwd: directory }), /config-invalid-parent-as-worker/);
+  await writeFile(configPath, "run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  parentAsHandoff: false\n");
+  assert.equal((await loadOrchestratorConfig(configPath, { cwd: directory })).parentAsHandoff, false);
+  await writeFile(configPath, "run:\n  maxParallel: 1\n  releasePolicy: merged\n  unavailableModels: none\n  parentAsHandoff: \"no\"\n");
+  await assert.rejects(loadOrchestratorConfig(configPath, { cwd: directory }), /config-invalid-parent-as-handoff/);
 });
 
 test("rejects malformed and unsafe orchestrator YAML configs", async () => {
@@ -1269,6 +1321,8 @@ test("parses the documented operational Project CLI flags", () => {
   );
   assert.equal(parseCliArgs(["--parent-provider", "Claude"]).parentAgent, "Claude");
   assert.equal(parseCliArgs(["--parent-as-worker"]).parentAsWorker, true);
+  assert.equal(parseCliArgs(["--no-parent-as-handoff"]).parentAsHandoff, false);
+  assert.equal(parseCliArgs([]).parentAsHandoff, undefined);
   assert.throws(() => parseCliArgs(["--mystery"]), /unknown-flag:--mystery/);
 });
 
