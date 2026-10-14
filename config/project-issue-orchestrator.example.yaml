@@ -9,6 +9,9 @@ run:
   unavailableAgents: none
   # Set true to let the calling Parent agent also receive worker routes (default false).
   parentAsWorker: false
+  # Set false to stop the Parent agent's verified routes from receiving handoffs of
+  # interrupted workers (default true). Initial assignment is unaffected.
+  parentAsHandoff: true
   # Opt-in only: assisted also requires a local measured-evaluation approval record.
   triage:
     mode: off

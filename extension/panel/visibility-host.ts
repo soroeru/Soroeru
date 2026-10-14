@@ -472,7 +472,7 @@ export class VisibilityHost {
     const l1 = capability?.level === "L1" && capability.scope!.siteAccountIds.includes(site.id);
     const attributeKeys = l1 ? capability.scope!.attributeKeys : [...FIXED_ATTRIBUTE_LABELS.keys()];
     this.authority = { operation: "collection", siteAccountId: site.id, attributeKeys, actionId: crypto.randomUUID(), revision: capability?.revision ?? 0, policyVersion: AUTHORIZATION_POLICY_VERSION, level: l1 ? "L1" : "L0" };
-    try { this.assertAuthority(site.id); return await this.service.runSite(site.id); }
+    try { this.assertAuthority(site.id); return await this.service.runSite(site.id, l1 ? { authorizedAttributeKeys: attributeKeys } : {}); }
     finally { this.authority = undefined; this.pausedAuthority = undefined; this.lastSnapshot = undefined; }
   }
 

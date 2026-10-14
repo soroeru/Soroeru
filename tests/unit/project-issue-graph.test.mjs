@@ -872,6 +872,44 @@ test("fails closed when every handoff candidate is unavailable", async () => {
   assert.equal(run.deps.dispatched.length, 1);
 });
 
+test("an interrupted worker hands off to the parent route when no worker remains (Issue #617)", async () => {
+  const capabilities = [parentRecord, workerRoute("Codex", "gpt-5"), workerRoute("Claude", "sonnet")];
+  const run = makeRun();
+  await run.invoke(makeInput({ items: [item(1)], capabilities }));
+  // The parent never takes initial assignment.
+  assert.equal(run.deps.dispatched[0].route.agent, "Claude");
+
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "session-limit" });
+  const state = await run.state();
+  assert.equal(state.runStatus, undefined);
+  const execution = state.workerExecutions[0];
+  assert.equal(execution.agent, "Codex");
+  assert.equal(execution.skill, "handoff-issue");
+  assert.equal(execution.worktreeId, "issue-1");
+  // A later initial assignment still excludes the parent.
+  assert.ok(!state.workerRoutes.some(({ agent }) => agent === "Codex"));
+});
+
+test("a proposed parent handoff route is accepted, and the opt-out fails closed", async () => {
+  const proposal = {
+    type: "worker-interrupted",
+    issue: 1,
+    reason: "session-limit",
+    proposedRoute: { agent: "Codex", model: "gpt-5" },
+  };
+  const run = makeRun();
+  await run.invoke(makeInput({ items: [item(1)] }));
+  await run.resume(proposal);
+  assert.equal((await run.state()).workerExecutions[0].agent, "Codex");
+
+  const optedOut = makeRun({ threadId: "opted-out" });
+  await optedOut.invoke(
+    makeInput({ items: [item(1)], config: { parent: { agent: "Codex", model: "gpt-5", asHandoff: false } } }),
+  );
+  const result = await optedOut.resume(proposal);
+  assert.equal(result.failureReason, "invalid-assignment:1:Codex:gpt-5");
+});
+
 test("a route failing at dispatch time is excluded and the Issue handed off", async () => {
   const invalidated = [];
   const deps = makeDeps({
@@ -1261,6 +1299,7 @@ test("the parent runtime receives worker dispatches only when parent.asWorker op
 
 test("parseGraphCliArgs validates thread id and resume sources", () => {
   assert.equal(parseGraphCliArgs(["--thread-id", "t", "--parent-as-worker"]).parentAsWorker, true);
+  assert.equal(parseGraphCliArgs(["--thread-id", "t", "--no-parent-as-handoff"]).parentAsHandoff, false);
   assert.throws(() => parseGraphCliArgs([]), /thread-id-required/);
   assert.throws(
     () => parseGraphCliArgs(["--thread-id", "t", "--resume-json", "{}", "--resume-file", "x"]),
@@ -1552,7 +1591,9 @@ test("a handoff keeps the reviewer off the implementer's route", async () => {
 
 test("a handoff with no distinct route left shares one and records the degradation", async () => {
   const run = makeRun();
-  await run.invoke(roleInput([item(1)]));
+  // Opted out of parent handoff (Issue #617), so the parent cannot supply
+  // the distinct route.
+  await run.invoke(roleInput([item(1)], { parent: { agent: "Codex", model: "gpt-5", asHandoff: false } }));
   const implementer = run.deps.dispatched.at(-1);
   await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
 
@@ -1565,6 +1606,21 @@ test("a handoff with no distinct route left shares one and records the degradati
   assert.equal(handoff.route.agent, implementer.route.agent);
   const state = await run.state();
   assert.equal(state.roleStates[0].degraded, "same-route:reviewer:no-distinct-route-left");
+});
+
+test("a parent route supplies the distinct reviewer when the workers run out (Issue #617)", async () => {
+  const run = makeRun();
+  await run.invoke(roleInput([item(1)]));
+  const implementer = run.deps.dispatched.at(-1);
+  assert.notEqual(implementer.route.agent, "Codex");
+  await run.resume({ type: "role-complete", issue: 1, role: "implementer" });
+
+  await run.resume({ type: "worker-interrupted", issue: 1, reason: "timeout" });
+  const handoff = run.deps.dispatched.at(-1);
+  assert.equal(handoff.role, "reviewer");
+  assert.equal(handoff.route.agent, "Codex");
+  const state = await run.state();
+  assert.equal(state.roleStates[0].degraded, undefined);
 });
 
 test("malformed role-complete events are rejected without touching state", async () => {

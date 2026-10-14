@@ -14,6 +14,9 @@ policy. Pending features below are release criteria, not currently available UI.
 - [ ] 既存データの置換チェックを外すと実行できないこと、誤パスフレーズ・壊れたファイル・新しい形式では既存データを保持することを確認する。
 - [ ] 取り込み検証中にパネルを閉じ、再度開いて既存データが残ることを確認する。
 
+- [ ] 解錠処理中に置換取り込みを要求し、取り込み後もロック状態で、再解錠すると取り込んだデータだけが表示されることを確認する。パスフレーズとリカバリーキーの両方で試す。
+- [ ] schemaVersion 1 の workflowCheckpoint を含む架空の Vault v2 を取り込み、再解錠後に読み取れることを確認する。
+
 ## Vault and panel lifetime
 
 - [ ] Build/load the unpacked extension and open the Side Panel without Electron

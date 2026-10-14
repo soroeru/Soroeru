@@ -1,7 +1,18 @@
 import { classifyFieldsWithEvidence, type CustomFieldDef } from "../agent/classifier.js";
 import type { DomainService } from "../domain/domain-service.js";
-import { MOST_SENSITIVE_ATTRIBUTE_KEY, type DisclosureSourceKind, type SiteAccount } from "../domain/entities.js";
-import type { DisplayValueCandidate, FormField, MappingEntry, PageSnapshot, ProfileKey, WallDetection } from "../types.js";
+import {
+  MOST_SENSITIVE_ATTRIBUTE_KEY,
+  type DisclosureSourceKind,
+  type SiteAccount,
+} from "../domain/entities.js";
+import type {
+  DisplayValueCandidate,
+  FormField,
+  MappingEntry,
+  PageSnapshot,
+  ProfileKey,
+  WallDetection,
+} from "../types.js";
 import { redactedEvidence } from "./evidence.js";
 import type { PageDriver } from "./page-driver.js";
 import type { ExplorationEvent, ExplorationHandoff } from "./page-explorer.js";
@@ -14,9 +25,14 @@ export interface DisclosureCollectionOptions {
   values: Record<string, string>;
   now?: () => number;
   sourceKind?: DisclosureSourceKind;
+  /** When present, dynamic candidates may only be recorded for authorized attributes. */
+  authorizedAttributeKeys?: readonly string[];
 }
 
-export function collectDisclosures(options: DisclosureCollectionOptions): { disclosures: number; dynamicCandidates: number } {
+export function collectDisclosures(options: DisclosureCollectionOptions): {
+  disclosures: number;
+  dynamicCandidates: number;
+} {
   const classification = classifyFieldsWithEvidence(options.fields, confirmedDynamicCustoms(options.domain));
   let disclosures = 0;
   for (const entry of classification.plan.entries) {
@@ -28,6 +44,9 @@ export function collectDisclosures(options: DisclosureCollectionOptions): { disc
 
   let dynamicCandidates = 0;
   for (const fieldId of classification.plan.unmappedRequired) {
+    // An unmapped field has no known attribute key to compare with an L1
+    // allowlist. Fail closed whenever a scoped collection supplies one.
+    if (options.authorizedAttributeKeys !== undefined) continue;
     const field = options.fields.find((candidate) => candidate.fieldId === fieldId);
     if (!field) continue;
     if (options.sourceKind === "manual-import") {
@@ -57,6 +76,8 @@ export interface ExplorationCollectionOptions {
   pageDriver: PageDriver;
   now?: () => number;
   isCanceled?: () => boolean;
+  /** L1 scope. Omit for the existing unscoped/L0 collector behavior. */
+  authorizedAttributeKeys?: readonly string[];
 }
 
 export interface ExplorationCollectionResult {
@@ -114,6 +135,9 @@ export async function collectDuringExploration(
       fields: [...event.snapshot.fields, ...displayFields],
       values: { ...values, ...displayValues },
       ...(options.now !== undefined ? { now: options.now } : {}),
+      ...(options.authorizedAttributeKeys !== undefined
+        ? { authorizedAttributeKeys: options.authorizedAttributeKeys }
+        : {}),
     });
     result.pagesCollected++;
     result.disclosures += collected.disclosures;

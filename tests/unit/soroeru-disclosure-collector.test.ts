@@ -47,9 +47,18 @@ test("disclosure collector records manual-import disclosures and skips empty tem
     const disclosures = domain.listDisclosuresForSite(site.id);
     assert.equal(disclosures.length, 2);
     assert.ok(disclosures.every((disclosure) => disclosure.sourceKind === "manual-import"));
-    assert.equal(disclosures.find((disclosure) => disclosure.attributeKey === "postal.full")?.siteHeldValue, "100-0001");
-    assert.equal(disclosures.find((disclosure) => disclosure.attributeKey === "address.city")?.siteHeldValue, "千代田区");
-    assert.equal(disclosures.find((disclosure) => disclosure.attributeKey === "postal.full")?.sourcePageUrl, "https://shop.example.test/account");
+    assert.equal(
+      disclosures.find((disclosure) => disclosure.attributeKey === "postal.full")?.siteHeldValue,
+      "100-0001",
+    );
+    assert.equal(
+      disclosures.find((disclosure) => disclosure.attributeKey === "address.city")?.siteHeldValue,
+      "千代田区",
+    );
+    assert.equal(
+      disclosures.find((disclosure) => disclosure.attributeKey === "postal.full")?.sourcePageUrl,
+      "https://shop.example.test/account",
+    );
 
     const evidenceJson = JSON.stringify(domain.listEvidence());
     assert.equal(evidenceJson.includes("100-0001"), false);
@@ -90,16 +99,34 @@ test("disclosure collector stores revealable values while reducing card numbers 
 
     assert.equal(result.disclosures, 2);
     const disclosures = domain.listDisclosuresForSite(site.id);
-    assert.equal(disclosures.find((disclosure) => disclosure.attributeKey === "email")?.siteHeldValue, "member@example.test");
-    assert.equal(disclosures.find((disclosure) => disclosure.attributeKey === "card.number")?.siteHeldValue, "1234");
-    assert.equal(disclosures.some((disclosure) => disclosure.attributeKey === "card.cvv"), false);
+    assert.equal(
+      disclosures.find((disclosure) => disclosure.attributeKey === "email")?.siteHeldValue,
+      "member@example.test",
+    );
+    assert.equal(
+      disclosures.find((disclosure) => disclosure.attributeKey === "card.number")?.siteHeldValue,
+      "1234",
+    );
+    assert.equal(
+      disclosures.some((disclosure) => disclosure.attributeKey === "card.cvv"),
+      false,
+    );
 
     const evidence = domain.listEvidence();
-    assert.equal(JSON.stringify(disclosures.map((disclosure) => disclosure.siteHeldValue)).includes("4111"), false);
-    assert.equal(JSON.stringify(disclosures.map((disclosure) => disclosure.siteHeldValue)).includes("999"), false);
+    assert.equal(
+      JSON.stringify(disclosures.map((disclosure) => disclosure.siteHeldValue)).includes("4111"),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(disclosures.map((disclosure) => disclosure.siteHeldValue)).includes("999"),
+      false,
+    );
     assert.equal(JSON.stringify(evidence.map((entry) => entry.maskedSnippet)).includes("4111"), false);
     assert.equal(JSON.stringify(evidence.map((entry) => entry.maskedSnippet)).includes("999"), false);
-    assert.equal(evidence.some((entry) => entry.fieldLabel === "セキュリティコード"), false);
+    assert.equal(
+      evidence.some((entry) => entry.fieldLabel === "セキュリティコード"),
+      false,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -137,6 +164,43 @@ test("disclosure collector creates a labeled dynamic attribute candidate for unk
     // the label rather than the field's id — see the slug-stability test below.
     assert.match(candidate?.proposedAttributeKey ?? "", /^custom\.field_[0-9a-z]+$/);
     assert.deepEqual(candidate?.matchTerms, ["職業"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("L1-scoped disclosure collection omits candidates for required fields outside the selected attributes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "soroeru-collector-"));
+  try {
+    const vault = await VaultV2.open(new FileVaultPersistence(join(dir, "vault.json")), PASSPHRASE);
+    const domain = new DomainService(vault);
+    const site = domain.upsertSiteAccount({
+      domain: "profile.example.test",
+      url: "https://profile.example.test/account",
+      displayName: "Profile",
+    });
+
+    const fields = [
+      field("email", { autocomplete: "email" }),
+      field("occupation", { required: true, labels: ["職業"] }),
+    ];
+    const result = collectDisclosures({
+      domain,
+      siteAccount: site,
+      snapshot: snapshot(fields),
+      fields,
+      values: { email: "member@example.test", occupation: "会社員" },
+      authorizedAttributeKeys: ["email"],
+      now: () => 1_700_000_000_000,
+    });
+
+    assert.equal(result.disclosures, 1);
+    assert.equal(result.dynamicCandidates, 0);
+    assert.deepEqual(domain.listDynamicAttributeCandidates(), []);
+    assert.deepEqual(
+      domain.listDisclosuresForSite(site.id).map((item) => item.attributeKey),
+      ["email"],
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -248,7 +312,10 @@ test("disclosure collector reuses confirmed dynamic attributes on later collecti
     const disclosure = domain.listDisclosuresForSite(site.id)[0];
     assert.equal(disclosure?.attributeKey, "custom.occupation");
     assert.equal(disclosure?.siteHeldValue, "会社員");
-    assert.equal(domain.listDynamicAttributeCandidates().filter((candidate) => candidate.status === "candidate").length, 0);
+    assert.equal(
+      domain.listDynamicAttributeCandidates().filter((candidate) => candidate.status === "candidate").length,
+      0,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

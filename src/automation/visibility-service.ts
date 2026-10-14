@@ -116,7 +116,7 @@ export class VisibilityService {
    */
   async runSite(
     siteAccountId: string,
-    runOptions: { regenerateCollectionMap?: boolean } = {},
+    runOptions: { regenerateCollectionMap?: boolean; authorizedAttributeKeys?: readonly string[] } = {},
   ): Promise<VisibilityRunResultView> {
     if (!this.domain) {
       return { siteAccountId, status: "locked", disclosures: 0, relationships: 0, constraints: 0 };
@@ -146,6 +146,9 @@ export class VisibilityService {
           : {}),
         ...(this.options.maxHandoffs !== undefined ? { maxHandoffs: this.options.maxHandoffs } : {}),
         ...(this.aiEngine !== undefined ? { aiEngine: this.aiEngine } : {}),
+        ...(runOptions.authorizedAttributeKeys !== undefined
+          ? { authorizedAttributeKeys: runOptions.authorizedAttributeKeys }
+          : {}),
       });
       this.emit({ type: "run-started", siteAccountId });
       const view = toView(await runner.runSite(siteAccountId, runOptions));
