@@ -227,3 +227,28 @@ missing feature as untested rather than passing it:
 - [ ] Before desktop retirement, compare migrated screens and outcomes using
       fake data. Legacy entry points are in development; detailed old DMG release
       evidence remains in Git history and the original PRs.
+
+## Optional identity and explicit collection scope
+
+Use only fake accounts and values, with Cloud assistance off initially.
+
+- Create/unlock a vault without identity records, edit an email in 「自分の情報」,
+  and collect a fake profile. No JPKI/BFF/OTP prerequisite or duplicate collection
+  approval should appear. Site MFA still hands off in the same tab.
+- Edit a verified fixture: saving changes the badge to unverified; cancel or an
+  unchanged draft preserves it. Simulate a quota failure: the draft stays unsaved,
+  while the committed value and disclosure comparison remain unchanged.
+- Open L1 scope: nothing starts selected. Enable one named site and email only;
+  collect it and verify other values are not recorded. Uncheck a scope item during
+  a delayed command: the command cannot save a late observation. Add a scope item
+  without pressing enable: the addition must remain inactive.
+- Stop L1 during collection, including while a consent gate is visible. With a
+  failed save, execution stays blocked until retry succeeds. Lock/close/restart
+  and permission invalidation cannot reuse the previous run grant.
+- Unlock legacy attributes/quiz-L1 with passphrase and recovery key. Check unknown
+  provenance and L0, export/reopen, and repeated migration. Quota/corrupt/newer
+  schema failures must preserve the prior ciphertext.
+- In retained registration/update fixtures, verify one concrete review and no
+  consequential driver action when approval evidence fails to save. Changed
+  terms/payment consequences need a new review. Final withdrawal stays manual;
+  internal record deletion and each identity declaration keep their confirmation.

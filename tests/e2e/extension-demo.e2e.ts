@@ -148,3 +148,37 @@ test("wall fixture stops at same-tab handoff", async () => {
     await browser.close();
   }
 });
+
+test("identity-free local collection and canonical editing work with Cloud off", async () => {
+  const browser = await openDemo("tier1");
+  try {
+    await browser.panel.getByLabel("正典の項目").selectOption("email");
+    await browser.panel.getByLabel("正典の値").fill("canonical@example.test");
+    await browser.panel.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(browser.panel.getByText("保存しました", { exact: true })).toBeVisible();
+    await expect(browser.panel.getByText("ユーザー入力・未検証", { exact: true })).toBeVisible();
+    await browser.run();
+    await expect(browser.panel.getByText(/collected: 開示/)).toBeVisible();
+    expect(browser.requests).toHaveLength(0);
+    expect((await browser.inspect()).disclosures).toBeGreaterThan(0);
+  } finally { await browser.close(); }
+});
+
+test("L1 starts with no selections and limits collection to explicitly selected attributes", async () => {
+  const browser = await openDemo("tier1");
+  try {
+    await browser.panel.getByText(/収集の自動実行範囲/).click();
+    const scope = browser.panel.locator("details").filter({ hasText: "収集の自動実行範囲" });
+    await expect(scope.getByRole("checkbox", { name: "メールアドレス", exact: true })).not.toBeChecked();
+    await scope.getByRole("checkbox", { name: "Demo tier1", exact: true }).check();
+    await scope.getByRole("checkbox", { name: "メールアドレス", exact: true }).check();
+    await scope.getByRole("button", { name: "この範囲で L1 を有効にする" }).click();
+    await expect(scope.locator("summary")).toContainText("L1");
+    await browser.run();
+    await expect(browser.panel.getByText(/collected: 開示 1/)).toBeVisible();
+    expect(browser.requests).toHaveLength(0);
+    await scope.getByRole("button", { name: "L1 を停止する" }).click();
+    await expect(scope.locator("summary")).toContainText("L0");
+    expect((await browser.inspect()).disclosures).toBe(1);
+  } finally { await browser.close(); }
+});

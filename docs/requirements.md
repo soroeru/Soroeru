@@ -151,9 +151,9 @@ resolution and valid cached schemas; unresolved work is explicitly handed off.
 
 ## Policy changes awaiting implementation
 
-These requirements simplify earlier gates; changing this document does not enable
-these behaviors in the app. Run-scoped Tier 3 consent, quiz-free L1 and unverified
-identity editing need implementation and tests before use. The existing per-call
-Tier 3 plan, identity-first onboarding plan and L1 quiz plan must be reconciled in
-GitHub before their implementation. The implementation Issue/PR owns that work
-and its acceptance evidence; this document is not a release-completion checklist.
+Changing this document does not by itself enable a behavior. Run-scoped Tier 3
+consent still needs implementation and tests before use; the existing per-call
+Tier 3 plan must be reconciled in GitHub first. The extension implements
+unverified canonical editing and quiz-free L1 for read-only collection only
+(#604). Update, withdrawal, registration and AI-assisted discovery stay at L0.
+This document is not a release-completion checklist.

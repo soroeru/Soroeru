@@ -1,10 +1,3 @@
-import {
-  ResolutionOrchestrator,
-  type ResolveClient,
-  type Tier3ConsentCallback,
-  type Tier3ConsentParams,
-} from "../resolution-orchestrator.js";
-import { deliverQueue, type DeliveryClient } from "../cloud-delivery-queue.js";
 /**
  * Side Panel runtime host for Visibility runs (Issue #558). It wires the unlocked
  * `VaultSession.vault` -> `DomainService` -> `VisibilityService`, and gives the service an
@@ -12,6 +5,21 @@ import { deliverQueue, type DeliveryClient } from "../cloud-delivery-queue.js";
  * collected values; the UI only receives the sanitized events and counts of `VisibilityService`.
  */
 
+import { AUTHORIZATION_POLICY_VERSION, intersectScope, type OperationContext } from "../../src/domain/authorization.js";
+import { FIXED_ATTRIBUTE_LABELS } from "../../src/domain/attribute-labels.js";
+import { classifyFields } from "../../src/agent/classifier.js";
+import { displayValueToSyntheticField } from "../../src/automation/disclosure-collector.js";
+import type { PageSnapshot } from "../../src/types.js";
+import type { PageCommand } from "../../src/shared/extension-messages.js";
+import type { Capability, CapabilityScope, PersonalAttribute } from "../../src/domain/entities.js";
+import type { SetPersonalAttributeInput } from "../../src/domain/domain-service.js";
+import {
+  ResolutionOrchestrator,
+  type ResolveClient,
+  type Tier3ConsentCallback,
+  type Tier3ConsentParams,
+} from "../resolution-orchestrator.js";
+import { deliverQueue, type DeliveryClient } from "../cloud-delivery-queue.js";
 import { DomainService } from "../../src/domain/domain-service.js";
 import type { SiteAccount } from "../../src/domain/entities.js";
 import type { VisibilityEvent, VisibilityRunResultView } from "../../electron/ipc/contract.js";
@@ -56,11 +64,18 @@ export class VisibilityHost {
   private readonly stopStateWatch: () => void;
   private readonly stopCloudStateWatch: () => void;
   private bound = false;
+  private authority: (OperationContext & { level: "L0" | "L1"; leaseId?: string }) | undefined;
+  private pausedAuthority: typeof this.authority;
+  /** Serializes encrypted vault writes; only authorization changes block collection. */
+  private vaultWrite: Promise<void> = Promise.resolve();
+  private authorityPending = 0;
+  private authorizationEpoch = 0;
+  private authoritySaveFailed = false;
+  private lastSnapshot: PageSnapshot | undefined;
   private stopping = false;
   private consentGateProvider: Tier3ConsentCallback | undefined;
   private activeTabOrigin: string | undefined;
   private readonly resolver: ResolutionOrchestrator;
-  private settingsWrite: Promise<void> = Promise.resolve();
   private pendingOff: { cloud: boolean; sharing: boolean } = { cloud: false, sharing: false };
   private feedbackEpoch = 0;
   private sharingOverride: boolean | undefined;
@@ -82,7 +97,7 @@ export class VisibilityHost {
           !this.pendingOff.sharing,
         epoch: () => this.feedbackEpoch,
       },
-      sendPageCommand: (command) => options.leaseClient.sendPageCommand(command),
+      sendPageCommand: (command) => this.sendAuthorizedCommand(command),
       isActive: () => !this.stopping && options.leaseClient.isLeaseActive(),
       showConsentGate: (params: Tier3ConsentParams) => this.handleConsentGate(params),
       // currentOrigin is omitted intentionally: origin is already supplied via
@@ -117,6 +132,7 @@ export class VisibilityHost {
       },
       openSession: (site) => this.openSession(site),
       emit: (event) => {
+        if (event.type === "handoff") { this.pausedAuthority = this.authority; this.authority = undefined; }
         for (const listener of this.listeners) listener(event);
       },
       persist: () => options.session.save(),
@@ -124,6 +140,8 @@ export class VisibilityHost {
     });
     // A lease that ends under a running collection (tab closed, left the site) stops the run.
     options.leaseClient.onInvalidated(() => {
+      this.authority = undefined;
+      this.pausedAuthority = undefined;
       this.service.abortRun();
     });
     this.stopCloudStateWatch = options.session.onStateChange((state) => {
@@ -135,6 +153,130 @@ export class VisibilityHost {
     });
     this.stopStateWatch = options.session.onStateChange((state) => this.onSessionState(state));
     this.onSessionState(options.session.state);
+  }
+
+  listCanonicalAttributes(): PersonalAttribute[] {
+    return this.options.session.vault.list("personalAttribute").filter(a => a.sensitivity === "normal" && !a.attributeKey.startsWith("card.") && a.attributeKey !== "account.password").map(a => structuredClone(a));
+  }
+
+  async saveCanonicalAttribute(input: SetPersonalAttributeInput): Promise<PersonalAttribute> {
+    if (!FIXED_ATTRIBUTE_LABELS.has(input.attributeKey) || input.attributeKey.startsWith("card.") || input.attributeKey === "account.password" ||
+        (input.sensitivity !== undefined && input.sensitivity !== "normal")) throw new VisibilityHostError("unsupported canonical editor field");
+    if (this.service.isRunning) throw new VisibilityHostError("collection is running");
+    let result!: PersonalAttribute;
+    await this.queueVaultWrite(async () => {
+      const vault = this.options.session.vault;
+      const previous = structuredClone(vault.get("personalAttribute", input.attributeKey));
+      const disclosures = structuredClone(vault.list("disclosure"));
+      try {
+        result = new DomainService(vault).setPersonalAttribute({ ...input, sensitivity: "normal" });
+        await this.options.session.save();
+      } catch (error) {
+        if (previous) vault.put("personalAttribute", previous); else vault.delete("personalAttribute", input.attributeKey);
+        for (const d of disclosures) vault.put("disclosure", d);
+        throw error;
+      }
+    });
+    return structuredClone(result);
+  }
+
+  get collectionCapability(): Capability | undefined {
+    return structuredClone(new DomainService(this.options.session.vault).getCapability("collection"));
+  }
+
+  /** Removals are immediate; additions are only applied by the explicit enable action. */
+  reduceCollectionScope(scope?: CapabilityScope): Promise<void> {
+    this.authorizationEpoch++;
+    this.abort();
+    const domain = new DomainService(this.options.session.vault);
+    domain.reduceCapability({ operation: "collection", ...(scope ? { scope } : {}) });
+    this.authoritySaveFailed = true;
+    return this.queueVaultWrite(async () => {
+      await this.options.session.save();
+      this.authoritySaveFailed = false;
+    }, true);
+  }
+
+  async enableCollectionScope(scope: CapabilityScope): Promise<void> {
+    const epoch = this.authorizationEpoch;
+    const old = this.collectionCapability;
+    if (old?.scope) {
+      const intersection = intersectScope(old.scope, scope);
+      if (JSON.stringify(intersection) !== JSON.stringify(old.scope)) await this.reduceCollectionScope(intersection);
+    }
+    if (this.service.isRunning) throw new VisibilityHostError("collection is running");
+    const enableEpoch = this.authorizationEpoch;
+    if (epoch !== enableEpoch && !old?.scope) throw new VisibilityHostError("authorization changed");
+    await this.queueVaultWrite(async () => {
+      if (enableEpoch !== this.authorizationEpoch) throw new VisibilityHostError("authorization changed");
+      const vault = this.options.session.vault;
+      const prior = structuredClone(this.collectionCapability);
+      const evidenceId = crypto.randomUUID();
+      try {
+        const capability = new DomainService(vault).enableCapability({ operation: "collection", scope, policyVersion: AUTHORIZATION_POLICY_VERSION });
+        // Scope is referenced by a revision; values are never copied into Evidence.
+        const digest = await scopeDigest(capability);
+        if (enableEpoch !== this.authorizationEpoch) throw new VisibilityHostError("authorization changed");
+        vault.put("evidence", { id: evidenceId, observedAt: Date.now(), fieldType: "collection-approval", normalizedHash: digest });
+        await this.options.session.save();
+        this.authoritySaveFailed = false;
+      } catch (error) {
+        if (enableEpoch === this.authorizationEpoch) {
+          if (prior) vault.put("capability", prior); else vault.delete("capability", "collection");
+        }
+        vault.delete("evidence", evidenceId);
+        throw error;
+      }
+    }, true);
+  }
+
+  retryAuthorizationSave(): Promise<void> {
+    return this.queueVaultWrite(async () => { await this.options.session.save(); this.authoritySaveFailed = false; }, true);
+  }
+
+  private queueVaultWrite(work: () => Promise<void>, authority = false): Promise<void> {
+    if (authority) this.authorityPending++;
+    const write = this.vaultWrite.catch(() => undefined).then(work).finally(() => { if (authority) this.authorityPending--; });
+    this.vaultWrite = write;
+    return write;
+  }
+
+  private assertAuthority(siteId?: string, key?: string): void {
+    const grant = this.authority;
+    if (!grant || this.stopping || this.authoritySaveFailed || this.authorityPending || this.options.session.state !== "unlocked" ||
+        (siteId !== undefined && siteId !== grant.siteAccountId) ||
+        (key !== undefined && grant.level === "L1" && !grant.attributeKeys.includes(key))) throw new VisibilityHostError("collection authorization ended");
+    const decision = new DomainService(this.options.session.vault).authorizeOperation(grant);
+    // An L0 run was reviewed by the 収集 gesture; any capability change still ends it.
+    const allowed = grant.level === "L1" ? decision.kind === "permitted" : !(decision.kind === "stopped" && decision.reason === "stale");
+    if (!allowed) throw new VisibilityHostError("collection scope changed");
+    if (grant.leaseId && this.options.leaseClient.currentLease()?.leaseId !== grant.leaseId) throw new VisibilityHostError("collection lease changed");
+  }
+
+  private async sendAuthorizedCommand(command: PageCommand): Promise<unknown> {
+    this.assertAuthority();
+    const grant = this.authority!;
+    let scoped = command;
+    if (command.command === "captureCollectionObservation" || command.command === "checkCollectionObservation") {
+      throw new VisibilityHostError("AI discovery is not authorized by collection");
+    } else if (grant.level === "L0") {
+      // L0: the user's 収集 gesture reviewed this run; no L1 attribute scope applies.
+    } else if (command.command === "readValues" || command.command === "readDisplayValues") {
+      if (!this.lastSnapshot) throw new VisibilityHostError("observation required");
+      const fields = command.command === "readValues" ? this.lastSnapshot.fields : (this.lastSnapshot.displayValues ?? []).map(displayValueToSyntheticField);
+      const ids = classifyFields(fields, []).entries.filter(e => grant.attributeKeys.includes(e.profileKey)).map(e => e.fieldId);
+      scoped = command.command === "readValues" ? { ...command, fieldIds: ids.filter(id => !command.fieldIds || command.fieldIds.includes(id)) } : { ...command, valueIds: ids.filter(id => !command.valueIds || command.valueIds.includes(id)) };
+    } else if (command.command === "readSchema") {
+      scoped = { ...command, schema: { ...command.schema, fields: command.schema.fields.filter(f => grant.attributeKeys.includes(f.attributeKey)) } };
+    }
+    // readRegionMasked stays on the separate Tier 3 consent path. Collection L1
+    // neither grants nor suppresses that read.
+    const result = await this.options.leaseClient.sendPageCommand(scoped);
+    this.assertAuthority();
+    if (this.authority !== grant) throw new VisibilityHostError("stale collection response");
+    if (command.command === "snapshot") this.lastSnapshot = result as PageSnapshot;
+    if (command.command === "goto" || command.command === "click") this.lastSnapshot = undefined;
+    return result;
   }
 
   get cloudAvailable(): boolean {
@@ -210,9 +352,7 @@ export class VisibilityHost {
         updatedAt: Date.now(),
       });
     }
-    const write = this.settingsWrite
-      .catch(() => undefined)
-      .then(async () => {
+    const write = this.queueVaultWrite(async () => {
         const current = session.vault.get("cloudSettings", "cloud");
         const { discardFeedback: _discardFeedback, ...values } = patch;
         const queue =
@@ -244,7 +384,6 @@ export class VisibilityHost {
         if (patch.cloudAssistEnabled === false) this.pendingOff.cloud = false;
         if (patch.telemetryEnabled === false) this.pendingOff.sharing = false;
       });
-    this.settingsWrite = write;
     await write;
   }
 
@@ -327,15 +466,28 @@ export class VisibilityHost {
 
   async run(site: SiteAccount): Promise<VisibilityRunResultView> {
     if (this.stopping) throw new VisibilityHostError("runtime is stopping");
-    return this.service.runSite(site.id);
+    if (this.service.isRunning || this.authorityPending || this.authoritySaveFailed) throw new VisibilityHostError("runtime is busy or has an unsaved authorization change");
+    const capability = this.collectionCapability;
+    // A site outside the L1 scope falls back to the default L0 run reviewed by this gesture.
+    const l1 = capability?.level === "L1" && capability.scope!.siteAccountIds.includes(site.id);
+    const attributeKeys = l1 ? capability.scope!.attributeKeys : [...FIXED_ATTRIBUTE_LABELS.keys()];
+    this.authority = { operation: "collection", siteAccountId: site.id, attributeKeys, actionId: crypto.randomUUID(), revision: capability?.revision ?? 0, policyVersion: AUTHORIZATION_POLICY_VERSION, level: l1 ? "L1" : "L0" };
+    try { this.assertAuthority(site.id); return await this.service.runSite(site.id); }
+    finally { this.authority = undefined; this.pausedAuthority = undefined; this.lastSnapshot = undefined; }
   }
 
   /** The user cleared the wall: re-verify the lease, then let the runner re-observe the page. */
   resume(): boolean {
+    if (!this.pausedAuthority || this.authoritySaveFailed) return false;
+    this.authority = { ...this.pausedAuthority, actionId: crypto.randomUUID() };
+    this.pausedAuthority = undefined;
+    try { this.assertAuthority(); } catch { this.abort(); return false; }
     return this.service.resumeHandoff();
   }
 
   abort(): void {
+    this.authority = undefined;
+    this.pausedAuthority = undefined;
     // B5: resolve any pending consent gate as "declined" before aborting the run.
     if (this.pendingGateResolve) {
       const resolve = this.pendingGateResolve;
@@ -350,6 +502,7 @@ export class VisibilityHost {
     if (this.stopping) return;
     this.stopping = true;
     try {
+      await this.vaultWrite.catch(() => undefined);
       await this.stop(true);
       this.options.session.lock();
     } finally {
@@ -379,11 +532,11 @@ export class VisibilityHost {
   private onSessionState(state: string): void {
     if (state === "unlocked") {
       if (this.bound) return;
-      this.service.setDomain(new DomainService(this.options.session.vault));
+      this.service.setDomain(new DomainService(this.options.session.vault, (site, key) => this.assertAuthority(site, key)));
       this.bound = true;
       // Fire-and-forget: drain the queue now that the vault is unlocked.
       if (this.options.deliveryClient) {
-        deliverQueue(this.options.session, this.options.deliveryClient).catch(() => {
+        this.queueVaultWrite(() => deliverQueue(this.options.session, this.options.deliveryClient!)).catch(() => {
           /* Queue delivery errors are non-fatal; items persist for the next attempt. */
         });
       }
@@ -391,6 +544,8 @@ export class VisibilityHost {
     }
     if (!this.bound) return;
     this.bound = false;
+    this.authority = undefined;
+    this.pausedAuthority = undefined;
     this.service.clearDomain();
     void this.options.leaseClient.releaseLease();
   }
@@ -414,12 +569,14 @@ export class VisibilityHost {
   }
 
   private async openSession(site: SiteAccount): Promise<SiteSession> {
+    this.assertAuthority(site.id);
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tab?.id;
     if (!tab || tabId === undefined) throw new VisibilityHostError("no active tab");
     if (!(await chrome.permissions.contains({ origins: hostPermissionOrigins(site.domain) }))) {
       throw new VisibilityHostError("host permission required");
     }
+    this.assertAuthority(site.id);
     let current = tab.url;
     const inScope = (url: string | undefined): url is string => {
       if (!url) return false;
@@ -436,9 +593,16 @@ export class VisibilityHost {
       // egress: target-site — navigate the user's selected tab after validating the site's origin.
       current = await this.navigateTab(tabId, site.url ?? `https://${site.domain}/`, site.domain);
     }
+    this.assertAuthority(site.id);
     const origin = new URL(current).origin;
     const lease = await this.options.leaseClient.openLease({ tabId, origin, siteDomain: site.domain });
-    return openExtensionTabSession(leasePageTransport(this.options.leaseClient), {
+    this.assertAuthority(site.id);
+    this.authority!.leaseId = lease.leaseId;
+    return openExtensionTabSession(leasePageTransport({
+      sendPageCommand: command => this.sendAuthorizedCommand(command),
+      isLeaseActive: () => this.options.leaseClient.isLeaseActive(),
+      releaseLease: () => this.options.leaseClient.releaseLease(),
+    }), {
       tabId: lease.tabId,
       siteDomain: site.domain,
     });
@@ -463,10 +627,16 @@ export class VisibilityHost {
       chrome.tabs.onUpdated.addListener(listener);
     });
     loaded.catch(() => undefined);
+    this.assertAuthority();
     await chrome.tabs.update(tabId, { url: target });
     await loaded;
     const landed = (await chrome.tabs.get(tabId)).url;
     if (!landed) throw new VisibilityHostError("tab has no URL");
     return landed;
   }
+}
+
+async function scopeDigest(capability: Capability): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(capability)));
+  return Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, "0")).join("");
 }

@@ -43,8 +43,18 @@ export interface DomainRecord {
 /** How sensitive a value is; drives masking and reveal re-auth (RFC-002 §6). */
 export type Sensitivity = "normal" | "sensitive" | "most-sensitive";
 
+export type AttributeProvenance =
+  | { source: "user-entered" | "legacy-unknown"; verification: "unverified" }
+  | { source: "identity-verification"; verification: "verified"; method: "jpki"; verifiedAt: number; evidenceId: string };
+
+export interface CapabilityScope {
+  siteAccountIds: string[];
+  attributeKeys: string[];
+}
+
 /** Canonical personal value owned by the user (RFC-002 §4.1). Value is PII. */
 export interface PersonalAttribute extends DomainRecord {
+  provenance: AttributeProvenance;
   /** Stable attribute key, e.g. "email", "phone.full", "card.number", "custom.foo". */
   attributeKey: string;
   label: string;
@@ -192,7 +202,10 @@ export interface Preference extends DomainRecord {
 export interface Capability extends DomainRecord {
   operationType: "ai-assisted-discovery" | "collection" | "update" | "withdrawal" | "registration";
   level: "L0" | "L1";
-  understandingCheckPassedAt?: number;
+  revision: number;
+  scope?: CapabilityScope;
+  policyVersion?: number;
+  explicitlyEnabledAt?: number;
   reducedAt?: number;
   updatedAt: number;
 }

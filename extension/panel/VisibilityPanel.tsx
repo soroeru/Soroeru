@@ -2,6 +2,8 @@
 // wall hand-off card (instruction + Resume / Abort). It shows only the sanitized events and
 // counts from VisibilityService; collected values and hand-off credentials are never rendered.
 
+import { CanonicalPanel } from "./CanonicalPanel.js";
+import { CollectionScopePanel } from "./CollectionScopePanel.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SiteAccount } from "../../src/domain/entities.js";
 import type { VisibilityRunResultView } from "../../electron/ipc/contract.js";
@@ -168,6 +170,10 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
       {instruction !== undefined && (
         <HandoffCard instruction={instruction} onResume={() => host.resume()} onAbort={() => host.abort()} />
       )}
+      <CanonicalPanel host={host} busy={running} />
+      <CollectionScopePanel host={host} busy={running} />
+      <p className="text-xs">「収集」で対象サイトの情報を読み取ります。通常の移動とローカルのログイン入力を含みます。認証・アクセス制限は手動で確認し、変更・支払い・退会は実行しません。</p>
+      {running && <button type="button" onClick={() => host.abort()}>収集を停止</button>}
       <CloudSettingsPanel host={host} busy={running || Boolean(consentGate)} />
       {!consentGate && <LedgerView sites={sites} results={results} busy={running} onRun={run} />}
     </div>
