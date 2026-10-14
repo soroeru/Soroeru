@@ -68,10 +68,12 @@ short-lived extractable copy solely to wrap it with the locally generated
 once and stored only as a wrapped master key. Passphrase change invalidates the
 old recovery wrap and requires a replacement recovery key.
 
-IndexedDB contains ciphertext only. Authentication/format errors fail closed,
-without replacing a corrupt vault with an empty one. Transactional saves and a
-single-writer Web Lock prevent partial/concurrent overwrite. Export is encrypted;
-import validates before replacing data and requires confirmation for overwrite.
+IndexedDB contains ciphertext only and remains the only extension vault store.
+Authentication/format errors fail closed, without replacing a corrupt vault with
+an empty one. Transactional saves and a single-writer Web Lock prevent
+partial/concurrent overwrite. Export is an explicit encrypted file chosen by the
+user, not cloud sync and not a second primary copy. Import validates the exact
+Vault v2 document before replacing data and requires confirmation for overwrite.
 A lost passphrase without recovery prevents decryption; a recovery key does not
 recover erased browser storage. Backups, save-error visibility and lock/close
 semantics are specified in architecture.

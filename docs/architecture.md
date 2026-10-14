@@ -75,11 +75,23 @@ checkpoint UX before changing the key/approval boundary.
 Vault v2 stores a versioned header and independently encrypted record envelopes.
 `VaultPersistence.load/save/clear` separates IndexedDB from the retained file
 backend. A save replaces the entire encrypted document in one transaction and
-succeeds only after commit. On quota, interrupted transaction or corrupt/newer
-format, surface an error and preserve the previous document; never silently
-initialize over unreadable data. Validate record schema versions before migration.
-Encrypted export uses the same format; an import must validate and confirm any
-replacement before committing. Complete import/migration UX remains future work.
+succeeds only after commit. On quota, an interrupted transaction, or a corrupt
+or unsupported format, surface an error and preserve the previous document;
+never silently initialize over unreadable data. Validate record schema versions
+before migration. Encrypted export uses the same Vault v2 document. The
+extension writes that document to a file the user selects when the platform
+allows it, and otherwise keeps a download pending until a later click and an
+explicit save confirmation. Import runs only while the panel holds the profile
+Web Lock and the session is absent or locked. It requires exact Vault v2, checks
+the header and every record version, and authenticates every record in memory
+before one IndexedDB replacement. Existing data moves only after an explicit
+replacement confirmation. A wrong passphrase, corrupt or legacy v1 file,
+unsupported version, failed save, or panel close during validation leaves the
+previous ciphertext and the session locked, so cloud delivery does not start.
+IndexedDB remains the only extension vault store. Reconsider a file-handle store
+only if the browser can give a durable write that survives panel close, stays
+visible to the user, and coordinates external writers; a silent fallback to
+another copy stays out of scope.
 
 `VaultSession` keeps a non-extractable master `CryptoKey` only in panel memory;
 `navigator.locks` prevents a second writer. Lock saves first; failure leaves the

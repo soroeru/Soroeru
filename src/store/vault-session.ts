@@ -76,6 +76,7 @@ export class VaultSession {
   private savesSinceExport = 0;
   private starting: Promise<VaultSessionState> | null = null;
   private exportDue = false;
+  private importing = false;
   private readonly listeners = new Set<(state: VaultSessionState) => void>();
 
   constructor(private readonly options: VaultSessionOptions) {}
@@ -102,8 +103,9 @@ export class VaultSession {
 
   /**
    * Take the single-writer lock and inspect storage. Safe to call again from
-   * `in-use-elsewhere` to retry. Unreadable stored data rejects (fail closed)
-   * and leaves the session unusable rather than offering to create a new vault.
+   * `in-use-elsewhere` to retry. Unreadable stored data rejects (fail closed),
+   * keeps those bytes, and stops in `locked` so setup cannot create over them.
+   * Recovery is a confirmed import while this panel still holds the Web Lock.
    */
   start(): Promise<VaultSessionState> {
     // Concurrent callers (e.g. a double-clicked retry) share one attempt, so a
@@ -132,7 +134,14 @@ export class VaultSession {
       }
       this.lockHandle = handle;
     }
-    const stored = await this.options.persistence.load();
+    let stored;
+    try {
+      stored = await this.options.persistence.load();
+    } catch (err) {
+      this.requireStartable();
+      this.setState("locked");
+      throw err;
+    }
     this.requireStartable();
     this.setState(stored === null ? "absent" : "locked");
     return this.stateValue;
@@ -161,9 +170,14 @@ export class VaultSession {
     // Intentionally two KDF runs: open() derives the non-extractable session key,
     // and setupRecoveryKey() derives a short-lived extractable copy to wrap
     // (design #554 §6.2). Do not "optimize" this into one extractable key.
-    const vault = await VaultV2.open(this.options.persistence, passphrase, this.options.kdfAlgo ?? "argon2id", {
-      extractableKey: false,
-    });
+    const vault = await VaultV2.open(
+      this.options.persistence,
+      passphrase,
+      this.options.kdfAlgo ?? "argon2id",
+      {
+        extractableKey: false,
+      },
+    );
     try {
       const recoveryKey = await vault.setupRecoveryKey(passphrase);
       // close() may have run during the KDF: never write after the Web Lock is released.
@@ -214,6 +228,41 @@ export class VaultSession {
     return this.vault.exportEncrypted();
   }
 
+  /**
+   * Import only while absent or locked and while this panel holds the profile
+   * Web Lock. The session stays locked, so unlock-only work such as cloud
+   * delivery does not start.
+   */
+  async importEncrypted(exported: string, passphrase: string, overwrite = false): Promise<void> {
+    const expected = this.stateValue;
+    if (this.importing || (expected !== "absent" && expected !== "locked") || !this.lockHandle) {
+      throw new VaultSessionStateError(expected, "import");
+    }
+    this.importing = true;
+    const persistence: VaultPersistence = {
+      load: () => this.options.persistence.load(),
+      save: async (data) => {
+        // Closing during authentication must not write after releasing the lock.
+        if (this.stateValue !== expected) throw new VaultSessionStateError(this.stateValue, "import");
+        await this.options.persistence.save(data);
+      },
+      clear: () => this.options.persistence.clear(),
+    };
+    try {
+      const vault = await VaultV2.importEncrypted(persistence, exported, passphrase, {
+        overwrite,
+        extractableKey: false,
+      });
+      vault.lock();
+      if (this.stateValue !== expected) throw new VaultSessionStateError(this.stateValue, "import");
+      this.exportDue = false;
+      this.savesSinceExport = 0;
+      this.setState("locked");
+    } finally {
+      this.importing = false;
+    }
+  }
+
   /** Record that an encrypted export reached the user (clears the export reminder). */
   markExported(): void {
     this.exportDue = false;
@@ -252,7 +301,8 @@ export class VaultSession {
   }
 
   private requireState(expected: VaultSessionState, action: string): void {
-    if (this.stateValue !== expected) throw new VaultSessionStateError(this.stateValue, action);
+    if (this.importing || this.stateValue !== expected)
+      throw new VaultSessionStateError(this.stateValue, action);
   }
 
   private setState(state: VaultSessionState): void {

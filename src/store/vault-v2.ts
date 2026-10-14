@@ -247,10 +247,49 @@ export class VaultV2 {
   }
 
   private static validateV2Version(raw: VaultFileV2): void {
-    if (raw.vaultVersion > VAULT_FORMAT_VERSION) {
+    if (raw.vaultVersion !== VAULT_FORMAT_VERSION) {
       throw new VaultFormatError(
-        `vault format version ${raw.vaultVersion} is newer than supported ${VAULT_FORMAT_VERSION}`,
+        `vault format version ${String(raw.vaultVersion)} is not supported; expected ${VAULT_FORMAT_VERSION}`,
       );
+    }
+  }
+
+  /** Reject a document that cannot be authenticated, before any KDF or store write. */
+  private static assertImportDocument(parsed: VaultFileV2): void {
+    const kdf = parsed.kdf;
+    const metadata = parsed.metadata;
+    const headerOk =
+      !!kdf &&
+      (kdf.algo === "argon2id" || kdf.algo === "pbkdf2-sha512") &&
+      typeof kdf.salt === "string" &&
+      kdf.salt.length > 0 &&
+      Number.isInteger(kdf.iterations) &&
+      kdf.iterations >= 1 &&
+      !!metadata &&
+      typeof metadata.createdAt === "number" &&
+      typeof metadata.updatedAt === "number" &&
+      typeof metadata.appName === "string" &&
+      (parsed.verifier !== undefined || parsed.records.length > 0);
+    if (!headerOk) {
+      throw new VaultCorruptError("encrypted export has an invalid header or no authentication material");
+    }
+    for (const env of parsed.records) {
+      if (
+        !env ||
+        typeof env.recordId !== "string" ||
+        typeof env.entityKind !== "string" ||
+        !ENTITY_KIND_SET.has(env.entityKind) ||
+        typeof env.iv !== "string" ||
+        typeof env.ciphertext !== "string"
+      ) {
+        throw new VaultCorruptError("encrypted export has an invalid record envelope");
+      }
+      const supported = RECORD_SCHEMA_VERSIONS[env.entityKind as EntityKind];
+      if (!Number.isInteger(env.schemaVersion) || env.schemaVersion !== supported) {
+        throw new VaultFormatError(
+          `vault record ${env.recordId} has unsupported ${env.entityKind} schema version ${String(env.schemaVersion)}`,
+        );
+      }
     }
   }
 
@@ -477,9 +516,11 @@ export class VaultV2 {
     // Snapshots are captured synchronously, but writes must retain call order.
     // A failed earlier write must not prevent an explicit later retry.
     snapshot.catch(() => undefined);
-    const saving = this.pendingSave.catch(() => undefined).then(async () => {
-      await this.persistence.save(await snapshot);
-    });
+    const saving = this.pendingSave
+      .catch(() => undefined)
+      .then(async () => {
+        await this.persistence.save(await snapshot);
+      });
     this.pendingSave = saving;
     await saving;
   }
@@ -514,7 +555,6 @@ export class VaultV2 {
     ) {
       throw new VaultFormatError("encrypted export is not a Vault v2 file");
     }
-    VaultV2.validateV2Version(parsed);
     if (!options?.overwrite) {
       // Corrupt stored data counts as existing: never replace it implicitly.
       const exists = await persistence.load().then(
@@ -525,8 +565,25 @@ export class VaultV2 {
         throw new Error("refusing to overwrite an existing vault (pass { overwrite: true } to replace it)");
       }
     }
-    await persistence.save(parsed);
-    return VaultV2.open(persistence, passphrase, "argon2id", { extractableKey: options?.extractableKey ?? true });
+    VaultV2.validateV2Version(parsed);
+    VaultV2.assertImportDocument(parsed);
+    // Authenticate and validate every record against a staged document before
+    // committing. Subsequent saves by the returned vault use the real backend.
+    const staged: VaultPersistence = {
+      load: async () => parsed,
+      save: (data) => persistence.save(data),
+      clear: () => persistence.clear(),
+    };
+    const vault = await VaultV2.open(staged, passphrase, "argon2id", {
+      extractableKey: options?.extractableKey ?? true,
+    });
+    try {
+      await persistence.save(parsed);
+      return vault;
+    } catch (err) {
+      vault.lock();
+      throw err;
+    }
   }
 
   // --- Migration from v1 (RFC-002 §2.4) ---
