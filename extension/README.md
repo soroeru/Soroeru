@@ -86,3 +86,15 @@ exhaustion, and other HTTP 4xx responses are not retried. One-fallback approval
 does not retry. Responses are checked against the current page and discarded
 after revocation. Only locally corroborated values are saved. Tier 3 remains
 read-only.
+
+A collection reads unresolved content one DOM region at a time (the nearest
+fieldset, form, section, or article; otherwise the page body), up to 20 regions.
+It stops when all requested attributes are resolved. Run approval covers later
+regions within its displayed scope and request/time limits; single approval asks
+again for each region. Each send and retry uses a fresh payload-bound ticket.
+This region traversal stays on the selected page; it does not add automatic
+navigation to other pages. If navigation occurs during a gate, that decision is
+discarded and the new page is observed and gated again (at most one restart).
+Page identity includes the document, URL and lease epoch, even when the page
+structure is identical. Cancellation, lock and expiry are checked again after
+asynchronous page checks and immediately before each Cloud dispatch.

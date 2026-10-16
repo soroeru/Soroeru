@@ -1,4 +1,4 @@
-import { assertReadablePage, schemaPageFingerprint, readSchemaPage, structurePageSnapshot } from "./schema-page.js";
+import { schemaPageObservation, assertReadablePage, schemaPageFingerprint, readSchemaPage, structurePageSnapshot } from "./schema-page.js";
 import type { FormSchema } from "../src/shared/cloud-contract.js";
 import {
   collectionObservationInPage,
@@ -23,11 +23,12 @@ type ContentCommand =
   | { command: "checkCollectionObservation"; token: ObservationToken }
   | { command: "snapshot" }
   | { command: "schemaFingerprint" }
+  | { command: "schemaObservation" }
   | { command: "structureSnapshot"; site: string }
   | { command: "readSchema"; schema: FormSchema }
   | { command: "readValues"; fieldIds?: string[] }
   | { command: "readDisplayValues"; valueIds?: string[] }
-  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[] }
+  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[]; regionIndex?: number }
   | { command: "fill"; fieldId: string; value: string }
   | { command: "click"; selector: string }
   | { command: "waitForReady" }
@@ -125,14 +126,22 @@ export interface MaskedRegionItem {
  * excluded to limit disclosure. The caller (Tier3PayloadBuilder) re-validates masking as
  * defense-in-depth.
  */
-export function readRegionMasked(requestedKeys: string[], resolvedIds?: string[]): { items: MaskedRegionItem[] } {
+export function readRegionMasked(requestedKeys: string[], resolvedIds?: string[], regionIndex = 0): { items: MaskedRegionItem[]; hasMore: boolean } {
   assertReadablePage();
   const excludeIds = new Set(resolvedIds ?? []);
   const result: MaskedRegionItem[] = [];
   // Collect all labeled elements with data-af-id (scanner-assigned IDs).
   const labeled = Array.from(document.querySelectorAll<HTMLElement>("[data-af-id]"));
-  // Limit to a reasonable scan window.
+  // Stable region ordering includes resolved elements so later reads cannot shift the cursor.
+  const groups = new Map<Element, HTMLElement[]>();
   for (const element of labeled.slice(0, 400)) {
+    const region = element.closest("fieldset, form, section, article") ?? document.body;
+    const group = groups.get(region) ?? [];
+    group.push(element);
+    groups.set(region, group);
+  }
+  const regions = [...groups.values()];
+  for (const element of regions[regionIndex] ?? []) {
     const id = element.dataset.afId ?? "";
     if (!id.startsWith("f-") && !id.startsWith("d-")) continue;
     // Exclude items already resolved by Tier 1/2 (B1: minimize disclosure).
@@ -207,7 +216,7 @@ export function readRegionMasked(requestedKeys: string[], resolvedIds?: string[]
     if (labelText) item.label = labelText.slice(0, 64);
     result.push(item);
   }
-  return { items: result };
+  return { items: result, hasMore: regionIndex + 1 < regions.length };
 }
 
 async function waitForReady(): Promise<ReturnType<typeof scanPage>> {
@@ -239,9 +248,10 @@ async function execute(command: ContentCommand): Promise<unknown> {
       hideAutomationBanner();
       return { ok: true };
     case "schemaFingerprint": return schemaPageFingerprint();
+    case "schemaObservation": return schemaPageObservation(activeLease?.leaseId ?? "", activeLease?.epoch ?? 0);
     case "structureSnapshot": return structurePageSnapshot(command.site);
     case "readSchema": return readSchemaPage(command.schema);
-    case "readRegionMasked": return readRegionMasked(command.requestedKeys, command.resolvedIds);
+    case "readRegionMasked": return readRegionMasked(command.requestedKeys, command.resolvedIds, command.regionIndex);
     case "snapshot":
       // Direct Side Panel commands bypass the legacy worker-side page identity merge.
       return { ...scanPage(), url: location.href, title: document.title };
@@ -306,6 +316,7 @@ function toContentCommand(command: PageCommand): ContentCommand | undefined {
       return {
         command: "readRegionMasked",
         requestedKeys: command.requestedKeys,
+        ...(command.regionIndex !== undefined ? { regionIndex: command.regionIndex } : {}),
         ...(command.resolvedIds !== undefined ? { resolvedIds: command.resolvedIds } : {}),
       };
     default:

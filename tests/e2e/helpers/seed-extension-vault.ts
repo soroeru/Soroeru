@@ -32,7 +32,7 @@ window.demoSeed = (async () => {
     if (state !== "absent") throw new Error("demo profile was not empty");
     await session.create("fake-demo-passphrase-565");
     const page = new URL(location.href).searchParams.get("page");
-    if (!page || !/^(tier1|tier2|tier3|wall)$/.test(page)) throw new Error("invalid demo page");
+    if (!page || !/^(tier1|tier2|tier3|tier3-regions|wall)$/.test(page)) throw new Error("invalid demo page");
     new DomainService(session.vault).upsertSiteAccount({
       domain: "demo.example",
       displayName: `Demo ${page}`,

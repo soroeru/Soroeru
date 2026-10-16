@@ -139,6 +139,17 @@ are `soroeru-tier3-resolution.test.ts` and Cloud API tests (`server.test.mjs`).
       and a request after 15 minutes do not send under the old approval.
       Transport or HTTP 5xx failure retries once with a new ticket. HTTP 429,
       budget exhaustion, and other 4xx responses do not retry.
+- [ ] Use `sites/extension-demo/tier3-regions.html` with fake Cloud mappings that
+      leave phone and name unresolved. One run approval must produce two reads,
+      with separate tickets and disjoint form contents, and save both attributes.
+      Single approval must ask again for the second region; declining sends no
+      second request. The automated extension demo covers the run approval path.
+- [ ] Navigate while the gate is open, including a same-structure URL change or
+      document reload. Approving the old gate must send nothing under its scope;
+      re-observation must show a fresh gate with the new page kind/attributes.
+- [ ] Hold the final page-check reply after ticket issuance, then stop, lock, or
+      expire approval. Releasing the reply must produce zero personal-content
+      requests. Deferred-command unit tests cover all three timings.
 - [ ] Use「Gemini への送信を止める」, a wall hand-off, resume, lock, panel close,
       or cloud assistance off. Each ends the approval. The next collection asks
       again. Decline, close, and timeout still send nothing.
@@ -159,7 +170,7 @@ are `soroeru-tier3-resolution.test.ts` and Cloud API tests (`server.test.mjs`).
 
 ## Tier 1 → 2 → 3 Cloud demo for #555
 
-Use the four fake pages in [`sites/extension-demo/`](../sites/extension-demo/)
+Use the fake pages in [`sites/extension-demo/`](../sites/extension-demo/)
 on a development HTTPS host. Use a disposable Chrome profile and development
 Cloud project only. Record the commit, extension build API origin, Cloud Run
 revisions, configured Gemini model and UTC time window in the PR. Run

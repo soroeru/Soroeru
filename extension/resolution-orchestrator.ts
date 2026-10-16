@@ -30,6 +30,9 @@ const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const TIER3_RUN_REQUEST_LIMIT = 20;
 const TIER3_RUN_TTL_MS = 15 * 60 * 1000;
 
+class StaleConsentObservation extends Error {}
+interface ConsentObservation { fingerprint: string; identity: string }
+
 /**
  * Local corroboration for Tier 3 responses (design #554 §5.3 / Issue #517 rules).
  *
@@ -169,6 +172,7 @@ export class ResolutionOrchestrator {
   ) {}
   async resolve(
     site: string,
+    observationRestarts = 1,
   ): Promise<
     | (SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" | "gemini_pii_consent" })
     | null
@@ -209,9 +213,13 @@ export class ResolutionOrchestrator {
     let snapshotReady = false;
     let pageKind: string | undefined;
     let localReadStarted = false;
+    let consentObservation: ConsentObservation | undefined;
     try {
+      if (o.showConsentGate) consentObservation = await this.observeConsentPage();
       const snapshot = await o.sendPageCommand({ command: "structureSnapshot", site });
       validateCloudRequest("mapStructure", snapshot);
+      if (consentObservation && (snapshot.pageFingerprint !== consentObservation.fingerprint ||
+          !(await this.sameConsentPage(consentObservation)))) throw new StaleConsentObservation();
       if (snapshot.purposeHint !== "unknown") pageKind = snapshot.purposeHint;
       if (!cloudStillAuthorized()) return tier1;
       if (
@@ -350,11 +358,38 @@ export class ResolutionOrchestrator {
       return baseResult;
 
     try {
-      return await this.resolveTier3(site, baseResult, active, pageKind);
-    } catch {
+      if (!consentObservation) return baseResult;
+      let result: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" | "gemini_pii_consent" } = baseResult;
+      // One bounded collection can need several DOM regions. Reuse only the active
+      // run authority; a single approval still gates every subsequent region.
+      for (let regionIndex = 0; regionIndex < TIER3_RUN_REQUEST_LIMIT; regionIndex++) {
+        const progress = { hasMore: false };
+        result = await this.resolveTier3(site, result, active, consentObservation, regionIndex, progress, pageKind);
+        if (!progress.hasMore || !result.unresolved.length) break;
+      }
+      return result;
+    } catch (error) {
       active();
+      if (error instanceof StaleConsentObservation) {
+        this.revokeConsent();
+        // Re-observe all tiers and the page kind; never adopt a new page under an old gate.
+        return observationRestarts > 0 ? this.resolve(site, observationRestarts - 1) : null;
+      }
       return baseResult;
     }
+  }
+
+  private async observeConsentPage(): Promise<ConsentObservation> {
+    const value = await this.options.sendPageCommand({ command: "schemaObservation" });
+    if (!value || typeof value !== "object" ||
+        typeof (value as ConsentObservation).identity !== "string" ||
+        typeof (value as ConsentObservation).fingerprint !== "string") throw new Error("invalid-consent-observation");
+    return value as ConsentObservation;
+  }
+
+  private async sameConsentPage(observation: ConsentObservation): Promise<boolean> {
+    const current = await this.observeConsentPage();
+    return current.identity === observation.identity && current.fingerprint === observation.fingerprint;
   }
 
   /**
@@ -364,8 +399,11 @@ export class ResolutionOrchestrator {
    */
   private async resolveTier3(
     site: string,
-    tier2: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" },
+    tier2: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" | "gemini_pii_consent" },
     active: () => void,
+    observation: ConsentObservation,
+    regionIndex: number,
+    progress: { hasMore: boolean },
     pageKind?: string,
   ): Promise<SchemaReadResult & { schema: FormSchema; source: "gemini_pii_consent" }> {
     const o = this.options;
@@ -387,6 +425,9 @@ export class ResolutionOrchestrator {
     if (this.runConsent && !(scopeCovers(this.runConsent) && this.runConsent.remainingRequests > 0)) {
       this.revokeConsent();
     }
+    const gateGeneration = this.generation;
+    if (!(await this.sameConsentPage(observation))) throw new StaleConsentObservation();
+    if (gateGeneration !== this.generation) return { ...tier2, source: "gemini_pii_consent" };
     const reused = this.runConsent !== undefined;
     const consentDecision = reused
       ? "run"
@@ -400,6 +441,9 @@ export class ResolutionOrchestrator {
           regionLimitKiB: CLOUD_LIMITS.tier3Bytes / 1024,
         });
     active();
+    if (gateGeneration !== this.generation) return { ...tier2, source: "gemini_pii_consent" };
+    if (!(await this.sameConsentPage(observation))) throw new StaleConsentObservation();
+    if (gateGeneration !== this.generation) return { ...tier2, source: "gemini_pii_consent" };
 
     // S6: re-check cloudAssistEnabled — the user may have toggled it during the gate wait.
     const afterConsent = o.session.vault.get("cloudSettings", "cloud");
@@ -467,14 +511,7 @@ export class ResolutionOrchestrator {
     }
     const authority = choice === "run" ? this.runConsent : undefined;
     const generation = this.generation;
-    let observation: unknown;
-    try {
-      observation = await o.sendPageCommand({ command: "schemaFingerprint" });
-    } catch (error) {
-      if (error instanceof Error && error.message === "wall-or-page-unavailable") this.revokeConsent();
-      return { ...tier2, source: "gemini_pii_consent" as const };
-    }
-    const authorized = async (): Promise<boolean> => {
+    const authorityValid = (): boolean => {
       if (o.session.state !== "unlocked" || !o.isActive()) {
         this.revokeConsent();
         throw new Error("resolution-inactive");
@@ -486,8 +523,14 @@ export class ResolutionOrchestrator {
         return false;
       }
       if (authority && (this.runConsent !== authority || !scopeCovers(authority))) return false;
+      return true;
+    };
+    const authorized = async (): Promise<boolean> => {
+      if (!authorityValid()) return false;
       try {
-        return (await o.sendPageCommand({ command: "schemaFingerprint" })) === observation;
+        const unchanged = await this.sameConsentPage(observation);
+        // The command yields: stop/lock/expiry/settings may have changed while it ran.
+        return authorityValid() && unchanged;
       } catch (error) {
         if (error instanceof Error && error.message === "wall-or-page-unavailable") this.revokeConsent();
         return false;
@@ -499,19 +542,27 @@ export class ResolutionOrchestrator {
     // Pass already-resolved item IDs so the content script excludes them from the read.
     const resolvedIds = tier2.values.map((v) => v.itemId);
     let rawItems: MaskedRegionItem[] = [];
+    let regionHasMore = false;
     try {
       const rawRegion = await o.sendPageCommand({
         command: "readRegionMasked",
+        regionIndex,
         requestedKeys: unresolvedKeys,
         resolvedIds,
       });
       rawItems = (rawRegion as { items?: MaskedRegionItem[] }).items ?? [];
+      // Set continuation only after a validated response (or an empty region).
+      regionHasMore = (rawRegion as { hasMore?: boolean }).hasMore === true;
     } catch (error) {
       if (error instanceof Error && error.message === "wall-or-page-unavailable") this.revokeConsent();
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
     if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
 
+    if (!rawItems.length) {
+      progress.hasMore = regionHasMore;
+      return { ...tier2, source: "gemini_pii_consent" };
+    }
     let payload: ConsentedReadPayload;
     try {
       payload = buildTier3Payload(site, unresolvedKeys, rawItems);
@@ -546,6 +597,7 @@ export class ResolutionOrchestrator {
         if (attempt > 0) {
           const fresh = await o.sendPageCommand({
             command: "readRegionMasked",
+            regionIndex,
             requestedKeys: unresolvedKeys,
             resolvedIds,
           });
@@ -566,11 +618,13 @@ export class ResolutionOrchestrator {
         }
         const ticketRequest: CloudRequests["tier3Ticket"] = { consentId: payload.consentId, site, payloadSha256 };
         validateCloudRequest("tier3Ticket", ticketRequest);
+        if (!authorityValid()) break;
         const ticketResponse: CloudResponses["tier3Ticket"] = await o.client.call("tier3Ticket", ticketRequest);
         validateCloudResponse("tier3Ticket", ticketResponse);
         if (!(await authorized())) break;
         const readRequest: CloudRequests["readWithConsent"] = { ...payload, ticket: ticketResponse.ticket };
         validateCloudRequest("readWithConsent", readRequest);
+        if (!authorityValid()) break;
         readResponse = await o.client.call("readWithConsent", readRequest);
         validateCloudResponse("readWithConsent", readResponse);
         if (!(await authorized())) readResponse = undefined;
@@ -634,6 +688,7 @@ export class ResolutionOrchestrator {
     await o.session.save();
     if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
 
+    progress.hasMore = regionHasMore;
     return {
       values: [
         ...tier2.values,
