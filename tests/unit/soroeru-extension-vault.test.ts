@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { importFailureMessage, vaultErrorMessage } from "../../extension/sidepanel-messages.js";
 import { FileVaultPersistence } from "../../src/store/file-vault-persistence.js";
 import { DomainService } from "../../src/domain/domain-service.js";
+import { AUTHORIZATION_POLICY_VERSION } from "../../src/domain/authorization.js";
 import { exportKeyRaw } from "../../src/store/crypto.js";
 import { IndexedDbVaultPersistence } from "../../src/store/indexeddb-vault-persistence.js";
 import {
@@ -1016,6 +1017,45 @@ test("import preserves and opens a supported schema 1 workflow checkpoint", asyn
   assert.deepEqual(await idb(factory).load(), document);
   await session.unlock(PASSPHRASE);
   assert.equal(session.vault.get("workflowCheckpoint", "visibility:fake")?.step, "collect");
+  session.close();
+  source.lock();
+});
+
+test("import migrates schema 1 authority records without promoting L1 or verification", async () => {
+  const source = await VaultV2.open(idb(new FakeIdbFactory()), PASSPHRASE, "pbkdf2-sha512");
+  source.put("capability", {
+    id: "collection",
+    operationType: "collection",
+    level: "L1",
+    revision: 3,
+    updatedAt: 1,
+    policyVersion: AUTHORIZATION_POLICY_VERSION,
+    explicitlyEnabledAt: 1,
+    scope: { siteAccountIds: ["fake"], attributeKeys: ["email"] },
+  });
+  source.put("personalAttribute", {
+    id: "email",
+    attributeKey: "email",
+    label: "Email",
+    value: "fake@example.test",
+    sensitivity: "normal",
+    valueType: "email",
+    updatedAt: 1,
+    provenance: { source: "identity-verification", verification: "verified", method: "jpki", verifiedAt: 1, evidenceId: "fake-evidence" },
+  });
+  const document = JSON.parse(await source.exportEncrypted()) as EncryptedVaultData;
+  for (const record of document.records) record.schemaVersion = 1;
+  const session = newSession(new FakeIdbFactory());
+  await session.start();
+  await session.importEncrypted(JSON.stringify(document), PASSPHRASE);
+  await session.unlock(PASSPHRASE);
+  const capability = session.vault.get("capability", "collection");
+  assert.equal(capability?.level, "L0");
+  assert.equal(capability?.scope, undefined);
+  assert.deepEqual(session.vault.get("personalAttribute", "email")?.provenance, {
+    source: "legacy-unknown",
+    verification: "unverified",
+  });
   session.close();
   source.lock();
 });

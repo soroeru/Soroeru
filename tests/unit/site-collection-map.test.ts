@@ -97,9 +97,10 @@ test("maps and distinct AI authorization records roundtrip encrypted and maps fo
       id: "ai-capability",
       operationType: "ai-assisted-discovery",
       level: "L0",
+      revision: 1,
       updatedAt: 1,
     });
-    vault.put("capability", { id: "collection", operationType: "collection", level: "L1", updatedAt: 1 });
+    vault.put("capability", { id: "collection", operationType: "collection", level: "L1", revision: 1, scope: { siteAccountIds: ["site-1"], attributeKeys: ["email"] }, policyVersion: 1, explicitlyEnabledAt: 1, updatedAt: 1 });
     await vault.save();
     vault.lock();
     assert.equal((await readFile(path, "utf8")).includes("a".repeat(64)), false);

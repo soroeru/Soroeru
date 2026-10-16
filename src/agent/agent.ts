@@ -3,6 +3,8 @@
 // assisted fill on auto-creation-prohibited sites, wall handoff hooks, and the
 // hash-diff bulk update flow.
 
+import { ConsequenceApprovals, consequenceDigest } from "../domain/consequence-approval.js";
+import type { GateDecision } from "../types.js";
 import type { Page } from "playwright";
 import { applyTransform } from "../profile.js";
 import { sha256Hex, type PocStore } from "../store/store.js";
@@ -335,7 +337,7 @@ export async function runRegistration(page: Page, siteTopUrl: string, deps: Agen
   };
   deps.log(renderGate(gateRequest));
   recordPhase(deps, "gate", gateStart);
-  const decision = await deps.gate.decide(gateRequest);
+  const decision = await decideConsequence(deps, "registration", gateRequest, { termsText, pageTexts, planned });
   if (!decision.approved) {
     notes.push("確認ゲートで承認されなかったため中止しました");
     return result("declined", true, analysis.highRiskFlags);
@@ -701,7 +703,7 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   };
   deps.log(renderGate(gateRequest));
   recordPhase(deps, "gate", gateStart);
-  const decision = await deps.gate.decide(gateRequest);
+  const decision = await decideConsequence(deps, "update", gateRequest, { termsText, pageText: snapshot.visibleText, planned });
   const guard = evaluateGuards({ analysis, decision, hasCardFields: hasCardFields(snapshot.fields) });
   const addUpdateMandate = (result: "updated" | RegistrationStatus): void => {
     deps.store.addMandate(
@@ -800,4 +802,18 @@ export async function runUpdate(page: Page, siteTopUrl: string, siteId: string, 
   recordPhase(deps, "record", recordStart);
   deps.log(`${siteId}: 差分 ${changed.length} 項目を更新しました`);
   return { siteId, status: "updated", changedKeys: [...changedKeySet], planned, notes };
+}
+
+async function decideConsequence(deps: AgentDeps, operation: "registration" | "update", request: GateRequest, concrete: unknown): Promise<GateDecision> {
+  const actionId = globalThis.crypto.randomUUID();
+  const approvals = new ConsequenceApprovals<GateDecision>(actionId, async event => {
+    // Legacy encrypted storage: only identifiers, digest and outcome; no request/body copy.
+    deps.store.addDiagnosticEvent({ type: "flow", severity: "info", message: "consequence-approval", metadata: {
+      actionId: event.actionId, operation: event.operation, targetHash: await consequenceDigest(event.targetIds),
+      scopeRevision: event.scopeRevision, policyVersion: event.policyVersion, consequenceDigest: event.consequenceDigest, outcome: event.outcome,
+    } });
+    await deps.store.save();
+  });
+  return approvals.decide({ actionId, operation, targetIds: [request.origin], scopeRevision: 0, policyVersion: 1,
+    consequenceDigest: await consequenceDigest({ request, concrete }) }, () => deps.gate.decide(request), request.attestations.length > 0);
 }

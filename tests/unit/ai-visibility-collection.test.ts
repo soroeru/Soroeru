@@ -262,8 +262,8 @@ test("runner stores a model-classified masked CVV from the local read as an encr
       collectionProvider: f.options.provider,
       collectionGrant: context => {
         vault.put("mandate", { id: "m", siteAccountId: site.id, operation: "ai-assisted-discovery", authorizedAt: 2, scope: context.runId });
-        vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", updatedAt: 1 });
-        return { ...context, mandateId: "m", capabilityId: "c", capabilityUpdatedAt: 1 };
+        vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", revision: 1, updatedAt: 1 });
+        return { ...context, mandateId: "m", capabilityId: "c", capabilityRevision: 1, attributeKeys: ["email", "card.cvv", "phone.full"], policyVersion: 1 };
       } });
     const r = await runner.runSite(site.id);
     assert.equal(r.status, "collected"); assert.equal(users.length, 1); assert.equal(users[0]!.includes(SECRETS.cvv), false);
@@ -285,8 +285,8 @@ test("runner uses real scoped authorization and typed encrypted persistence, hal
       collectionProvider: f.options.provider,
       collectionGrant: context => {
         vault.put("mandate", { id: "m", siteAccountId: site.id, operation: "ai-assisted-discovery", authorizedAt: 2, scope: context.runId });
-        vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", updatedAt: 1 });
-        return { ...context, mandateId: "m", capabilityId: "c", capabilityUpdatedAt: 1 };
+        vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", revision: 1, updatedAt: 1 });
+        return { ...context, mandateId: "m", capabilityId: "c", capabilityRevision: 1, attributeKeys: ["email", "card.cvv", "phone.full"], policyVersion: 1 };
       } });
     const r = await runner.runSite(site.id);
     assert.equal(r.disclosures, 1); assert.equal(r.status, "collected");

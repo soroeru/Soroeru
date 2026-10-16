@@ -67,6 +67,8 @@ export interface VisibilityRunnerOptions {
   decideCollectionTos?: (input: { siteAccountId: string; constraintId: string; observationId: string; safeSummary: string }) => Promise<"proceed" | "stop">;
   /** Plain-text diagnostics sink for run outcomes / failure reasons (Issue #314); defaults to a no-op. */
   logger?: Logger;
+  /** L1 scope: when set, dynamic attribute candidates are not recorded for unmapped required fields. */
+  authorizedAttributeKeys?: readonly string[];
 }
 
 export interface VisibilityRunResult {
@@ -876,6 +878,9 @@ export class VisibilityRunner {
         pageDriver: session.page,
         now: this.now,
         isCanceled: () => this.isCanceled(),
+        ...(this.options.authorizedAttributeKeys !== undefined
+          ? { authorizedAttributeKeys: this.options.authorizedAttributeKeys }
+          : {}),
       },
     );
 
@@ -930,6 +935,9 @@ export class VisibilityRunner {
         pageDriver: session.page,
         now: this.now,
         isCanceled: () => this.isCanceled(),
+        ...(this.options.authorizedAttributeKeys !== undefined
+          ? { authorizedAttributeKeys: this.options.authorizedAttributeKeys }
+          : {}),
       });
     }
     return {
