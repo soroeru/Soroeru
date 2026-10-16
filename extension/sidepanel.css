@@ -1,8 +1,8 @@
 @import "tailwindcss" source(none);
 
-/* Tailwind scans only the Side Panel and the shared renderer components it uses. */
+/* Tailwind scans the Side Panel and the shared renderer components it mounts (Issue #569). */
 @source "./";
-@source "../src/renderer/components/VaultGate.tsx";
+@source "../src/renderer/components";
 
 body {
   margin: 0;

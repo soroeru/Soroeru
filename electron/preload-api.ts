@@ -92,6 +92,12 @@ export interface SoroeruApi {
     clear(siteAccountId: string): Promise<SessionPersistenceMutationResult>;
   };
   visibility: {
+    /**
+     * Optional pre-run step for a batch (extension Side Panel, Issue #569): ask once for
+     * host access to every queued site. Called first in the click handler so the browser
+     * still sees the user gesture. Returns false when the user declines.
+     */
+    prepare?(siteAccountIds: readonly string[]): Promise<boolean>;
     run(siteAccountId: string): Promise<VisibilityRunResultView>;
     resume(): Promise<VisibilityHandoffAck>;
     abort(): Promise<VisibilityHandoffAck>;

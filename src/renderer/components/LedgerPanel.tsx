@@ -38,6 +38,7 @@ import {
   ledgerTableWidthPx,
 } from "../ledger-table.js";
 import { reasonMessage, relationshipLabel, staleLabel } from "../messages.js";
+import { surfaceCapabilities } from "../surface.js";
 import { prepareChromeBridgeRun } from "../chrome-bridge-ui.js";
 import { filterLedgerSitesByCollection, type LedgerCollectionFilter } from "../ledger-filter.js";
 import { moveLedgerSite, orderLedgerSites, type LedgerSortMode } from "../ledger-ordering.js";
@@ -347,6 +348,13 @@ export function LedgerPanel({
         deleteExclusiveBusy ||
         batchInFlightRef.current
       ) {
+        return;
+      }
+      // First await of the click handler: a host that needs a user gesture (the extension's
+      // host-permission prompt) still has it here.
+      const visibilityApi = window.soroeru.visibility;
+      if (visibilityApi.prepare && !(await visibilityApi.prepare(queue))) {
+        setLoadError("サイトへのアクセスが許可されなかったため、収集を開始しませんでした。");
         return;
       }
       const ready = await prepareChromeBridgeRun(window.soroeru.chromeBridge);
@@ -801,7 +809,9 @@ export function LedgerPanel({
         disabled={batchBusy}
         onStart={() => void startBatch()}
         onCancel={cancelBatch}
-        onEnableSessionPersistence={() => void enableSessionPersistenceForSelected()}
+        {...(surfaceCapabilities().sessionPersistence
+          ? { onEnableSessionPersistence: () => void enableSessionPersistenceForSelected() }
+          : {})}
         sessionPersistenceBulkRunning={sessionPersistenceBulkRunning}
         sessionPersistenceBulkError={sessionPersistenceBulkError}
         onDeleteSelected={requestDeleteSelected}
@@ -1363,11 +1373,13 @@ export function SiteDetail({
         onReload={onReload}
       />
 
-      <SessionPersistenceControl
-        siteAccountId={detail.siteAccountId}
-        sessionPersistence={detail.sessionPersistence}
-        onReload={onReload}
-      />
+      {surfaceCapabilities().sessionPersistence && (
+        <SessionPersistenceControl
+          siteAccountId={detail.siteAccountId}
+          sessionPersistence={detail.sessionPersistence}
+          onReload={onReload}
+        />
+      )}
     </div>
   );
 }

@@ -47,6 +47,21 @@ policy. Pending features below are release criteria, not currently available UI.
 - [ ] Cancel a run and verify already saved observations remain, with no later
       sends/writes attributed to the cancelled request.
 
+## Side Panel parity with the Electron screens (#569)
+
+Run each check in the Side Panel and in the current Electron build with the same
+fake data. Record any difference in the PR. These results gate removing Electron.
+
+- [ ] 設定タブで架空のパスワード CSV を取り込み、件数と台帳のサイト行が Electron と一致することを確認する。誤ったヘッダー・空ファイル・上限超過は理由付きで拒否される。
+- [ ] 開示台帳タブで並び替え・フィルタ・列表示・サイト詳細（開示値、関係、制約、資格情報の更新、動的属性候補の確定、サイト削除の確認）が Electron と同じ結果になることを確認する。セッション保持の操作は表示されない。
+- [ ] 機微な開示値の表示はパスフレーズの再入力を求め、誤りでは表示されず、CVV は常に拒否されることを確認する。
+- [ ] 台帳で複数サイトを選んで収集すると、最初に1回だけアクセス許可を求め、拒否すると収集を開始しないことを確認する。許可後はウォールの引き継ぎ・再開・スキップが Electron と同じに動き、実行中は他のタブへ切り替えられない。
+- [ ] 台帳から収集したときは Tier 3 の同意画面を出さず、Cloud へ値を送らないことを確認する（同意を伴う収集は「このタブで収集」タブのみ）。
+- [ ] 保存ページ取り込みで架空の保存 HTML を読み込み、Electron と同じ開示件数になることを確認する。DevTools のネットワークで、保存ページ内の画像・CSS・スクリプトへの通信が発生しないことを確認する。
+- [ ] 「サイトを開く」は新しいタブで対象サイトだけを開き、「手動で確認」は制約として記録されることを確認する。
+- [ ] インサイトタブのフィルタとリフレクションが Electron と一致することを確認する。
+- [ ] 設定タブのログ書き出しで、このパネルを開いてからの操作が記録され、値（メールアドレス、カード番号、パスワード）が含まれないことを確認する。パネルを閉じるとログは消える。
+
 ## Cloud settings panel (#568)
 
 Use a development environment with fake vault records only.

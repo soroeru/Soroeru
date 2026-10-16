@@ -11,24 +11,16 @@ import { AiEngine as AiEngineImpl, type RedactionValueSource } from "../src/auto
 import { aiProviderFromEnv, type AiProvider } from "../src/agent/ai/provider.js";
 import type { AiEngine } from "../src/automation/decision-engine.js";
 import { DomainService } from "../src/domain/domain-service.js";
-import { FIXED_ATTRIBUTE_LABELS, displayLabelWithAttributeKey } from "../src/domain/attribute-labels.js";
 import { FileVaultPersistence } from "../src/store/file-vault-persistence.js";
 import { VaultV2 } from "../src/store/vault-v2.js";
 import { vaultExists } from "../src/store/vault.js";
-import { importPasswordCsv, CsvImportError } from "../src/domain/csv-import.js";
-import { computeLedgerInsights } from "../src/domain/ledger-insights.js";
-import {
-  isSensitiveAttributeKey,
-  MOST_SENSITIVE_ATTRIBUTE_KEY,
-  type Credential,
-  type SiteAccount,
-  type Sensitivity,
-} from "../src/domain/entities.js";
+import { LedgerAppService } from "../src/app/ledger-app-service.js";
+import type { SiteAccount } from "../src/domain/entities.js";
 import type { SiteSession } from "../src/automation/page-driver.js";
 import type { ChromeBridgeTransport } from "../src/automation/extension-page-driver.js";
 import { openExtensionTabSession } from "../src/automation/extension-page-driver.js";
 import { VisibilityService } from "../src/automation/visibility-service.js";
-import { importSavedPage, MAX_SAVED_PAGE_BYTES } from "../src/automation/saved-page-importer.js";
+import { playwrightSavedPageRenderer } from "../src/automation/saved-page-importer.js";
 import { FileLogger } from "../src/logging/file-logger.js";
 import type { LogFields, LogLevel, Logger } from "../src/logging/logger.js";
 import {
@@ -49,28 +41,22 @@ import {
   type NativeHostPaths,
 } from "../native-host/registration.js";
 import type {
-  AttributeSummary,
   ConfirmDynamicAttributeCandidateRequest,
   ConfirmDynamicAttributeCandidateResult,
   CsvImportResult,
   DeleteSiteAccountRequest,
   DeleteSiteAccountResultView,
-  DisclosureView,
   DomainSummary,
   LedgerInsights,
   LogsExportResult,
-  PendingAttributeCandidateView,
   RecoveryKeyResult,
   RevealResult,
   SavedPageImportRequest,
   SavedPageImportResult,
   SessionPersistenceMutationResult,
-  SessionPersistenceView,
   SetSessionPersistenceRequest,
-  SiteCredentialView,
   SiteLedgerDetail,
   SiteLedgerSummary,
-  StaleTally,
   UpdateSiteCredentialRequest,
   UpdateSiteCredentialResultView,
   VaultMutationResult,
@@ -154,31 +140,6 @@ export interface SoroeruSessionOptions {
   };
 }
 
-/** Mask a value to a fixed-width bullet preview that reveals at most its length. */
-function maskPreview(value: string): string {
-  if (value.length === 0) return "";
-  return "•".repeat(Math.min(value.length, 8));
-}
-
-/**
- * Only "sensitive"/"most-sensitive" disclosures (card data, the site password)
- * stay masked behind passphrase re-authentication (Issue #300). "normal"
- * disclosures (name, address, phone, account id, etc.) are already-imported,
- * already-known information the user wants to confirm immediately, so they
- * are shown as-is with no reveal gate.
- */
-function previewFor(raw: string | undefined, sensitivity: Sensitivity): string {
-  if (raw === undefined) return "";
-  return sensitivity === "normal" ? raw : maskPreview(raw);
-}
-
-/** Sensitivity classification mirrors DomainService's; drives masking and reveal refusal. */
-function sensitivityFor(attributeKey: string): Sensitivity {
-  if (attributeKey === MOST_SENSITIVE_ATTRIBUTE_KEY) return "most-sensitive";
-  if (isSensitiveAttributeKey(attributeKey)) return "sensitive";
-  return "normal";
-}
-
 export class SoroeruSession {
   private vault: VaultV2 | undefined;
   private domain: DomainService | undefined;
@@ -189,6 +150,8 @@ export class SoroeruSession {
   private readonly openExternal: ((url: string) => Promise<void>) | undefined;
   private eventSink: ((event: VisibilityEvent) => void) | undefined;
   private collectionRunning = false;
+  /** Vault-backed ledger/import/reveal handlers shared with the extension Side Panel (Issue #569). */
+  private readonly ledger: LedgerAppService;
   /** True when a test injected `SoroeruSessionOptions.aiEngine` directly (skips the per-unlock lazy rebuild/clear below). */
   private readonly aiEngineOverride: boolean;
   /** `aiProviderFromEnv` in production; test-injectable via `SoroeruSessionOptions.aiProviderFactory`. */
@@ -234,6 +197,19 @@ export class SoroeruSession {
     this.aiProviderFactory = options.aiProviderFactory ?? aiProviderFromEnv;
     this.logPath = options.logPath ?? join(dirname(vaultPath), "logs", "soroeru.log");
     this.logger = options.logger ?? new FileLogger(this.logPath);
+    this.ledger = new LedgerAppService({
+      context: () => (this.vault && this.domain ? { vault: this.vault, domain: this.domain } : undefined),
+      acquireCollection: () => {
+        if (this.collectionRunning) return undefined;
+        this.collectionRunning = true;
+        return () => {
+          this.collectionRunning = false;
+        };
+      },
+      collectionBusy: () => this.collectionRunning,
+      savedPageRenderer: playwrightSavedPageRenderer,
+      logger: this.logger,
+    });
     const openSession = options.openSession ?? ((site: SiteAccount) => this.defaultOpenSession(site));
     this.visibility = new VisibilityService({
       openSession,
@@ -760,49 +736,13 @@ export class SoroeruSession {
 
   /** Build the sanitized domain summary. Returns a locked, empty view when locked. */
   domainSummary(): DomainSummary {
-    if (!this.domain || !this.vault || this.vault.isLocked) {
-      return { locked: true, siteAccountCount: 0, attributeCount: 0, attributes: [] };
-    }
-    const attributes: AttributeSummary[] = this.domain.listPersonalAttributes().map((attr) => ({
-      attributeKey: attr.attributeKey,
-      label: attr.label,
-      sensitivity: attr.sensitivity,
-      hasValue: attr.value.length > 0,
-      preview: maskPreview(attr.value),
-    }));
-    return {
-      locked: false,
-      siteAccountCount: this.domain.listSiteAccounts().length,
-      attributeCount: attributes.length,
-      attributes,
-    };
+    return this.ledger.domainSummary();
   }
 
-  // --- CSV import & queue review (RFC-002 §5.1) ---
+  // --- CSV import, saved pages, and the disclosure ledger (shared with the Side Panel, Issue #569) ---
 
-  /**
-   * Import a password-manager CSV (bytes or text) into the vault and persist it.
-   * Parsing is local and the raw byte buffer is zeroed by the importer; only a
-   * counts-only summary crosses back to the renderer (never a raw credential).
-   */
-  async importCsv(data: string | Uint8Array): Promise<CsvImportResult> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    try {
-      const summary = importPasswordCsv(this.domain, { data });
-      await this.vault.save();
-      this.logger.info("csv-import", "csv import completed", {
-        importedCredentials: summary.importedCredentials,
-        sitesCreated: summary.sitesCreated,
-        sitesMatched: summary.sitesMatched,
-        skipped: summary.skipped,
-      });
-      return { ok: true, summary };
-    } catch (err) {
-      // CsvImportError carries a safe reason code; anything else is reported opaquely.
-      const reason = err instanceof CsvImportError ? err.reason : "import-failed";
-      this.logger.warn("csv-import", "csv import failed", { reason });
-      return { ok: false, error: reason };
-    }
+  importCsv(data: string | Uint8Array): Promise<CsvImportResult> {
+    return this.ledger.importCsv(data);
   }
 
   /**
@@ -831,392 +771,73 @@ export class SoroeruSession {
     this.logger[level](category, message, fields);
   }
 
-  async importSavedPage(request: SavedPageImportRequest): Promise<SavedPageImportResult> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    if (this.collectionRunning) return { ok: false, error: "busy" };
-    const siteAccount = this.domain.getSiteAccount(request.siteAccountId);
-    if (!siteAccount) return { ok: false, error: "not-found" };
-    if (!isSavedPageFile(request.fileName)) return { ok: false, error: "bad-file-type" };
-    if (request.data.byteLength > MAX_SAVED_PAGE_BYTES) return { ok: false, error: "too-large" };
-    this.collectionRunning = true;
-    try {
-      const summary = await importSavedPage({
-        domain: this.domain,
-        siteAccount,
-        data: request.data,
-        fileName: request.fileName,
-      });
-      await this.vault.save();
-      return {
-        ok: true,
-        summary: {
-          siteAccountId: summary.siteAccountId,
-          disclosures: summary.disclosures,
-          ...(summary.sourceUrl !== undefined ? { sourceUrl: summary.sourceUrl } : {}),
-          sourceHashPreview: summary.sourceHash.slice(0, 16),
-          recommendSourceDeletion: summary.recommendSourceDeletion,
-        },
-      };
-    } catch {
-      return { ok: false, error: "import-failed" };
-    } finally {
-      this.collectionRunning = false;
-    }
+  importSavedPage(request: SavedPageImportRequest): Promise<SavedPageImportResult> {
+    return this.ledger.importSavedPage(request);
   }
 
   async openSiteInDefaultBrowser(
     siteAccountId: string,
   ): Promise<{ ok: boolean; url?: string; error?: string }> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    const siteAccount = this.domain.getSiteAccount(siteAccountId);
-    if (!siteAccount) return { ok: false, error: "not-found" };
-    // egress: target-site — fallback URL opened only after an explicit user action.
-    const url = safeExternalSiteUrl(siteAccount);
-    if (!url) return { ok: false, error: "bad-url" };
+    const target = this.ledger.siteUrl(siteAccountId);
+    if (!target.ok) return target;
     if (!this.openExternal) return { ok: false, error: "open-failed" };
     try {
-      await this.openExternal(url);
-      return { ok: true, url };
+      await this.openExternal(target.url);
+      return { ok: true, url: target.url };
     } catch {
       return { ok: false, error: "open-failed" };
     }
   }
 
-  async markSavedPageManualCheck(siteAccountId: string): Promise<{ ok: boolean; error?: string }> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    if (this.collectionRunning) return { ok: false, error: "busy" };
-    const siteAccount = this.domain.getSiteAccount(siteAccountId);
-    if (!siteAccount) return { ok: false, error: "not-found" };
-    try {
-      const observedAt = Date.now();
-      this.domain.addConstraint({
-        siteAccountId,
-        kind: "unknown-state",
-        detail: "保存ページ取り込みをスキップし、ユーザーがこのサイトを手動で確認する印を付けました。",
-        observedAt,
-        resolution: "user-stopped",
-      });
-      this.domain.saveCheckpoint({
-        workflow: "visibility",
-        siteAccountId,
-        step: "manual-check",
-        status: "failed",
-        resumeData: { source: "manual-check" },
-      });
-      await this.vault.save();
-      return { ok: true };
-    } catch {
-      return { ok: false, error: "mark-failed" };
-    }
+  markSavedPageManualCheck(siteAccountId: string): Promise<{ ok: boolean; error?: string }> {
+    return this.ledger.markSavedPageManualCheck(siteAccountId);
   }
 
-  // --- Disclosure ledger (RFC-002 §4.2 / §5.1) ---
-
-  /** Composed per-site ledger rows. Returns an empty list when locked. */
   ledgerSites(): SiteLedgerSummary[] {
-    if (!this.domain || !this.vault || this.vault.isLocked) return [];
-    const domain = this.domain;
-    return domain
-      .listSiteAccountsInManualOrder()
-      .map((site) => this.composeSiteSummary(site.id))
-      .filter((summary): summary is SiteLedgerSummary => summary !== undefined);
+    return this.ledger.ledgerSites();
   }
 
-  /** Cross-cutting filters and the initial Reflection derived from the ledger (RFC-002 §5.3). */
   ledgerInsights(): LedgerInsights {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { filters: [], reflection: [] };
-    return computeLedgerInsights(this.domain);
+    return this.ledger.ledgerInsights();
   }
 
-  /** The per-site composed ledger detail (masked disclosures, relationships, constraints). */
   ledgerSite(siteAccountId: string): SiteLedgerDetail | undefined {
-    if (!this.domain || !this.vault || this.vault.isLocked) return undefined;
-    return this.composeSiteDetail(siteAccountId);
+    return this.ledger.ledgerSite(siteAccountId);
   }
 
-  /**
-   * All sites' composed ledger detail in one call (Issue #301's spreadsheet-style
-   * ledger view needs every site's disclosures at once to build its attribute
-   * columns). Returns an empty list when locked. Fetches dynamic-attribute
-   * candidates and constraints once and shares them across every site instead
-   * of letting each `composeSiteDetail` call re-scan them (this is now the
-   * primary load path for the Ledger tab).
-   */
   ledgerSiteDetails(): SiteLedgerDetail[] {
-    if (!this.domain || !this.vault || this.vault.isLocked) return [];
-    const dynamicCandidates = this.domain.listDynamicAttributeCandidates();
-    const constraints = this.domain.listConstraints();
-    return this.domain
-      .listSiteAccountsInManualOrder()
-      .map((site) => this.composeSiteDetail(site.id, { dynamicCandidates, constraints }))
-      .filter((detail): detail is SiteLedgerDetail => detail !== undefined);
+    return this.ledger.ledgerSiteDetails();
   }
 
-  async reorderSiteAccounts(orderedIds: string[]): Promise<{ ok: boolean; error?: string }> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    const previousIds = this.domain.listSiteAccountsInManualOrder().map((site) => site.id);
-    const result = this.domain.reorderSiteAccounts(orderedIds);
-    if (!result.ok) return result;
-    try {
-      await this.vault.save();
-      return { ok: true };
-    } catch {
-      this.domain.reorderSiteAccounts(previousIds);
-      return { ok: false, error: "save-failed" };
-    }
+  reorderSiteAccounts(orderedIds: string[]): Promise<{ ok: boolean; error?: string }> {
+    return this.ledger.reorderSiteAccounts(orderedIds);
   }
 
-  private composeSiteDetail(
-    siteAccountId: string,
-    shared?: {
-      dynamicCandidates: ReturnType<DomainService["listDynamicAttributeCandidates"]>;
-      constraints: ReturnType<DomainService["listConstraints"]>;
-    },
-  ): SiteLedgerDetail | undefined {
-    if (!this.domain) return undefined;
-    const summary = this.composeSiteSummary(siteAccountId);
-    if (!summary) return undefined;
-    const dynamicCandidates = shared?.dynamicCandidates ?? this.domain.listDynamicAttributeCandidates();
-    const dynamicLabels = new Map<string, string>();
-    for (const candidate of dynamicCandidates) {
-      dynamicLabels.set(candidate.proposedAttributeKey, candidate.label);
-      dynamicLabels.set(
-        candidate.proposedAttributeKey.replace(/^custom\./, "custom.unknown."),
-        candidate.label,
-      );
-    }
-    const pendingAttributeCandidates: PendingAttributeCandidateView[] = dynamicCandidates
-      .filter(
-        (candidate) =>
-          candidate.status === "candidate" && (candidate.siteAccountIds?.includes(siteAccountId) ?? false),
-      )
-      .map((candidate) => ({
-        id: candidate.id,
-        label: candidate.label,
-        proposedAttributeKey: candidate.proposedAttributeKey,
-        matchTerms: candidate.matchTerms,
-        observedAt: candidate.updatedAt,
-      }));
-    const disclosures: DisclosureView[] = this.domain
-      .listDisclosuresForSite(siteAccountId)
-      .map((disclosure) => {
-        const sensitivity = sensitivityFor(disclosure.attributeKey);
-        const canonical = this.domain?.getPersonalAttribute(disclosure.attributeKey);
-        const label =
-          canonical?.label ??
-          dynamicLabels.get(disclosure.attributeKey) ??
-          FIXED_ATTRIBUTE_LABELS.get(disclosure.attributeKey);
-        const raw = disclosure.siteHeldValue;
-        return {
-          disclosureId: disclosure.id,
-          attributeKey: disclosure.attributeKey,
-          label: displayLabelWithAttributeKey(disclosure.attributeKey, label),
-          sensitivity,
-          staleState: disclosure.staleState,
-          sourceKind: disclosure.sourceKind,
-          observedAt: disclosure.observedAt,
-          preview: previewFor(raw, sensitivity),
-          revealable: raw !== undefined && sensitivity === "sensitive",
-          evidenceCount: disclosure.evidenceIds.length,
-        };
-      })
-      .sort((a, b) => a.label.localeCompare(b.label));
-    const relationships = this.domain.listAccountRelationshipsForSite(siteAccountId).map((r) => ({
-      kind: r.kind,
-      state: r.state,
-      ...(r.detail !== undefined ? { detail: r.detail } : {}),
-      observedAt: r.observedAt,
-    }));
-    const constraints = (shared?.constraints ?? this.domain.listConstraints())
-      .filter((c) => c.siteAccountId === siteAccountId)
-      .map((c) => ({
-        kind: c.kind,
-        detail: c.detail,
-        ...(c.resolution !== undefined ? { resolution: c.resolution } : {}),
-        observedAt: c.observedAt,
-      }));
-    // Preserve vault list order — Visibility uses listCredentialsForSite(...)[0]
-    // with no sort (Issue #362: edit UI must target the same primary credential).
-    const credentials: SiteCredentialView[] = this.domain
-      .listCredentialsForSite(siteAccountId)
-      .map((credential) => toSiteCredentialView(credential));
-    return {
-      ...summary,
-      disclosures,
-      relationships,
-      constraints,
-      pendingAttributeCandidates,
-      credentials,
-      sessionPersistence: this.sessionPersistenceView(siteAccountId),
-    };
-  }
-
-  /**
-   * Confirm a pending dynamic-attribute candidate as a reusable typed attribute
-   * (dynamic schema growth, RFC-002 §7). This is the explicit user-confirmation
-   * step CLAUDE.md requires before a newly observed field becomes a reusable
-   * attribute — it is never inferred or promoted automatically.
-   */
-  async confirmDynamicAttributeCandidate(
+  confirmDynamicAttributeCandidate(
     request: ConfirmDynamicAttributeCandidateRequest,
   ): Promise<ConfirmDynamicAttributeCandidateResult> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    const proposedAttributeKey = request.proposedAttributeKey.trim();
-    const label = request.label.trim();
-    if (!proposedAttributeKey.startsWith("custom.") || label === "")
-      return { ok: false, error: "invalid-request" };
-    const isPendingCandidate = this.domain
-      .listDynamicAttributeCandidates()
-      .some(
-        (candidate) =>
-          candidate.status === "candidate" && candidate.proposedAttributeKey === proposedAttributeKey,
-      );
-    if (!isPendingCandidate) return { ok: false, error: "not-found" };
-    try {
-      this.domain.confirmDynamicAttributeCandidate({
-        attributeKey: proposedAttributeKey as `custom.${string}`,
-        label,
-        matchTerms: request.matchTerms?.map((term) => term.trim()).filter((term) => term !== "") ?? [label],
-      });
-      await this.vault.save();
-      return { ok: true };
-    } catch {
-      return { ok: false, error: "confirm-failed" };
-    }
+    return this.ledger.confirmDynamicAttributeCandidate(request);
   }
 
-  async deleteSiteAccount(request: DeleteSiteAccountRequest): Promise<DeleteSiteAccountResultView> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    if (!request.confirmedFourthBoundary) return { ok: false, error: "confirmation-required" };
-    try {
-      const result = this.domain.deleteSiteAccount(request.siteAccountId);
-      if (!result.ok) return result;
-      await this.vault.save();
-      return result;
-    } catch {
-      return { ok: false, error: "delete-failed" };
-    }
+  deleteSiteAccount(request: DeleteSiteAccountRequest): Promise<DeleteSiteAccountResultView> {
+    return this.ledger.deleteSiteAccount(request);
   }
 
-  /**
-   * Update a site's stored login credential (username and/or password) from the
-   * ledger (Issue #362). Requires explicit overwrite acknowledgement. The
-   * password never appears in the response or logs.
-   */
-  async updateSiteCredential(request: UpdateSiteCredentialRequest): Promise<UpdateSiteCredentialResultView> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    if (!request.confirmedOverwrite) return { ok: false, error: "confirmation-required" };
-    if (!request.credentialId) return { ok: false, error: "invalid-request" };
-
-    const existing = this.domain.getCredential(request.credentialId);
-    if (!existing) return { ok: false, error: "not-found" };
-    if (existing.siteAccountId !== request.siteAccountId) return { ok: false, error: "not-found" };
-
-    try {
-      const result = this.domain.updateCredential({
-        credentialId: request.credentialId,
-        ...(request.username !== undefined ? { username: request.username } : {}),
-        ...(request.password !== undefined ? { password: request.password } : {}),
-      });
-      if (!result.ok) return { ok: false, error: result.error };
-      await this.vault.save();
-      return { ok: true, credential: toSiteCredentialView(result.credential) };
-    } catch {
-      return { ok: false, error: "update-failed" };
-    }
+  updateSiteCredential(request: UpdateSiteCredentialRequest): Promise<UpdateSiteCredentialResultView> {
+    return this.ledger.updateSiteCredential(request);
   }
 
-  // --- Session persistence (opt-in encrypted storageState, Issue #294) ---
-
-  /** Toggle the per-site opt-in; disabling clears any persisted storageState immediately. */
-  async setSessionPersistence(
-    request: SetSessionPersistenceRequest,
-  ): Promise<SessionPersistenceMutationResult> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    const site = this.domain.setSessionPersistenceEnabled(request.siteAccountId, request.enabled);
-    if (!site) return { ok: false, error: "not-found" };
-    await this.vault.save();
-    return { ok: true, state: this.sessionPersistenceView(request.siteAccountId) };
+  setSessionPersistence(request: SetSessionPersistenceRequest): Promise<SessionPersistenceMutationResult> {
+    return this.ledger.setSessionPersistence(request);
   }
 
-  /** Explicit "clear now" while persistence stays enabled — the next run starts a fresh session. */
-  async clearSessionPersistence(siteAccountId: string): Promise<SessionPersistenceMutationResult> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    if (!this.domain.getSiteAccount(siteAccountId)) return { ok: false, error: "not-found" };
-    this.domain.clearPersistedSessionState(siteAccountId);
-    await this.vault.save();
-    return { ok: true, state: this.sessionPersistenceView(siteAccountId) };
+  clearSessionPersistence(siteAccountId: string): Promise<SessionPersistenceMutationResult> {
+    return this.ledger.clearSessionPersistence(siteAccountId);
   }
 
-  private sessionPersistenceView(siteAccountId: string): SessionPersistenceView {
-    const site = this.domain?.getSiteAccount(siteAccountId);
-    // Non-mutating read: this view backs a pure read path (`ledgerSite`), which
-    // must not silently delete an expired session as a side effect of display.
-    const state = this.domain?.peekPersistedSessionState(siteAccountId);
-    return {
-      enabled: site?.persistSessionEnabled ?? false,
-      hasPersistedSession: state !== undefined,
-      ...(state ? { updatedAt: state.updatedAt, expiresAt: state.expiresAt } : {}),
-    };
+  revealValue(disclosureId: string, passphrase: string): Promise<RevealResult> {
+    return this.ledger.revealValue(disclosureId, passphrase);
   }
-
-  /**
-   * Re-authenticated reveal of a single disclosed raw value. Requires the master
-   * passphrase to be re-verified for this reveal; refuses most-sensitive values
-   * (CVV) outright. Never logs the value.
-   */
-  async revealValue(disclosureId: string, passphrase: string): Promise<RevealResult> {
-    if (!this.domain || !this.vault || this.vault.isLocked) return { ok: false, error: "locked" };
-    const disclosure = this.domain.getDisclosure(disclosureId);
-    if (!disclosure) return { ok: false, error: "not-found" };
-    if (sensitivityFor(disclosure.attributeKey) === "most-sensitive") {
-      return { ok: false, error: "reveal-not-permitted" };
-    }
-    if (!(await this.vault.verifyPassphrase(passphrase))) return { ok: false, error: "reauth-failed" };
-    if (disclosure.siteHeldValue === undefined) return { ok: false, error: "no-raw-value" };
-    return { ok: true, value: disclosure.siteHeldValue };
-  }
-
-  /** Build one composed ledger summary for a site, or undefined if it is gone. */
-  private composeSiteSummary(siteAccountId: string): SiteLedgerSummary | undefined {
-    if (!this.domain) return undefined;
-    const site = this.domain.getSiteAccount(siteAccountId);
-    if (!site) return undefined;
-    const disclosures = this.domain.listDisclosuresForSite(siteAccountId);
-    const stale: StaleTally = { current: 0, stale: 0, unknown: 0 };
-    for (const disclosure of disclosures) stale[disclosure.staleState]++;
-    const relationshipKinds = this.domain
-      .listAccountRelationshipsForSite(siteAccountId)
-      .filter((r) => r.state === "active")
-      .map((r) => r.kind);
-    const constraintCount = this.domain
-      .listConstraints()
-      .filter((c) => c.siteAccountId === siteAccountId).length;
-    const checkpointDone = this.domain.getCheckpoint("visibility", siteAccountId)?.status === "done";
-    return {
-      siteAccountId: site.id,
-      domain: site.domain,
-      displayName: site.displayName,
-      ...(site.url !== undefined ? { url: site.url } : {}),
-      credentialCount: this.domain.listCredentialsForSite(siteAccountId).length,
-      disclosureCount: disclosures.length,
-      stale,
-      relationshipKinds: [...new Set(relationshipKinds)],
-      constraintCount,
-      collected: disclosures.length > 0 || checkpointDone,
-    };
-  }
-}
-
-/** Masked credential summary for IPC — never includes the password. */
-function toSiteCredentialView(credential: Credential): SiteCredentialView {
-  return {
-    credentialId: credential.id,
-    username: credential.username,
-    updatedAt: credential.updatedAt,
-    source: credential.source,
-    passwordStale: credential.passwordStale === true,
-  };
 }
 
 function isSafeChromeOrigin(value: string): boolean {
@@ -1232,22 +853,6 @@ export function normalizeChromePermissionOrigin(pattern: string): string | undef
   try {
     const url = new URL(pattern.replace(/\/\*$/, "/"));
     return url.protocol === "https:" ? url.origin : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function isSavedPageFile(fileName: string): boolean {
-  return /\.(html?|htm)$/i.test(fileName);
-}
-
-function safeExternalSiteUrl(siteAccount: SiteAccount): string | undefined {
-  // egress: target-site — constructs only the target site URL that may be opened after explicit user action.
-  const candidate = siteAccount.url ?? `https://${siteAccount.domain}`;
-  try {
-    const url = new URL(candidate);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
-    return url.toString();
   } catch {
     return undefined;
   }

@@ -32,6 +32,7 @@ declare namespace chrome {
       status?: "loading" | "complete";
     }
     function get(tabId: number): Promise<Tab>;
+    function create(createProperties: { url: string; active?: boolean }): Promise<Tab>;
     function update(tabId: number, updateProperties: { url: string }): Promise<Tab>;
     function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;
     function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<tabs.Tab[]>;
