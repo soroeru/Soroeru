@@ -5,11 +5,19 @@
  * explicitly approve sending a minimal masked page region to Gemini via Soroeru Cloud.
  *
  * Rules enforced by this component:
- * - Default selection is "送信しない" (do not send). No pre-checked state.
- * - Approval is valid for this one fallback only; no "next time auto-approve" option.
+ * - Nothing is preselected. "送信しない" is the first action and holds focus.
+ * - The user may approve only this fallback, or this collection run when the page kind is known.
  * - Times out after `timeoutMs` (default 5 minutes) and resolves as "timeout".
  * - Closing / clicking "送信しない" resolves as "declined".
  */
+
+const PAGE_KIND_LABELS: Record<string, string> = {
+  profile: "プロフィール",
+  address: "住所",
+  payment: "支払い",
+  contact: "連絡先",
+  security: "セキュリティ",
+};
 
 import { useEffect, useRef, useState } from "react";
 import type { AttributeKey } from "../../src/shared/cloud-contract.js";
@@ -18,9 +26,14 @@ import { PROFILE_FIELD_LABELS } from "../../src/types.js";
 export interface ConsentGateProps {
   origin: string;
   attributeKeys: AttributeKey[];
-  /** Page type hint shown to the user (e.g. "プロフィール", "住所"). */
-  pageType?: string;
-  onApprove: () => void;
+  /** Known page kind. Run approval is hidden when this is absent. */
+  pageKind?: string;
+  allowRun: boolean;
+  requestLimit: number;
+  ttlMinutes: number;
+  regionLimitKiB: number;
+  onSingle: () => void;
+  onRun: () => void;
   onDecline: () => void;
   /** Called when the countdown reaches zero. Distinct from onDecline (user action). */
   onTimeout: () => void;
@@ -36,8 +49,13 @@ function attributeLabel(key: AttributeKey): string {
 export function ConsentGate({
   origin,
   attributeKeys,
-  pageType,
-  onApprove,
+  pageKind,
+  allowRun,
+  requestLimit,
+  ttlMinutes,
+  regionLimitKiB,
+  onSingle,
+  onRun,
   onDecline,
   onTimeout,
   timeoutMs = 300_000,
@@ -65,10 +83,10 @@ export function ConsentGate({
     onDecline();
   };
 
-  const handleApprove = (): void => {
+  const choose = (action: () => void): void => {
     if (resolved.current) return;
     resolved.current = true;
-    onApprove();
+    action();
   };
 
   return (
@@ -92,23 +110,35 @@ export function ConsentGate({
           <dt className="font-medium shrink-0">対象サイト:</dt>
           <dd className="break-all">{origin}</dd>
         </div>
-        {pageType && (
+        {pageKind && (
           <div className="flex gap-2 mt-1">
             <dt className="font-medium shrink-0">ページ種別:</dt>
-            <dd>{pageType}</dd>
+            <dd>{PAGE_KIND_LABELS[pageKind] ?? pageKind}</dd>
           </div>
         )}
         <div className="flex gap-2 mt-1">
           <dt className="font-medium shrink-0">読み取りたい属性:</dt>
           <dd>{attributeKeys.map(attributeLabel).join("、")}</dd>
         </div>
+        <div className="flex gap-2 mt-1">
+          <dt className="font-medium shrink-0">送信先:</dt>
+          <dd>Soroeru Cloud（Google Cloud）経由の Gemini</dd>
+        </div>
       </dl>
 
       <ul className="text-sm list-disc list-inside space-y-1 text-neutral-700">
-        <li>パスワード・CVV・ワンタイムコードなどの秘密情報は送信されません。</li>
-        <li>送信した内容は改善用データとして保存されません。</li>
-        <li>承認はこの1回のみ有効です。次回は再度確認します。</li>
-        <li>送信先: Soroeru Cloud（Google Cloud）経由の Gemini</li>
+        <li>パスワード、セキュリティコード、ワンタイムコードなどの秘密情報は送信されません。</li>
+        <li>1回の送信は {regionLimitKiB} KiB までです。</li>
+        <li>送信した個人情報は改善用データとして保存されません。</li>
+        {allowRun ? (
+          <li>
+            「この収集だけ許可する」は、上のサイト・ページ種別・属性だけに、最大 {requestLimit} 件、承認から {ttlMinutes}{" "}
+            分まで有効です。範囲が変わると、再度確認します。
+          </li>
+        ) : (
+          <li>ページ種別を特定できないため、承認できるのはこの1回だけです。</li>
+        )}
+        <li>収集中の「Gemini への送信を止める」で、残っている承認を取り消せます。</li>
       </ul>
 
       <p className="text-xs text-neutral-500">残り {remaining} 秒で自動キャンセルされます。</p>
@@ -116,23 +146,32 @@ export function ConsentGate({
         送信しない場合は、サイトのプロフィールページを開いてから「保存したページを読み込む」機能で手動で読み取ることができます。
       </p>
 
-      <div className="flex gap-2">
-        {/* Default: do not send. Tab order puts decline first so accidental approval is harder. */}
+      <div className="flex flex-col gap-2">
+        {/* Nothing is preselected. Decline is first and focused so approval takes an explicit click. */}
         <button
           type="button"
           onClick={handleDecline}
-          className="flex-1 rounded border border-neutral-400 px-3 py-2 text-sm font-medium"
+          className="rounded border border-neutral-400 px-3 py-2 text-sm font-medium"
           autoFocus
         >
           送信しない
         </button>
         <button
           type="button"
-          onClick={handleApprove}
-          className="flex-1 rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white"
+          onClick={() => choose(onSingle)}
+          className="rounded border border-blue-600 px-3 py-2 text-sm font-medium text-blue-700"
         >
           この1回だけ送信する
         </button>
+        {allowRun && (
+          <button
+            type="button"
+            onClick={() => choose(onRun)}
+            className="rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white"
+          >
+            この収集だけ許可する
+          </button>
+        )}
       </div>
     </section>
   );

@@ -61,7 +61,12 @@ export function shouldDiscard(
 ): boolean {
   if (attempts >= MAX_ATTEMPTS) return true;
   if (now - enqueuedAt > MAX_AGE_MS) return true;
-  if (failReason === "budget-exhausted" || failReason === "ai-invalid-response") return true;
+  if (
+    failReason === "budget-exhausted" ||
+    failReason === "ai-invalid-response" ||
+    failReason === "client-error"
+  )
+    return true;
   return false;
 }
 
@@ -107,10 +112,9 @@ function updateQueueItem(
  *
  * - Skips items that are not yet due (backoff window not elapsed).
  * - Discards items that exceed MAX_ATTEMPTS or MAX_AGE_MS.
- * - Retries only on `cloud-unreachable` and `rate-limited`; discards on all other errors.
- *   Note: `CloudClient` maps every non-OK HTTP response — including 4xx such as
- *   `schema-retired` or `schema-not-found` — to `cloud-unreachable`, so those are
- *   retried up to MAX_ATTEMPTS times before being discarded.
+ * - Retries transport failures, HTTP 5xx (`server-error`), and `rate-limited`.
+ *   Discards HTTP 4xx (`client-error`), budget exhaustion, and invalid responses.
+ *   `schema-retired` and `schema-not-found` are 4xx and are not retried.
  * - `idempotencyKey` values are reused across retries — never regenerated.
  * - Cloud writes are only attempted when `cloudAssistEnabled` is true. The off switch
  *   is re-checked before each individual `client.call` so that disabling cloud assistance
@@ -166,10 +170,14 @@ async function doDeliverQueue(session: VaultSession, client: DeliveryClient): Pr
     } catch (err) {
       if (err instanceof CloudClientError) {
         failReason = err.category;
-        if (err.category === "cloud-unreachable" || err.category === "rate-limited") {
+        if (
+          err.category === "cloud-unreachable" ||
+          err.category === "server-error" ||
+          err.category === "rate-limited"
+        ) {
           outcome = "retryable";
         }
-        // budget-exhausted, ai-invalid-response -> discard (default)
+        // client-error, budget-exhausted, ai-invalid-response -> discard (default)
       }
       // CloudContractError -> discard (default)
     }

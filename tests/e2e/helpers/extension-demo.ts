@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { CloudOperation, CloudRequests, FormSchema } from "../../../src/shared/cloud-contract.js";
 
-export type DemoPage = "tier1" | "tier2" | "tier3" | "wall";
+export type DemoPage = "tier1" | "tier2" | "tier3" | "tier3-regions" | "wall";
 export type CapturedRequest = { operation: CloudOperation; body: CloudRequests[CloudOperation] };
 
 export interface DemoBrowser {
@@ -118,7 +118,7 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     );
     await context.route(`${siteOrigin}/**`, async (route) => {
       const path = new URL(route.request().url()).pathname.slice(1);
-      if (!/^(tier1|tier2|tier3|wall)$/.test(path)) return route.abort();
+      if (!/^(tier1|tier2|tier3|tier3-regions|wall)$/.test(path)) return route.abort();
       await route.fulfill({ contentType: "text/html", path: resolve(`sites/extension-demo/${path}.html`) });
     });
     const respond = (operation: CloudOperation, body: CloudRequests[CloudOperation]): unknown => {
@@ -135,14 +135,15 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
         const phone = snapshot.items.find((item) => item.label === "電話番号");
         const name = snapshot.items.find((item) => item.label === "氏名");
         response = {
-          pagePurpose: "profile",
+          pagePurpose: snapshot.items.some(item => item.nameTokens.includes("contact")) ? "contact" : "profile",
           mappings: [
             ...(email ? [{ itemId: email.id, attributeKey: "email", confidence: 0.95 }] : []),
             ...(page === "tier2" && phone
               ? [{ itemId: phone.id, attributeKey: "phone.full", confidence: 0.95 }]
-              : page === "tier3" && name
+              : (page === "tier3" || page === "tier3-regions") && name
                 ? [{ itemId: name.id, attributeKey: "phone.full", confidence: 0.95 }]
                 : []),
+            ...(page === "tier3-regions" && phone ? [{ itemId: phone.id, attributeKey: "name.full", confidence: 0.95 }] : []),
           ],
         };
       } else if (operation === "tier3Ticket") {
@@ -151,8 +152,10 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
         const request = body as CloudRequests["readWithConsent"];
         response = {
           values: request.items
-            .filter((item) => item.label === "電話番号" && request.requestedKeys.includes("phone.full"))
-            .map((item) => ({ itemId: item.id, attributeKey: "phone.full", value: item.text })),
+            .flatMap((item) => {
+              const key = item.label === "電話番号" ? "phone.full" : item.label === "氏名" ? "name.full" : undefined;
+              return key && request.requestedKeys.includes(key) ? [{ itemId: item.id, attributeKey: key, value: item.text }] : [];
+            }),
         };
       } else if (operation === "feedback") response = { accepted: true };
       else response = {};

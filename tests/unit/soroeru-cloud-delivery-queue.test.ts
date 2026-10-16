@@ -56,7 +56,9 @@ test("shouldDiscard: budget-exhausted and ai-invalid-response are non-retryable"
   assert.equal(shouldDiscard("budget-exhausted", 0, 0, 0), true);
   assert.equal(shouldDiscard("ai-invalid-response", 0, 0, 0), true);
   assert.equal(shouldDiscard("cloud-unreachable", 0, 0, 0), false);
+  assert.equal(shouldDiscard("server-error", 0, 0, 0), false);
   assert.equal(shouldDiscard("rate-limited", 0, 0, 0), false);
+  assert.equal(shouldDiscard("client-error", 0, 0, 0), true);
 });
 
 // ── Session fixture ───────────────────────────────────────────────────────────

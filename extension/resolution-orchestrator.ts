@@ -1,4 +1,5 @@
 import {
+  CLOUD_LIMITS,
   validateCloudRequest,
   validateCloudResponse,
   validateFormSchema,
@@ -16,6 +17,7 @@ import { validateSchemaReadResult, type SchemaReadResult } from "../src/shared/s
 import { deliverQueue, type DeliveryClient } from "./cloud-delivery-queue.js";
 import { sha256Hex } from "../src/shared/sha256.js";
 import { buildTier3Payload, Tier3HandoffNeeded } from "./tier3-payload-builder.js";
+import { CloudClientError } from "./cloud-client.js";
 import type { MaskedRegionItem } from "./content-script.js";
 import { classifyFields } from "../src/agent/classifier.js";
 import { permittedCollectionItem } from "../src/automation/ai-visibility-contract.js";
@@ -24,6 +26,12 @@ import type { FormField } from "../src/types.js";
 
 /** 30-day cache freshness window (§567 §2.2). */
 const CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Run-scoped Tier 3 approval bounds (#603 / requirements). */
+const TIER3_RUN_REQUEST_LIMIT = 20;
+const TIER3_RUN_TTL_MS = 15 * 60 * 1000;
+
+class StaleConsentObservation extends Error {}
+interface ConsentObservation { fingerprint: string; identity: string }
 
 /**
  * Local corroboration for Tier 3 responses (design #554 §5.3 / Issue #517 rules).
@@ -77,15 +85,39 @@ function corroborateValue(proposed: string, item: MaskedRegionItem, key: Attribu
   return true;
 }
 
-/** Parameters shown to the user in the consent gate (design #554 §5.3). */
+/** Parameters shown to the user in the consent gate. Nothing in the gate is preselected. */
 export interface Tier3ConsentParams {
   origin: string;
   attributeKeys: AttributeKey[];
+  /** Omitted when the page kind cannot be established. Run approval is then unavailable. */
+  pageKind?: string;
+  allowRun: boolean;
+  requestLimit: number;
+  ttlMinutes: number;
+  regionLimitKiB: number;
 }
+/**
+ * User decision for one Tier 3 gate.
+ * `approved` is the historical one-fallback choice and is treated as `single`.
+ */
+export type Tier3ConsentDecision = "single" | "run" | "approved" | "declined" | "timeout";
 /** Callback that shows the consent gate and resolves with the user's decision. */
-export type Tier3ConsentCallback = (
-  params: Tier3ConsentParams,
-) => Promise<"approved" | "declined" | "timeout">;
+export type Tier3ConsentCallback = (params: Tier3ConsentParams) => Promise<Tier3ConsentDecision>;
+
+/** In-memory authority for one collection run. It is never persisted or restored. */
+interface RunConsent {
+  runId: string;
+  consentId: string;
+  mode: "run";
+  sites: ReadonlySet<string>;
+  pageKinds: ReadonlySet<string>;
+  attributeKeys: ReadonlySet<AttributeKey>;
+  approvedAt: number;
+  expiresAt: number;
+  remainingRequests: number;
+  settingsVersion: number;
+  generation: number;
+}
 
 export interface ResolveClient {
   call<K extends "resolve" | "mapStructure" | "tier3Ticket" | "readWithConsent">(
@@ -100,6 +132,26 @@ export interface SharingPolicy {
 }
 /** Side Panel Tier 1 + 2 + 3 orchestrator. Values stay on the direct content->panel path and in the encrypted vault. */
 export class ResolutionOrchestrator {
+  private runId = crypto.randomUUID();
+  private generation = 0;
+  private runConsent: RunConsent | undefined;
+
+  /** Starts a collection run and drops any approval from a previous run. */
+  beginRun(): void {
+    this.revokeConsent();
+    this.runId = crypto.randomUUID();
+  }
+
+  /** Ends run-scoped approval. In-flight reads must observe the new generation and discard. */
+  revokeConsent(): void {
+    this.generation++;
+    this.runConsent = undefined;
+  }
+
+  private now(): number {
+    return this.options.now?.() ?? Date.now();
+  }
+
   constructor(
     private readonly options: {
       session: VaultSession;
@@ -110,14 +162,17 @@ export class ResolutionOrchestrator {
       clientVersion: string;
       sendPageCommand: (command: PageCommand) => Promise<unknown>;
       isActive: () => boolean;
-      /** Required for Tier 3. Called once per fallback attempt; approval is valid for this invocation only. */
+      /** Required for Tier 3. Reused only inside the active run authority. */
       showConsentGate?: Tier3ConsentCallback;
-      /** Origin of the current page (e.g. "example.com"). Provided for the consent gate display. */
+      /** Origin of the current page, shown on the consent gate. */
       currentOrigin?: string;
+      /** Clock for the 15-minute run authority. Defaults to Date.now. */
+      now?: () => number;
     },
   ) {}
   async resolve(
     site: string,
+    observationRestarts = 1,
   ): Promise<
     | (SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" | "gemini_pii_consent" })
     | null
@@ -156,10 +211,16 @@ export class ResolutionOrchestrator {
     let tier2FallbackResult: (SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" }) | null =
       null;
     let snapshotReady = false;
+    let pageKind: string | undefined;
     let localReadStarted = false;
+    let consentObservation: ConsentObservation | undefined;
     try {
+      if (o.showConsentGate) consentObservation = await this.observeConsentPage();
       const snapshot = await o.sendPageCommand({ command: "structureSnapshot", site });
       validateCloudRequest("mapStructure", snapshot);
+      if (consentObservation && (snapshot.pageFingerprint !== consentObservation.fingerprint ||
+          !(await this.sameConsentPage(consentObservation)))) throw new StaleConsentObservation();
+      if (snapshot.purposeHint !== "unknown") pageKind = snapshot.purposeHint;
       if (!cloudStillAuthorized()) return tier1;
       if (
         snapshot.site !== site ||
@@ -176,6 +237,7 @@ export class ResolutionOrchestrator {
         snapshotReady = true;
         const response = await o.client.call("mapStructure", snapshot);
         validateStructureMappings(snapshot, response);
+        if (response.pagePurpose !== "unknown") pageKind = response.pagePurpose;
         if (!cloudStillAuthorized()) return tier1;
         const fields = response.mappings
           .filter((m) => m.confidence >= 0.8 && !resolvedKeys.has(m.attributeKey))
@@ -296,11 +358,38 @@ export class ResolutionOrchestrator {
       return baseResult;
 
     try {
-      return await this.resolveTier3(site, baseResult, active);
-    } catch {
+      if (!consentObservation) return baseResult;
+      let result: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" | "gemini_pii_consent" } = baseResult;
+      // One bounded collection can need several DOM regions. Reuse only the active
+      // run authority; a single approval still gates every subsequent region.
+      for (let regionIndex = 0; regionIndex < TIER3_RUN_REQUEST_LIMIT; regionIndex++) {
+        const progress = { hasMore: false };
+        result = await this.resolveTier3(site, result, active, consentObservation, regionIndex, progress, pageKind);
+        if (!progress.hasMore || !result.unresolved.length) break;
+      }
+      return result;
+    } catch (error) {
       active();
+      if (error instanceof StaleConsentObservation) {
+        this.revokeConsent();
+        // Re-observe all tiers and the page kind; never adopt a new page under an old gate.
+        return observationRestarts > 0 ? this.resolve(site, observationRestarts - 1) : null;
+      }
       return baseResult;
     }
+  }
+
+  private async observeConsentPage(): Promise<ConsentObservation> {
+    const value = await this.options.sendPageCommand({ command: "schemaObservation" });
+    if (!value || typeof value !== "object" ||
+        typeof (value as ConsentObservation).identity !== "string" ||
+        typeof (value as ConsentObservation).fingerprint !== "string") throw new Error("invalid-consent-observation");
+    return value as ConsentObservation;
+  }
+
+  private async sameConsentPage(observation: ConsentObservation): Promise<boolean> {
+    const current = await this.observeConsentPage();
+    return current.identity === observation.identity && current.fingerprint === observation.fingerprint;
   }
 
   /**
@@ -310,8 +399,12 @@ export class ResolutionOrchestrator {
    */
   private async resolveTier3(
     site: string,
-    tier2: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" },
+    tier2: SchemaReadResult & { schema: FormSchema; source: "cloud" | "cache" | "gemini" | "gemini_pii_consent" },
     active: () => void,
+    observation: ConsentObservation,
+    regionIndex: number,
+    progress: { hasMore: boolean },
+    pageKind?: string,
   ): Promise<SchemaReadResult & { schema: FormSchema; source: "gemini_pii_consent" }> {
     const o = this.options;
     if (!o.showConsentGate || !o.client) throw new Error("tier3-unavailable");
@@ -320,19 +413,50 @@ export class ResolutionOrchestrator {
     const beforeConsent = o.session.vault.get("cloudSettings", "cloud");
     // egress: target-site — display origin of the user's selected site for the consent gate UI
     const origin = o.currentOrigin ?? `https://${site}`;
-    const consentDecision = await o.showConsentGate({ origin, attributeKeys: unresolvedKeys });
+    const scopeCovers = (authority: RunConsent): boolean =>
+      authority.runId === this.runId &&
+      authority.generation === this.generation &&
+      authority.sites.has(site) &&
+      pageKind !== undefined &&
+      authority.pageKinds.has(pageKind) &&
+      unresolvedKeys.every((key) => authority.attributeKeys.has(key)) &&
+      authority.expiresAt > this.now() &&
+      authority.settingsVersion === beforeConsent?.updatedAt;
+    if (this.runConsent && !(scopeCovers(this.runConsent) && this.runConsent.remainingRequests > 0)) {
+      this.revokeConsent();
+    }
+    const gateGeneration = this.generation;
+    if (!(await this.sameConsentPage(observation))) throw new StaleConsentObservation();
+    if (gateGeneration !== this.generation) return { ...tier2, source: "gemini_pii_consent" };
+    const reused = this.runConsent !== undefined;
+    const consentDecision = reused
+      ? "run"
+      : await o.showConsentGate({
+          origin,
+          attributeKeys: unresolvedKeys,
+          ...(pageKind ? { pageKind } : {}),
+          allowRun: pageKind !== undefined,
+          requestLimit: TIER3_RUN_REQUEST_LIMIT,
+          ttlMinutes: TIER3_RUN_TTL_MS / 60_000,
+          regionLimitKiB: CLOUD_LIMITS.tier3Bytes / 1024,
+        });
     active();
+    if (gateGeneration !== this.generation) return { ...tier2, source: "gemini_pii_consent" };
+    if (!(await this.sameConsentPage(observation))) throw new StaleConsentObservation();
+    if (gateGeneration !== this.generation) return { ...tier2, source: "gemini_pii_consent" };
 
     // S6: re-check cloudAssistEnabled — the user may have toggled it during the gate wait.
     const afterConsent = o.session.vault.get("cloudSettings", "cloud");
     if (!afterConsent?.cloudAssistEnabled || afterConsent.updatedAt !== beforeConsent?.updatedAt) {
+      this.revokeConsent();
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
 
     // S5: siteHash is an unsalted sha256 of the registrable domain (no HMAC).
     const siteHash = sha256Hex(site);
 
-    if (consentDecision !== "approved") {
+    const choice = consentDecision === "approved" ? "single" : consentDecision;
+    if (choice !== "single" && choice !== "run") {
       // Record C6 decline/timeout evidence; no API call made.
       o.session.vault.put("evidence", {
         id: crypto.randomUUID(),
@@ -341,7 +465,7 @@ export class ResolutionOrchestrator {
         tier3Consent: {
           siteHash,
           attributeKeys: unresolvedKeys,
-          result: consentDecision,
+          result: choice,
           payloadBytes: 0,
           payloadSha256: "0".repeat(64),
         },
@@ -351,19 +475,94 @@ export class ResolutionOrchestrator {
       // Return Tier 2 result with unresolved attributes still unknown — no handoff from here.
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
+    if (choice === "run" && !pageKind) {
+      o.session.vault.put("evidence", {
+        id: crypto.randomUUID(),
+        observedAt: Date.now(),
+        kind: "tier3-consent",
+        tier3Consent: {
+          siteHash,
+          attributeKeys: unresolvedKeys,
+          result: "error",
+          payloadBytes: 0,
+          payloadSha256: "0".repeat(64),
+        },
+      });
+      await o.session.save();
+      active();
+      return { ...tier2, source: "gemini_pii_consent" as const };
+    }
+
+    if (choice === "run" && !reused && pageKind) {
+      const approvedAt = this.now();
+      this.runConsent = {
+        runId: this.runId,
+        consentId: crypto.randomUUID(),
+        mode: "run",
+        sites: new Set([site]),
+        pageKinds: new Set([pageKind]),
+        attributeKeys: new Set(unresolvedKeys),
+        approvedAt,
+        expiresAt: approvedAt + TIER3_RUN_TTL_MS,
+        remainingRequests: TIER3_RUN_REQUEST_LIMIT,
+        settingsVersion: afterConsent.updatedAt,
+        generation: this.generation,
+      };
+    }
+    const authority = choice === "run" ? this.runConsent : undefined;
+    const generation = this.generation;
+    const authorityValid = (): boolean => {
+      if (o.session.state !== "unlocked" || !o.isActive()) {
+        this.revokeConsent();
+        throw new Error("resolution-inactive");
+      }
+      if (generation !== this.generation) return false;
+      const current = o.session.vault.get("cloudSettings", "cloud");
+      if (!current?.cloudAssistEnabled || current.updatedAt !== afterConsent.updatedAt) {
+        this.revokeConsent();
+        return false;
+      }
+      if (authority && (this.runConsent !== authority || !scopeCovers(authority))) return false;
+      return true;
+    };
+    const authorized = async (): Promise<boolean> => {
+      if (!authorityValid()) return false;
+      try {
+        const unchanged = await this.sameConsentPage(observation);
+        // The command yields: stop/lock/expiry/settings may have changed while it ran.
+        return authorityValid() && unchanged;
+      } catch (error) {
+        if (error instanceof Error && error.message === "wall-or-page-unavailable") this.revokeConsent();
+        return false;
+      }
+    };
+    if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
 
     // Approved: build the minimal payload scoped to unresolved attributes only (B1).
     // Pass already-resolved item IDs so the content script excludes them from the read.
     const resolvedIds = tier2.values.map((v) => v.itemId);
-    const rawRegion = await o.sendPageCommand({
-      command: "readRegionMasked",
-      requestedKeys: unresolvedKeys,
-      resolvedIds,
-    });
-    active();
+    let rawItems: MaskedRegionItem[] = [];
+    let regionHasMore = false;
+    try {
+      const rawRegion = await o.sendPageCommand({
+        command: "readRegionMasked",
+        regionIndex,
+        requestedKeys: unresolvedKeys,
+        resolvedIds,
+      });
+      rawItems = (rawRegion as { items?: MaskedRegionItem[] }).items ?? [];
+      // Set continuation only after a validated response (or an empty region).
+      regionHasMore = (rawRegion as { hasMore?: boolean }).hasMore === true;
+    } catch (error) {
+      if (error instanceof Error && error.message === "wall-or-page-unavailable") this.revokeConsent();
+      return { ...tier2, source: "gemini_pii_consent" as const };
+    }
+    if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
 
-    const rawItems = (rawRegion as { items?: MaskedRegionItem[] }).items ?? [];
-
+    if (!rawItems.length) {
+      progress.hasMore = regionHasMore;
+      return { ...tier2, source: "gemini_pii_consent" };
+    }
     let payload: ConsentedReadPayload;
     try {
       payload = buildTier3Payload(site, unresolvedKeys, rawItems);
@@ -388,72 +587,69 @@ export class ResolutionOrchestrator {
       throw err;
     }
 
-    const payloadJson = tier3PayloadJson(payload);
-    const payloadBytes = new TextEncoder().encode(payloadJson).byteLength;
-    const payloadSha256 = sha256Hex(payloadJson);
-
-    // Issue a Tier 3 ticket (consumes one budget unit).
-    let ticket: string;
-    try {
-      const ticketRequest: CloudRequests["tier3Ticket"] = {
-        consentId: payload.consentId,
-        site,
-        payloadSha256,
-      };
-      validateCloudRequest("tier3Ticket", ticketRequest);
-      const ticketResponse = await o.client.call("tier3Ticket", ticketRequest);
-      validateCloudResponse("tier3Ticket", ticketResponse);
-      active();
-      if (o.session.vault.get("cloudSettings", "cloud")?.updatedAt !== afterConsent.updatedAt)
-        return { ...tier2, source: "gemini_pii_consent" as const };
-      ticket = ticketResponse.ticket;
-    } catch {
-      active();
+    let payloadJson = tier3PayloadJson(payload);
+    let payloadBytes = new TextEncoder().encode(payloadJson).byteLength;
+    let payloadSha256 = sha256Hex(payloadJson);
+    let readResponse: CloudResponses["readWithConsent"] | undefined;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!(await authorized())) break;
+      try {
+        if (attempt > 0) {
+          const fresh = await o.sendPageCommand({
+            command: "readRegionMasked",
+            regionIndex,
+            requestedKeys: unresolvedKeys,
+            resolvedIds,
+          });
+          if (!(await authorized())) break;
+          payload = buildTier3Payload(site, unresolvedKeys, (fresh as { items?: MaskedRegionItem[] }).items ?? []);
+          payloadJson = tier3PayloadJson(payload);
+          payloadBytes = new TextEncoder().encode(payloadJson).byteLength;
+          payloadSha256 = sha256Hex(payloadJson);
+        }
+        if (!(await authorized())) break;
+        // Reservation is synchronous so concurrent resolutions cannot exceed the run limit.
+        // A consumed slot is not restored: delivery of a ticket is uncertain after the call starts.
+        if (authority) {
+          if (this.runConsent !== authority || authority.remainingRequests <= 0) break;
+          authority.remainingRequests--;
+        } else if (attempt > 0) {
+          break; // A single approval authorizes one send only.
+        }
+        const ticketRequest: CloudRequests["tier3Ticket"] = { consentId: payload.consentId, site, payloadSha256 };
+        validateCloudRequest("tier3Ticket", ticketRequest);
+        if (!authorityValid()) break;
+        const ticketResponse: CloudResponses["tier3Ticket"] = await o.client.call("tier3Ticket", ticketRequest);
+        validateCloudResponse("tier3Ticket", ticketResponse);
+        if (!(await authorized())) break;
+        const readRequest: CloudRequests["readWithConsent"] = { ...payload, ticket: ticketResponse.ticket };
+        validateCloudRequest("readWithConsent", readRequest);
+        if (!authorityValid()) break;
+        readResponse = await o.client.call("readWithConsent", readRequest);
+        validateCloudResponse("readWithConsent", readResponse);
+        if (!(await authorized())) readResponse = undefined;
+        break;
+      } catch (error) {
+        readResponse = undefined;
+        if (error instanceof Tier3HandoffNeeded) break;
+        if (!(await authorized())) break;
+        const retryable =
+          error instanceof CloudClientError &&
+          (error.category === "cloud-unreachable" || error.category === "server-error");
+        if (!retryable || attempt !== 0 || !authority) break;
+      }
+    }
+    if (!readResponse) {
       o.session.vault.put("evidence", {
         id: crypto.randomUUID(),
         observedAt: Date.now(),
         kind: "tier3-consent",
-        tier3Consent: {
-          siteHash,
-          attributeKeys: unresolvedKeys,
-          result: "error",
-          payloadBytes,
-          payloadSha256,
-        },
+        tier3Consent: { siteHash, attributeKeys: unresolvedKeys, result: "error", payloadBytes, payloadSha256 },
       });
       await o.session.save();
-      active();
       return { ...tier2, source: "gemini_pii_consent" as const };
     }
-
-    // Call the pii-fallback service. No retries; a new consent is required for any retry.
-    let readResponse: CloudResponses["readWithConsent"];
-    try {
-      const readRequest: CloudRequests["readWithConsent"] = { ...payload, ticket };
-      validateCloudRequest("readWithConsent", readRequest);
-      readResponse = await o.client.call("readWithConsent", readRequest);
-      validateCloudResponse("readWithConsent", readResponse);
-      active();
-      if (o.session.vault.get("cloudSettings", "cloud")?.updatedAt !== afterConsent.updatedAt)
-        return { ...tier2, source: "gemini_pii_consent" as const };
-    } catch {
-      active();
-      o.session.vault.put("evidence", {
-        id: crypto.randomUUID(),
-        observedAt: Date.now(),
-        kind: "tier3-consent",
-        tier3Consent: {
-          siteHash,
-          attributeKeys: unresolvedKeys,
-          result: "error",
-          payloadBytes,
-          payloadSha256,
-        },
-      });
-      await o.session.save();
-      active();
-      return { ...tier2, source: "gemini_pii_consent" as const };
-    }
+    if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
 
     // Local corroboration: proposed value must equal item text after normalization and pass
     // classifier + permittedCollectionItem checks (design #554 §5.3 / Issue #517 rules).
@@ -472,7 +668,11 @@ export class ResolutionOrchestrator {
       });
     }
 
-    // Record C6 evidence (approved + corroboration outcome).
+    if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
+
+    // Record C6 evidence only when the response is still inside the approval.
+    // The runner stores the corroborated group atomically via resolveSharedSchema.
+    const acceptedKeys = new Set(corroboratedValues.map((v) => v.attributeKey));
     o.session.vault.put("evidence", {
       id: crypto.randomUUID(),
       observedAt: Date.now(),
@@ -485,12 +685,10 @@ export class ResolutionOrchestrator {
         payloadSha256,
       },
     });
-
-    // Corroborated values are stored by the runner via resolveSharedSchema; not persisted here.
-    const acceptedKeys = new Set(corroboratedValues.map((v) => v.attributeKey));
     await o.session.save();
-    active();
+    if (!(await authorized())) return { ...tier2, source: "gemini_pii_consent" as const };
 
+    progress.hasMore = regionHasMore;
     return {
       values: [
         ...tier2.values,
