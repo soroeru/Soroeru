@@ -1,3 +1,4 @@
+import { sha256Hex } from "../src/shared/sha256.js";
 import { sanitizeStructure, sanitizedLabel } from "./structure-sanitizer.js";
 import { WallDetectionService } from "../src/automation/wall-detection.js";
 import { classifyFields } from "../src/agent/classifier.js";
@@ -10,13 +11,33 @@ export type { SchemaReadResult } from "../src/shared/schema-resolution.js";
 import type { SchemaReadResult } from "../src/shared/schema-resolution.js";
 let structureObservation:
   { url: string; fingerprint: string; observer: MutationObserver; invalidated: boolean } | undefined;
-export function schemaPageFingerprint(): string {
+/** Wall, terms, and missing-document checks shared by fingerprint and Tier 3 reads. */
+export function assertReadablePage(): void {
   const snapshot = { ...scanInPage(), url: location.href, title: document.title };
   if (detectWall(snapshot) || new WallDetectionService().detectTosProhibition(snapshot) || !document.body)
     throw new Error("wall-or-page-unavailable");
+}
+export function schemaPageFingerprint(): string {
+  assertReadablePage();
   const print = structuralFingerprintInPage(document.body);
   if (!print) throw new Error("page-too-large");
   return print;
+}
+// Local-only identity: never sent as a Cloud fingerprint or persisted in Evidence.
+let documentIdentity: string | undefined;
+export function schemaPageObservation(leaseId: string, epoch: number): { fingerprint: string; identity: string } {
+  if (!documentIdentity) {
+    documentIdentity = crypto.randomUUID();
+    const invalidate = (): void => { documentIdentity = crypto.randomUUID(); };
+    addEventListener("pagehide", invalidate);
+    addEventListener("pageshow", invalidate);
+  }
+  const fingerprint = schemaPageFingerprint();
+  const values = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input,textarea,select"))
+    .map(element => [element.value, element instanceof HTMLInputElement ? element.checked : false]);
+  return { fingerprint, identity: sha256Hex(JSON.stringify([
+    documentIdentity, location.href, leaseId, epoch, fingerprint, document.body.innerText, values,
+  ])) };
 }
 /** Executes synchronously in the leased content script: validate first, read only accepted elements. */
 export function readSchemaPage(schema: FormSchema): SchemaReadResult {

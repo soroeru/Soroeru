@@ -17,6 +17,7 @@ import {
   ResolutionOrchestrator,
   type ResolveClient,
   type Tier3ConsentCallback,
+  type Tier3ConsentDecision,
   type Tier3ConsentParams,
 } from "../resolution-orchestrator.js";
 import { deliverQueue, type DeliveryClient } from "../cloud-delivery-queue.js";
@@ -61,6 +62,7 @@ export interface VisibilityHostOptions {
 export class VisibilityHost {
   readonly service: VisibilityService;
   private readonly listeners = new Set<(event: VisibilityEvent) => void>();
+  private readonly consentRevocations = new Set<() => void>();
   private readonly stopStateWatch: () => void;
   private readonly stopCloudStateWatch: () => void;
   private bound = false;
@@ -80,7 +82,7 @@ export class VisibilityHost {
   private feedbackEpoch = 0;
   private sharingOverride: boolean | undefined;
   /** Resolves the currently pending consent gate promise; set only while a gate is open. */
-  private pendingGateResolve: ((v: "approved" | "declined" | "timeout") => void) | undefined;
+  private pendingGateResolve: ((v: Tier3ConsentDecision) => void) | undefined;
 
   constructor(private readonly options: VisibilityHostOptions) {
     this.resolver = new ResolutionOrchestrator({
@@ -132,7 +134,11 @@ export class VisibilityHost {
       },
       openSession: (site) => this.openSession(site),
       emit: (event) => {
-        if (event.type === "handoff") { this.pausedAuthority = this.authority; this.authority = undefined; }
+        if (event.type === "handoff") {
+          this.pausedAuthority = this.authority;
+          this.authority = undefined;
+          this.revokeRunConsent();
+        }
         for (const listener of this.listeners) listener(event);
       },
       persist: () => options.session.save(),
@@ -142,12 +148,12 @@ export class VisibilityHost {
     options.leaseClient.onInvalidated(() => {
       this.authority = undefined;
       this.pausedAuthority = undefined;
+      this.revokeRunConsent();
       this.service.abortRun();
     });
     this.stopCloudStateWatch = options.session.onStateChange((state) => {
       if (state === "locked" || state === "closed" || state === "in-use-elsewhere") {
-        this.pendingGateResolve?.("declined");
-        this.pendingGateResolve = undefined;
+        this.revokeRunConsent();
         cloud?.revoke?.("cloud");
       }
     });
@@ -316,7 +322,10 @@ export class VisibilityHost {
       (patch.telemetryEnabled === false && old?.telemetryEnabled) || patch.discardFeedback === true;
     const cloud = this.options.cloudClient as
       (ResolveClient & { revoke?: (kind: "cloud" | "sharing") => void }) | undefined;
-    if (revokingCloud) cloud?.revoke?.("cloud");
+    if (revokingCloud) {
+      cloud?.revoke?.("cloud");
+      this.revokeRunConsent();
+    }
     if (revokingSharing) cloud?.revoke?.("sharing");
     if (revokingCloud) this.pendingOff.cloud = true;
     if (patch.telemetryEnabled === false && old?.telemetryEnabled) this.pendingOff.sharing = true;
@@ -402,25 +411,41 @@ export class VisibilityHost {
    * If a gate is pending when the provider is removed, the gate is resolved as "declined"
    * so the orchestrator doesn't hang (B5).
    */
-  setConsentGateProvider(
-    provider: ((params: Tier3ConsentParams) => Promise<"approved" | "declined" | "timeout">) | undefined,
-  ): void {
+  /** Drops in-memory Tier 3 approval and closes an open gate without sending. */
+  revokeRunConsent(): void {
+    this.resolver.revokeConsent();
+    this.resolvePendingGate("declined");
+    for (const listener of this.consentRevocations) listener();
+  }
+
+  /** Notifies the panel to close a gate when approval ends outside a button click. */
+  onConsentRevoked(listener: () => void): () => void {
+    this.consentRevocations.add(listener);
+    return () => this.consentRevocations.delete(listener);
+  }
+
+  private resolvePendingGate(decision: Tier3ConsentDecision): void {
+    const resolve = this.pendingGateResolve;
+    if (!resolve) return;
+    this.pendingGateResolve = undefined;
+    resolve(decision);
+  }
+
+  setConsentGateProvider(provider: Tier3ConsentCallback | undefined): void {
     if (provider === undefined && this.pendingGateResolve) {
-      const resolve = this.pendingGateResolve;
-      this.pendingGateResolve = undefined;
-      resolve("declined");
+      this.revokeRunConsent();
     }
     this.consentGateProvider = provider;
   }
 
-  private async handleConsentGate(params: Tier3ConsentParams): Promise<"approved" | "declined" | "timeout"> {
+  private async handleConsentGate(params: Tier3ConsentParams): Promise<Tier3ConsentDecision> {
     // S4: no provider means the user hasn't configured a cloud provider, not that they declined.
     // Return "declined" so the orchestrator treats the gate as unanswered (no API call).
     if (!this.consentGateProvider) return "declined";
 
     // B5: the host enforces the 5-minute deadline independently of the UI countdown.
     const DEADLINE_MS = 5 * 60 * 1000;
-    return new Promise<"approved" | "declined" | "timeout">((resolve) => {
+    return new Promise<Tier3ConsentDecision>((resolve) => {
       this.pendingGateResolve = resolve;
 
       const timer = setTimeout(() => {
@@ -472,12 +497,18 @@ export class VisibilityHost {
     const l1 = capability?.level === "L1" && capability.scope!.siteAccountIds.includes(site.id);
     const attributeKeys = l1 ? capability.scope!.attributeKeys : [...FIXED_ATTRIBUTE_LABELS.keys()];
     this.authority = { operation: "collection", siteAccountId: site.id, attributeKeys, actionId: crypto.randomUUID(), revision: capability?.revision ?? 0, policyVersion: AUTHORIZATION_POLICY_VERSION, level: l1 ? "L1" : "L0" };
+    this.resolver.beginRun();
     try { this.assertAuthority(site.id); return await this.service.runSite(site.id, l1 ? { authorizedAttributeKeys: attributeKeys } : {}); }
-    finally { this.authority = undefined; this.pausedAuthority = undefined; this.lastSnapshot = undefined; }
+    finally {
+      this.authority = undefined; this.pausedAuthority = undefined; this.lastSnapshot = undefined;
+      // Tier 3 approval does not survive the run, including a run that ended after resume.
+      this.resolver.revokeConsent();
+    }
   }
 
-  /** The user cleared the wall: re-verify the lease, then let the runner re-observe the page. */
+  /** The user cleared the wall: drop the old approval, then re-observe the page. */
   resume(): boolean {
+    this.resolver.revokeConsent();
     if (!this.pausedAuthority || this.authoritySaveFailed) return false;
     this.authority = { ...this.pausedAuthority, actionId: crypto.randomUUID() };
     this.pausedAuthority = undefined;
@@ -489,11 +520,7 @@ export class VisibilityHost {
     this.authority = undefined;
     this.pausedAuthority = undefined;
     // B5: resolve any pending consent gate as "declined" before aborting the run.
-    if (this.pendingGateResolve) {
-      const resolve = this.pendingGateResolve;
-      this.pendingGateResolve = undefined;
-      resolve("declined");
-    }
+    this.revokeRunConsent();
     this.service.abortRun();
   }
 
@@ -502,6 +529,7 @@ export class VisibilityHost {
     if (this.stopping) return;
     this.stopping = true;
     try {
+      this.revokeRunConsent();
       await this.vaultWrite.catch(() => undefined);
       await this.stop(true);
       this.options.session.lock();
@@ -513,6 +541,7 @@ export class VisibilityHost {
   /** Panel closing: abort, release the lease and save best-effort, then drop the key. */
   async shutdown(): Promise<void> {
     this.stopping = true;
+    this.revokeRunConsent();
     this.stopStateWatch();
     this.stopCloudStateWatch();
     this.service.abortRun();

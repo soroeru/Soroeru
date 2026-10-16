@@ -151,9 +151,7 @@ resolution and valid cached schemas; unresolved work is explicitly handed off.
 
 ## Policy changes awaiting implementation
 
-Changing this document does not by itself enable a behavior. Run-scoped Tier 3
-consent still needs implementation and tests before use; the existing per-call
-Tier 3 plan must be reconciled in GitHub first. The extension implements
-unverified canonical editing and quiz-free L1 for read-only collection only
-(#604). Update, withdrawal, registration and AI-assisted discovery stay at L0.
+Changing this document does not by itself enable a behavior. The extension
+implements unverified canonical editing and quiz-free L1 for read-only collection
+only (#604). Update, withdrawal, registration and AI-assisted discovery stay at L0.
 This document is not a release-completion checklist.

@@ -89,9 +89,9 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
   const [error, setError] = useState<string | undefined>();
   // Tier 3 consent gate state. When set, the panel renders the gate instead of the ledger.
   const [consentGate, setConsentGate] = useState<
-    Omit<ConsentGateProps, "onApprove" | "onDecline" | "onTimeout"> | undefined
+    Omit<ConsentGateProps, "onSingle" | "onRun" | "onDecline" | "onTimeout"> | undefined
   >();
-  const consentResolve = useRef<((decision: "approved" | "declined" | "timeout") => void) | undefined>(
+  const consentResolve = useRef<((decision: "single" | "run" | "declined" | "timeout") => void) | undefined>(
     undefined,
   );
 
@@ -111,15 +111,33 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
     [host],
   );
 
+  useEffect(
+    () =>
+      host.onConsentRevoked(() => {
+        consentResolve.current = undefined;
+        setConsentGate(undefined);
+      }),
+    [host],
+  );
+
   // Wire up the consent gate callback into the VisibilityHost.
   useEffect(() => {
     host.setConsentGateProvider((params) => {
-      return new Promise<"approved" | "declined" | "timeout">((resolve) => {
-        consentResolve.current = (decision: "approved" | "declined" | "timeout") => {
+      return new Promise((resolve) => {
+        consentResolve.current = (decision) => {
+          consentResolve.current = undefined;
           setConsentGate(undefined);
           resolve(decision);
         };
-        setConsentGate({ origin: params.origin, attributeKeys: params.attributeKeys });
+        setConsentGate({
+          origin: params.origin,
+          attributeKeys: params.attributeKeys,
+          ...(params.pageKind ? { pageKind: params.pageKind } : {}),
+          allowRun: params.allowRun,
+          requestLimit: params.requestLimit,
+          ttlMinutes: params.ttlMinutes,
+          regionLimitKiB: params.regionLimitKiB,
+        });
       });
     });
     return () => host.setConsentGateProvider(undefined);
@@ -158,11 +176,23 @@ export function VisibilityPanel({ host }: { host: VisibilityHost }): React.JSX.E
           {error}
         </p>
       )}
+      {running && (
+        <button
+          type="button"
+          onClick={() => {
+            consentResolve.current?.("declined");
+            host.revokeRunConsent();
+          }}
+          className="self-start rounded border border-neutral-300 px-3 py-1 text-sm"
+        >
+          Gemini への送信を止める
+        </button>
+      )}
       {consentGate && (
         <ConsentGate
-          origin={consentGate.origin}
-          attributeKeys={consentGate.attributeKeys}
-          onApprove={() => consentResolve.current?.("approved")}
+          {...consentGate}
+          onSingle={() => consentResolve.current?.("single")}
+          onRun={() => consentResolve.current?.("run")}
           onDecline={() => consentResolve.current?.("declined")}
           onTimeout={() => consentResolve.current?.("timeout")}
         />

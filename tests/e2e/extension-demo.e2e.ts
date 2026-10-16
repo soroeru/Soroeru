@@ -133,6 +133,36 @@ test("Tier 3 approval binds a masked, bounded payload to one ticket", async () =
   }
 });
 
+test("Tier 3 run consent shows its limits and the next collection asks again", async () => {
+  const browser = await openDemo("tier3");
+  try {
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await expect(browser.panel.getByRole("checkbox", { name: /改善用の動作データを送る/ })).not.toBeChecked();
+    await browser.run();
+    const gate = browser.panel.getByRole("dialog", { name: /Gemini/ });
+    await expect(gate).toBeVisible();
+    await expect(gate.getByText(/最大 20 件/)).toBeVisible();
+    await expect(gate.getByText(/15 分/)).toBeVisible();
+    await expect(gate.getByText("Soroeru Cloud（Google Cloud）経由の Gemini")).toBeVisible();
+    await gate.getByRole("button", { name: "この収集だけ許可する" }).click();
+    await expect(
+      browser.panel
+        .getByText(/Demo tier3/)
+        .locator("..")
+        .getByText(/開示/),
+    ).toBeVisible();
+    expect(requests(browser, "tier3Ticket")).toHaveLength(1);
+    expect(requests(browser, "readWithConsent")).toHaveLength(1);
+    await browser.run();
+    await expect(browser.panel.getByRole("dialog", { name: /Gemini/ })).toBeVisible();
+    expect(requests(browser, "tier3Ticket")).toHaveLength(1);
+    await browser.panel.getByRole("button", { name: "送信しない" }).click();
+    expect(requests(browser, "readWithConsent")).toHaveLength(1);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("wall fixture stops at same-tab handoff", async () => {
   const browser = await openDemo("wall");
   try {
@@ -181,4 +211,55 @@ test("L1 starts with no selections and limits collection to explicitly selected 
     await expect(scope.locator("summary")).toContainText("L0");
     expect((await browser.inspect()).disclosures).toBe(1);
   } finally { await browser.close(); }
+});
+
+test("one collection resolves two regions with one run gate and separate tickets", async () => {
+  const browser = await openDemo("tier3-regions");
+  try {
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await browser.run();
+    const gate = browser.panel.getByRole("dialog", { name: /Gemini/ });
+    await expect(gate).toBeVisible();
+    await gate.getByRole("button", { name: "この収集だけ許可する" }).click();
+    await expect(browser.panel.getByText(/Demo tier3-regions/).locator("..").getByText(/開示/)).toBeVisible();
+    await expect(gate).toBeHidden();
+    const reads = requests(browser, "readWithConsent");
+    const tickets = requests(browser, "tier3Ticket");
+    expect(reads).toHaveLength(2);
+    expect(tickets).toHaveLength(2);
+    const first = reads[0]!.body as CloudRead;
+    const second = reads[1]!.body as CloudRead;
+    expect(first.items.some(item => item.text === "090-0000-0000")).toBe(true);
+    expect(first.items.some(item => item.text === "架空花子")).toBe(false);
+    expect(second.items.some(item => item.text === "架空花子")).toBe(true);
+    expect(second.items.some(item => item.text === "090-0000-0000")).toBe(false);
+    expect(second.consentId).not.toBe(first.consentId);
+    expect(JSON.stringify(reads)).not.toMatch(secrets);
+    expect((await browser.inspect()).disclosures).toBe(3);
+  } finally {
+    await browser.close();
+  }
+});
+
+type CloudRead = { consentId: string; requestedKeys: string[]; items: { text: string }[] };
+
+test("navigation during a gate requires fresh consent for the new page kind", async () => {
+  const browser = await openDemo("tier3");
+  try {
+    await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
+    await browser.run();
+    const gate = browser.panel.getByRole("dialog", { name: /Gemini/ });
+    await expect(gate).toBeVisible();
+    // Keep the identical element tree but navigate within the leased site and change its purpose.
+    await browser.fixture.evaluate(() => { history.pushState({}, "", "/tier3?contact"); document.querySelector("h1")!.textContent = "連絡先"; document.querySelector("#phone")!.id = "contact"; });
+    await gate.getByRole("button", { name: "この収集だけ許可する" }).click();
+    await expect(gate.getByText("連絡先", { exact: true })).toBeVisible();
+    expect(requests(browser, "readWithConsent")).toHaveLength(0);
+    expect(requests(browser, "tier3Ticket")).toHaveLength(0);
+    await gate.getByRole("button", { name: "この収集だけ許可する" }).click();
+    await expect(browser.panel.getByText(/Demo tier3/).locator("..").getByText(/開示/)).toBeVisible();
+    expect(requests(browser, "readWithConsent")).toHaveLength(1);
+  } finally {
+    await browser.close();
+  }
 });
