@@ -42,6 +42,7 @@ export type PageCommand =
   | { command: "currentUrl" }
   | { command: "snapshot" }
   | { command: "schemaFingerprint" }
+  | { command: "schemaObservation" }
   | { command: "structureSnapshot"; site: string }
   | { command: "readSchema"; schema: FormSchema }
   | { command: "captureCollectionObservation"; bindingEpoch: number }
@@ -57,7 +58,7 @@ export type PageCommand =
    * before leaving the page. The result is an input to Tier3PayloadBuilder, which
    * re-validates masking and enforces the 16 KiB limit before building the consent payload.
    */
-  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[] };
+  | { command: "readRegionMasked"; requestedKeys: string[]; resolvedIds?: string[]; regionIndex?: number };
 export type PageCommandName = PageCommand["command"];
 
 interface Versioned {
@@ -226,6 +227,7 @@ export function parsePageCommand(value: unknown): PageCommand {
     case "currentUrl":
     case "snapshot":
     case "schemaFingerprint":
+    case "schemaObservation":
     case "waitForReady":
       rejectUnknownKeys(value, ["command"]);
       return { command: name };
@@ -261,10 +263,13 @@ export function parsePageCommand(value: unknown): PageCommand {
       rejectUnknownKeys(value, ["command", "selector"]);
       return { command: name, selector: requireString(value, "selector") };
     case "readRegionMasked": {
-      rejectUnknownKeys(value, ["command", "requestedKeys", "resolvedIds"]);
+      rejectUnknownKeys(value, ["command", "requestedKeys", "resolvedIds", "regionIndex"]);
       const keys = value.requestedKeys;
       if (!Array.isArray(keys) || keys.length === 0 || keys.length > 50 || keys.some((k) => typeof k !== "string"))
         return fail("requestedKeys must be a non-empty string array");
+      const regionIndex = value.regionIndex;
+      if (regionIndex !== undefined && (!Number.isSafeInteger(regionIndex) || (regionIndex as number) < 0 || (regionIndex as number) >= 20))
+        return fail("regionIndex must be between 0 and 19");
       const resolvedIds = value.resolvedIds;
       if (resolvedIds !== undefined) {
         if (!Array.isArray(resolvedIds) || resolvedIds.length > 500 || resolvedIds.some((k) => typeof k !== "string"))
@@ -273,6 +278,7 @@ export function parsePageCommand(value: unknown): PageCommand {
       return {
         command: name,
         requestedKeys: keys as string[],
+        ...(regionIndex !== undefined ? { regionIndex: regionIndex as number } : {}),
         ...(resolvedIds !== undefined ? { resolvedIds: resolvedIds as string[] } : {}),
       };
     }

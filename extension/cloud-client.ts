@@ -11,7 +11,13 @@ import {
 
 export class CloudClientError extends Error {
   constructor(
-    readonly category: "cloud-unreachable" | "rate-limited" | "budget-exhausted" | "ai-invalid-response",
+    readonly category:
+      | "cloud-unreachable"
+      | "server-error"
+      | "client-error"
+      | "rate-limited"
+      | "budget-exhausted"
+      | "ai-invalid-response",
   ) {
     super(category);
     this.name = "CloudClientError";
@@ -100,7 +106,7 @@ export class CloudClient {
             : "rate-limited",
         );
       }
-      if (!response.ok) throw new CloudClientError("cloud-unreachable");
+      if (!response.ok) throw new CloudClientError(response.status >= 500 ? "server-error" : "client-error");
       const body: unknown =
         operation === "outcome" && response.status === 204 ? undefined : await this.readResponse(response);
       validateCloudResponse(operation, body);
