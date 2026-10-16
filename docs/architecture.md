@@ -19,8 +19,10 @@ Tier 3 inference/consent UI, delivered telemetry, schema feedback promotion,
 queue delivery, full settings, complete vault migration and the remaining desktop
 screens are not complete. Their API contracts/infrastructure may exist while the
 handler still returns `503 unavailable`. Target behavior below is not evidence of
-implementation. Run-scoped consent and simplified L1/identity requirements are
-new policy work; existing code does not gain that authority from this document.
+implementation. Run-scoped Tier 3 consent is not implemented. The extension
+implements unverified canonical editing and explicit L1 for read-only collection
+in `extension/panel/visibility-host.ts`; this document does not grant that
+authority by itself.
 
 ## Components and trust boundaries
 

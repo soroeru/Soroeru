@@ -15,6 +15,7 @@
 // touches the file system and uses only `globalThis.crypto`, so it runs
 // unchanged in Node, Electron, and the Chrome extension.
 
+import { isCapability, isPersonalAttribute } from "../domain/authorization.js";
 import { isSiteCollectionMap } from "../domain/site-collection-map.js";
 import {
   ENTITY_KINDS,
@@ -79,8 +80,24 @@ export const RECORD_SCHEMA_VERSION = 1 as const;
  * next write. A record newer than this build understands fails closed.
  */
 export const RECORD_SCHEMA_VERSIONS: Readonly<Record<EntityKind, number>> = Object.fromEntries(
-  ENTITY_KINDS.map((kind) => [kind, kind === "workflowCheckpoint" ? 2 : RECORD_SCHEMA_VERSION]),
+  ENTITY_KINDS.map((kind) => [kind, ["workflowCheckpoint", "personalAttribute", "capability"].includes(kind) ? 2 : RECORD_SCHEMA_VERSION]),
 ) as Record<EntityKind, number>;
+
+/** Kinds whose v1 payloads are rewritten by an explicit migrator in `loadRecords`. */
+const MIGRATED_V1_KINDS: ReadonlySet<EntityKind> = new Set(["personalAttribute", "capability"]);
+
+/**
+ * Current versions are always accepted, and v1 of a kind with a migrator. With
+ * `allowOlder`, older versions that need no migration (e.g. workflowCheckpoint
+ * v1) are also read.
+ */
+function isAcceptedSchemaVersion(kind: EntityKind, schemaVersion: number, allowOlder: boolean): boolean {
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 1) return false;
+  const current = RECORD_SCHEMA_VERSIONS[kind];
+  if (schemaVersion === current) return true;
+  if (schemaVersion === 1 && MIGRATED_V1_KINDS.has(kind)) return true;
+  return allowOlder && schemaVersion < current;
+}
 
 /**
  * Key handling for an opened vault. `extractableKey: false` keeps the master key
@@ -284,8 +301,8 @@ export class VaultV2 {
       ) {
         throw new VaultCorruptError("encrypted export has an invalid record envelope");
       }
-      const supported = RECORD_SCHEMA_VERSIONS[env.entityKind as EntityKind];
-      if (!Number.isInteger(env.schemaVersion) || env.schemaVersion < 1 || env.schemaVersion > supported) {
+      // Supported older versions stay importable (#616); open() migrates them.
+      if (!isAcceptedSchemaVersion(env.entityKind as EntityKind, env.schemaVersion, true)) {
         throw new VaultFormatError(
           `vault record ${env.recordId} has unsupported ${env.entityKind} schema version ${String(env.schemaVersion)}`,
         );
@@ -295,23 +312,35 @@ export class VaultV2 {
 
   /** Decrypt every envelope into the in-memory maps. */
   private async loadRecords(envelopes: VaultRecordEnvelope[], key: MasterKey): Promise<void> {
+    let migrated = false;
     for (const env of envelopes) {
       if (!ENTITY_KIND_SET.has(env.entityKind)) {
         throw new VaultCorruptError(
           `unknown entity kind "${env.entityKind}" in vault record ${env.recordId}`,
         );
       }
-      if (
-        !Number.isInteger(env.schemaVersion) ||
-        env.schemaVersion < 1 ||
-        env.schemaVersion > RECORD_SCHEMA_VERSIONS[env.entityKind]
-      ) {
+      if (!isAcceptedSchemaVersion(env.entityKind, env.schemaVersion, true)) {
         throw new VaultFormatError(
           `vault record ${env.recordId} has unsupported ${env.entityKind} schema version ${String(env.schemaVersion)}`,
         );
       }
       const plaintext = await decryptRecord(key, { iv: env.iv, ct: env.ciphertext });
-      const payload = JSON.parse(plaintext) as DomainRecord;
+      let payload = JSON.parse(plaintext) as DomainRecord;
+      let schemaVersion = env.schemaVersion;
+      if (env.schemaVersion === 1 && env.entityKind === "personalAttribute") {
+        payload = { ...payload, provenance: { source: "legacy-unknown", verification: "unverified" } } as DomainRecord;
+        schemaVersion = 2;
+      }
+      if (env.schemaVersion === 1 && env.entityKind === "capability") {
+        const old = payload as unknown as Record<string, unknown>;
+        if (!["L0", "L1"].includes(old.level as string)) throw new VaultCorruptError("invalid legacy capability");
+        payload = { id: old.id, operationType: old.operationType, level: "L0", revision: 0, updatedAt: old.updatedAt,
+          ...(old.reducedAt === undefined ? {} : { reducedAt: old.reducedAt }) } as DomainRecord;
+        schemaVersion = 2;
+      }
+      validateAuthorityRecord(env.entityKind, payload);
+      migrated ||= schemaVersion !== env.schemaVersion;
+      if (this.bucket(env.entityKind).has(payload.id)) throw new VaultCorruptError("duplicate record");
       if (env.entityKind === "siteCollectionMap" && !isSiteCollectionMap(payload)) {
         throw new VaultCorruptError("invalid site collection map");
       }
@@ -322,10 +351,14 @@ export class VaultV2 {
       }
       this.bucket(env.entityKind).set(payload.id, {
         payload,
-        schemaVersion: env.schemaVersion,
+        schemaVersion,
         createdAt: env.createdAt,
         updatedAt: env.updatedAt,
       });
+    }
+    // All records are authenticated and validated before the atomic replacement.
+    if (migrated) {
+      try { await this.save(); } catch (error) { this.lock(); throw error; }
     }
   }
 
@@ -363,6 +396,7 @@ export class VaultV2 {
     if (kind === "siteCollectionMap" && !isSiteCollectionMap(payload)) {
       throw new VaultCorruptError("invalid site collection map");
     }
+    validateAuthorityRecord(kind, payload);
     const existing = this.bucket(kind).get(payload.id);
     this.bucket(kind).set(payload.id, {
       payload,
@@ -484,6 +518,7 @@ export class VaultV2 {
         ) {
           throw new VaultCorruptError("invalid site collection map");
         }
+        validateAuthorityRecord(kind, stored.payload);
         snapshot.push({
           recordId: id,
           entityKind: kind,
@@ -569,16 +604,19 @@ export class VaultV2 {
     VaultV2.assertImportDocument(parsed);
     // Authenticate and validate every record against a staged document before
     // committing. Subsequent saves by the returned vault use the real backend.
+    let stagedData = parsed;
+    let committed = false;
     const staged: VaultPersistence = {
-      load: async () => parsed,
-      save: (data) => persistence.save(data),
+      load: async () => stagedData,
+      save: async (data) => { if (committed) await persistence.save(data); else stagedData = data; },
       clear: () => persistence.clear(),
     };
     const vault = await VaultV2.open(staged, passphrase, "argon2id", {
       extractableKey: options?.extractableKey ?? true,
     });
     try {
-      await persistence.save(parsed);
+      await persistence.save(stagedData);
+      committed = true;
       return vault;
     } catch (err) {
       vault.lock();
@@ -624,6 +662,7 @@ export class VaultV2 {
         this.put("personalAttribute", {
           id: attributeKey || webCryptoRuntime.randomUUID(),
           attributeKey,
+          provenance: { source: "legacy-unknown", verification: "unverified" },
           label: String(d.label ?? attributeKey),
           value: String(d.value ?? ""),
           valueType: "custom",
@@ -743,4 +782,10 @@ function legacyDiagType(value: unknown): EntityPayloadMap["diagnostic"]["type"] 
 
 function legacySeverity(value: unknown): EntityPayloadMap["diagnostic"]["severity"] {
   return value === "warn" || value === "error" ? value : "info";
+}
+
+function validateAuthorityRecord(kind: EntityKind, payload: unknown): void {
+  if ((kind === "personalAttribute" && !isPersonalAttribute(payload)) || (kind === "capability" && !isCapability(payload))) {
+    throw new VaultCorruptError("invalid provenance or authorization record");
+  }
 }

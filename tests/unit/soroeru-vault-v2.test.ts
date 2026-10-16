@@ -35,6 +35,7 @@ test("create, persist, and reopen a v2 record vault", async () => {
       updatedAt: Date.now(),
     });
     vault.put("personalAttribute", {
+      provenance: { source: "user-entered", verification: "unverified" },
       id: "email",
       attributeKey: "email",
       label: "メール",
@@ -157,6 +158,7 @@ test("recovery key unlocks the vault without the passphrase", async () => {
     const vault = await VaultV2.open(new FileVaultPersistence(path), PASSPHRASE);
     const recoveryKey = await vault.setupRecoveryKey();
     vault.put("personalAttribute", {
+      provenance: { source: "user-entered", verification: "unverified" },
       id: "phone.full",
       attributeKey: "phone.full",
       label: "電話",

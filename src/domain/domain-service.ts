@@ -1,4 +1,3 @@
-import type { CollectionGrant } from "./collection-authorization.js";
 // DomainService (RFC-002 §3): typed services over the Vault v2 record vault for
 // the Soroeru domain. This layer owns semantic operations the UI/automation
 // call through (later via Electron IPC), the most important of which for
@@ -12,6 +11,10 @@ import type { CollectionGrant } from "./collection-authorization.js";
 
 // randomUUID replaced with globalThis.crypto.globalThis.crypto.randomUUID() for browser compatibility
 
+import { AUTHORIZATION_POLICY_VERSION, authorize, normalizeScope, scopeContains, type Operation, type OperationContext, type AuthorizationDecision } from "./authorization.js";
+import { FIXED_ATTRIBUTE_LABELS } from "./attribute-labels.js";
+import type { Capability, CapabilityScope } from "./entities.js";
+import type { CollectionGrant } from "./collection-authorization.js";
 import { normalizedValueHash } from "./normalize.js";
 import { deriveLedgerAllowedOrigins, isUrlInLedgerScope } from "./site-account-scope.js";
 import {
@@ -138,7 +141,7 @@ export interface ConfirmDynamicAttributeCandidateInput {
 }
 
 export class DomainService {
-  constructor(private readonly vault: VaultV2) {}
+  constructor(private readonly vault: VaultV2, private readonly assertObservation?: (siteAccountId: string, attributeKey: string) => void) {}
 
   /** Default sensitivity from the attribute key when the caller does not specify one. */
   private static defaultSensitivity(attributeKey: string): Sensitivity {
@@ -160,7 +163,22 @@ export class DomainService {
    * Disclosures revert to `unknown` rather than staying pinned at current/stale.
    */
   setPersonalAttribute(input: SetPersonalAttributeInput): PersonalAttribute {
+    if (/マイナンバー|個人番号|暗証番号|\bpin\b|my.?number|identity.?secret/i.test([input.attributeKey, input.label, input.value].join(" ")) || /^\d{12}$/.test(input.value.replace(/[\s-]/g, ""))) {
+      throw new Error("forbidden canonical value");
+    }
+    const existing = this.getPersonalAttribute(input.attributeKey);
+    // An unchanged manual edit must not mint a new record or drop verification.
+    if (
+      existing &&
+      existing.value === input.value &&
+      existing.label === input.label &&
+      (input.valueType === undefined || existing.valueType === input.valueType) &&
+      (input.sensitivity === undefined || existing.sensitivity === input.sensitivity)
+    ) {
+      return existing;
+    }
     const attribute: PersonalAttribute = {
+      provenance: { source: "user-entered", verification: "unverified" },
       id: input.attributeKey,
       attributeKey: input.attributeKey,
       label: input.label,
@@ -510,6 +528,7 @@ export class DomainService {
    * changes.
    */
   addDisclosure(input: AddDisclosureInput): Disclosure {
+    this.assertObservation?.(input.siteAccountId, input.attributeKey);
     const storedSiteHeldValue = disclosureStoredValue(
       input.attributeKey, input.siteHeldValue, input.collectionTier,
     );
@@ -864,16 +883,47 @@ export class DomainService {
     return map;
   }
 
+  getCapability(operation: Operation): Capability | undefined {
+    return this.vault.list("capability").find(c => c.operationType === operation);
+  }
+
+  enableCapability(input: { operation: Operation; scope: CapabilityScope; policyVersion: number }): Capability {
+    const scope = normalizeScope(input.scope);
+    if (input.policyVersion !== AUTHORIZATION_POLICY_VERSION || !scope.siteAccountIds.length || !scope.attributeKeys.length ||
+        scope.siteAccountIds.some(id => !this.getSiteAccount(id)) || scope.attributeKeys.some(key => !FIXED_ATTRIBUTE_LABELS.has(key))) throw new Error("invalid capability scope");
+    const old = this.getCapability(input.operation);
+    if (old?.level === "L1" && old.scope && scopeContains(old.scope, scope) && scopeContains(scope, old.scope)) return old;
+    const next: Capability = { id: old?.id ?? input.operation, operationType: input.operation, level: "L1", revision: (old?.revision ?? 0) + 1,
+      scope, policyVersion: input.policyVersion, explicitlyEnabledAt: Date.now(), updatedAt: Date.now() };
+    return this.vault.put("capability", next);
+  }
+
+  reduceCapability(input: { operation: Operation; scope?: CapabilityScope }): Capability {
+    const old = this.getCapability(input.operation);
+    const scope = input.scope ? normalizeScope(input.scope) : undefined;
+    if (scope && (!old?.scope || !scopeContains(old.scope, scope))) throw new Error("reduction cannot expand authority");
+    const active = scope && scope.siteAccountIds.length > 0 && scope.attributeKeys.length > 0;
+    const next: Capability = { id: old?.id ?? input.operation, operationType: input.operation, level: active ? "L1" : "L0",
+      revision: (old?.revision ?? 0) + 1, reducedAt: Date.now(), updatedAt: Date.now(),
+      ...(active ? { scope, policyVersion: AUTHORIZATION_POLICY_VERSION, explicitlyEnabledAt: old!.explicitlyEnabledAt! } : {}) };
+    return this.vault.put("capability", next);
+  }
+
+  authorizeOperation(context: OperationContext): AuthorizationDecision {
+    return authorize(this.getCapability(context.operation), context);
+  }
+
   /** Live reads make revocation/reduction effective before every collection action. */
   permitsAiCollection(grant: CollectionGrant, siteAccountId: string, runId: string, epoch: number): boolean {
-    if (grant.siteAccountId !== siteAccountId || grant.runId !== runId || grant.epoch !== epoch) return false;
+    if (grant.siteAccountId !== siteAccountId || grant.runId !== runId || grant.epoch !== epoch || grant.policyVersion !== AUTHORIZATION_POLICY_VERSION || !grant.attributeKeys.length) return false;
     const mandate = this.vault.get("mandate", grant.mandateId);
     const capability = this.vault.get("capability", grant.capabilityId);
     return !!mandate && !!capability && mandate.operation === "ai-assisted-discovery" &&
       mandate.siteAccountId === siteAccountId && mandate.scope === runId &&
-      capability.operationType === "ai-assisted-discovery" && capability.updatedAt === grant.capabilityUpdatedAt &&
+      capability.operationType === "ai-assisted-discovery" && capability.revision === grant.capabilityRevision &&
       (capability.reducedAt === undefined || mandate.authorizedAt > capability.reducedAt) &&
-      (capability.level === "L0" || (capability.level === "L1" && capability.understandingCheckPassedAt !== undefined));
+      (capability.level === "L0" || this.authorizeOperation({ operation: "ai-assisted-discovery", siteAccountId,
+        attributeKeys: grant.attributeKeys, actionId: runId, revision: grant.capabilityRevision, policyVersion: grant.policyVersion }).kind === "permitted");
   }
 
   resolveCollectionConstraint(id: string, resolution: "user-proceeded" | "user-stopped"): void {

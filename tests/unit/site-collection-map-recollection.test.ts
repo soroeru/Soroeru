@@ -153,8 +153,8 @@ async function setup(h: Harness) {
   } };
   const grant = (context: { siteAccountId: string; runId: string; epoch: number }) => {
     vault.put("mandate", { id: "m", siteAccountId: site.id, operation: "ai-assisted-discovery", authorizedAt: 2, scope: context.runId });
-    vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", updatedAt: 1 });
-    return { ...context, mandateId: "m", capabilityId: "c", capabilityUpdatedAt: 1 };
+    vault.put("capability", { id: "c", operationType: "ai-assisted-discovery", level: "L0", revision: 1, updatedAt: 1 });
+    return { ...context, mandateId: "m", capabilityId: "c", capabilityRevision: 1, attributeKeys: ["email", "card.cvv", "phone.full"], policyVersion: 1 };
   };
   const runner = (withGrant = true) => new VisibilityRunner({ domain, openSession: async () => ({ page: h.page, close: async () => {} }),
     collectionProvider: provider, ...(withGrant ? { collectionGrant: grant } : {}) });

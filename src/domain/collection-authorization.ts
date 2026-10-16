@@ -5,5 +5,7 @@ export interface CollectionGrant {
   epoch: number;
   mandateId: string;
   capabilityId: string;
-  capabilityUpdatedAt: number;
+  capabilityRevision: number;
+  attributeKeys: string[];
+  policyVersion: number;
 }
