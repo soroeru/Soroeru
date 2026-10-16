@@ -87,9 +87,9 @@ export const RECORD_SCHEMA_VERSIONS: Readonly<Record<EntityKind, number>> = Obje
 const MIGRATED_V1_KINDS: ReadonlySet<EntityKind> = new Set(["personalAttribute", "capability"]);
 
 /**
- * Current versions are always accepted, and v1 of a kind with a migrator. An
- * opened vault also keeps reading older versions that need no migration (e.g.
- * workflowCheckpoint v1); an encrypted import requires the current version.
+ * Current versions are always accepted, and v1 of a kind with a migrator. With
+ * `allowOlder`, older versions that need no migration (e.g. workflowCheckpoint
+ * v1) are also read.
  */
 function isAcceptedSchemaVersion(kind: EntityKind, schemaVersion: number, allowOlder: boolean): boolean {
   if (!Number.isInteger(schemaVersion) || schemaVersion < 1) return false;
@@ -301,7 +301,8 @@ export class VaultV2 {
       ) {
         throw new VaultCorruptError("encrypted export has an invalid record envelope");
       }
-      if (!isAcceptedSchemaVersion(env.entityKind as EntityKind, env.schemaVersion, false)) {
+      // Supported older versions stay importable (#616); open() migrates them.
+      if (!isAcceptedSchemaVersion(env.entityKind as EntityKind, env.schemaVersion, true)) {
         throw new VaultFormatError(
           `vault record ${env.recordId} has unsupported ${env.entityKind} schema version ${String(env.schemaVersion)}`,
         );
