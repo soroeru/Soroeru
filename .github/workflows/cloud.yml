@@ -20,7 +20,8 @@ on:
         "scripts/cloud-smoke.mjs",
       ]
   push:
-    branches: [main]
+    # TEMPORARY (#642): also deploy from the recovery branch; revert before merge.
+    branches: [main, issue-642-cloud-deploy-recovery]
     paths:
       [
         "cloud/**",
@@ -77,7 +78,7 @@ jobs:
           done
   deploy:
     needs: validate
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/issue-642-cloud-deploy-recovery')
     environment: soroeru-cloud
     runs-on: ubuntu-latest
     permissions:
