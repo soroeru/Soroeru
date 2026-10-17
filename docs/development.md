@@ -218,3 +218,21 @@ isolated fixtures. `npm run package:dmg` remains a legacy packaging command and
 requires Node 22; it is not the Chrome extension distribution workflow. Preserve
 encrypted export compatibility and test migration before retirement. Detailed
 historical setup/release evidence is available through Git and GitHub.
+
+## Interactive extension demo (UAT environment A)
+
+```bash
+npm run uat:extension-demo -- --page tier3
+npm run uat:extension-demo -- --page wall --empty
+```
+
+Choose `tier1`, `tier2`, `tier3` (default), `tier3-regions` or `wall` with
+`--page`. By default a fake vault/site is prepared; `--empty` starts
+onboarding instead. The command builds against fake Cloud on localhost:43365,
+serves only the fake demo pages, and opens disposable Chromium. Use the
+Chromium Side Panel and unlock the seeded vault with `fake-demo-passphrase-565`.
+The temporary launcher opens the panel and closes itself. Select the demo tab
+before collection and enable Cloud assistance in settings.
+The terminal prints operation names and cumulative counts only; inspect request
+bodies in DevTools. Close Chromium or press Ctrl+C to stop Cloud and delete the
+profile. Do not run this alongside extension E2E: both reserve port 43365.
