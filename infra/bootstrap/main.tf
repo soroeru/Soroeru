@@ -112,6 +112,21 @@ resource "google_secret_manager_secret_iam_member" "ticket" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${each.value.email}"
 }
+resource "google_secret_manager_secret" "feedback" {
+  project   = google_project.soroeru.project_id
+  secret_id = "feedback-validator-key"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+  lifecycle { prevent_destroy = true }
+}
+resource "google_secret_manager_secret_iam_member" "feedback" {
+  project   = google_project.soroeru.project_id
+  secret_id = google_secret_manager_secret.feedback.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime["api"].email}"
+}
 resource "google_iam_workload_identity_pool" "github" {
   project                   = google_project.soroeru.project_id
   workload_identity_pool_id = "github"

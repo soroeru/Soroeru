@@ -87,6 +87,7 @@ jobs:
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_gemini_daily_limit: ${{ vars.GEMINI_DAILY_LIMIT || '100' }}
       TF_VAR_ticket_secret_version: ${{ vars.TIER3_TICKET_SECRET_VERSION || '1' }}
+      TF_VAR_feedback_secret_version: ${{ vars.FEEDBACK_SECRET_VERSION || '1' }}
       STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
     steps:
       - uses: actions/checkout@v7

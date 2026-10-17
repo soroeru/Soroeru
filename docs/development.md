@@ -141,13 +141,16 @@ resources and applies Terraform. Configure `TF_VAR_project_id`,
 `TF_VAR_github_owner_id`, authenticate local ADC, then run
 `node scripts/bootstrap-cloud.mjs`. It first uses ignored local state under
 `state/cloud-bootstrap`, migrates to the project's bootstrap state bucket and
-creates a ticket-key secret version only if absent. Do not commit state, plans,
-credentials or keys. Inspect foundation IAM changes before applying.
+creates the ticket-key and feedback-validator secret versions only if absent.
+Do not commit state, plans, credentials or keys. Inspect foundation IAM changes
+before applying.
 
 Configure the GitHub `soroeru-cloud` environment for main-only deployment with
 `GCP_PROJECT_ID`, `TF_STATE_BUCKET`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-`GCP_DEPLOY_SERVICE_ACCOUNT`, `GEMINI_DAILY_LIMIT` and
-`TIER3_TICKET_SECRET_VERSION`. Values come from reviewed foundation outputs.
+`GCP_DEPLOY_SERVICE_ACCOUNT`, `GEMINI_DAILY_LIMIT`,
+`TIER3_TICKET_SECRET_VERSION` and `FEEDBACK_SECRET_VERSION` (both default to
+`1`). Values come from reviewed foundation outputs. Runtime Terraform routes all
+traffic to the latest revision; do not pin a revision manually.
 The cloud workflow validates PRs; its main/deployment path publishes an image,
 uses its immutable digest, plans/applies runtime Terraform, then runs:
 
