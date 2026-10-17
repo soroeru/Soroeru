@@ -63,10 +63,18 @@ for (const name of services) {
     console.log(`  traffic: ${status.percent}% ${status.type} -> ${status.revision}`);
   const { revisions = [] } = await api(`${base}/revisions?pageSize=5`);
   for (const revision of revisions) {
-    const ready = revision.terminalCondition ?? {};
+    // Ready stays SUCCEEDED on a retired revision that never started; report the
+    // failed conditions (e.g. ContainerHealthy) instead, ignoring plain retirement.
+    const conditions = revision.conditions ?? [];
+    const active = conditions.find((c) => c.type === "Active")?.state === "CONDITION_SUCCEEDED";
+    const failed = conditions.filter((c) => c.state === "CONDITION_FAILED" && c.revisionReason !== "RETIRED");
     console.log(
-      `  ${last(revision.name)} ${revision.createTime} ready=${ready.state ?? "?"} ${ready.reason ?? ""} ` +
-        `${clip(ready.message, 160)}`,
+      `  ${last(revision.name)} ${revision.createTime} ${active ? "active" : "inactive"} ` +
+        (failed.length
+          ? failed
+              .map((c) => `${c.type}:${c.revisionReason ?? c.reason ?? ""} ${clip(c.message, 120)}`)
+              .join("; ")
+          : "healthy"),
     );
   }
 }
