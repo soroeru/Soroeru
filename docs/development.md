@@ -238,7 +238,8 @@ npm run uat:extension-demo -- --page wall --empty
 
 Choose `tier1`, `tier2`, `tier3` (default), `tier3-regions` or `wall` with
 `--page`. By default a fake vault/site is prepared; `--empty` starts
-onboarding instead. The command builds against fake Cloud on localhost:43365,
+onboarding instead. The command builds against fake Cloud on 127.0.0.1:43365,
+which binds the loopback interface only and accepts no LAN connections,
 serves only the fake demo pages, and opens disposable Chromium. Use the
 Chromium Side Panel and unlock the seeded vault with `fake-demo-passphrase-565`.
 The temporary launcher opens the panel and closes itself. Select the demo tab
