@@ -203,6 +203,16 @@ child may send reviewed development text to TypeSafe only under the orchestratio
 skill's opt-in checks; no product vault, credentials or raw results enter parent
 state. Keep run state ignored and record decisions/review evidence in Issues/PRs.
 
+`skills/<id>/SKILL.md` is the single skill source. `.agents/skills/<id>` entries are
+Git-tracked symlinks into it for agents that discover `.agents/skills` (OpenCode's
+project compatibility source). `opencode.json` additionally registers `./skills`
+explicitly so OpenCode discovery does not depend on that symlink convention.
+Start OpenCode from the repository root so the relative `./skills` path resolves.
+`collection-diagnostics` sets `disable-model-invocation: true` and is therefore
+omitted from the model's advertised skill list; load it explicitly by ID.
+AGENTS.md is the one agent instruction file for OpenCode, Claude Code and Codex;
+do not duplicate its content into per-agent files such as CLAUDE.md.
+
 ## Legacy migration entry points
 
 `npm run dev` runs the retained Electron source; `npm run build:app` builds it.
