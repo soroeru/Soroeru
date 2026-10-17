@@ -107,7 +107,12 @@ Follow this workflow:
      verification results; this does not authorize merging.
    - If any check fails, inspect the failed run for that head with
      `gh run view <run-id> --log-failed`, identify the cause, and make a scoped
-     fix. Run applicable local checks, commit, and push to the same branch.
+     fix. For a Cloud deploy or Terraform apply failure, also inspect the live
+     Google Cloud resources and logs with the read-only observer
+     (`node scripts/cloud-diagnose.mjs`, see
+     [development](../../docs/development.md#deploy-failure-diagnosis)) before
+     concluding; the Actions log alone can miss revisions that never started or
+     never received traffic. Run applicable local checks, commit, and push to the same branch.
      Increment the counter for each CI fix cycle, then monitor the new head.
      CI fixes do **not** receive another reviewer pass.
    - Allow at most **3 CI fix cycles**. If CI/CD still fails after the third
