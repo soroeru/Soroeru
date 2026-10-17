@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { openDemo, payloadHash, type CapturedRequest, type DemoBrowser } from "./helpers/extension-demo.js";
+import { connect } from "node:net";
+import { networkInterfaces } from "node:os";
+import { openDemo, payloadHash, apiOrigin, type CapturedRequest, type DemoBrowser } from "./helpers/extension-demo.js";
 
 const personal = /fake@example\.com|090-0000-0000|架空花子/;
 const secrets = /fake-secret-password|987|123456/;
@@ -258,6 +260,38 @@ test("one collection resolves two regions with one run gate and separate tickets
 });
 
 type CloudRead = { consentId: string; requestedKeys: string[]; items: { text: string }[] };
+
+// Issue #630: the disposable fake Cloud must listen on loopback only; a host-less bind
+// accepted connections through the LAN interface. Loopback stays reachable, any
+// non-loopback local address is refused while the fake server is up.
+test("the fake Cloud accepts loopback and refuses non-loopback connections", async () => {
+  const browser = await openDemo("wall", { seed: false });
+  try {
+    expect(await probeReachable(new URL(apiOrigin).hostname)).toBe("open");
+    const lanAddress = Object.values(networkInterfaces())
+      .flat()
+      .find((entry) => entry && !entry.internal && entry.family === "IPv4")?.address;
+    test.skip(lanAddress === undefined, "no non-loopback IPv4 address on this host");
+    expect(lanAddress).toBeTruthy();
+    expect(await probeReachable(lanAddress!)).toBe("closed");
+  } finally {
+    await browser.close();
+  }
+});
+
+function probeReachable(host: string): Promise<"open" | "closed"> {
+  return new Promise((resolve) => {
+    const port = Number(new URL(apiOrigin).port);
+    const socket = connect({ host, port });
+    const settle = (result: "open" | "closed") => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(5_000, () => settle("closed"));
+    socket.once("connect", () => settle("open"));
+    socket.once("error", () => settle("closed"));
+  });
+}
 
 test("navigation during a gate requires fresh consent for the new page kind", async () => {
   const browser = await openDemo("tier3");

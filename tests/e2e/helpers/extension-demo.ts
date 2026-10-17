@@ -22,7 +22,10 @@ export interface DemoBrowser {
   close(): Promise<void>;
 }
 
-const apiOrigin = "http://localhost:43365";
+// The literal loopback address keeps the fake Cloud bind and the API connection target in
+// the same address family. A `localhost` name may resolve to ::1 or 127.0.0.1 depending on
+// platform, so both the embedded build URL and this server use one explicit address (#630).
+export const apiOrigin = "http://127.0.0.1:43365";
 const siteOrigin = "https://demo.example";
 const paths: Record<string, CloudOperation> = {
   "/v1/schemas/resolve": "resolve",
@@ -188,12 +191,14 @@ export async function openDemo(page: DemoPage, options: DemoOptions = {}): Promi
         }
       });
     });
-    // Listen on all interfaces (IPv4 + IPv6) so localhost resolves regardless of address family.
+    // Loopback-only bind: a host-less listen() opens every interface and makes the fake
+    // Cloud reachable from the LAN (#630). The explicit 127.0.0.1 host matches the literal
+    // apiOrigin above, so the extension fetches and this bind use the same address family.
     // Do NOT add a Playwright context.route() for apiOrigin: the route handler cannot reliably
     // read postData from chrome-extension page requests, causing the fetch to hang until
     // AbortSignal fires. The real HTTP server above handles all cloud mock traffic directly.
     await new Promise<void>((resolve, reject) =>
-      server!.listen(43365, () => resolve()).once("error", (error: NodeJS.ErrnoException) => reject(
+      server!.listen(43365, "127.0.0.1", () => resolve()).once("error", (error: NodeJS.ErrnoException) => reject(
         error.code === "EADDRINUSE" ? new Error("Port 43365 is in use. Close the other demo or E2E run first.") : error,
       )),
     );
