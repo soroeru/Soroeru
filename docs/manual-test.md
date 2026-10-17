@@ -289,3 +289,13 @@ Use only fake accounts and values, with Cloud assistance off initially.
   consequential driver action when approval evidence fails to save. Changed
   terms/payment consequences need a new review. Final withdrawal stays manual;
   internal record deletion and each identity declaration keep their confirmation.
+
+## Interactive UAT environment A
+
+Run `npm run uat:extension-demo -- --page tier3` for the fake Cloud/fixture
+setup described in [development](development.md#interactive-extension-demo-uat-environment-a).
+Use `--empty` to check first-run vault creation. Enable Cloud assistance, select
+the demo page and collect from the Chromium Side Panel. Approve Tier 3 consent and check
+that `tier3Ticket` and `readWithConsent` counts increase in the terminal. Inspect
+bodies only in DevTools. Close Chromium and verify the command exits and port
+43365 is available; repeat with Ctrl+C. All profiles and fixture data are disposable.

@@ -8,6 +8,17 @@ function requests(browser: DemoBrowser, operation: CapturedRequest["operation"])
   return browser.requests.filter((request) => request.operation === operation);
 }
 
+test("an empty demo starts at vault creation without Cloud requests", async () => {
+  const browser = await openDemo("wall", { seed: false });
+  try {
+    await expect(browser.panel.getByRole("button", { name: "作成して解錠", exact: true })).toBeVisible();
+    expect(browser.requests).toEqual([]);
+    expect(browser.fixture.url()).toBe("https://demo.example/wall");
+  } finally {
+    await browser.close();
+  }
+});
+
 test("Tier 1 reads a shared schema locally", async () => {
   const browser = await openDemo("tier1");
   try {
@@ -83,7 +94,10 @@ test("Tier 3 decline keeps Tier 2 observations and sends no PII request", async 
 });
 
 test("Tier 3 approval binds a masked, bounded payload to one ticket", async () => {
-  const browser = await openDemo("tier3");
+  const counts: { operation: string; count: number }[] = [];
+  const browser = await openDemo("tier3", {
+    onRequest: (operation, count) => counts.push({ operation, count }),
+  });
   try {
     await browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ }).click();
     await expect(browser.panel.getByRole("checkbox", { name: /クラウドのフォーム知識と Gemini を使う/ })).toBeChecked();
@@ -102,6 +116,8 @@ test("Tier 3 approval binds a masked, bounded payload to one ticket", async () =
     const read = requests(browser, "readWithConsent");
     expect(ticket).toHaveLength(1);
     expect(read).toHaveLength(1);
+    expect(counts).toContainEqual({ operation: "tier3Ticket", count: 1 });
+    expect(counts).toContainEqual({ operation: "readWithConsent", count: 1 });
     expect(browser.requests.indexOf(ticket[0]!)).toBeLessThan(browser.requests.indexOf(read[0]!));
     const readBody = read[0]!.body as {
       ticket: string;

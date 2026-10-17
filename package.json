@@ -22,6 +22,7 @@
     "poc:serve": "npm run poc -- serve",
     "poc:matrix": "npm run poc -- matrix",
     "e2e:real-visibility": "npm run build && node --test dist/compiled/tests/e2e/real-visibility.e2e.js",
+    "uat:extension-demo": "VITE_SOROERU_CLOUD_API_URL=http://localhost:43365 npm run build:extension && node dist/compiled/tests/e2e/extension-demo-uat.js",
     "e2e:extension-demo": "VITE_SOROERU_CLOUD_API_URL=http://localhost:43365 npm run build:extension && playwright test --config playwright.extension.config.ts",
     "e2e:app-ui": "npm run build:app && node --test dist/compiled/tests/e2e/app-ui.e2e.js",
     "e2e:app-ui-exploration": "npm run build:app && node --test dist/compiled/tests/e2e/app-ui-exploration.e2e.js",

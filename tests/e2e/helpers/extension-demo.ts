@@ -50,11 +50,28 @@ function activeSchema(fingerprint: string): FormSchema {
   };
 }
 
-export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
+export interface DemoOptions {
+  headless?: boolean;
+  seed?: boolean;
+  onRequest?: (operation: CloudOperation, count: number) => void;
+}
+
+export async function openDemo(page: DemoPage, options: DemoOptions = {}): Promise<DemoBrowser> {
   const dir = await mkdtemp(join(tmpdir(), "soroeru-extension-demo-"));
   const extension = join(dir, "extension");
   let context: BrowserContext | undefined;
   let server: Server | undefined;
+  const cleanup = async () => {
+    try {
+      await context?.close();
+    } finally {
+      try {
+        await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve());
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  };
   try {
     await cp(resolve("dist/extension"), extension, { recursive: true });
     // Build seed-vault.js into the extension directory BEFORE Chrome loads it.
@@ -77,6 +94,15 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       join(extension, "seed-vault.html"),
       '<!doctype html><script src="seed-vault.js"></script>',
     );
+    await writeFile(join(extension, "demo-launcher.html"),
+      '<!doctype html><button id="open">Open Soroeru Side Panel</button><script src="demo-launcher.js"></script>');
+    await writeFile(join(extension, "demo-launcher.js"), `
+      document.querySelector('#open').addEventListener('click', async () => {
+        const tab = await chrome.tabs.getCurrent();
+        await chrome.sidePanel.open({ windowId: tab.windowId });
+        await chrome.tabs.remove(tab.id);
+      });
+    `);
     // A directly opened extension tab has sender.tab; production accepts only a true Side Panel.
     // Playwright cannot automate Chrome's Side Panel surface, so relax only this sender-shape
     // clause in the disposable worker copy. Extension ID and exact page URL checks remain.
@@ -92,37 +118,11 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { host_permissions?: string[] };
     manifest.host_permissions = [`${siteOrigin}/*`, "https://*.demo.example/*", `${apiOrigin}/*`];
     await writeFile(manifestPath, JSON.stringify(manifest));
-    context = await chromium.launchPersistentContext(join(dir, "profile"), {
-      channel: "chromium",
-      headless: true,
-      args: [
-        `--disable-extensions-except=${extension}`,
-        `--load-extension=${extension}`,
-        "--ignore-certificate-errors",
-      ],
-    });
     const requests: CapturedRequest[] = [];
     const diagnostics: string[] = [];
-    context.on("request", (request) => {
-      if (request.url().startsWith(apiOrigin)) diagnostics.push(new URL(request.url()).pathname);
-    });
-    // Abort all external requests except the test origins. chrome-extension:// must be
-    // excluded — Playwright intercepts those too, and aborting them prevents seed-vault.js
-    // and other extension-internal resources from loading.
-    await context.route(
-      (url) =>
-        !url.href.startsWith(apiOrigin) &&
-        !url.href.startsWith(siteOrigin) &&
-        !url.href.startsWith("chrome-extension://"),
-      (route) => route.abort(),
-    );
-    await context.route(`${siteOrigin}/**`, async (route) => {
-      const path = new URL(route.request().url()).pathname.slice(1);
-      if (!/^(tier1|tier2|tier3|tier3-regions|wall)$/.test(path)) return route.abort();
-      await route.fulfill({ contentType: "text/html", path: resolve(`sites/extension-demo/${path}.html`) });
-    });
     const respond = (operation: CloudOperation, body: CloudRequests[CloudOperation]): unknown => {
       requests.push({ operation, body });
+      options.onRequest?.(operation, requests.filter((request) => request.operation === operation).length);
       let response: unknown;
       if (operation === "resolve") {
         response =
@@ -193,22 +193,56 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
     // read postData from chrome-extension page requests, causing the fetch to hang until
     // AbortSignal fires. The real HTTP server above handles all cloud mock traffic directly.
     await new Promise<void>((resolve, reject) =>
-      server!.listen(43365, () => resolve()).once("error", reject),
+      server!.listen(43365, () => resolve()).once("error", (error: NodeJS.ErrnoException) => reject(
+        error.code === "EADDRINUSE" ? new Error("Port 43365 is in use. Close the other demo or E2E run first.") : error,
+      )),
     );
+    context = await chromium.launchPersistentContext(join(dir, "profile"), {
+      channel: "chromium",
+      headless: options.headless ?? true,
+      // The interactive runner owns signals so its finally block can remove the profile.
+      handleSIGINT: options.headless !== false,
+      handleSIGTERM: options.headless !== false,
+      args: [
+        `--disable-extensions-except=${extension}`,
+        `--load-extension=${extension}`,
+        "--ignore-certificate-errors",
+      ],
+    });
+    context.on("request", (request) => {
+      if (request.url().startsWith(apiOrigin)) diagnostics.push(new URL(request.url()).pathname);
+    });
+    // Abort all external requests except the test origins. chrome-extension:// must be
+    // excluded — Playwright intercepts those too, and aborting them prevents seed-vault.js
+    // and other extension-internal resources from loading.
+    await context.route(
+      (url) =>
+        !url.href.startsWith(apiOrigin) &&
+        !url.href.startsWith(siteOrigin) &&
+        !url.href.startsWith("chrome-extension://"),
+      (route) => route.abort(),
+    );
+    await context.route(`${siteOrigin}/**`, async (route) => {
+      const path = new URL(route.request().url()).pathname.slice(1);
+      if (!/^(tier1|tier2|tier3|tier3-regions|wall)$/.test(path)) return route.abort();
+      await route.fulfill({ contentType: "text/html", path: resolve(`sites/extension-demo/${path}.html`) });
+    });
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker", { timeout: 60_000 }));
     worker.on("close", () => diagnostics.push("worker-closed"));
     worker.on("console", (message) => {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
     const extensionId = new URL(worker.url()).host;
-    const seed = await context.newPage();
-    await seed.goto(`chrome-extension://${extensionId}/seed-vault.html?page=${page}`);
-    // seed-vault.js sets window.demoSeed synchronously (before load event); await the async IIFE body.
-    await seed.evaluate(async () => {
-      if (!window.demoSeed) throw new Error("seed-vault.js did not run");
-      await window.demoSeed;
-    });
-    await seed.close();
+    if (options.seed !== false) {
+      const seed = await context.newPage();
+      await seed.goto(`chrome-extension://${extensionId}/seed-vault.html?page=${page}`);
+      // seed-vault.js sets window.demoSeed synchronously (before load event); await the async IIFE body.
+      await seed.evaluate(async () => {
+        if (!window.demoSeed) throw new Error("seed-vault.js did not run");
+        await window.demoSeed;
+      });
+      await seed.close();
+    }
     const fixture = await context.newPage();
     await fixture.goto(`${siteOrigin}/${page}`);
     const panel = await context.newPage();
@@ -216,9 +250,11 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
       if (message.type() === "error") diagnostics.push(message.text().slice(0, 200));
     });
     await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`);
-    await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
-    await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
-    await panel.getByText(`Demo ${page}`).waitFor({ timeout: 60_000 });
+    if (options.seed !== false) {
+      await panel.getByLabel("マスターパスフレーズ").fill("fake-demo-passphrase-565", { timeout: 30_000 });
+      await panel.getByRole("button", { name: "解錠", exact: true }).click({ timeout: 10_000 });
+      await panel.getByText(`Demo ${page}`).waitFor({ timeout: 60_000 });
+    }
     return {
       context,
       fixture,
@@ -274,16 +310,10 @@ export async function openDemo(page: DemoPage): Promise<DemoBrowser> {
           await inspector.close();
         }
       },
-      async close() {
-        await context?.close();
-        await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve());
-        await rm(dir, { recursive: true, force: true });
-      },
+      close: cleanup,
     };
   } catch (error) {
-    await context?.close();
-    await new Promise<void>((resolve) => server?.close(() => resolve()) ?? resolve());
-    await rm(dir, { recursive: true, force: true });
+    await cleanup();
     throw error;
   }
 }
