@@ -20,6 +20,11 @@ variable "monthly_budget_yen" {
   type    = number
   default = 1000
 }
+variable "observer_members" {
+  type        = list(string)
+  default     = []
+  description = "Operators (e.g. user:...) allowed to impersonate the read-only agent observer. Never commit real values."
+}
 resource "google_project" "soroeru" {
   project_id      = var.project_id
   name            = "Soroeru Cloud"
@@ -28,7 +33,7 @@ resource "google_project" "soroeru" {
 }
 locals {
   region = "asia-northeast1"
-  apis   = toset(["serviceusage.googleapis.com", "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "run.googleapis.com", "artifactregistry.googleapis.com", "firestore.googleapis.com", "bigquery.googleapis.com", "aiplatform.googleapis.com", "secretmanager.googleapis.com", "logging.googleapis.com", "billingbudgets.googleapis.com", "cloudbuild.googleapis.com"])
+  apis   = toset(["serviceusage.googleapis.com", "cloudresourcemanager.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "run.googleapis.com", "artifactregistry.googleapis.com", "firestore.googleapis.com", "bigquery.googleapis.com", "aiplatform.googleapis.com", "secretmanager.googleapis.com", "logging.googleapis.com", "billingbudgets.googleapis.com", "cloudbuild.googleapis.com", "monitoring.googleapis.com", "cloudasset.googleapis.com"])
 }
 resource "google_project_service" "apis" {
   for_each           = local.apis
@@ -112,6 +117,21 @@ resource "google_secret_manager_secret_iam_member" "ticket" {
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${each.value.email}"
 }
+resource "google_secret_manager_secret" "feedback" {
+  project   = google_project.soroeru.project_id
+  secret_id = "feedback-validator-key"
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.apis]
+  lifecycle { prevent_destroy = true }
+}
+resource "google_secret_manager_secret_iam_member" "feedback" {
+  project   = google_project.soroeru.project_id
+  secret_id = google_secret_manager_secret.feedback.secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.runtime["api"].email}"
+}
 resource "google_iam_workload_identity_pool" "github" {
   project                   = google_project.soroeru.project_id
   workload_identity_pool_id = "github"
@@ -191,3 +211,38 @@ resource "google_project_iam_member" "deploy_check" {
   role    = google_project_iam_custom_role.deploy_check.name
   member  = "serviceAccount:${google_service_account.deploy.email}"
 }
+
+# Read-only identity for operators and local AI agents. It has no key: operators
+# impersonate it for short-lived tokens. It sees resource metadata, IAM policy,
+# logs and metrics, but never secret values, Firestore documents, BigQuery rows,
+# Terraform state objects or private (data access) audit logs.
+resource "google_service_account" "observer" {
+  project      = google_project.soroeru.project_id
+  account_id   = "agent-observer"
+  display_name = "Read-only Cloud observer for operators and local agents"
+  depends_on   = [google_project_service.apis]
+}
+resource "google_project_iam_custom_role" "observer" {
+  project     = google_project.soroeru.project_id
+  role_id     = "soroeruObserver"
+  title       = "Soroeru read-only observer extras"
+  permissions = ["resourcemanager.projects.getIamPolicy", "aiplatform.cacheConfigs.get", "iam.workloadIdentityPools.get", "iam.workloadIdentityPoolProviders.get"]
+}
+resource "google_project_iam_member" "observer" {
+  for_each = toset(["roles/cloudasset.viewer", "roles/logging.viewer", "roles/monitoring.viewer", "roles/run.viewer", "roles/secretmanager.viewer", "roles/artifactregistry.reader", "roles/bigquery.metadataViewer", "roles/serviceusage.serviceUsageViewer", "roles/cloudbuild.builds.viewer"])
+  project  = google_project.soroeru.project_id
+  role     = each.key
+  member   = "serviceAccount:${google_service_account.observer.email}"
+}
+resource "google_project_iam_member" "observer_extras" {
+  project = google_project.soroeru.project_id
+  role    = google_project_iam_custom_role.observer.name
+  member  = "serviceAccount:${google_service_account.observer.email}"
+}
+resource "google_service_account_iam_member" "observer_impersonation" {
+  for_each           = toset(var.observer_members)
+  service_account_id = google_service_account.observer.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.key
+}
+output "observer_service_account" { value = google_service_account.observer.email }

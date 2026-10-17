@@ -36,6 +36,17 @@ for (const name of ["api", "pii-fallback"]) {
   assert.equal(template.spec.containerConcurrency, name === "pii-fallback" ? 1 : 20);
   const env = template.spec.containers[0].env;
   assert.ok(env.some((e) => e.name === "TIER3_TICKET_KEY" && e.valueFrom?.secretKeyRef));
+  if (name === "api")
+    assert.ok(
+      env.some((e) => e.name === "FEEDBACK_VALIDATOR_SECRET" && e.valueFrom?.secretKeyRef),
+      "feedback-secret-required",
+    );
+  // A pinned revision would keep serving old code after a successful apply.
+  assert.ok(
+    service.spec.traffic?.length > 0 && service.spec.traffic.every((t) => t.latestRevision === true),
+    "traffic-must-follow-latest",
+  );
+  assert.equal(service.status.latestReadyRevisionName, service.status.latestCreatedRevisionName);
   assert.ok(
     !env.some(
       (e) => /TRACE|OTEL|REQUEST_LOG|RESPONSE_LOG|CACHE/i.test(e.name) && e.value && e.value !== "false",

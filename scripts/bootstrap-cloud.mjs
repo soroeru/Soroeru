@@ -47,26 +47,27 @@ if (!remote) {
   );
 }
 // Key material is generated in memory, sent on stdin, and never enters Terraform state, logs or GitHub.
-const versions = JSON.parse(
-  execFileSync(
-    "gcloud",
-    [
-      "secrets",
-      "versions",
-      "list",
-      "tier3-ticket-key",
-      "--project",
-      project,
-      "--filter=state:ENABLED",
-      "--format=json",
-    ],
-    { encoding: "utf8" },
-  ),
-);
-if (versions.length === 0)
-  execFileSync(
-    "gcloud",
-    ["secrets", "versions", "add", "tier3-ticket-key", "--project", project, "--data-file=-"],
-    { input: randomBytes(32).toString("hex"), stdio: ["pipe", "inherit", "inherit"] },
+for (const secret of ["tier3-ticket-key", "feedback-validator-key"]) {
+  const versions = JSON.parse(
+    execFileSync(
+      "gcloud",
+      [
+        "secrets",
+        "versions",
+        "list",
+        secret,
+        "--project",
+        project,
+        "--filter=state:ENABLED",
+        "--format=json",
+      ],
+      { encoding: "utf8" },
+    ),
   );
-console.log("Foundation ready; ticket key exists in Secret Manager. Runtime deployment is separate.");
+  if (versions.length === 0)
+    execFileSync("gcloud", ["secrets", "versions", "add", secret, "--project", project, "--data-file=-"], {
+      input: randomBytes(32).toString("hex"),
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+}
+console.log("Foundation ready; runtime keys exist in Secret Manager. Runtime deployment is separate.");

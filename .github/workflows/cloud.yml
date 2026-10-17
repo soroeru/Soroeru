@@ -87,6 +87,7 @@ jobs:
       TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
       TF_VAR_gemini_daily_limit: ${{ vars.GEMINI_DAILY_LIMIT || '100' }}
       TF_VAR_ticket_secret_version: ${{ vars.TIER3_TICKET_SECRET_VERSION || '1' }}
+      TF_VAR_feedback_secret_version: ${{ vars.FEEDBACK_SECRET_VERSION || '1' }}
       STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
     steps:
       - uses: actions/checkout@v7
@@ -117,3 +118,7 @@ jobs:
           node-version: 22
       - name: Verify privacy configuration and public stubs
         run: node scripts/check-cloud-deployment.mjs "$TF_VAR_project_id"
+      # Actions logs are public: point to the live resources instead of dumping Cloud logs here.
+      - name: Point to live Cloud diagnosis
+        if: failure()
+        run: echo "::error::Deploy failed. Inspect the live Cloud resources and logs with the read-only observer (scripts/cloud-diagnose.mjs, docs/development.md#deploy-failure-diagnosis); the Actions log alone can miss revisions that never started or never received traffic."

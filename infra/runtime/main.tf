@@ -5,10 +5,17 @@ terraform {
   }
   backend "gcs" {}
 }
-provider "google" { project = var.project_id }
+provider "google" {
+  project = var.project_id
+  region  = local.region
+}
 variable "project_id" { type = string }
 variable "image" { type = string }
 variable "ticket_secret_version" {
+  type    = string
+  default = "1"
+}
+variable "feedback_secret_version" {
   type    = string
   default = "1"
 }
@@ -99,8 +106,25 @@ resource "google_cloud_run_v2_service" "service" {
           }
         }
       }
+      dynamic "env" {
+        for_each = each.key == "api" ? ["api"] : []
+        content {
+          name = "FEEDBACK_VALIDATOR_SECRET"
+          value_source {
+            secret_key_ref {
+              secret  = "feedback-validator-key"
+              version = var.feedback_secret_version
+            }
+          }
+        }
+      }
       ports { container_port = 8080 }
     }
+  }
+  # Always serve the newest ready revision; a manual pin must not outlive a deploy.
+  traffic {
+    type    = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
+    percent = 100
   }
   depends_on = [google_logging_project_exclusion.requests, google_firestore_database.schemas]
 }

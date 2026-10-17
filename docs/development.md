@@ -141,13 +141,16 @@ resources and applies Terraform. Configure `TF_VAR_project_id`,
 `TF_VAR_github_owner_id`, authenticate local ADC, then run
 `node scripts/bootstrap-cloud.mjs`. It first uses ignored local state under
 `state/cloud-bootstrap`, migrates to the project's bootstrap state bucket and
-creates a ticket-key secret version only if absent. Do not commit state, plans,
-credentials or keys. Inspect foundation IAM changes before applying.
+creates the ticket-key and feedback-validator secret versions only if absent.
+Do not commit state, plans, credentials or keys. Inspect foundation IAM changes
+before applying.
 
 Configure the GitHub `soroeru-cloud` environment for main-only deployment with
 `GCP_PROJECT_ID`, `TF_STATE_BUCKET`, `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-`GCP_DEPLOY_SERVICE_ACCOUNT`, `GEMINI_DAILY_LIMIT` and
-`TIER3_TICKET_SECRET_VERSION`. Values come from reviewed foundation outputs.
+`GCP_DEPLOY_SERVICE_ACCOUNT`, `GEMINI_DAILY_LIMIT`,
+`TIER3_TICKET_SECRET_VERSION` and `FEEDBACK_SECRET_VERSION` (both default to
+`1`). Values come from reviewed foundation outputs. Runtime Terraform routes all
+traffic to the latest revision; do not pin a revision manually.
 The cloud workflow validates PRs; its main/deployment path publishes an image,
 uses its immutable digest, plans/applies runtime Terraform, then runs:
 
@@ -156,9 +159,62 @@ node scripts/check-cloud-deployment.mjs <project-id>
 ```
 
 The check invokes public smoke requests, verifies log exclusions, IAM, instance
-limits and Vertex logging/cache settings. It consumes test budget. It does not
-prove Gemini can map a form: the mapping smoke permits explicit unavailability.
-Run the fake-data manual Tier 2 scenario before enabling a release.
+limits, traffic on the latest ready revision and Vertex logging/cache settings.
+It consumes test budget. It does not prove Gemini can map or read a form, or that
+telemetry is stored: those smokes permit explicit `503 unavailable` when the
+model or BigQuery table is not configured. Run the fake-data manual Tier 2
+scenario before enabling a release.
+
+### Deploy failure diagnosis
+
+When `Plan and apply runtime` or the verification step fails, do not diagnose
+from the GitHub Actions log alone. Terraform can stop after creating revisions,
+and a revision can be created yet never start or never receive traffic. Inspect
+the live project with the read-only observer identity (below):
+
+```bash
+CLOUDSDK_ACTIVE_CONFIG_NAME=soroeru-observer node scripts/cloud-diagnose.mjs <project-id> --since-minutes 120
+```
+
+It reports each service's terminal condition, traffic target and recent
+revisions, Cloud Run logs at WARNING or above, failed admin-activity audit
+entries, request counts by response class, Vertex cache settings and whether
+runtime secrets have an enabled version. Compare it with the failed step and
+record the cause in the Issue/PR. Fixes still go through Terraform; do not
+repair production by hand unless the Product Owner asks, and record any manual
+change.
+
+### Read-only Cloud access for operators and local agents
+
+Bootstrap creates `agent-observer`, a key-less service account with read-only
+roles: Cloud Asset inventory, logs, metrics, Cloud Run, Secret Manager metadata,
+Artifact Registry, BigQuery metadata, service usage, Cloud Build and a custom
+role for project IAM policy, Vertex cache config and the GitHub WIF provider. It
+cannot read secret values, Firestore documents, BigQuery rows, Terraform state
+objects or private (data access) audit logs, and cannot change anything.
+
+Grant impersonation only to named operators through the bootstrap variable
+`TF_VAR_observer_members` (for example `["user:<operator-account>"]`; never commit
+it). Each operator then creates a separate gcloud configuration, which does not
+change the active one:
+
+```bash
+gcloud config configurations create soroeru-observer --no-activate
+gcloud config set project <project-id> --configuration soroeru-observer
+gcloud config set account <operator-account> --configuration soroeru-observer
+gcloud config set auth/impersonate_service_account \
+  agent-observer@<project-id>.iam.gserviceaccount.com --configuration soroeru-observer
+```
+
+Agents run Cloud commands with `CLOUDSDK_ACTIVE_CONFIG_NAME=soroeru-observer`.
+Tokens are short-lived and minted from the operator's own login, so there is no
+key file to leak, every call is attributed to the observer, and removing the
+member from `observer_members` revokes access. Never create a key for this or
+any other service account. The operator's own credentials stay on the machine:
+impersonation lowers the default privilege, but it is not a hard boundary
+against an agent that switches configuration. Keep agent permission rules from
+running write commands (for example `gcloud ... create|update|delete`,
+`terraform apply`) without approval.
 
 Set runtime `gemini_model_id` explicitly to an available reviewed model; empty
 disables Tier 2. The current deployment workflow does not pass a Gemini model
