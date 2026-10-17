@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+// Handlers whose backend (Gemini model, BigQuery table) is optional per deployment.
+const optionalBackends = new Set([
+  "/v1/agent/map-structure",
+  "/v1/agent/read-with-consent",
+  "/v1/telemetry/outcome",
+]);
 export async function verifyCloudEndpoints(services) {
   const post = async (service, path, body, expected) => {
     const response = await fetch(services[service] + path, {
@@ -9,9 +15,10 @@ export async function verifyCloudEndpoints(services) {
       redirect: "error",
       signal: AbortSignal.timeout(30000),
     });
-    if (response.status === 503 && path === "/v1/agent/map-structure") {
-      assert.deepEqual(await response.json(), { error: "unavailable" }, "mapping-unavailable");
-      return undefined; // Model not configured or provider unavailable: fail closed.
+    // Rejections (403) must never degrade to unavailability.
+    if (response.status === 503 && optionalBackends.has(path) && expected !== 403) {
+      assert.deepEqual(await response.json(), { error: "unavailable" }, `unavailable-body:${path}`);
+      return undefined; // Backend not configured or provider unavailable: fail closed.
     }
     if (response.status === 429 && expected === "budgeted") {
       assert.deepEqual(await response.json(), { error: "budget-exhausted" }, `budget-status:${path}`);
