@@ -14,7 +14,7 @@
     "audit": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
-    "@google-cloud/bigquery": "^9.2.0",
+    "@google-cloud/bigquery": "^9.3.0",
     "@google-cloud/firestore": "^9.3.1"
   },
   "devDependencies": {
