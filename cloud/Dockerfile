@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM node:22.23.4-bookworm-slim AS build
 WORKDIR /app/cloud
 COPY cloud/package*.json ./
 # NodeNext also needs an ESM package scope for the shared sources outside cloud/.
@@ -11,7 +11,7 @@ COPY src/shared/personal-value.ts /app/src/shared/personal-value.ts
 COPY src/types.ts /app/src/types.ts
 RUN npm run build && npm prune --omit=dev
 
-FROM node:22-bookworm-slim
+FROM node:22.23.4-bookworm-slim
 ENV NODE_ENV=production
 WORKDIR /app/cloud
 COPY --from=build --chown=node:node /app/cloud/package.json ./
