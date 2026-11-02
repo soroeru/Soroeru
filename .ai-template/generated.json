@@ -37,10 +37,6 @@
       "type": "link",
       "target": "../../skills/orchestrate-issues-implementation"
     },
-    ".agents/skills/orchestrate-project-issues": {
-      "type": "link",
-      "target": "../../skills/orchestrate-project-issues"
-    },
     ".agents/skills/requirements-review": {
       "type": "link",
       "target": "../../skills/requirements-review"
@@ -84,10 +80,6 @@
     ".claude/skills/orchestrate-issues-implementation": {
       "type": "link",
       "target": "../../skills/orchestrate-issues-implementation"
-    },
-    ".claude/skills/orchestrate-project-issues": {
-      "type": "link",
-      "target": "../../skills/orchestrate-project-issues"
     },
     ".claude/skills/requirements-review": {
       "type": "link",
