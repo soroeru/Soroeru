@@ -52,4 +52,4 @@ else
   printf 'set core.hooksPath = .githooks (was: %s)\n' "${CURRENT:-<unset>}"
 fi
 
-printf '\nhooks installed. pre-commit quality gates (format / lint / typecheck) will run on commits.\n'
+printf '\nhooks installed. See AGENTS.md for repository quality gates.\n'
