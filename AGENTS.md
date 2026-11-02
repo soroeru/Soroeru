@@ -40,7 +40,8 @@ report residual risk honestly.
   `scripts/issue-worktree.sh`; the primary clone is human-only. Resume inherited work with the
   `handoff-issue` skill. Never discard another worker's WIP.
 - Follow [`docs/github-operations.md`](docs/github-operations.md) for branches, commits, PRs, and
-  review.
+  review. The shared review and implementation skills are template-managed and generic; apply
+  [Soroeru's context for them](docs/development.md#repository-context-for-shared-skills).
 - Do not commit secrets, real personal data, local state, or generated caches.
 - Update user docs when behavior changes and technical docs when setup, commands, architecture,
   security, or workflow changes. `README.md` stays user-facing.

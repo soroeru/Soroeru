@@ -269,6 +269,39 @@ omitted from the model's advertised skill list; load it explicitly by ID.
 AGENTS.md is the one agent instruction file for OpenCode, Claude Code and Codex;
 do not duplicate its content into per-agent files such as CLAUDE.md.
 
+### Repository context for shared skills
+
+The review and Issue skills are synchronized from the AI template and stay
+generic. Apply them with this context; the owning documents remain canonical.
+
+Reviews (`requirements-review`, `architecture-review`, `design-doc-review`):
+
+- Judge against the UX-first principle in [requirements](requirements.md) and
+  Soroeru's shape: a Chrome MV3 Side Panel client, an encrypted local vault and
+  bounded Cloud form assistance. Separate implemented behavior from target design
+  using the architecture's implementation status.
+- An explicitly scoped Product Owner policy change is a review input, not an
+  automatically forbidden weakening of an older constraint. Review its concrete
+  user benefit, residual risk and implementation gap.
+- An unacknowledged contradiction or a secret-disclosure path is a `blocker`.
+- Requirements state the failure side as well: errors, walls such as CAPTCHA or
+  MFA, cancellation and partial completion.
+- Architecture makes it decidable where personal data exists and in what form
+  (encrypted, in memory, in a form field) and names every egress point across the
+  Side Panel, worker, content script, sites and Cloud/Vertex. Flag a component
+  whose decrypted-data access is broader than its job. Vault failure handling
+  covers atomic writes, a versioned schema with migration, and detectable rather
+  than silent corruption, with local diagnosability and bounded, value-free Cloud
+  outcomes.
+
+Implementation (`issue-implementation`, `handoff-issue`):
+
+- For a Cloud deploy or Terraform apply failure, follow
+  [Deploy failure diagnosis](#deploy-failure-diagnosis) before concluding.
+- Use [isolated development Cloud resources](#isolated-development-cloud-resources)
+  only when local tests cannot verify Cloud Run, Firestore or Secret Manager
+  behavior, and destroy the Issue's resources after verification.
+
 ## Legacy migration entry points
 
 `npm run dev` runs the retained Electron source; `npm run build:app` builds it.
