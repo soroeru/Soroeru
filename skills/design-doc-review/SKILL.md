@@ -79,8 +79,9 @@ reason. Cite the comment URL and exact section or quoted text.
 ## Common mistakes
 
 - Reviewing pseudocode as production code.
-- Demanding server-scale concerns (horizontal scaling, HA) from a
-  Chrome extension and bounded Cloud form service — judge against Soroeru's context.
+- Demanding concerns from a different system shape (for example horizontal
+  scaling or HA from a single-user local app) — judge against this project's
+  actual context.
 - Flagging detail deliberately deferred to implementation as a gap when the
   doc says so explicitly and the deferral is safe.
 - Re-litigating requirements — requirements review owns that; here

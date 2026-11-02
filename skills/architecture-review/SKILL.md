@@ -1,18 +1,29 @@
 ---
 name: architecture-review
-description: Use when docs/architecture.md (or another architecture / technology-selection document) is created or changed, or when asked to review an architecture decision. Not for requirements, per-Issue design docs, or code diffs.
+description: Use when the repository's architecture / technology-selection document is created or changed, or when asked to review an architecture decision. Not for requirements, per-Issue design docs, or code diffs.
 user-invocable: true
 ---
 
 # Architecture Review
 
-Review `docs/architecture.md` (or its diff) against the five criteria below.
-This skill owns the criteria; development links here without duplicating them.
+Resolve `repository.documents.architecture` and `.requirements` with
+`node scripts/repository-config.mjs --get documents`. For omitted locations,
+follow this repository's `AGENTS.md`. Use the actual documents and paths in
+findings; report missing inputs rather than assuming a particular file layout.
 
-Judge Soroeru's Chrome MV3 Side Panel client, encrypted local vault and Google
-Cloud form assistance against UX-first requirements. Distinguish implemented
-behavior from target design. Explicitly scoped Product Owner policy changes are
-review inputs, not automatically forbidden weakening of historical constraints.
+Review the canonical architecture document (or a diff to it) against the five
+criteria below. This skill owns the criteria; development links here without duplication.
+
+Judge everything against **this project's actual context** — its deployment
+shape, user count, and operating environment as stated in
+the canonical requirements and architecture documents. Do not import expectations
+from a different shape of system (for example demanding horizontal scaling,
+HA clusters, or fleet observability from a single-user desktop app, or
+ignoring multi-tenant isolation in a hosted service). Where a classic concern
+genuinely does not apply, say "not applicable" explicitly under Criterion
+coverage rather than inventing a finding. The non-negotiable requirements
+stated in `AGENTS.md` and the canonical requirements document are fixed inputs — review whether the architecture
+*satisfies* them, never whether they are right.
 
 When the document names repository files, APIs, or implemented behavior,
 verify those claims against the current code before judging — a confirmed
@@ -22,24 +33,27 @@ finding.
 ## Review criteria (priority order)
 
 1. **Requirements and constraint fit** — every architectural choice satisfies
-   the current product/data-handling boundaries and the quality attributes the requirements actually prioritize.
-   Make trade-off points explicit: which quality was sacrificed for which,
-   and is that consistent with the requirements' priorities?
-2. **System boundaries and data flow** — process / trust boundaries are
-   drawn (Side Panel vs worker vs content script vs sites vs Cloud/Vertex), and it is decidable where personal data may exist in what form
-   (encrypted / in-memory / in a form field) and what every egress point is.
-   Flag any component whose access to decrypted data is broader than its job.
+   the non-negotiable requirements stated in `AGENTS.md` and the requirements
+   document, and the quality attributes the requirements actually prioritize. Make trade-off
+   points explicit: which quality was sacrificed for which, and is that
+   consistent with the requirements' priorities?
+2. **System boundaries and data flow** — process / trust boundaries are drawn,
+   and it is decidable where sensitive data may exist in what form (encrypted
+   at rest / in memory / in transit) and what every egress point is. Flag any
+   component whose access to sensitive data is broader than its job.
 3. **Dependencies** — each significant dependency is justified against
    alternatives, maintained, license-compatible with OSS distribution, and
    its security surface is understood; the stack stays within the doc's own
    decisions (no undocumented framework / tool / service).
-4. **Failure modes and data integrity** — crash, forced quit, disk-full, and
-   interrupted-write behavior for the vault (the user's single source of
-   truth) is designed: atomic writes, versioned schema with a migration
-   story, and detectable-not-silent corruption. Includes local diagnosability and bounded, value-free Cloud outcomes.
+4. **Failure modes and data integrity** — crash, abrupt termination,
+   out-of-space, and interrupted-write behavior for the system's source of
+   truth is designed: atomic writes, versioned schema with a migration story,
+   and detectable-not-silent corruption. Includes diagnosability: how an
+   operator or agent investigates a failure with the observability the project
+   actually permits.
 5. **Decision records** — each significant decision is captured so it can be
-   revisited: context, rationale and reconsideration triggers. Keep concise durable
-   decisions in architecture and implementation detail in the Issue/PR.
+   revisited: context, considered alternatives, rationale, and what would
+   trigger reconsideration (ADR-style, whether or not in ADR files).
 
 Every criterion is judged: detailed findings go in the findings list (a few
 strong ones over many shallow ones), and the closing `## Criterion coverage`
@@ -49,14 +63,16 @@ minor/nit findings touch it), or that it is not applicable and why.
 
 ## Output format
 
-Record the review in the Issue/PR using this format:
+Record the review in the Issue/PR using this format. When reviewing the whole
+document rather than a diff, citing repository code that confirms a finding is
+in scope.
 
 ```
 verdict: PASS | NEEDS_CHANGES | NIT_ONLY
 
 ## Findings
 
-1. [<severity>] docs/architecture.md:<line> — <one-sentence problem statement>
+1. [<severity>] <architecture-document>:<line> — <one-sentence problem statement>
    <2-4 sentences of explanation, including a concrete suggested fix>
 
 ## Criterion coverage
@@ -73,11 +89,19 @@ at most `major`; `blocker` is reserved for what the document affirmatively
 chooses) · `minor` (clarity, small gaps) · `nit` (wording, optional). Verdict mapping: any
 `blocker`/`major` → `NEEDS_CHANGES`; only `minor`/`nit` → `NIT_ONLY`; no
 findings → `verdict: PASS` with a one-line reason. Cite doc line numbers (or
-post-image diff lines when reviewing a diff). Do not review embedded sample code as shipped code.
+post-image diff lines when reviewing a diff). Do not review embedded sample
+code as shipped code.
 
 ## Common mistakes
 
-- Treating the remaining Electron source as the target architecture.
-- Claiming a future consent, telemetry or migration path already ships.
-- Requiring a separate ADR/design directory instead of a concise decision in its owner.
-- Re-litigating an explicitly authorized UX policy change instead of reviewing its risks.
+- Applying defaults from a different system shape: demanding scalability,
+  uptime targets, or cloud cost analysis from a single-user desktop app, or
+  the reverse. The analogues that do apply belong under criteria 1 and 4 when
+  the requirements make them matter.
+- Re-litigating the non-negotiables (e.g. proposing a hosted service for
+  convenience) — they are inputs, not review targets.
+- Treating "not applicable" as a failure — an explicit, reasoned
+  non-applicability is a passing answer.
+- Flagging a missing formal ADR directory when the decision, alternatives,
+  and rationale are recorded in the doc itself — criterion 5 is about the
+  content, not the file format.
