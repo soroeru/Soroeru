@@ -228,7 +228,7 @@ test("consumer list entries are validated, deduplicated and default to manual me
   assert.throws(() => run(["consumers", "--repo", "example/three"], root), /consumers-repo-unknown/);
 });
 
-test("PR summary states the source range and never includes file contents", t => {
+test("PR summary states the source range and never includes file contents", () => {
   const summary = renderSyncSummary({ from: "a".repeat(40), to: "b".repeat(40), written: ["scripts/one.mjs"], removed: [], drift: [], adopted: [] },
     { sourceRepository: "example/template" });
   assert.match(summary, /compare\/a{40}\.\.\.b{40}/);

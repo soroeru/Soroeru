@@ -102,13 +102,16 @@ function pruneParents(root, file) {
 function localSkills(root) {
   let config;
   try { config = JSON.parse(fs.readFileSync(path.join(root, ".ai-template/config.json"), "utf8")); }
-  catch (error) { if (error.code === "ENOENT") return []; throw new Error("repository-config-invalid-json"); }
+  catch (error) { if (error.code === "ENOENT") return []; throw new Error("repository-config-invalid-json", { cause: error }); }
   const skills = config?.localSkills ?? [];
   if (!Array.isArray(skills) || skills.some(s => typeof s !== "string")) throw new Error("runtime-local-skill-invalid");
   return skills;
 }
 
-/** Copy managed files into `root`, propagate deletions and record the lock. Validates everything first. */
+/**
+ * Copy managed files into `root`, propagate deletions and record the lock. Validates everything first.
+ * @param {{ from?: string, root?: string, adopt?: boolean, sourceRepository?: string }} [options]
+ */
 export function sync({ from, root = process.cwd(), adopt = false, sourceRepository } = {}) {
   root = fs.realpathSync(root);
   const source = listManagedFiles(from);
@@ -190,7 +193,11 @@ export function check(root = process.cwd()) {
   return { ok: problems.length === 0, problems };
 }
 
-/** Markdown for the consumer PR; lists paths only, never file contents. */
+/**
+ * Markdown for the consumer PR; lists paths only, never file contents.
+ * @param {{ from: string | null, to: string, written: string[], removed: string[], drift: string[], adopted: string[] }} result
+ * @param {{ sourceRepository?: string }} [options]
+ */
 export function renderSyncSummary(result, { sourceRepository } = {}) {
   const short = sha => sha ? sha.slice(0, 12) : "(none)";
   const range = sourceRepository && result.from

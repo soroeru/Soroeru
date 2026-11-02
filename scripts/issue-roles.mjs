@@ -25,6 +25,7 @@ export const ROLES = Object.freeze({
   REVIEWER: "reviewer",
 });
 
+/** @type {readonly string[]} */
 export const VALID_ROLES = Object.freeze(Object.values(ROLES));
 
 /**
@@ -196,7 +197,14 @@ export function distinctPreferenceRole(role) {
   return counterpartRole(role);
 }
 
-/** Advance a role program. Returns the next state, never mutating the input. */
+/**
+ * Advance a role program. Returns the next state, never mutating the input.
+ * @typedef {{ program: string[], index: number, issue?: number | string, reviewPasses?: number, fixCycles?: number,
+ *   status?: string, blockedReason?: string, gateReopens?: number, [k: string]: unknown }} RoleState
+ * @param {RoleState} roleState
+ * @param {{ role?: string, verdict?: string }} [step]
+ * @returns {RoleState}
+ */
 export function advanceRoleProgram(roleState, { role, verdict } = {}) {
   const program = roleState.program;
   const current = program[roleState.index];
@@ -273,6 +281,8 @@ export function assertNoDisallowedKeys(value, path = "") {
  * The complete set of facts the parent hands a worker. Deliberately tiny:
  * the worker fetches the Issue body, the diff, and test results itself, so
  * nothing sensitive has to travel through orchestrator state or the prompt.
+ * @param {{ role: string, issueNumber: number, executionMode?: string, skill?: string | null, releasePolicy?: string,
+ *   nextMilestone?: string, reviewPass?: number, fixCycle?: number }} fields
  */
 export function buildRoleDispatchPayload({
   role,

@@ -38,6 +38,8 @@ const TTY_REQUIRED_PATTERN =
 
 /**
  * Resolve an executable on PATH (or an absolute path). Returns absolute path or null.
+ * @param {string} command
+ * @param {{ env?: NodeJS.ProcessEnv, pathEnv?: string }} [options]
  */
 export async function resolveExecutable(command, { env = process.env, pathEnv } = {}) {
   if (typeof command !== "string" || !command.trim()) return null;
@@ -71,6 +73,9 @@ export async function resolveExecutable(command, { env = process.env, pathEnv } 
  * direct child (probes stay non-detached for reliable SIGTERM). Callers must
  * extract only machine-readable fields from stdout/stderr and must not persist
  * credentials, prompts, Issue bodies, or model response bodies in diagnostics.
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ timeoutMs?: number, env?: NodeJS.ProcessEnv, cwd?: string, input?: string, killSignal?: NodeJS.Signals }} [options]
  */
 export function runProcess(
   command,
@@ -142,7 +147,7 @@ export function runProcess(
       }, 500).unref?.();
     }, timeoutMs);
 
-    child.on("error", (error) => {
+    child.on("error", (/** @type {NodeJS.ErrnoException} */ error) => {
       finish({
         code: null,
         signal: null,
@@ -178,8 +183,12 @@ export function runProcess(
  * verdict and (on failure) a reason code leave this function.
  *
  * @param {object} options
- * @param {string} options.cliPath - resolved absolute path to the CLI.
- * @param {string[]} options.args - selector args (model flags etc.) to place
+ * @param {string} [options.cliPath] - resolved absolute path to the CLI.
+ * @param {string} [options.expectedModel]
+ * @param {typeof runProcess} [options.run]
+ * @param {number} [options.timeoutMs]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {string[]} [options.args] - selector args (model flags etc.) to place
  *   before the generated task prompt; must not include the prompt itself.
  * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
  */
@@ -299,6 +308,15 @@ export function isRetiredRuntimeRoute(route, root = process.cwd()) {
   return isRetiredCommand(splitSelector(route.selector)[0], root);
 }
 
+/**
+ * @typedef {{ agent: string, model: string, requestedModel?: string, role: string, selector: string,
+ *   timeoutMs: number, selectable: boolean, verifiable: boolean }} CapabilityRecord
+ */
+/**
+ * @param {{ agent: string, model?: string, requestedModel?: string, role: string, selector: string,
+ *   timeoutMs?: number, selectable?: boolean, verifiable?: boolean }} fields
+ * @returns {CapabilityRecord}
+ */
 export function capabilityRecord({
   agent,
   requestedModel,
@@ -322,6 +340,11 @@ export function capabilityRecord({
   return record;
 }
 
+/**
+ * @typedef {{ agent?: string, status?: string, reason?: string, model?: string }} Diagnostic
+ * @param {Diagnostic} [fields]
+ * @returns {Diagnostic}
+ */
 export function diagnostic({ agent, status, reason, model } = {}) {
   const entry = { agent, status };
   if (reason !== undefined) entry.reason = reason;
@@ -410,6 +433,9 @@ export async function writeJsonAtomic(filePath, value) {
 /**
  * Spawn a long-running worker and return a handle that can kill only that
  * process tree. Does not capture or persist stdout/stderr to run state.
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{ timeoutMs?: number, env?: NodeJS.ProcessEnv, cwd?: string }} [options]
  */
 export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd } = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -429,7 +455,7 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
 
   let timedOut = false;
   let exitResult;
-  const killTree = (signal = "SIGTERM") => {
+  const killTree = (/** @type {NodeJS.Signals} */ signal = "SIGTERM") => {
     if (!child.pid) return;
     try {
       if (process.platform === "win32") {
@@ -530,6 +556,8 @@ function roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }) {
 /**
  * Build the minimal worker prompt — role, Issue number, and route labels
  * only. No Issue body, diff, or personal data ever enters the prompt.
+ * @param {{ issueNumber: number, agent: string, model: string, releasePolicy: string, nextMilestone: string,
+ *   role?: string, skill?: string, reviewPass?: number, fixCycle?: number }} fields
  */
 export function buildWorkerPrompt({
   issueNumber,

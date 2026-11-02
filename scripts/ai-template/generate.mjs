@@ -24,10 +24,12 @@ export function safePath(root, relative) {
   }
   return path.join(root, relative);
 }
+/** @returns {Record<string, string>} frontmatter fields plus `body` */
 function roleSource(file) {
   const text = fs.readFileSync(file, "utf8");
   const match = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) throw new Error("role-frontmatter-invalid");
+  /** @type {Record<string, string>} */
   const meta = {};
   for (const line of match[1].split("\n")) {
     const item = line.match(/^(name|description|tier|tools): (.+)$/);

@@ -1,6 +1,7 @@
 import { isKnownAgent } from "./issue-assignment.mjs";
 import { createHash } from "node:crypto";
 
+/** @type {Readonly<{ mode: string, model: string, maxRequests: number, allowPrivateIssues?: boolean }>} */
 export const TRIAGE_DEFAULTS = Object.freeze({ mode: "off", model: "jev-1.13.0", maxRequests: 20 });
 export const TRIAGE_POLICY = "triage-v3";
 export const TRIAGE_RUBRIC_VERSION = "triage-rubric-538-v3";

@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 
 import {
   EXECUTION_MODES,
-  VALID_MODES,
-  DEFAULT_MODE_CONFIGS,
   RISK_CATEGORIES,
   determineEligibleModes,
   rankAndSelectMode,

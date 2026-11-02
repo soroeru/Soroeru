@@ -57,7 +57,7 @@ export async function withStateLock(
         if (!new Set(["ENOENT", "EEXIST"]).has(lockError.code)) throw lockError;
         continue;
       }
-      if (Date.now() >= deadline) throw new Error("state-lock-timeout");
+      if (Date.now() >= deadline) throw new Error("state-lock-timeout", { cause: error });
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
   }

@@ -596,11 +596,11 @@ test("skips unverified routes and rejects malformed worker capability records", 
     /invalid-capability-record: Codex /,
   );
   assert.throws(
-    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), selectable: "false" }]),
+    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), selectable: /** @type {boolean} */ (/** @type {unknown} */ ("false")) }]),
     /invalid-capability-record:Codex/,
   );
   assert.throws(
-    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), verifiable: "false" }]),
+    () => selectWorkerRoutes([{ ...workerRoute("Codex", "gpt-5"), verifiable: /** @type {boolean} */ (/** @type {unknown} */ ("false")) }]),
     /invalid-capability-record:Codex/,
   );
 });

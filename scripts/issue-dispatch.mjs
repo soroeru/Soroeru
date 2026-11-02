@@ -8,6 +8,7 @@
  * Issue worktree is left untouched for handoff-issue.
  */
 
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +20,7 @@ import { splitSelector } from "./issue-runtime-adapters/shared.mjs";
  * Launch a worker for one Issue on one capability route.
  *
  * @param {object} input
- * @param {object} input.route - capability record (agent, model, selector, timeoutMs, …)
+ * @param {import("./issue-runtime-adapters/shared.mjs").CapabilityRecord} input.route - capability record (agent, model, selector, timeoutMs, …)
  * @param {number} input.issueNumber
  * @param {string} input.releasePolicy
  * @param {string} input.nextMilestone
@@ -135,6 +136,19 @@ export function parseDispatchCliArgs(argv) {
   return options;
 }
 
+/**
+ * Map a worker wait() result to the dispatcher's process exit code. Any
+ * failure is non-zero: a spawn error reports `code: null`, so the plain
+ * `code` value alone would read as success.
+ */
+export function dispatchExitCode(result) {
+  if (result.timedOut) return 124;
+  if (Number.isSafeInteger(result.code) && result.code > 0) return result.code;
+  if (result.signal) return 128 + (os.constants.signals[result.signal] ?? 0);
+  if (result.code === 0 && !result.error) return 0;
+  return 1;
+}
+
 async function main() {
   const cli = parseDispatchCliArgs(process.argv.slice(2));
   const route = JSON.parse(cli.routeJson);
@@ -161,16 +175,17 @@ async function main() {
     })}\n`,
   );
   const result = await handle.wait();
+  const exitCode = dispatchExitCode(result);
   process.stdout.write(
     `${JSON.stringify({
-      status: result.timedOut ? "timeout" : result.code === 0 ? "exited" : "failed",
+      status: result.timedOut ? "timeout" : exitCode === 0 ? "exited" : "failed",
       code: result.code,
+      signal: result.signal ?? null,
       timedOut: Boolean(result.timedOut),
       pid: result.pid,
     })}\n`,
   );
-  if (result.timedOut) process.exitCode = 124;
-  else if (result.code) process.exitCode = result.code;
+  process.exitCode = exitCode;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -14,6 +14,11 @@ const safeEnv = (env) =>
     Object.entries(env).filter(([key]) => !["NODE_OPTIONS", "NODE_DEBUG", "GH_DEBUG"].includes(key)),
   );
 
+/**
+ * @param {unknown} rawInput
+ * @param {unknown} rawConfig
+ * @param {{ env?: NodeJS.ProcessEnv, signal?: AbortSignal, timeoutMs?: number }} [options]
+ */
 export function runTriageChild(rawInput, rawConfig, { env = process.env, signal, timeoutMs = 10_000 } = {}) {
   const input = normalizeTriageInput(rawInput);
   const config = normalizeTriageConfig(rawConfig);

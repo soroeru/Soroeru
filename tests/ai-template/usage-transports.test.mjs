@@ -53,7 +53,7 @@ const response = used => ({ secret: "fixture-account-plan-token", allowed: true,
 for (const transport of ["exec-json", "jsonrpc-stdio", "control-stdio"]) {
   test(`${transport}: declaration alone enables a non-Codex parent's boundary, alias and closed snapshot`, async t => {
     const f = await fixture(t, transport);
-    for (const [used, eligible] of [[0, true], [50, true], [51, false], [100, false]]) {
+    for (const [used, eligible] of /** @type {[number, boolean][]} */ ([[0, true], [50, true], [51, false], [100, false]])) {
       await f.respond(response(used));
       const snapshot = await readParentUsage("fixture-alias", { cwd: f.cwd, now });
       assert.deepEqual(snapshot, { status: "ok", remainingPercent: 100 - used, windowDurationMins: 300, fetchedAt });
@@ -165,7 +165,7 @@ test("declared five-hour self window accepts decimal percentages and rejects exp
   await f.save();
   const raw = (used, reset="2050-01-01T00:00:00Z", extra={}) => ({quota:{five_hour:{used,reset,...extra},
     seven_day:{used:0,reset:"2050-01-01T00:00:00Z"}}});
-  for(const [used, eligible] of [[49.9,true],[50,true],[50.1,false]]) {
+  for(const [used, eligible] of /** @type {[number, boolean][]} */ ([[49.9,true],[50,true],[50.1,false]])) {
     await f.respond(raw(used));
     const snapshot = await readParentUsage("fixture", {cwd:f.cwd,now});
     assert.equal(snapshot.remainingPercent,100-used);

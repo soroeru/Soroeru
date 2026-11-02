@@ -1033,7 +1033,7 @@ test("loadOrRefreshCapabilities always re-probes a cached agent whose last diagn
   const cachePath = path.join(directory, "capabilities.json");
   const bin = path.join(directory, "bin");
   await mkdir(bin);
-  const grokPath = await makeFakeBin(
+  await makeFakeBin(
     bin,
     "grok",
     `

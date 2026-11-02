@@ -93,6 +93,10 @@ function makeDeps(overrides = {}) {
   };
 }
 
+/**
+ * @param {{ items: Record<string, any>[], capabilities?: object[], config?: Record<string, any> }} options
+ * @returns {{ config: Record<string, any>, items: Record<string, any>[], capabilities: object[] }}
+ */ // any: free-form config and item overrides
 function makeInput({ items, capabilities = defaultCapabilities, config = {} }) {
   return {
     config: {
@@ -119,9 +123,10 @@ function makeRun({ deps = makeDeps(), checkpointer = new MemorySaver(), threadId
     deps,
     graph,
     config,
-    invoke: (input) => graph.invoke(input, config),
-    resume: (value) => graph.invoke(new Command({ resume: value }), config),
-    state: async () => (await graph.getState(config)).values,
+    // any: graph state and interrupt payloads are untyped channels
+    invoke: (input) => /** @type {Promise<Record<string, any>>} */ (graph.invoke(input, config)),
+    resume: (value) => /** @type {Promise<Record<string, any>>} */ (graph.invoke(new Command({ resume: value }), config)),
+    state: async () => /** @type {Record<string, any>} */ ((await graph.getState(config)).values),
   };
 }
 
@@ -723,13 +728,13 @@ test("an invalid interactive assignment re-prompts instead of killing the run", 
 
 test("schedules dependent Issues only after the release milestone passes the gate", async () => {
   const run = makeRun();
-  let result = await run.invoke(makeInput({ items: [item(1), item(2, [1])] }));
+  await run.invoke(makeInput({ items: [item(1), item(2, [1])] }));
   assert.deepEqual(
     run.deps.dispatched.map(({ issueNumber }) => issueNumber),
     [1],
   );
 
-  result = await run.resume({ type: "milestone", issue: 1, milestone: "pr-created", usage: usageSample });
+  let result = await run.resume({ type: "milestone", issue: 1, milestone: "pr-created", usage: usageSample });
   assert.deepEqual(result.__interrupt__[0].value.gate, {
     issue: 1,
     type: "pr-created",
@@ -740,13 +745,13 @@ test("schedules dependent Issues only after the release milestone passes the gat
     ],
   });
 
-  result = await run.resume({ accepted: true });
+  await run.resume({ accepted: true });
   assert.deepEqual(
     run.deps.dispatched.map(({ issueNumber }) => issueNumber),
     [1, 2],
   );
 
-  result = await run.resume({ type: "milestone", issue: 2, milestone: "pr-created" });
+  await run.resume({ type: "milestone", issue: 2, milestone: "pr-created" });
   result = await run.resume({ accepted: true });
   assert.equal(result.runStatus, "complete");
   assert.deepEqual(result.summary.completed, [1, 2]);
@@ -787,7 +792,7 @@ test("merged release policy completes only on merged", async () => {
   const run = makeRun();
   await run.invoke(makeInput({ items: [item(1), item(2, [1])], config: { releasePolicy: "merged" } }));
   await run.resume({ type: "milestone", issue: 1, milestone: "pr-created" });
-  let result = await run.resume({ accepted: true });
+  await run.resume({ accepted: true });
   // pr-created accepted but policy is merged: dependent not released.
   assert.deepEqual(
     run.deps.dispatched.map(({ issueNumber }) => issueNumber),
@@ -798,13 +803,13 @@ test("merged release policy completes only on merged", async () => {
   assert.equal(midState.workerExecutions[0].expectedMilestone, "merged");
 
   await run.resume({ type: "milestone", issue: 1, milestone: "merged" });
-  result = await run.resume({ accepted: true });
+  await run.resume({ accepted: true });
   assert.deepEqual(
     run.deps.dispatched.map(({ issueNumber }) => issueNumber),
     [1, 2],
   );
   await run.resume({ type: "milestone", issue: 2, milestone: "merged" });
-  result = await run.resume({ accepted: true });
+  const result = await run.resume({ accepted: true });
   assert.equal(result.runStatus, "complete");
 });
 
@@ -2004,10 +2009,10 @@ test("the file checkpointer rejects malformed triage budget or attempt sections"
   const directory = await mkdtemp(path.join(tmpdir(), "graph-checkpoint-"));
   try {
     const format = "issue-graph-checkpoint/v1";
-    for (const [name, section] of [
+    for (const [name, section] of /** @type {[string, object][]} */ ([
       ["attempts.json", { triageAttempts: { run: "not-a-list" } }],
       ["budgets.json", { triageBudgets: { run: 3 } }],
-    ]) {
+    ])) {
       const file = path.join(directory, name);
       await writeFile(file, JSON.stringify({ format, storage: {}, writes: {}, ...section }));
       await assert.rejects(FileCheckpointSaver.load(file), /checkpoint-file-corrupt/);

@@ -36,7 +36,11 @@ export function resolveRepository({ env = process.env } = {}) {
   return resolvedRepository;
 }
 
-/** Read only metadata: the parent must never request the triage Issue body. */
+/**
+ * Read only metadata: the parent must never request the triage Issue body.
+ * @param {number} issue
+ * @param {{ graphql?: (query: string, variables: { owner?: string, name?: string, number?: number }) => Promise<any>, repository?: string }} [options]
+ */
 export async function fetchTriageRevision(issue, { graphql, repository } = {}) {
   if (!Number.isSafeInteger(issue) || issue <= 0 || typeof graphql !== "function") return null;
   try {
@@ -71,7 +75,10 @@ export async function repositoryIssueGraphql(query, variables) {
   }
 }
 
-/** Fetch explicit Issues and their dependency closure without Issue text. */
+/**
+ * Fetch explicit Issues and their dependency closure without Issue text.
+ * @param {{ issues: unknown[], graphql?: (query: string, variables: { owner?: string, name?: string, number?: number }) => Promise<any>, repository?: string }} options
+ */
 export async function fetchRepositoryIssues({ issues, graphql = repositoryIssueGraphql, repository }) {
   if (!Array.isArray(issues) || !issues.length || issues.some((n) => !Number.isSafeInteger(Number(n)) || Number(n) <= 0))
     throw new Error("issue-numbers-required");

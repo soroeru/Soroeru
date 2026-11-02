@@ -38,7 +38,7 @@ function external(calls = []) {
 
 test("new declaration alone participates in alias resolution, discovery, dispatch and offline selection", async t => {
   const root = fixture(t, ["fiction"]);
-  const definition = { ...JSON.parse(fs.readFileSync(path.join(root,"agents/runtimes/opencode.json"))), id: "fiction", name: "Fiction", aliases: ["fiction-cli"], commands: ["fiction"], models: { args: ["models"], parser: "json-models" } };
+  const definition = { ...JSON.parse(fs.readFileSync(path.join(root,"agents/runtimes/opencode.json"),"utf8")), id: "fiction", name: "Fiction", aliases: ["fiction-cli"], commands: ["fiction"], models: { args: ["models"], parser: "json-models" } };
   put(root, ".ai-template/runtimes/fiction.json", definition);
   assert.equal(findRuntime("fiction-cli", root).id, "fiction");
   assert.equal(canonicalizeAgent("FICTION-CLI", root), "Fiction");
@@ -81,13 +81,13 @@ test("OpenCode addition and enablement needs no script or skill changes", async 
 test("disabling a runtime removes owned outputs, invalidates its cache and never probes it", async t => {
   const root=fixture(t,["gemini"]), calls=[];
   // Give this fixture a dedicated discovery directory to observe deletion.
-  const p=path.join(root,"agents/runtimes/gemini.json"), def=JSON.parse(fs.readFileSync(p));
+  const p=path.join(root,"agents/runtimes/gemini.json"), def=JSON.parse(fs.readFileSync(p,"utf8"));
   def.skills.discoveryDirs=[".fixture/skills"]; put(root,"agents/runtimes/gemini.json",def);
   generate(root);
   const cachePath=path.join(root,"cache.json");
   await discoverCapabilities({cwd:root,outputPath:cachePath,...external(calls)});
   put(root,".ai-template/config.json",{agents:{enabled:[]}});
-  const previousRoute=JSON.parse(fs.readFileSync(cachePath)).capabilities[0];
+  const previousRoute=JSON.parse(fs.readFileSync(cachePath,"utf8")).capabilities[0];
   assert.deepEqual(selectWorkerRoutes([previousRoute], {cwd:root}),[]);
   calls.length=0;
   const result=await loadOrRefreshCapabilities({cwd:root,cachePath,...external(calls)});
@@ -107,13 +107,13 @@ test("generation is idempotent, deduplicates shared paths and preserves custom s
   assert.equal(generate(root).written,0);
   assert.equal(fs.readFileSync(path.join(root,".ai-template/generated.json"),"utf8"),before);
   assert.equal(fs.readlinkSync(path.join(root,".agents/skills/local-example")),"../../skills/local-example");
-  const settings=JSON.parse(fs.readFileSync(path.join(root,".claude/settings.json")));
+  const settings=JSON.parse(fs.readFileSync(path.join(root,".claude/settings.json"),"utf8"));
   assert.deepEqual(settings.env,{FAKE:"kept"});assert.equal(settings.hooks.PreToolUse.length,2);
   put(root,".ai-template/config.json",{agents:{enabled:["grok"]}});
   generate(root);
   assert.equal(fs.existsSync(path.join(root,".agents/skills/example")),true);
   assert.equal(fs.existsSync(path.join(root,".claude/skills/example")),false);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root,".claude/settings.json"))).hooks.PreToolUse[0].matcher,"Read");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root,".claude/settings.json"),"utf8")).hooks.PreToolUse[0].matcher,"Read");
 });
 
 test("generation refuses unmanaged and edited files before writing any output", t=>{
@@ -143,7 +143,7 @@ test("invalid definitions/configuration and retired aliases fail before discover
     await assert.rejects(discoverCapabilities({cwd:root,resolveExecutable:()=>assert.fail("must not spawn")}),/runtime-/);
   }
   put(root,".ai-template/config.json",{agents:{enabled:[]}});
-  const base=JSON.parse(fs.readFileSync(path.join(root,"agents/runtimes/opencode.json")));
+  const base=JSON.parse(fs.readFileSync(path.join(root,"agents/runtimes/opencode.json"),"utf8"));
   for(const change of [{id:"other",aliases:["claude-code"]},{id:"other",skills:{discoveryDirs:["../escape"]}},{id:"other",models:{parser:"arbitrary-code",args:[]}}]){
     put(root,".ai-template/runtimes/other.json",{...base,...change});
     assert.throws(()=>loadRuntimeRegistry(root),/runtime-/);
@@ -158,6 +158,6 @@ test("interrupted generation can adopt exact completed outputs without duplicati
   generate(root);
   fs.unlinkSync(path.join(root,".ai-template/generated.json"));
   assert.equal(generate(root).written,0);
-  const hooks=JSON.parse(fs.readFileSync(path.join(root,".claude/settings.json"))).hooks.PreToolUse;
+  const hooks=JSON.parse(fs.readFileSync(path.join(root,".claude/settings.json"),"utf8")).hooks.PreToolUse;
   assert.equal(hooks.length,1);
 });
