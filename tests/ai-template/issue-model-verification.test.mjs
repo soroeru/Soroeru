@@ -112,11 +112,11 @@ test("a timeout or thrown probe failure does not hide later usable models or lea
   assert.equal(JSON.stringify(result).includes("fake-private-probe-error"), false);
 });
 
-for (const [outcome, reason] of [
+for (const [outcome, reason] of /** @type {[object, string][]} */ ([
   [{ code: null, timedOut: true }, "verification-timeout"],
   [{ code: 1 }, "headless-exec-failed"],
   [{ stdout: '{"model":"other-model"}' }, "model-mismatch"],
-]) {
+])) {
   test(`a written artifact cannot hide ${reason}`, async () => {
     const result = await runHeadlessExecProbe({
       cliPath: "/fake-cli", expectedModel: "requested-model",

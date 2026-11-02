@@ -33,7 +33,15 @@ function at(object, selector) {
   return object;
 }
 
-/** Select exactly one 300-minute window; expose no account or raw response fields. */
+/** @typedef {{ status: string, reason?: string, remainingPercent?: number, windowDurationMins?: number, fetchedAt?: string }} UsageSnapshot */
+
+/**
+ * Select exactly one 300-minute window; expose no account or raw response fields.
+ * @param {Record<string, any>} result raw runtime response, shape checked at runtime
+ * @param {Record<string, any>} usage runtime usage definition from the registry
+ * @param {{ fetchedAt?: string }} [options]
+ * @returns {UsageSnapshot}
+ */
 export function normalizeUsage(result, usage, { fetchedAt } = {}) {
   if (!result || typeof result !== "object" || Array.isArray(result))
     return unknown("parent-usage-invalid-response", fetchedAt);
@@ -66,6 +74,8 @@ export function normalizeUsage(result, usage, { fetchedAt } = {}) {
 }
 
 /** Bounded, argv-only local transports. Raw data never leaves this boundary's caller. */
+/** @param {Record<string, any>} usage runtime usage definition from the registry
+ * @param {{ timeoutMs?: number, spawn?: Function, env?: NodeJS.ProcessEnv, cwd?: string }} [options] */
 export function fetchUsage(usage, { timeoutMs = 15_000, spawn = nodeSpawn, env = process.env, cwd = process.cwd() } = {}) {
   return new Promise((resolve, reject) => {
     let child;
@@ -74,7 +84,8 @@ export function fetchUsage(usage, { timeoutMs = 15_000, spawn = nodeSpawn, env =
     let bytes = 0;
     let initialized = false;
     const fail = () => new Error("parent-usage-fetch-failed");
-    let timer;
+    // Assigned after spawn; a spawn failure calls finish() before that.
+    let timer = null;
     const finish = (error, value) => {
       if (settled) return;
       settled = true;

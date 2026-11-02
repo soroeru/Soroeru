@@ -16,6 +16,8 @@ async function stat(file) {
  * Move an old local state path once, only if the new path does not exist.
  * Both-existing paths are preserved. Dry runs read the old path without writes.
  * Notifications go to stderr, keeping machine-readable stdout unchanged.
+ * @param {string | undefined} target
+ * @param {{ dryRun?: boolean, notify?: (message: string) => unknown }} [options]
  */
 export async function migrateLegacyStatePath(target, {
   dryRun = false,

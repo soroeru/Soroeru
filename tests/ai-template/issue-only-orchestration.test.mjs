@@ -51,11 +51,11 @@ test("open Issue blockers prevent implementation without a board status", async 
 });
 
 test("truncated, ambiguous and cross-repository Issue metadata fail closed", async () => {
-  for (const [mutate, reason] of [
+  for (const [mutate, reason] of /** @type {[(i: ReturnType<typeof issue>) => void, string][]} */ ([
     [(i) => { i.blockedBy.pageInfo.hasNextPage = true; }, "issue-metadata-truncated"],
     [(i) => { i.labels.nodes.push({ name: "priority:P2" }); }, "issue-priority-ambiguous"],
     [(i) => { i.blockedBy.nodes[0].repository.nameWithOwner = "fixture/other"; }, "issue-dependency-unavailable"],
-  ]) {
+  ])) {
     await assert.rejects(fetchRepositoryIssues({ issues: [1], repository: "example-org/example-repo", graphql: async () => {
       const value = issue(1, "OPEN", [[2, "CLOSED"]]); mutate(value);
       return { repository: { issue: value } };

@@ -6,7 +6,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
-  loadEvalDataset,
   validateEvalDataset,
   runTriageEvaluation,
   computeTriageMetrics,
@@ -305,7 +304,7 @@ test("the baseline CLI runs offline and prints no Issue text", async () => {
   assert.ok(!stdout.includes(dataset.cases.find((c) => c.split === "holdout").title));
   await assert.rejects(
     execFileAsync(process.execPath, [script, "--transport", "live", "--max-requests", "200"], { env }),
-    (error) => /triage-eval-missing-key/.test(error.stderr),
+    (/** @type {{ stderr: string }} */ error) => /triage-eval-missing-key/.test(error.stderr),
   );
 });
 

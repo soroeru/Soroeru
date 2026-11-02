@@ -138,6 +138,7 @@ export class EvaluationPolicy {
   /**
    * Decide configuration for an episode.
    * Return { execution_mode, implementer_route, reviewer_route, retry_policy }
+   * @returns {{ execution_mode: string, implementer_route?: string, reviewer_route?: string | null, retry_policy?: string }}
    */
   selectConfiguration(episode) {
     const hint = episode.issue_features?.mode_hint;

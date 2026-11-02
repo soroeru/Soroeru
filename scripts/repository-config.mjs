@@ -9,8 +9,10 @@ const documentKeys = new Set([
 ]);
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const fail = (field) => { throw new Error(`repository-config-invalid:${field}`); };
+/** True when `value` contains U+0000-U+001F or U+007F. */
+export const hasControlCharacter = (value) => [...value].some((ch) => ch < " " || ch === "\x7f");
 const text = (value, field) => {
-  if (typeof value !== "string" || !value.trim() || /[\x00-\x1f\x7f]/.test(value)) fail(field);
+  if (typeof value !== "string" || !value.trim() || hasControlCharacter(value)) fail(field);
   return value.trim();
 };
 
@@ -20,7 +22,7 @@ export function loadRepositoryConfig(root = process.cwd()) {
   let source;
   try { source = fs.readFileSync(path.join(root, ".ai-template/config.json"), "utf8"); }
   catch (error) {
-    if (error.code !== "ENOENT") throw new Error("repository-config-unreadable");
+    if (error.code !== "ENOENT") throw new Error("repository-config-unreadable", { cause: error });
     return { repository: { baseBranch: "main", qualityGates: [], documents: {} } };
   }
   let parsed;

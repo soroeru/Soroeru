@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { loadRepositoryConfig } from "../repository-config.mjs";
+import { hasControlCharacter, loadRepositoryConfig } from "../repository-config.mjs";
 import { validateUsageDefinition } from "../issue-runtime-adapters/usage.mjs";
 import { validateSchema } from "./schema.mjs";
 
@@ -12,7 +12,7 @@ const readJson = file => {
   catch { throw new Error(`runtime-config-unreadable:${path.basename(file)}`); }
 };
 export function relativePath(value) {
-  if (typeof value !== "string" || !value || value !== value.trim() || /[\\\x00-\x1f\x7f]/.test(value) ||
+  if (typeof value !== "string" || !value || value !== value.trim() || value.includes("\\") || hasControlCharacter(value) ||
     path.posix.isAbsolute(value) || /^[A-Za-z]:/.test(value) || value.split("/").some(p => !p || p === "." || p === "..") ||
     value.split("/").includes(".git")) throw new Error("runtime-path-invalid");
   return value;

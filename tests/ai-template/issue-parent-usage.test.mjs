@@ -110,7 +110,7 @@ test("explicit modes do not consult usage", () => {
 function fakeAppServer(handler) {
   const calls = [];
   const spawn = (command, args) => {
-    const child = new EventEmitter();
+    const child = /** @type {EventEmitter & { stdin: PassThrough, stdout: PassThrough, exitCode: number | null, signalCode: string | null, kills: string[], kill: (signal: string) => boolean }} */ (new EventEmitter());
     child.stdin = new PassThrough();
     child.stdout = new PassThrough();
     child.exitCode = null;
@@ -262,6 +262,7 @@ async function classicRun(parent, extraOptions = {}) {
     },
   });
 }
+/** @returns {import("../../scripts/issue-runtime-adapters/usage.mjs").UsageSnapshot} */
 const usageAt = (remainingPercent) => ({ status: "ok", remainingPercent, windowDurationMins: 300, fetchedAt });
 
 test("classic: auto mode admits the parent at >= 50% and reports a closed decision", async () => {
@@ -305,6 +306,7 @@ const graphItem = (number) => ({
   number, title: `Issue ${number}`, url: `https://example.com/${number}`, status: "Ready", priority: "P1", dependencies: [],
 });
 
+/** @param {{ usages?: object[], parent?: object, capabilityRecords?: object[], config?: object, read?: (agent: string) => Promise<object> }} options */
 function graphRun({ usages, parent = {}, capabilityRecords = capabilities, config = {}, read }) {
   const reads = [];
   const dispatched = [];
@@ -336,8 +338,8 @@ function graphRun({ usages, parent = {}, capabilityRecords = capabilities, confi
   return {
     reads,
     dispatched,
-    invoke: (items) => graph.invoke(input(items), runConfig),
-    resume: (value) => graph.invoke(new Command({ resume: value }), runConfig),
+    invoke: (items) => /** @type {Promise<Record<string, any>>} */ (graph.invoke(input(items), runConfig)), // any: interrupt payloads are untyped
+    resume: (value) => /** @type {Promise<Record<string, any>>} */ (graph.invoke(new Command({ resume: value }), runConfig)),
     state: async () => (await graph.getState(runConfig)).values,
   };
 }
@@ -404,7 +406,7 @@ test("graph: handoff re-judges the parent without touching the running worker", 
 });
 
 test("graph: a manual assignment resumed after usage dropped is re-judged before dispatch", async () => {
-  for (const dropped of [usageAt(30), { status: "unknown", reason: "parent-usage-timeout", fetchedAt }]) {
+  for (const dropped of /** @type {import("../../scripts/issue-runtime-adapters/usage.mjs").UsageSnapshot[]} */ ([usageAt(30), { status: "unknown", reason: "parent-usage-timeout", fetchedAt }])) {
     let current = usageAt(80);
     const run = graphRun({ read: async () => current, config: { autoAssign: false } });
     const prompt = await run.invoke([graphItem(1)]);

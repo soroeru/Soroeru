@@ -31,6 +31,19 @@ import { loadRuntimeRegistry, findRuntime, isRetiredCommand } from "./ai-templat
 
 import { selectWorkerRoutes } from "./issue-plan.mjs";
 
+/**
+ * @typedef {import("./issue-runtime-adapters/shared.mjs").CapabilityRecord} CapabilityRecord
+ * @typedef {import("./issue-runtime-adapters/shared.mjs").Diagnostic} Diagnostic
+ * @typedef {{ cwd?: string, timeoutMs?: number, workerTimeoutMs?: number, env?: NodeJS.ProcessEnv, pathEnv?: string,
+ *   homeDir?: string, adapters?: unknown, runProcess?: typeof runProcess, resolveExecutable?: Function,
+ *   headlessExecProbe?: Function, headlessProbeTimeoutMs?: number, only?: string[], modelFilter?: string,
+ *   outputPath?: string, cachePath?: string, refresh?: boolean, invalidateAgents?: string[], dryRun?: boolean,
+ *   parentAgent?: string, parentAsWorker?: boolean, unavailableAgents?: any[], unavailableModels?: any[] }} CapabilityOptions
+ * @typedef {{ capabilities: CapabilityRecord[], diagnostics: Diagnostic[], cli: Record<string, { path?: string, version?: string }>,
+ *   probedAt: string, repositoryCommit?: string, probeSchemaVersion?: number | string, runtimeFingerprint?: string,
+ *   outputPath?: string, reused?: boolean, reprobedAgents?: string[] }} CapabilityPayload
+ */
+
 export const DEFAULT_CAPABILITIES_OUTPUT = "state/issue-capabilities.json";
 
 /** Only enabled registered routes may be discovered or dispatched. */
@@ -45,7 +58,8 @@ function canonicalAgentName(name, root) {
  * `probedAt` so a later run can decide whether the cache is still fresh
  * without re-running any adapter.
  *
- * @returns {{ capabilities: object[], diagnostics: object[], cli: object, probedAt: string, outputPath?: string }}
+ * @param {CapabilityOptions} [options]
+ * @returns {Promise<CapabilityPayload>}
  */
 export async function discoverCapabilities(options = {}) {
   const timeoutMs = options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -120,6 +134,8 @@ export async function discoverCapabilities(options = {}) {
  * executable moved/disappeared or whose `--version` output changed is
  * reported as stale and must be re-probed before its cached records are
  * trusted again.
+ * @param {CapabilityPayload["cli"]} [cliMeta]
+ * @param {CapabilityOptions} [options]
  */
 async function findStaleCachedAgents(
   cliMeta,
@@ -158,7 +174,8 @@ async function findStaleCachedAgents(
  * Never writes the cache file when `dryRun` is true, matching
  * `discoverCapabilities`'s existing no-disk-writes-during-dry-run contract.
  *
- * @returns {{ capabilities: object[], diagnostics: object[], cli: object, probedAt: string, reused: boolean, reprobedAgents?: string[] }}
+ * @param {CapabilityOptions} [options]
+ * @returns {Promise<CapabilityPayload>}
  */
 export async function loadOrRefreshCapabilities(options = {}) {
   const { cachePath, refresh = false, invalidateAgents = [], dryRun = false } = options;
@@ -265,6 +282,7 @@ export async function loadOrRefreshCapabilities(options = {}) {
  * Fresh pool for one triage batch. Never reads/writes a capability cache.
  * Call again for every new selection batch; only the caller may share a result
  * within that batch. Parent/unavailable exclusions remain deterministic.
+ * @param {CapabilityOptions} [options]
  */
 export async function refreshWorkerRoutes(options = {}) {
   const result = await discoverCapabilities({ ...options, outputPath: undefined });
@@ -275,6 +293,8 @@ export async function refreshWorkerRoutes(options = {}) {
  * Dispatch preflight: re-read the selected agent's catalog and probe only the
  * exact model. Never execute the supplied selector; compare it to fresh CLI
  * discovery. A changed selector or a failed model requires route reselection.
+ * @param {{ agent?: string, model?: string, selector?: string }} route
+ * @param {CapabilityOptions} [options]
  */
 export async function verifyWorkerRoute(route, options = {}) {
   if (isRetiredRuntimeRoute(route, options.cwd)) return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
@@ -294,7 +314,9 @@ export async function verifyWorkerRoute(route, options = {}) {
   return { ok: false, reason: failure?.reason ?? REASON_CODES.MODEL_NOT_SELECTABLE };
 }
 
+/** @param {string[]} argv */
 export function parseCapabilitiesCliArgs(argv) {
+  /** @type {{ stdout?: boolean, outputPath?: string, timeoutMs?: number, workerTimeoutMs?: number }} */
   const options = {};
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];

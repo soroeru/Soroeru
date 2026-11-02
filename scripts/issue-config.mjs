@@ -87,6 +87,8 @@ export async function loadOrchestratorConfig(filePath = DEFAULT_CONFIG_PATH, { c
   return normalizeDocument(YAML.parseDocument(source, { uniqueKeys: true }));
 }
 
+/** @typedef {Record<string, any>} ConfigLayer config layers are free-form until normalized */
+/** @param {{ defaults?: ConfigLayer, yaml?: ConfigLayer, cli?: ConfigLayer }} [layers] */
 export function mergeOrchestratorConfig({ defaults = {}, yaml = {}, cli = {} } = {}) {
   const merged = { ...defaults, ...yaml, ...cli };
   if (defaults.triage !== undefined || yaml.triage !== undefined || cli.triage !== undefined) {

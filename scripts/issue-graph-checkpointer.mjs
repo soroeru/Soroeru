@@ -141,6 +141,7 @@ export class FileCheckpointSaver extends MemorySaver {
   }
 
   async put(config, checkpoint, metadata, newVersions) {
+    // @ts-expect-error MemorySaver.put is typed with 3 parameters but the base contract (BaseCheckpointSaver.put) takes newVersions
     const result = await super.put(config, checkpoint, metadata, newVersions);
     await this.#persist();
     return result;

@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { loadRepositoryConfig } from "../../scripts/repository-config.mjs";
+import { hasControlCharacter, loadRepositoryConfig } from "../../scripts/repository-config.mjs";
 import { verifyRepositoryFreshness } from "../../scripts/issue-runtime-adapters/shared.mjs";
 
 const reader = path.resolve(import.meta.dirname, "../../scripts/repository-config.mjs");
@@ -59,6 +59,11 @@ test("malformed settings, unsafe refs, and escaping document paths fail closed",
   }
   await fs.writeFile(path.join(dir, ".ai-template/config.json"), "{broken");
   assert.throws(() => loadRepositoryConfig(dir), /repository-config-invalid-json/);
+});
+
+test("control characters are exactly U+0000-U+001F and U+007F", () => {
+  for (const value of ["\x00", "a\x1fb", "\t", "end\x7f"]) assert.equal(hasControlCharacter(value), true, JSON.stringify(value));
+  for (const value of ["", " ", "~", "\x80", "設計.md", "fixture-😀"]) assert.equal(hasControlCharacter(value), false, JSON.stringify(value));
 });
 
 test("freshness follows the configured trunk, rejecting a checkout after that remote advances", async (t) => {

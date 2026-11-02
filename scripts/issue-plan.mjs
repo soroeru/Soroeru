@@ -81,7 +81,11 @@ function selectorValues(value) {
   return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
 }
 
-/** Select matching items and recursively include their dependency closure. */
+/**
+ * Select matching items and recursively include their dependency closure.
+ * @param {*} rawItems
+ * @param {{ issues?: unknown, priority?: unknown, iteration?: unknown, size?: unknown }} [selectors]
+ */
 export function selectIssues(rawItems, selectors = {}) {
   const issues = selectorValues(selectors.issues).map(Number);
   const priorities = selectorValues(selectors.priority);
@@ -92,12 +96,12 @@ export function selectIssues(rawItems, selectors = {}) {
   if (issues.some((issue) => !Number.isSafeInteger(issue) || issue <= 0))
     throw new Error("invalid-issue-filter");
 
-  const dimensions = [
+  const dimensions = /** @type {[unknown[], (item: any) => boolean][]} */ ([
     [issues, (item) => issues.includes(Number(item.number))],
     [priorities, (item) => priorities.includes(item.priority)],
     [iterations, (item) => iterations.includes(item.iteration)],
     [sizes, (item) => sizes.includes(item.size)],
-  ].filter(([values]) => values.length);
+  ]).filter(([values]) => values.length); // any: items are raw, unvalidated Issue rows
   const matches = rawItems.filter((item) => dimensions.every(([, predicate]) => predicate(item)));
   if (!matches.length) throw new Error("no-issues-match-filter");
 
@@ -213,6 +217,8 @@ export function validateCapabilities(requiredRoutes, capabilities) {
  * (unless `parentAsWorker` opts it in) or run-scoped unavailable
  * agent/model lists. The orchestrating agent assigns
  * each runnable Issue to one of these routes; the pool never invents a route.
+ * @param {import("./issue-runtime-adapters/shared.mjs").CapabilityRecord[]} capabilities
+ * @param {{ parentAgent?: string, parentAsWorker?: boolean, unavailableAgents?: any[], unavailableModels?: any[], cwd?: string }} [options]
  */
 export function selectWorkerRoutes(
   capabilities,
@@ -389,6 +395,7 @@ export function buildUsageReport(usage = {}, issueNumbers = []) {
     availableIssues.push(number);
     return { number, usage: exact };
   });
+  /** @type {string | object} */
   let total = "unavailable";
   if (availableIssues.length)
     total = {

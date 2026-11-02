@@ -47,11 +47,14 @@ export function resolveParentWorkerFlags(options) {
   return options;
 }
 
+/** @returns {import("./issue-runtime-adapters/usage.mjs").UsageSnapshot} */
 const unknown = (reason, fetchedAt) => ({ status: "unknown", reason, ...(fetchedAt ? { fetchedAt } : {}) });
 
 /**
  * Decide whether the parent runtime may take worker routes right now.
  * Unknown usage never opts the parent in.
+ * @param {string} mode
+ * @param {import("./issue-runtime-adapters/usage.mjs").UsageSnapshot} [usage]
  */
 export function decideParentWorker(mode, usage) {
   if (mode === "always") return { eligible: true, reason: "parent-worker-forced" };
@@ -63,7 +66,12 @@ export function decideParentWorker(mode, usage) {
     : { eligible: false, reason: "parent-usage-low" };
 }
 
-/** Read a registered parent's usage; unsupported or failed reads never opt it in. */
+/**
+ * Read a registered parent's usage; unsupported or failed reads never opt it in.
+ * @param {string} agent
+ * @param {{ timeoutMs?: number, now?: () => string, cwd?: string, spawn?: Function, env?: NodeJS.ProcessEnv }} [options]
+ * @returns {Promise<import("./issue-runtime-adapters/usage.mjs").UsageSnapshot>}
+ */
 export async function readParentUsage(agent, {
   timeoutMs = DEFAULT_PARENT_USAGE_TIMEOUT_MS,
   now = () => new Date().toISOString(),

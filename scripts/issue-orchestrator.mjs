@@ -377,7 +377,8 @@ async function main() {
   const parent = input.options.parent;
   if (parent?.agent && parentWorkerMode(parent) === "auto" && input.options.parentUsage === undefined)
     input.options.parentUsage = await readParentUsage(input.options.parent.agent, { cwd: repositoryRoot });
-  const result = await runOrchestration(input);
+  const result = /** @type {Awaited<ReturnType<typeof runOrchestration>> & { capabilityDiagnostics?: unknown, capabilityCacheStatus?: unknown }} */ (
+    await runOrchestration(input));
   if (capabilityDiagnostics !== undefined) result.capabilityDiagnostics = capabilityDiagnostics;
   if (capabilityCacheStatus !== undefined) result.capabilityCacheStatus = capabilityCacheStatus;
   process.stdout.write(`${JSON.stringify(result)}\n`);

@@ -10,7 +10,7 @@ const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export async function loadAssistedApproval(cwd, model) {
   try {
     const raw = await fs.readFile(path.resolve(cwd, "state/triage-eval/assisted-evaluation.json"));
-    const report = JSON.parse(raw);
+    const report = JSON.parse(/** @type {string} */ (/** @type {unknown} */ (raw)));
     const approval = JSON.parse(await fs.readFile(path.resolve(cwd, "state/triage-eval/assisted-approval.json"), "utf8"));
     const allowed = ["evaluationSha256", "routeEvidenceSha256", "labelsConfirmed", "overrideCausesReviewed", "decision", "reviewedBy", "reviewedAt"];
     if (!approval || Object.keys(approval).some((k) => !allowed.includes(k)) ||
@@ -36,7 +36,7 @@ export async function loadApprovedRouteEvidence(cwd, model) {
   try {
     const raw = await fs.readFile(path.resolve(cwd, "state/route-evidence.json"));
     if (accepted.approval.routeEvidenceSha256 !== digest(raw)) return [];
-    const evidence = JSON.parse(raw);
+    const evidence = JSON.parse(/** @type {string} */ (/** @type {unknown} */ (raw)));
     if (!Array.isArray(evidence) || evidence.length > 256) return [];
     return evidence.map(normalizeRouteEvidence);
   } catch {
