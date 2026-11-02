@@ -210,7 +210,7 @@ test("schema validation rejects disallowed keys (CoT, full conversation, raw mod
 
 test("the orchestrator dispatch guard shares the role-schema deny-list", async () => {
   const module = await import(
-    pathToFileURL(join(process.cwd(), "scripts", "project-issue-roles.mjs")).href
+    pathToFileURL(join(process.cwd(), "scripts", "issue-roles.mjs")).href
   );
   const payloadKeys: string[] = module.DISALLOWED_PAYLOAD_KEYS;
   assert.deepEqual([...payloadKeys].sort(), [...DISALLOWED_KEYS].sort());
@@ -222,7 +222,7 @@ test("a reviewer worker's own context still validates as ReviewerInput", () => {
   const reviewerContext = validateReviewerInput({
     acceptanceCriteria: ["role programs dispatch a distinct reviewer"],
     diffReference: "origin/main...issue-482-role-based-worker-dispatch",
-    changedFiles: ["scripts/project-issue-roles.mjs"],
+    changedFiles: ["scripts/issue-roles.mjs"],
     testSummary: { passed: true, totalTests: 41, failedTests: 0 },
   });
   assert.equal(reviewerContext.changedFiles.length, 1);

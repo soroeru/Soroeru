@@ -14,9 +14,9 @@
 
 ## Orchestration
 
-Use `orchestrate-project-issues` only when coordinating multiple GitHub Issues. Dispatch
-reasoning-heavy bounded work to `deep-reasoner` and mechanical, fully specified work to
-`fast-worker`; their definitions constrain their tools. Issue lifecycle skills remain
+Use `orchestrate-issues-implementation` only when coordinating multiple GitHub Issues.
+Dispatch reasoning-heavy bounded work to `deep-reasoner` and mechanical, fully specified work
+to `fast-worker`; their definitions constrain their tools. Issue lifecycle skills remain
 authoritative regardless of the orchestrating model.
 
 Worker prompts must state four labeled parts:

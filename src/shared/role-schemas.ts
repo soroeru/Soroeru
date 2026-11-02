@@ -148,7 +148,7 @@ function isStringArray(val: unknown): val is string[] {
 
 /**
  * Keys that must never reach a role's context. Exported so the orchestrator's
- * dispatch-payload guard (`scripts/project-issue-roles.mjs`) can be checked
+ * dispatch-payload guard (`scripts/issue-roles.mjs`) can be checked
  * against the same list.
  */
 export const DISALLOWED_KEYS = new Set([

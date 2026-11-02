@@ -109,8 +109,8 @@ node --test dist/compiled/tests/e2e/tier1-*.e2e.js
 node --test dist/compiled/tests/e2e/tier2-*.e2e.js
 ```
 
-Root `npm test` runs compiled TypeScript unit tests; development-tool `.test.mjs`
-files run separately, for example `node --test tests/unit/project-issue-*.test.mjs`.
+Root `npm test` runs compiled TypeScript unit tests. The template-managed Issue
+tooling tests run separately with `node scripts/ai-template.mjs test`.
 Run only the relevant manual scenarios from [manual-test.md](manual-test.md) and
 record any omissions in the PR. Requirements/architecture changes use their
 matching review skills; implementation plans and reviews belong in the Issue/PR.
@@ -250,9 +250,11 @@ Use GitHub Issues, labels and native `Blocked by` relations only; no Projects or
 Project token. Invoke [issue-implementation](../skills/issue-implementation/SKILL.md)
 for new work and [handoff-issue](../skills/handoff-issue/SKILL.md) for existing work.
 Multi-Issue routing/configuration belongs in
-[orchestrate-project-issues](../skills/orchestrate-project-issues/SKILL.md).
-Route discovery is `node scripts/project-issue-capabilities.mjs`; historical
-`project-issue-*` names do not authorize Project access.
+[orchestrate-issues-implementation](../skills/orchestrate-issues-implementation/SKILL.md).
+Route discovery is `node scripts/issue-capabilities.mjs`. The Issue tooling,
+its tests and the shared skills come from the AI template and are listed in
+`.ai-template/lock.json`; change them through a template pull request, because
+`node scripts/ai-template.mjs check` rejects local edits.
 
 Development Issue triage is optional and separate from product AI. Its isolated
 child may send reviewed development text to TypeSafe only under the orchestration
