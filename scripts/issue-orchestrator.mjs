@@ -204,6 +204,11 @@ export function parseCliArgs(argv) {
       options.refresh = true;
       continue;
     }
+    // Re-lists every runtime's model catalog (no model execution) before discovery.
+    if (flag === "--refresh-catalog") {
+      options.refreshCatalog = true;
+      continue;
+    }
     // Backward-compatible alias; prefer --parent-agent.
     if (flag === "--parent-provider") {
       const value = argv[++index];
@@ -324,6 +329,7 @@ async function main() {
   let capabilities;
   let capabilityDiagnostics;
   let capabilityCacheStatus;
+  let modelCatalogStatus;
   if (cli.capabilitiesFile) {
     const loaded = JSON.parse(await fs.readFile(cli.capabilitiesFile, "utf8"));
     capabilities = Array.isArray(loaded) ? loaded : loaded.capabilities;
@@ -337,10 +343,14 @@ async function main() {
     const discovered = await loadOrRefreshCapabilities({
       cachePath,
       refresh: Boolean(cli.refresh),
+      refreshCatalog: Boolean(cli.refreshCatalog),
+      catalogMaxAgeHours: merged.modelCatalog?.maxAgeHours,
       invalidateAgents: cli.invalidateAgents,
       dryRun: Boolean(cli.dryRun),
       cwd: repositoryRoot,
     });
+    if (discovered.catalogRefreshedAgents) modelCatalogStatus = `refreshed:${discovered.catalogRefreshedAgents.join(",")}`;
+    else modelCatalogStatus = "fresh";
     capabilities = discovered.capabilities;
     capabilityDiagnostics = discovered.diagnostics;
     capabilityCacheStatus = discovered.reused
@@ -377,10 +387,11 @@ async function main() {
   const parent = input.options.parent;
   if (parent?.agent && parentWorkerMode(parent) === "auto" && input.options.parentUsage === undefined)
     input.options.parentUsage = await readParentUsage(input.options.parent.agent, { cwd: repositoryRoot });
-  const result = /** @type {Awaited<ReturnType<typeof runOrchestration>> & { capabilityDiagnostics?: unknown, capabilityCacheStatus?: unknown }} */ (
+  const result = /** @type {Awaited<ReturnType<typeof runOrchestration>> & { capabilityDiagnostics?: unknown, capabilityCacheStatus?: unknown, modelCatalogStatus?: unknown }} */ (
     await runOrchestration(input));
   if (capabilityDiagnostics !== undefined) result.capabilityDiagnostics = capabilityDiagnostics;
   if (capabilityCacheStatus !== undefined) result.capabilityCacheStatus = capabilityCacheStatus;
+  if (modelCatalogStatus !== undefined) result.modelCatalogStatus = modelCatalogStatus;
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

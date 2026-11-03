@@ -1,56 +1,57 @@
 import {
-  DEFAULT_PROBE_TIMEOUT_MS, DEFAULT_WORKER_TIMEOUT_MS, REASON_CODES,
+  DEFAULT_WORKER_TIMEOUT_MS, REASON_CODES,
   buildWorkerPrompt, capabilityRecord, diagnostic, quoteSelectorArg,
   resolveExecutable, verifyModelCandidate, runProcess, spawnWorker, splitSelector,
 } from "./shared.mjs";
-import { parseAuthentication, parseCatalog } from "./parsers.mjs";
-import { isRetiredCommand, loadRuntimeRegistry } from "../ai-template/registry.mjs";
+import { fetchRuntimeCatalog } from "./catalog.mjs";
+import { isModelAllowed, isModelDenied, isRetiredCommand } from "../ai-template/registry.mjs";
 
 export function createAdapter(definition) {
   const agent = definition.name;
   return {
     agent, id: definition.id, evaluationOrder: definition.evaluationOrder, definition,
+    /**
+     * Probe the runtime's catalog models. Candidates come from `ctx.catalogEntry` (the persisted
+     * model catalog) when supplied, otherwise from a fresh listing; both use the same source.
+     */
     async discover(ctx = {}) {
-      const timeoutMs = ctx.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
       const run = ctx.runProcess ?? runProcess;
-      const resolve = ctx.resolveExecutable ?? resolveExecutable;
       const env = ctx.env ?? process.env;
       const records = [], diagnostics = [];
       const fail = reason => ({ records, diagnostics: [...diagnostics, diagnostic({ agent, status: "failed", reason })] });
       if (definition.retired) return fail(REASON_CODES.CLI_NOT_FOUND);
-      let cliPath;
-      for (const name of ctx.cliPath ? [ctx.cliPath] : definition.commands) {
-        if (isRetiredCommand(name, ctx.cwd)) continue;
-        const resolved = await resolve(name, { env, pathEnv: ctx.pathEnv });
-        if (resolved && !isRetiredCommand(resolved, ctx.cwd)) { cliPath = resolved; break; }
-      }
-      if (!cliPath) return fail(REASON_CODES.CLI_NOT_FOUND);
-      if (definition.auth) {
-        const auth = await run(cliPath, definition.auth.args, { timeoutMs, env, cwd: ctx.cwd });
-        if (auth.timedOut) return fail(REASON_CODES.VERIFICATION_TIMEOUT);
-        if (!parseAuthentication(definition.auth.parser, auth)) return fail(REASON_CODES.AUTH_UNAVAILABLE);
-      }
-      const listed = definition.models.args.length
-        ? await run(cliPath, definition.models.args, { timeoutMs, env, cwd: ctx.cwd }) : { code: 0, stdout: "" };
-      if (listed.timedOut) return fail(REASON_CODES.VERIFICATION_TIMEOUT);
-      const { models, loggedIn } = await parseCatalog(definition.models.parser, listed, ctx);
-      if (listed.code !== 0) return fail(definition.auth || loggedIn ? REASON_CODES.PROBE_FAILED : REASON_CODES.AUTH_UNAVAILABLE);
-      if (!models?.length) return fail(loggedIn === false ? REASON_CODES.AUTH_UNAVAILABLE : REASON_CODES.MODEL_NOT_SELECTABLE);
-      const allowed = loadRuntimeRegistry(ctx.cwd).allowedModels.get(definition.id);
+      const listing = ctx.catalogEntry ?? await fetchRuntimeCatalog(definition, ctx);
+      if (listing.status !== "ok") return fail(listing.reason ?? REASON_CODES.PROBE_FAILED);
+      const cliPath = listing.cliPath;
+      if (!cliPath || isRetiredCommand(cliPath, ctx.cwd)) return fail(REASON_CODES.CLI_NOT_FOUND);
+      // Alias-resolving runtimes pass the catalog value to `--model` and record the canonical
+      // model the probe reports; `requestedModel` then carries the catalog value.
+      const resolveModel = definition.models.resolveReportedModel === true;
+      const filters = ctx.modelFilter === undefined ? null : [ctx.modelFilter].flat().filter(Boolean);
       let selected = 0;
-      for (const entry of models) {
-        if (ctx.modelFilter !== undefined && entry.model !== ctx.modelFilter) continue;
+      for (const { model, label } of listing.models) {
+        if (filters && !filters.includes(model)) continue;
         selected++;
-        // Never probe a model the repository allowlist excludes.
-        if (allowed && !allowed.includes(entry.model)) {
-          diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_ALLOWED, model: entry.model }));
+        // Never probe a model the repository policy excludes (deny wins over allow).
+        if (isModelDenied(definition.id, model, ctx.cwd, label)) {
+          diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_DENIED, model }));
           continue;
         }
-        const args = [quoteSelectorArg(cliPath), ...definition.selectorArgs.map(arg => quoteSelectorArg(arg === "{model}" ? entry.model : arg))];
-        if (args.some(arg => !arg)) { diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE, model: entry.model })); continue; }
+        if (!isModelAllowed(definition.id, model, ctx.cwd)) {
+          diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_ALLOWED, model }));
+          continue;
+        }
+        const args = [quoteSelectorArg(cliPath), ...definition.selectorArgs.map(arg => quoteSelectorArg(arg === "{model}" ? model : arg))];
+        if (args.some(arg => !arg)) { diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE, model })); continue; }
         const selector = args.join(" ");
-        const result = await verifyModelCandidate({ ...entry, selector }, { ...ctx, run, env, extraArgs: definition.probeArgs });
-        if (!result.ok) { diagnostics.push(diagnostic({ agent, status: "failed", reason: result.reason, model: entry.model })); continue; }
+        const result = await verifyModelCandidate({ model, selector }, { ...ctx, run, env, resolveModel, extraArgs: definition.probeArgs });
+        if (!result.ok) { diagnostics.push(diagnostic({ agent, status: "failed", reason: result.reason, model })); continue; }
+        const entry = resolveModel ? { model: result.reportedModel, requestedModel: model } : { model, requestedModel: label };
+        if (resolveModel && isModelDenied(definition.id, entry.model, ctx.cwd)) {
+          diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_DENIED, model }));
+          continue;
+        }
+        if (records.some(record => record.model === entry.model)) continue;
         for (const role of ["worker", "parent"]) records.push(capabilityRecord({ agent, ...entry, role, selector, timeoutMs: ctx.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS }));
         diagnostics.push(diagnostic({ agent, status: "ok", model: entry.model }));
       }

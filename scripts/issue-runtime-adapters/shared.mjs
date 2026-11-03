@@ -22,6 +22,10 @@ export const REASON_CODES = Object.freeze({
   HEADLESS_EXEC_FAILED: "headless-exec-failed",
   // Repository config `agents.models.<id>.allow` excludes this exact model; it is never probed.
   MODEL_NOT_ALLOWED: "model-not-allowed",
+  // Repository config `agents.models.<id>.deny` matches the requested or reported model.
+  MODEL_DENIED: "model-denied",
+  // An alias-resolving runtime did not report exactly one canonical model during the probe.
+  MODEL_UNRESOLVED: "model-unresolved",
 });
 
 // Bumped from 30s: CLI authentication / model catalogs
@@ -32,7 +36,7 @@ export const DEFAULT_WORKER_TIMEOUT_MS = 3_600_000;
 // status check), so it gets its own, longer budget.
 export const DEFAULT_HEADLESS_PROBE_TIMEOUT_MS = 120_000;
 
-export const PROBE_SCHEMA_VERSION = 4;
+export const PROBE_SCHEMA_VERSION = 5;
 
 /** Stderr/stdout patterns that indicate the CLI demanded a real TTY/PTY. */
 const TTY_REQUIRED_PATTERN =
@@ -192,12 +196,15 @@ export function runProcess(
  * @param {NodeJS.ProcessEnv} [options.env]
  * @param {string[]} [options.args] - selector args (model flags etc.) to place
  *   before the generated task prompt; must not include the prompt itself.
- * @returns {Promise<{ok: true} | {ok: false, reason: string}>}
+ * @param {boolean} [options.resolveModel] - the selector passes an alias; require
+ *   exactly one reported canonical model and return it instead of comparing.
+ * @returns {Promise<{ok: true, reportedModel?: string} | {ok: false, reason: string}>}
  */
 export async function runHeadlessExecProbe({
   cliPath,
   args = [],
   expectedModel,
+  resolveModel = false,
   run = runProcess,
   timeoutMs = DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   env = process.env,
@@ -222,10 +229,17 @@ export async function runHeadlessExecProbe({
     }
     if (result.timedOut) return { ok: false, reason: REASON_CODES.VERIFICATION_TIMEOUT };
     const combinedOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-    if (expectedModel && reportedModels(result).some((model) => model !== expectedModel)) {
+    const reported = [...new Set(reportedModels(result))];
+    if (!resolveModel && expectedModel && reported.some((model) => model !== expectedModel)) {
       return { ok: false, reason: REASON_CODES.MODEL_MISMATCH };
     }
-    if (artifactMatches && result.code === 0) return { ok: true };
+    if (artifactMatches && result.code === 0) {
+      if (!resolveModel) return { ok: true };
+      // Canonical identity comes only from the runtime's machine-readable report.
+      return reported.length === 1
+        ? { ok: true, reportedModel: reported[0] }
+        : { ok: false, reason: REASON_CODES.MODEL_UNRESOLVED };
+    }
     if (TTY_REQUIRED_PATTERN.test(combinedOutput)) return { ok: false, reason: REASON_CODES.TTY_REQUIRED };
     // Exited cleanly but produced no artifact: a print/response-only mode
     // that never actually exercised a tool (observed for `agy --print`).
@@ -262,11 +276,17 @@ export async function verifyModelCandidate(candidate, ctx = {}) {
       cliPath: tokens[0],
       args: [...tokens.slice(1), ...(ctx.extraArgs ?? [])],
       expectedModel: candidate.model,
+      resolveModel: ctx.resolveModel === true,
       run: ctx.run ?? runProcess,
       timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
       env: ctx.env ?? process.env,
     });
-    if (result?.ok === true) return { ok: true };
+    if (result?.ok === true) {
+      if (ctx.resolveModel !== true) return { ok: true };
+      return typeof result.reportedModel === "string" && result.reportedModel
+        ? { ok: true, reportedModel: result.reportedModel }
+        : { ok: false, reason: REASON_CODES.MODEL_UNRESOLVED };
+    }
     return {
       ok: false,
       reason: Object.values(REASON_CODES).includes(result?.reason)
@@ -310,9 +330,9 @@ export function isRetiredRuntimeRoute(route, root = process.cwd()) {
   return isRetiredCommand(splitSelector(route.selector)[0], root);
 }
 
-/** A route whose runtime declares a model allowlist without this exact model. */
+/** A route excluded by the runtime's model allowlist or deny patterns (model or requested value). */
 export function isDisallowedModelRoute(route, root = process.cwd()) {
-  return !isModelAllowed(route?.agent, route?.model, root);
+  return !isModelAllowed(route?.agent, route?.model, root, route?.requestedModel);
 }
 
 /**

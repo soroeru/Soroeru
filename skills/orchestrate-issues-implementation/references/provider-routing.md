@@ -5,6 +5,18 @@ Project field names an agent or model; the automatic capability discovery path b
 source of routes for a normal orchestration run, and the orchestrating agent assigns Issues to
 routes at run time.
 
+## Model catalog
+
+Candidates come from the local model catalog `state/model-catalog.json`, written by
+`scripts/issue-model-catalog.mjs` (also by the `refresh-model-catalog` skill). Each runtime's
+definition declares how its CLI lists models: a list command (`models.args`) or one
+control-protocol request (`models.control`, Claude's `initialize`). Listing never executes a
+model and keeps only model IDs, labels, CLI path/version, timestamps and closed reason codes.
+Before discovery the orchestrator re-lists a runtime whose entry is missing, failed, older than
+`run.modelCatalog.maxAgeHours` (default 168), or whose CLI path/`--version` changed;
+`--refresh-catalog` forces it and `--dry-run` never writes it. A runtime whose candidate list
+changed is re-probed; unchanged runtimes keep their cached capability records.
+
 ## Automatic discovery (normal path)
 
 1. `issue-orchestrator.mjs` invokes discovery automatically whenever no `--capabilities-file`
@@ -19,8 +31,8 @@ routes at run time.
    aliases and enabled/disabled/retired status with `node scripts/ai-template.mjs agents list`.
    Definition/config fingerprints invalidate the cache when registration changes, even without a
    commit. Disabled and retired routes cannot return through cached or explicit capabilities.
-3. Each adapter performs CLI existence and auth/availability checks, then exact model selection. A
-   model list alone does not make a route usable: each adapter also runs a **headless execution
+3. Each adapter takes its candidates from the catalog (a fresh listing for dispatch preflight and
+   triage batches), then exact model selection. A model list alone does not make a route usable: each adapter also runs a **headless execution
    probe** for each exact model/selector pair — spawn the CLI with no TTY attached and a minimal, locally-generated
    tool-use task ("create this exact file with this exact marker"), then check the artifact. Only a
    route whose exact model actually completed that task under a fixed timeout emits capability records of
@@ -28,9 +40,12 @@ routes at run time.
    catches CLIs that answer an auth/model-list check but cannot actually act unattended (e.g. a CLI
    that demands a real TTY, or one whose "print" mode only ever answers in prose and never touches a
    tool). The probe never persists the generated prompt, the marker, or any stdout/stderr — only the
-   pass/fail verdict and a closed reason code leave it.
+   pass/fail verdict and a closed reason code leave it. For a runtime with
+   `models.resolveReportedModel` the catalog value is an alias (`sonnet`): the probe must report
+   exactly one canonical model, which becomes `model`, and the alias becomes `requestedModel`.
 4. Failures use closed reason codes only: `cli-not-found`, `auth-unavailable`,
-   `model-not-selectable`, `model-mismatch`, `verification-timeout`, `probe-failed`, and the headless-
+   `model-not-selectable`, `model-mismatch`, `model-unresolved`, `model-not-allowed`, `model-denied`,
+   `verification-timeout`, `probe-failed`, and the headless-
    probe-specific `tty-required` (CLI demanded a real terminal), `non-agentic-print-mode` (exited
    cleanly but never produced the artifact), `headless-exec-failed` (any other unexplained failure).
    Diagnostics and run state must never store credentials, prompts, Issue bodies, diffs, or model
@@ -55,10 +70,12 @@ Codex-only file for ordinary orchestration; discovery (fresh or cached) is the s
 2. If the runtime cannot select or prove a requested model machine-readably, that route is
    unavailable (`verifiable: false` / omitted). Do not use a nearby model name and never relabel
    another model.
-3. A repository-owned allowlist (`agents.models.<id>.allow` in `.ai-template/config.json`) is
-   persistent policy, not run state: a model outside it is never probed (`model-not-allowed`),
-   never selected and never launched, even from a cached or explicit capability record. Do not
-   work around it with explicit capabilities; change the committed allowlist instead.
+3. Repository-owned model policy (`agents.models.<id>.allow` / `.deny` in `.ai-template/config.json`)
+   is persistent, not run state: a model outside `allow` (`model-not-allowed`) or matching a `deny`
+   pattern (`model-denied`; case-insensitive `*` patterns on the catalog value, its label and the
+   reported canonical model, winning over `allow`) is never probed, selected or launched, even from
+   a cached or explicit capability record. Do not work around it with explicit capabilities or
+   `--unavailable-model`; change the committed policy instead.
 4. Apply `--unavailable-agent` and `--unavailable-model` only to the current run. They remove routes
    from the run's worker pool; they never trigger substitution. Re-run discovery next time.
 5. The parent runtime's own worker records are admitted per its worker mode (see the

@@ -16,6 +16,7 @@ files under `skills/`. Inspect runtime IDs with `node scripts/ai-template.mjs ag
 | [`issue-implementation`](issue-implementation/SKILL.md) | Implementing exactly one Issue end to end: worktree gate, commit, independent reviewer pass, PR, CI monitoring |
 | [`handoff-issue`](handoff-issue/SKILL.md) | Resuming an existing Issue worktree after a session limit, interruption, or agent change |
 | [`orchestrate-issues-implementation`](orchestrate-issues-implementation/SKILL.md) | Coordinating several Issues: dependency order, run-time agent/model routing, role programs, integration gate |
+| [`refresh-model-catalog`](refresh-model-catalog/SKILL.md) | Refreshing or inspecting the local model catalog and proposing model-policy changes |
 
 The workflow skills call these tools:
 
@@ -24,6 +25,7 @@ The workflow skills call these tools:
 | `scripts/issue-worktree.sh` (`create` / `status` / `handoff` / `release` / `cleanup`) | `issue-implementation`, `handoff-issue` |
 | `scripts/issue-dispatch.mjs --role reviewer` | `issue-implementation` (pre-PR review), `orchestrate-issues-implementation` |
 | `scripts/issue-orchestrator.mjs`, `issue-capabilities.mjs`, `issue-graph.mjs` | `orchestrate-issues-implementation` |
+| `scripts/issue-model-catalog.mjs` (`refresh` / `show`) | `refresh-model-catalog`, and automatically by `issue-capabilities.mjs` |
 | `scripts/repository-config.mjs` (repository settings as data) | workflow and documentation review skills |
 | `gh` (Issues, PRs, checks) | all workflow skills |
 

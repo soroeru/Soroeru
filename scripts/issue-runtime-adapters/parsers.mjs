@@ -1,7 +1,3 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
 function parseAuth(stdout) {
   try {
     const json = JSON.parse(String(stdout ?? "").trim());
@@ -11,85 +7,22 @@ function parseAuth(stdout) {
   }
 }
 
-async function readSettingsModel(homeDir) {
-  try {
-    const raw = await fs.readFile(path.join(homeDir, ".claude", "settings.json"), "utf8");
-    const settings = JSON.parse(raw);
-    if (typeof settings?.model !== "string" || !settings.model.trim()) return null;
-    // Strip UI suffixes such as `[1m]`.
-    return settings.model
-      .trim()
-      .replace(/\[[^\]]*\]\s*$/, "")
-      .trim();
-  } catch {
-    return null;
+/**
+ * Claude CLI control-protocol `initialize` response: `models[]` of `{ value, displayName }`.
+ * Only those two fields are read; every other response field (account, commands, ...) is dropped.
+ * `default` names no specific model and is never a candidate.
+ */
+function parseInitializeModels(response) {
+  if (!response || typeof response !== "object" || !Array.isArray(response.models)) return null;
+  const out = [];
+  for (const entry of response.models) {
+    const value = typeof entry?.value === "string" ? entry.value.trim() : "";
+    if (!value || value === "default" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value)) continue;
+    const label = typeof entry?.displayName === "string" && entry.displayName.trim() ? entry.displayName.trim() : value;
+    if (!out.some(model => model.model === value)) out.push({ model: value, requestedModel: label });
   }
+  return out.length ? out : null;
 }
-
-function modelEntry(model, requestedModel = model) {
-  if (typeof model !== "string" || !model.trim()) return null;
-  const normalized = model
-    .trim()
-    .replace(/\[[^\]]*\]\s*$/, "")
-    .trim();
-  if (!normalized) return null;
-  return {
-    model: normalized,
-    requestedModel:
-      typeof requestedModel === "string" && requestedModel.trim() ? requestedModel.trim() : normalized,
-  };
-}
-
-function projectPaths(cwd, explicitProjectPath) {
-  const start = explicitProjectPath || cwd;
-  if (typeof start !== "string" || !start.trim()) return [];
-  const paths = [];
-  let current = path.resolve(start);
-  while (true) {
-    paths.push(current);
-    const parent = path.dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return paths;
-}
-
-async function readClaudeJsonModels(homeDir, cwd, explicitProjectPath) {
-  try {
-    const raw = await fs.readFile(path.join(homeDir, ".claude.json"), "utf8");
-    const config = JSON.parse(raw);
-    const projects = config?.projects;
-    if (!projects || typeof projects !== "object") return null;
-
-    for (const projectPath of projectPaths(cwd, explicitProjectPath)) {
-      const project = projects[projectPath];
-      const usage = project?.lastModelUsage;
-      if (!usage || typeof usage !== "object") continue;
-      const models = Object.keys(usage)
-        .map((model) => modelEntry(model))
-        .filter(Boolean);
-      if (models.length) return models;
-    }
-  } catch {
-    // Missing or malformed local state is equivalent to no discovered model.
-  }
-  return null;
-}
-
-async function readAvailableModelOptions(homeDir) {
-  try {
-    const raw = await fs.readFile(path.join(homeDir, ".claude.json"), "utf8");
-    const config = JSON.parse(raw);
-    if (!Array.isArray(config?.additionalModelOptionsCache)) return null;
-    const models = config.additionalModelOptionsCache
-      .map((entry) => modelEntry(entry?.value, entry?.label))
-      .filter(Boolean);
-    return models.length ? models : null;
-  } catch {
-    return null;
-  }
-}
-
 
 function parseLoginStatus(stdout) {
   const text = String(stdout ?? "");
@@ -213,7 +146,7 @@ export function parseAuthentication(parser, result) {
   if (parser === "login-status") return parseLoginStatus(result.stdout) || parseLoginStatus(result.stderr);
   throw new Error("runtime-auth-parser-invalid");
 }
-export async function parseCatalog(parser, result, ctx) {
+export async function parseCatalog(parser, result) {
   if (parser === "codex-models") return { models: parseModelCatalog(result.stdout) };
   if (parser === "bullet-models") return parseModelsOutput(result.stdout);
   if (parser === "model-lines") return { models: parseModels(result.stdout) };
@@ -226,15 +159,6 @@ export async function parseCatalog(parser, result, ctx) {
         .filter(e => typeof e === "string" && e.trim()).map(model => ({ model, requestedModel: model })) : null };
     } catch { return { models: null }; }
   }
-  if (parser === "claude-local") {
-    if (typeof ctx.settingsModel === "string" && ctx.settingsModel.trim()) return { models: [modelEntry(ctx.settingsModel)] };
-    if (Array.isArray(ctx.candidateModels) && ctx.candidateModels.length) return { models: ctx.candidateModels
-      .map(e => typeof e === "string" ? modelEntry(e) : modelEntry(e?.model, e?.requestedModel)).filter(Boolean) };
-    const home = ctx.homeDir ?? os.homedir();
-    let models = await readClaudeJsonModels(home, ctx.cwd, ctx.projectPath);
-    if (!models?.length) models = await readAvailableModelOptions(home);
-    if (!models?.length) { const legacy = await readSettingsModel(home); if (legacy) models = [modelEntry(legacy)]; }
-    return { models };
-  }
+  if (parser === "claude-initialize") return { models: parseInitializeModels(result.response) };
   throw new Error("runtime-model-parser-invalid");
 }

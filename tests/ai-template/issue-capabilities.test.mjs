@@ -44,6 +44,30 @@ function isolatedPath(directory) {
   return `${directory}${path.delimiter}${path.dirname(process.execPath)}`;
 }
 
+/**
+ * Fake `claude` that answers the control-protocol `initialize` request with `values`
+ * (plus fields that must be dropped) and exits 0 for any other invocation.
+ */
+function makeFakeClaude(directory, values, { reply = true } = {}) {
+  return makeFakeBin(directory, "claude", `
+    const args = process.argv.slice(2);
+    if (!args.includes("--input-format")) process.exit(0);
+    if (${JSON.stringify(!reply)}) process.exit(3);
+    require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+      const request = JSON.parse(line);
+      console.log(JSON.stringify({ type: "control_response", response: { subtype: "success",
+        request_id: request.request_id, response: { account: { email: "private@example.invalid" },
+          models: [{ value: "default", displayName: "Default" },
+            ...${JSON.stringify(values)}.map((value) => ({ value, displayName: value.toUpperCase() }))] } } }));
+    });
+  `);
+}
+
+const loggedInRun = async (command, args) =>
+  args[0] === "auth" && args[1] === "status"
+    ? { code: 0, signal: null, timedOut: false, error: null, stdout: JSON.stringify({ loggedIn: true }), stderr: "", pid: 1 }
+    : { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
+
 test("runtime adapters evaluate in fixed Codex → Claude → Grok → Gemini order", async () => {
   // A directory without .ai-template/config.json exposes the shipped defaults.
   const templateDefaults = await mkdtemp(path.join(tmpdir(), "runtime-defaults-"));
@@ -194,7 +218,7 @@ test("records verification-timeout without aborting later adapters", async () =>
   };
   // Touch paths so basename resolution stays realistic.
   await makeFakeBin(bin, "codex", "process.exit(0);");
-  await makeFakeBin(bin, "claude", "process.exit(0);");
+  await makeFakeClaude(bin, ["sonnet"]);
 
   const result = await discoverAllCapabilities({
     env: { ...process.env, PATH: isolatedPath(bin) },
@@ -203,8 +227,7 @@ test("records verification-timeout without aborting later adapters", async () =>
     workerTimeoutMs: 30_000,
     runProcess,
     resolveExecutable,
-    adapters: { Claude: { candidateModels: ["sonnet"] } },
-    headlessExecProbe: async () => ({ ok: true }),
+    headlessExecProbe: async () => ({ ok: true, reportedModel: "claude-sonnet-fake-1" }),
   });
 
   assert.ok(
@@ -212,156 +235,103 @@ test("records verification-timeout without aborting later adapters", async () =>
       (entry) => entry.agent === "Codex" && entry.reason === REASON_CODES.VERIFICATION_TIMEOUT,
     ),
   );
-  assert.ok(result.capabilities.some((record) => record.agent === "Claude" && record.model === "sonnet"));
+  assert.ok(result.capabilities.some((record) =>
+    record.agent === "Claude" && record.model === "claude-sonnet-fake-1" && record.requestedModel === "sonnet"));
 });
 
-test("Claude discovers exact models from the project state in .claude.json", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "example-cap-claude-project-state-"));
+test("Claude candidates come from the CLI initialize response, never from local usage state", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "example-cap-claude-initialize-"));
   const bin = path.join(directory, "bin");
   const home = path.join(directory, "home");
-  const project = path.join(directory, "project");
   await mkdir(bin);
   await mkdir(home);
-  await mkdir(project);
-  await makeFakeBin(bin, "claude", "process.exit(0);");
-  await writeFile(
-    path.join(home, ".claude.json"),
-    JSON.stringify({
-      projects: {
-        [project]: {
-          lastModelUsage: {
-            "claude-sonnet-4-5-20250929": { inputTokens: 1 },
-            "claude-opus-4-5-20251101": { inputTokens: 2 },
-          },
-        },
-      },
-    }),
-  );
+  // Local usage history names other models; it must not influence the candidates.
+  await writeFile(path.join(home, ".claude.json"), JSON.stringify({
+    projects: { [directory]: { lastModelUsage: { "fiction-history-model": { inputTokens: 1 } } } },
+    additionalModelOptionsCache: [{ value: "fiction-cached-model", label: "Cached" }],
+  }));
+  await makeFakeClaude(bin, ["fiction-alpha", "fiction-beta"]);
   const calls = [];
+  const probes = [];
   const result = await discoverAllCapabilities({
-    cwd: project,
+    cwd: directory,
     homeDir: home,
-    env: { ...process.env, PATH: isolatedPath(bin) },
+    env: { ...process.env, PATH: isolatedPath(bin), HOME: home },
     pathEnv: isolatedPath(bin),
+    only: ["Claude"],
     resolveExecutable: async (name) => (name === "claude" ? path.join(bin, name) : null),
-    runProcess: async (command, args) => {
-      calls.push(args);
-      if (args[0] === "auth" && args[1] === "status") {
-        return {
-          code: 0,
-          signal: null,
-          timedOut: false,
-          error: null,
-          stdout: JSON.stringify({ loggedIn: true }),
-          stderr: "",
-          pid: 1,
-        };
-      }
-      return { code: 127, signal: null, timedOut: false, error: null, stdout: "", stderr: "", pid: null };
-    },
+    runProcess: async (command, args) => { calls.push(args); return loggedInRun(command, args); },
     headlessExecProbe: async ({ args }) => {
-      assert.deepEqual(args.slice(0, 1), ["--model"]);
-      assert.ok(["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"].includes(args[1]));
-      assert.deepEqual(args.slice(2, 4), ["--permission-mode", "bypassPermissions"]);
-      return { ok: true };
+      probes.push(args);
+      return { ok: true, reportedModel: `${args[args.indexOf("--model") + 1]}-canonical` };
     },
   });
 
   assert.deepEqual(
-    result.capabilities
-      .filter((record) => record.agent === "Claude" && record.role === "worker")
-      .map((record) => record.model),
-    ["claude-sonnet-4-5-20250929", "claude-opus-4-5-20251101"],
+    result.capabilities.filter((record) => record.role === "worker").map((record) => [record.model, record.requestedModel]),
+    [["fiction-alpha-canonical", "fiction-alpha"], ["fiction-beta-canonical", "fiction-beta"]],
   );
+  // Probe output must name the model: stream-json follows the shared selector.
+  assert.deepEqual(probes[0].slice(0, 4), ["--model", "fiction-alpha", "--permission-mode", "bypassPermissions"]);
+  assert.deepEqual(probes[0].slice(4), ["-p", "--output-format", "stream-json", "--verbose"]);
   assert.deepEqual(calls, [["auth", "status"]]);
+  assert.equal(JSON.stringify(result).includes("private@example.invalid"), false);
 });
 
-test("Claude verifies each candidate independently and excludes a later model that fails", async () => {
+test("Claude verifies each alias independently and fails closed when the probe cannot name the model", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "example-cap-claude-per-model-"));
   const bin = path.join(directory, "bin");
   await mkdir(bin);
-  const claudePath = await makeFakeBin(bin, "claude", "process.exit(0);");
+  const claudePath = await makeFakeClaude(bin, ["fiction-ok", "fiction-broken", "fiction-silent", "fiction-dup"]);
   const probedModels = [];
   const result = await discoverAllCapabilities({
     env: { ...process.env, PATH: isolatedPath(bin) },
     pathEnv: isolatedPath(bin),
     only: ["Claude"],
-    adapters: { Claude: { candidateModels: ["claude-sonnet", "claude-fable"] } },
     resolveExecutable: async (name) => (name === "claude" ? claudePath : null),
-    runProcess: async () => ({
-      code: 0,
-      signal: null,
-      timedOut: false,
-      error: null,
-      stdout: JSON.stringify({ loggedIn: true }),
-      stderr: "",
-      pid: 1,
-    }),
+    runProcess: loggedInRun,
     headlessExecProbe: async ({ args }) => {
       const model = args[args.indexOf("--model") + 1];
       probedModels.push(model);
-      return model === "claude-sonnet"
-        ? { ok: true }
-        : { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED };
+      if (model === "fiction-broken") return { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED };
+      if (model === "fiction-silent") return { ok: true };
+      // Two aliases for the same canonical model yield one route.
+      return { ok: true, reportedModel: "fiction-ok-1" };
     },
   });
 
-  assert.deepEqual(probedModels, ["claude-sonnet", "claude-fable"]);
+  assert.deepEqual(probedModels, ["fiction-ok", "fiction-broken", "fiction-silent", "fiction-dup"]);
   assert.deepEqual(
-    result.capabilities
-      .filter((record) => record.agent === "Claude")
-      .map((record) => [record.model, record.role]),
-    [
-      ["claude-sonnet", "worker"],
-      ["claude-sonnet", "parent"],
-    ],
+    result.capabilities.map((record) => [record.model, record.requestedModel, record.role]),
+    [["fiction-ok-1", "fiction-ok", "worker"], ["fiction-ok-1", "fiction-ok", "parent"]],
   );
-  assert.deepEqual(
-    result.diagnostics.filter((entry) => entry.agent === "Claude"),
-    [
-      { agent: "Claude", status: "ok", model: "claude-sonnet" },
-      {
-        agent: "Claude",
-        status: "failed",
-        reason: REASON_CODES.HEADLESS_EXEC_FAILED,
-        model: "claude-fable",
-      },
-    ],
-  );
+  assert.deepEqual(result.diagnostics, [
+    { agent: "Claude", status: "ok", model: "fiction-ok-1" },
+    { agent: "Claude", status: "failed", reason: REASON_CODES.HEADLESS_EXEC_FAILED, model: "fiction-broken" },
+    { agent: "Claude", status: "failed", reason: REASON_CODES.MODEL_UNRESOLVED, model: "fiction-silent" },
+  ]);
 });
 
-test("Claude uses the available-model cache when project usage is absent", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "example-cap-claude-model-cache-"));
+test("a failed Claude initialize listing fails closed without falling back to local state", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "example-cap-claude-initialize-fail-"));
   const bin = path.join(directory, "bin");
   const home = path.join(directory, "home");
   await mkdir(bin);
   await mkdir(home);
-  await makeFakeBin(bin, "claude", "process.exit(0);");
-  await writeFile(
-    path.join(home, ".claude.json"),
-    JSON.stringify({ additionalModelOptionsCache: [{ value: "claude-fable-5[1m]", label: "Fable" }] }),
-  );
+  await writeFile(path.join(home, ".claude.json"),
+    JSON.stringify({ additionalModelOptionsCache: [{ value: "fiction-cached-model", label: "Cached" }] }));
+  const claudePath = await makeFakeClaude(bin, [], { reply: false });
   const result = await discoverAllCapabilities({
-    cwd: path.join(directory, "unused-project"),
     homeDir: home,
-    env: { ...process.env, PATH: isolatedPath(bin) },
+    env: { ...process.env, PATH: isolatedPath(bin), HOME: home },
     pathEnv: isolatedPath(bin),
-    resolveExecutable: async (name) => (name === "claude" ? path.join(bin, name) : null),
-    runProcess: async () => ({
-      code: 0,
-      signal: null,
-      timedOut: false,
-      error: null,
-      stdout: JSON.stringify({ loggedIn: true }),
-      stderr: "",
-      pid: 1,
-    }),
-    headlessExecProbe: async () => ({ ok: true }),
+    only: ["Claude"],
+    resolveExecutable: async (name) => (name === "claude" ? claudePath : null),
+    runProcess: loggedInRun,
+    headlessExecProbe: async () => assert.fail("nothing may be probed"),
   });
-
-  const worker = result.capabilities.find((record) => record.agent === "Claude" && record.role === "worker");
-  assert.equal(worker.model, "claude-fable-5");
-  assert.equal(worker.requestedModel, "Fable");
+  assert.deepEqual(result.capabilities, []);
+  assert.deepEqual(result.diagnostics, [{ agent: "Claude", status: "failed", reason: REASON_CODES.PROBE_FAILED }]);
 });
 
 test("rejects model catalog parse failures as model-not-selectable", async () => {
