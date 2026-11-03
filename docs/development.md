@@ -86,9 +86,14 @@ npm test
 ```
 
 `format` is a check, not a rewrite; `format:write` updates the configured source
-set. For changed Markdown, inspect rendered headings/tables/code fences and
-relative links. Documentation-only work may use that review instead of code
-checks. A runtime prompt or other executable edit still needs relevant tests.
+set. `npm run lint` is `eslint --max-warnings=0 .`. It covers the Electron and
+renderer sources, `scripts/*.mjs`, the AI template scripts, and
+`tests/ai-template/**/*.mjs`. Warnings fail the command. `.github/workflows/ci.yml`
+runs it on every pull request and on pushes to `main`. Legacy `src/agent`,
+`src/app`, and `run` stay outside this lint set. For changed Markdown, inspect
+rendered headings/tables/code fences and relative links. Documentation-only work
+may use that review instead of code checks. A runtime prompt or other executable
+edit still needs relevant tests.
 
 For security/privacy/release-sensitive changes:
 

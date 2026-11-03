@@ -26,6 +26,17 @@ jobs:
       - name: SEC-003 production dependency audit gate
         run: npm run audit:check
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
   unit:
     runs-on: ubuntu-latest
     steps:

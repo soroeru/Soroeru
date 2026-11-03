@@ -49,4 +49,19 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
+  // Node scripts and template-managed files. JSON fixtures under tests/ai-template
+  // are not scripts. Legacy src/agent, src/app, and run stay out of scope.
+  {
+    files: [
+      "scripts/*.mjs",
+      "scripts/ai-template/**/*.mjs",
+      "scripts/issue-runtime-adapters/**/*.mjs",
+      "tests/ai-template/**/*.mjs",
+    ],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: { ...globals.node },
+      parserOptions: { ecmaVersion: "latest", sourceType: "module" },
+    },
+  },
 );
