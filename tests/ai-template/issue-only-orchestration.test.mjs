@@ -50,6 +50,39 @@ test("open Issue blockers prevent implementation without a board status", async 
   assert.throws(() => selectIssues(fetched.items, { issues: [1] }), /dependency-open:1:2/);
 });
 
+test("a merged cross-repository blocker releases the Issue without colliding with local numbers", async () => {
+  const value = issue(1, "OPEN", [[1, "CLOSED"], [2, "CLOSED"]]);
+  value.blockedBy.nodes[0].repository.nameWithOwner = "other/project";
+  const fetched = await fetchRepositoryIssues({ issues: [1], repository: "example-org/example-repo", graphql: async (query, vars) => {
+    assert.doesNotMatch(query, /\bbody\b/);
+    if (vars.owner === "other") return { repository: { issue: { number: 1, state: "CLOSED", closedByPullRequestsReferences: {
+      nodes: [{ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z" }], pageInfo: { hasNextPage: false },
+    } } } };
+    return { repository: { issue: vars.number === 1 ? value : issue(2, "CLOSED") } };
+  } });
+  const selected = selectIssues(fetched.items, { issues: [1] });
+  const plan = buildRunPlan(normalizeIssues(selected.items, { completed: selected.completed }), {
+    completed: selected.completed, maxParallel: 1, releasePolicy: "merged",
+  });
+  assert.deepEqual(plan.runnable.map((item) => item.number), [1]);
+  assert.deepEqual(fetched.items[0].dependencies, [2]);
+});
+
+test("cross-repository blockers require complete merged-PR evidence", async () => {
+  for (const links of [
+    { nodes: [], pageInfo: { hasNextPage: false } },
+    { nodes: [{ state: "CLOSED", mergedAt: null }], pageInfo: { hasNextPage: false } },
+    { nodes: [{ state: "MERGED", mergedAt: "2026-01-01T00:00:00Z" }], pageInfo: { hasNextPage: true } },
+    null,
+  ]) {
+    const value = issue(1, "OPEN", [[2, "CLOSED"]]);
+    value.blockedBy.nodes[0].repository.nameWithOwner = "other/project";
+    await assert.rejects(fetchRepositoryIssues({ issues: [1], repository: "example-org/example-repo", graphql: async (_query, vars) => ({
+      repository: { issue: vars.owner === "other" ? { number: 2, state: "CLOSED", closedByPullRequestsReferences: links } : value },
+    }) }), /issue-dependency-unavailable/);
+  }
+});
+
 test("truncated, ambiguous and cross-repository Issue metadata fail closed", async () => {
   for (const [mutate, reason] of /** @type {[(i: ReturnType<typeof issue>) => void, string][]} */ ([
     [(i) => { i.blockedBy.pageInfo.hasNextPage = true; }, "issue-metadata-truncated"],

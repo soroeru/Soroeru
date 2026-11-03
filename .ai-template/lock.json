@@ -2,7 +2,7 @@
   "version": 1,
   "source": {
     "repository": "ShinHaya/ai-coding-template",
-    "commit": "729153c1f52a605e42ee617cd80ad3493f752ba4"
+    "commit": "cf2dd4adeada5961dbcb121bd6bb7fe48898889d"
   },
   "files": {
     ".claude/hooks/guard-repository.sh": {
@@ -102,7 +102,7 @@
       "executable": false
     },
     "scripts/issue-github.mjs": {
-      "sha256": "428f72b9336dc5f20a95add6d94a837bd12518fa6fd57305424a78a25b6dc72c",
+      "sha256": "e7752b9292c7586434870dc3ffb3110ba7ca6ce4ecf447575c29b835b8b94084",
       "executable": false
     },
     "scripts/issue-graph-checkpointer.mjs": {
@@ -246,7 +246,7 @@
       "executable": false
     },
     "skills/orchestrate-issues-implementation/SKILL.md": {
-      "sha256": "66e32cfaf6a9150ad99aa2b7c8e591e418a3566d09ac5abc5915650a95f4a9f7",
+      "sha256": "0d678ee0ce4ee2ea51107ba75f16f8f3f3dad9b4dfc1705146e0a839fab47d03",
       "executable": false
     },
     "skills/orchestrate-issues-implementation/agents/openai.yaml": {
@@ -322,7 +322,7 @@
       "executable": false
     },
     "tests/ai-template/issue-only-orchestration.test.mjs": {
-      "sha256": "cc4c2a8ee1ad994f163f2453bf31ab19bdf30ec3d12feca8bd1e8137037ca4d4",
+      "sha256": "e690f54c157bee09d792bece902101812726cabc1b331dbbffab61e0f6155a90",
       "executable": false
     },
     "tests/ai-template/issue-orchestrator.test.mjs": {
