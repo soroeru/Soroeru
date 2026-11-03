@@ -2,7 +2,7 @@
   "version": 1,
   "source": {
     "repository": "ShinHaya/ai-coding-template",
-    "commit": "753635458e4386f15d4d4f61b486fa53d596ed6d"
+    "commit": "cf2dd4adeada5961dbcb121bd6bb7fe48898889d"
   },
   "files": {
     ".claude/hooks/guard-repository.sh": {
