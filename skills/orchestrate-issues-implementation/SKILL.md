@@ -34,9 +34,11 @@ Issues are completed. Size is not fetched or written; triage may recommend it.
    `Blocked by` relations, never bodies or Project fields. Only the isolated
    opt-in triage child may fetch its current Issue body. Each worker reads its
    own Issue body and comments immediately before its work.
-3. Stop before worktree writes on missing/truncated metadata, cross-repository
-   dependencies, cycles, an open blocker, ambiguous priority or unavailable routes.
-   A closed blocker is completed. No Project status transition is performed.
+3. Stop before worktree writes on missing/truncated metadata, cycles, an open
+   blocker, ambiguous priority or unavailable routes. A closed same-repository
+   blocker is completed. A cross-repository blocker is completed only when it is
+   closed and a linked closing PR is confirmed merged with complete metadata;
+   otherwise stop. No Project status transition is performed.
 4. Assign from `workerRoutes` in the resulting runnable plan; routing remains a
    run-time decision. An empty verified pool stops with `no-worker-route-available`.
 

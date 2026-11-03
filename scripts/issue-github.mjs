@@ -97,6 +97,7 @@ export async function fetchRepositoryIssues({ issues, graphql = repositoryIssueG
   }`;
   const pending = [...new Set(issues.map(Number))];
   const items = new Map();
+  const verifiedExternal = new Set();
   let fetchedBytes = 0;
   while (pending.length) {
     const number = pending.shift();
@@ -112,19 +113,47 @@ export async function fetchRepositoryIssues({ issues, graphql = repositoryIssueG
     const priority = issue.labels.nodes.map((l) => l.name).filter((l) => /^priority:P[0-3]$/.test(l));
     if (priority.length > 1) throw new Error("issue-priority-ambiguous");
     const dependencies = issue.blockedBy.nodes;
-    if (dependencies.some((d) => d.repository?.nameWithOwner?.toLowerCase() !== nameWithOwner.toLowerCase() ||
+    if (dependencies.some((d) => typeof d.repository?.nameWithOwner !== "string" ||
         !Number.isSafeInteger(d.number) || d.number <= 0 || !["OPEN", "CLOSED"].includes(d.state)))
       throw new Error("issue-dependency-unavailable");
+    const localDependencies = [];
+    for (const dependency of dependencies) {
+      if (dependency.repository.nameWithOwner.toLowerCase() === nameWithOwner.toLowerCase()) {
+        localDependencies.push(dependency);
+        continue;
+      }
+      let external;
+      try { external = parseRepository(dependency.repository.nameWithOwner); }
+      catch { throw new Error("issue-dependency-unavailable"); }
+      const key = `${external.nameWithOwner.toLowerCase()}#${dependency.number}`;
+      if (dependency.state !== "CLOSED") throw new Error("issue-dependency-unavailable");
+      if (verifiedExternal.has(key)) continue;
+      const result = await graphql(`query ExternalBlocker($owner:String!, $name:String!, $number:Int!) {
+        repository(owner:$owner, name:$name) { issue(number:$number) {
+          number state closedByPullRequestsReferences(first:100) {
+            nodes { state mergedAt } pageInfo { hasNextPage }
+          }
+        } }
+      }`, { owner: external.owner, name: external.name, number: dependency.number });
+      const blocker = result?.repository?.issue;
+      const links = blocker?.closedByPullRequestsReferences;
+      if (blocker?.number !== dependency.number || blocker.state !== "CLOSED" ||
+          !Array.isArray(links?.nodes) || links.pageInfo?.hasNextPage !== false ||
+          !links.nodes.some((pr) => pr?.state === "MERGED" && typeof pr.mergedAt === "string" && !Number.isNaN(Date.parse(pr.mergedAt))))
+        throw new Error("issue-dependency-unavailable");
+      fetchedBytes += Buffer.byteLength(JSON.stringify(blocker));
+      verifiedExternal.add(key);
+    }
     items.set(number, {
       number, title: issue.title, url: issue.url,
       status: issue.state === "OPEN" ? "Ready" : "Done",
       ...(priority.length ? { priority: priority[0].slice(9) } : {}),
       ...(issue.labels.nodes.some((l) => l.name === "security") ? { riskCategory: "high" } : {}),
-      dependencies: dependencies.map((d) => d.number),
-      blockedBy: dependencies.map(({ number, state }) => ({ number, state })),
+      dependencies: localDependencies.map((d) => d.number),
+      blockedBy: localDependencies.map(({ number, state }) => ({ number, state })),
     });
     fetchedBytes += Buffer.byteLength(JSON.stringify(issue));
-    pending.push(...dependencies.map((d) => d.number));
+    pending.push(...localDependencies.map((d) => d.number));
   }
   return { items: [...items.values()], fetchedBytes };
 }
