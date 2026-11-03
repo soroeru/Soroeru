@@ -31,18 +31,22 @@ import { discoverAllCapabilities } from "./issue-runtime-adapters/index.mjs";
 import { loadRuntimeRegistry, findRuntime, isRetiredCommand } from "./ai-template/registry.mjs";
 
 import { selectWorkerRoutes } from "./issue-plan.mjs";
+import { DEFAULT_MODEL_CATALOG_PATH, catalogEntryFingerprint, catalogListing, ensureModelCatalog } from "./issue-model-catalog.mjs";
 
 /**
  * @typedef {import("./issue-runtime-adapters/shared.mjs").CapabilityRecord} CapabilityRecord
  * @typedef {import("./issue-runtime-adapters/shared.mjs").Diagnostic} Diagnostic
  * @typedef {{ cwd?: string, timeoutMs?: number, workerTimeoutMs?: number, env?: NodeJS.ProcessEnv, pathEnv?: string,
  *   homeDir?: string, adapters?: unknown, runProcess?: typeof runProcess, resolveExecutable?: Function,
- *   headlessExecProbe?: Function, headlessProbeTimeoutMs?: number, only?: string[], modelFilter?: string,
+ *   headlessExecProbe?: Function, headlessProbeTimeoutMs?: number, only?: string[], modelFilter?: string | string[],
  *   outputPath?: string, cachePath?: string, refresh?: boolean, invalidateAgents?: string[], dryRun?: boolean,
- *   parentAgent?: string, parentAsWorker?: boolean, unavailableAgents?: any[], unavailableModels?: any[] }} CapabilityOptions
+ *   parentAgent?: string, parentAsWorker?: boolean, unavailableAgents?: any[], unavailableModels?: any[],
+ *   catalogPath?: string, catalogMaxAgeHours?: number, refreshCatalog?: boolean, spawn?: Function,
+ *   catalogListings?: Record<string, any>, catalogFingerprints?: Record<string, string> }} CapabilityOptions
  * @typedef {{ capabilities: CapabilityRecord[], diagnostics: Diagnostic[], cli: Record<string, { path?: string, version?: string }>,
  *   probedAt: string, repositoryCommit?: string, probeSchemaVersion?: number | string, runtimeFingerprint?: string,
- *   outputPath?: string, reused?: boolean, reprobedAgents?: string[] }} CapabilityPayload
+ *   catalogFingerprints?: Record<string, string>, outputPath?: string, reused?: boolean, reprobedAgents?: string[],
+ *   catalogRefreshedAgents?: string[] }} CapabilityPayload
  */
 
 export const DEFAULT_CAPABILITIES_OUTPUT = "state/issue-capabilities.json";
@@ -80,6 +84,7 @@ export async function discoverCapabilities(options = {}) {
     headlessProbeTimeoutMs: options.headlessProbeTimeoutMs,
     only: options.only,
     modelFilter: options.modelFilter,
+    catalogListings: options.catalogListings,
   });
 
   // Strip anything that is not a closed diagnostic field (defense in depth).
@@ -118,7 +123,8 @@ export async function discoverCapabilities(options = {}) {
     probedAt: new Date().toISOString(),
     repositoryCommit,
     probeSchemaVersion: PROBE_SCHEMA_VERSION,
-    runtimeFingerprint: loadRuntimeRegistry(options.cwd).fingerprint
+    runtimeFingerprint: loadRuntimeRegistry(options.cwd).fingerprint,
+    ...(options.catalogFingerprints ? { catalogFingerprints: options.catalogFingerprints } : {}),
   };
 
   let outputPath;
@@ -195,6 +201,30 @@ export async function loadOrRefreshCapabilities(options = {}) {
     headlessProbeTimeoutMs: options.headlessProbeTimeoutMs,
   };
 
+  // Candidates come from the model catalog, re-listed (no model execution) only when stale.
+  const catalogResult = await ensureModelCatalog({
+    cwd: options.cwd,
+    catalogPath: options.catalogPath ?? (cachePath ? path.join(path.dirname(cachePath), path.basename(DEFAULT_MODEL_CATALOG_PATH)) : undefined),
+    maxAgeHours: options.catalogMaxAgeHours,
+    refresh: refresh || options.refreshCatalog === true,
+    dryRun,
+    timeoutMs: options.timeoutMs,
+    env: options.env,
+    pathEnv: options.pathEnv,
+    runProcess: options.runProcess,
+    resolveExecutable: options.resolveExecutable,
+    spawn: options.spawn,
+    adapters: /** @type {any} */ (options.adapters),
+  });
+  const catalogListings = {};
+  const catalogFingerprints = {};
+  for (const [id, entry] of Object.entries(catalogResult.catalog.agents)) {
+    catalogListings[id] = catalogListing(entry);
+    catalogFingerprints[id] = catalogEntryFingerprint(entry);
+  }
+  Object.assign(discoveryOptions, { catalogListings, catalogFingerprints });
+  const catalogInfo = catalogResult.refreshedAgents.length ? { catalogRefreshedAgents: catalogResult.refreshedAgents } : {};
+
   let cached = null;
   if (!refresh && cachePath) {
     try {
@@ -218,7 +248,7 @@ export async function loadOrRefreshCapabilities(options = {}) {
       ...discoveryOptions,
       ...(dryRun ? {} : { outputPath: cachePath }),
     });
-    return { ...fresh, reused: false };
+    return { ...fresh, ...catalogInfo, reused: false };
   }
 
   const unknownInvalidateAgents = [];
@@ -242,9 +272,16 @@ export async function loadOrRefreshCapabilities(options = {}) {
     ))
     .map((entry) => entry.agent);
 
+  // An agent whose catalog candidate list changed since its records were probed is re-probed.
+  // Caches without fingerprints come only from fixtures: a real old cache fails the schema check.
+  const catalogChangedAgents = cached.catalogFingerprints
+    ? registry.enabled.filter((runtime) => cached.catalogFingerprints[runtime.id] !== catalogFingerprints[runtime.id])
+      .map((runtime) => runtime.name)
+    : [];
   const staleAgents = new Set([
     ...canonicalInvalidateAgents,
     ...previouslyFailedAgents,
+    ...catalogChangedAgents,
     ...(await findStaleCachedAgents(cached.cli, discoveryOptions)),
   ]);
   if (!staleAgents.size) {
@@ -256,6 +293,8 @@ export async function loadOrRefreshCapabilities(options = {}) {
       repositoryCommit: cached.repositoryCommit,
       probeSchemaVersion: cached.probeSchemaVersion,
       runtimeFingerprint: cached.runtimeFingerprint,
+      ...(cached.catalogFingerprints ? { catalogFingerprints: cached.catalogFingerprints } : {}),
+      ...catalogInfo,
       reused: true,
     };
   }
@@ -275,9 +314,10 @@ export async function loadOrRefreshCapabilities(options = {}) {
     repositoryCommit: targeted.repositoryCommit,
     probeSchemaVersion: targeted.probeSchemaVersion,
     runtimeFingerprint: targeted.runtimeFingerprint,
+    catalogFingerprints,
   };
   if (!dryRun && cachePath) await writeJsonAtomic(cachePath, merged);
-  return { ...merged, reused: false, reprobedAgents: [...staleAgents] };
+  return { ...merged, ...catalogInfo, reused: false, reprobedAgents: [...staleAgents] };
 }
 
 /**
@@ -295,7 +335,7 @@ export async function refreshWorkerRoutes(options = {}) {
  * Dispatch preflight: re-read the selected agent's catalog and probe only the
  * exact model. Never execute the supplied selector; compare it to fresh CLI
  * discovery. A changed selector or a failed model requires route reselection.
- * @param {{ agent?: string, model?: string, selector?: string }} route
+ * @param {{ agent?: string, model?: string, requestedModel?: string, selector?: string }} route
  * @param {CapabilityOptions} [options]
  */
 export async function verifyWorkerRoute(route, options = {}) {
@@ -306,8 +346,10 @@ export async function verifyWorkerRoute(route, options = {}) {
       typeof route?.selector !== "string" || !route.selector) {
     return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
   }
+  // Alias-resolving runtimes list the requested value (e.g. `sonnet`), not the canonical model.
   const result = await refreshWorkerRoutes({
-    ...options, only: [agent], modelFilter: route.model,
+    ...options, only: [agent],
+    modelFilter: [route.model, ...(typeof route.requestedModel === "string" && route.requestedModel ? [route.requestedModel] : [])],
   });
   const verified = result.workerRoutes.find((candidate) =>
     candidate.agent === agent && candidate.model === route.model && candidate.selector === route.selector);
@@ -361,11 +403,20 @@ async function main() {
     cli.outputPath ??
     (cli.stdout ? undefined : path.join(repositoryRoot, DEFAULT_CAPABILITIES_OUTPUT));
   await migrateLegacyStatePath(outputPath);
+  // A full re-discovery also re-lists every runtime's catalog first.
+  const catalog = await ensureModelCatalog({
+    cwd: repositoryRoot,
+    catalogPath: path.join(repositoryRoot, DEFAULT_MODEL_CATALOG_PATH),
+    refresh: true,
+    timeoutMs: cli.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
+  });
   const result = await discoverCapabilities({
     outputPath,
     timeoutMs: cli.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
     workerTimeoutMs: cli.workerTimeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS,
     cwd: repositoryRoot,
+    catalogListings: Object.fromEntries(Object.entries(catalog.catalog.agents).map(([id, entry]) => [id, catalogListing(entry)])),
+    catalogFingerprints: Object.fromEntries(Object.entries(catalog.catalog.agents).map(([id, entry]) => [id, catalogEntryFingerprint(entry)])),
   });
   // Summary only on stdout when writing a file; full JSON when --stdout.
   if (cli.stdout || !outputPath) {

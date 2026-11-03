@@ -17,7 +17,10 @@ export async function discoverAllCapabilities(ctx = {}) {
   for (const adapter of registry.enabled.map(createAdapter)) {
     if (only && !only.has(adapter.id)) continue;
     try {
-      const result = await adapter.discover({ ...ctx, ...(ctx.adapters?.[adapter.agent] ?? ctx.adapters?.[adapter.id] ?? {}) });
+      // `catalogListings` (runtime id -> listing) comes from the persisted model catalog.
+      const catalogEntry = ctx.catalogListings?.[adapter.id];
+      const result = await adapter.discover({ ...ctx, ...(catalogEntry ? { catalogEntry } : {}),
+        ...(ctx.adapters?.[adapter.agent] ?? ctx.adapters?.[adapter.id] ?? {}) });
       capabilities.push(...(result.records ?? []));
       diagnostics.push(...(result.diagnostics ?? []));
       if (result.cliPath) cli[adapter.agent] = { path: result.cliPath };
@@ -30,7 +33,8 @@ export async function discoverAllCapabilities(ctx = {}) {
 export async function launchWithAdapter(agentName, job, ctx = {}) {
   const root = job?.cwd ?? ctx.cwd;
   if (isRetiredRuntimeRoute({ agent: agentName, selector: job?.selector }, root)) throw new Error("runtime-retired");
-  if (isDisallowedModelRoute({ agent: agentName, model: job?.model }, root)) throw new Error("runtime-model-not-allowed");
+  if (isDisallowedModelRoute({ agent: agentName, model: job?.model, requestedModel: job?.requestedModel }, root))
+    throw new Error("runtime-model-not-allowed");
   const adapter = getAdapter(agentName, root);
   if (!adapter) throw new Error(`dispatch-adapter-unavailable:${agentName}`);
   return adapter.launch(ctx, job);

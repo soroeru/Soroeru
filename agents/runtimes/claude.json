@@ -5,7 +5,10 @@
   "enabledByDefault": true,
   "retired": false,
   "probeArgs": [
-    "-p"
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose"
   ],
   "promptArgs": [
     "-p"
@@ -30,7 +33,24 @@
   },
   "models": {
     "args": [],
-    "parser": "claude-local"
+    "parser": "claude-initialize",
+    "control": {
+      "args": [
+        "--safe-mode",
+        "--tools=",
+        "--no-session-persistence",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "-p"
+      ],
+      "request": {
+        "method": "initialize"
+      }
+    },
+    "resolveReportedModel": true
   },
   "selectorArgs": [
     "--model",

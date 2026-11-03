@@ -54,6 +54,10 @@ export function loadRuntimeRegistry(root = process.cwd()) {
       }
       for (const arg of [...(runtime.selectorArgs ?? []), ...(runtime.probeArgs ?? []), ...(runtime.promptArgs ?? [])])
         if (/[{}]/.test(arg) && arg !== "{model}") throw new Error("runtime-argument-placeholder-invalid");
+      // A control-protocol listing replaces the list command and needs its own parser.
+      if (runtime.models && ((runtime.models.parser === "claude-initialize") !== Boolean(runtime.models.control) ||
+          (runtime.models.control && (runtime.models.args.length || runtime.models.control.args.some(arg => /[{}]/.test(arg))))))
+        throw new Error(`runtime-models-control-invalid:${runtime.id}`);
       for (const dir of runtime.skills?.discoveryDirs ?? []) relativePath(dir);
       if (runtime.subagents) {
         relativePath(runtime.subagents.directory);
@@ -72,27 +76,57 @@ export function loadRuntimeRegistry(root = process.cwd()) {
   }
   for (const skill of config.localSkills ?? []) if (!/^[a-z0-9][a-z0-9-]*$/.test(skill)) throw new Error("runtime-local-skill-invalid");
   const enabled = runtimes.filter(r => enabledIds.includes(r.id) && !r.retired);
-  // Optional per-runtime exact model allowlists. Keys must be exact IDs of enabled runtimes.
+  // Optional per-runtime model policy. Keys must be exact IDs of enabled runtimes.
+  // `allow` is an exact list; `deny` is a case-insensitive `*` pattern list that wins over `allow`.
   const allowedModels = new Map();
+  const deniedModels = new Map();
   for (const [id, entry] of Object.entries(config.agents?.models ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
     const runtime = aliases.get(id);
     if (!runtime || id !== runtime.id || !enabled.includes(runtime)) throw new Error(`runtime-models-invalid:${id}`);
-    allowedModels.set(id, [...entry.allow].sort());
+    if (!entry.allow && !entry.deny) throw new Error(`runtime-models-invalid:${id}`);
+    if (entry.allow) allowedModels.set(id, [...entry.allow].sort());
+    if (entry.deny) deniedModels.set(id, [...entry.deny].sort());
   }
   const fingerprint = createHash("sha256")
-    .update(JSON.stringify({ runtimes, enabledIds, ...(allowedModels.size ? { allowedModels: [...allowedModels] } : {}) }))
+    .update(JSON.stringify({ runtimes, enabledIds,
+      ...(allowedModels.size ? { allowedModels: [...allowedModels] } : {}),
+      ...(deniedModels.size ? { deniedModels: [...deniedModels] } : {}) }))
     .digest("hex");
-  return { root, sourceRoot, runtimes, enabled, aliases, commands, allowedModels, localSkills: config.localSkills ?? [], fingerprint };
+  return { root, sourceRoot, runtimes, enabled, aliases, commands, allowedModels, deniedModels,
+    localSkills: config.localSkills ?? [], fingerprint };
 }
+
+/** Case-insensitive match where `*` is the only wildcard; every other character is literal. */
+export function matchesModelPattern(pattern, value) {
+  if (typeof value !== "string" || !value) return false;
+  const source = String(pattern).split("*").map(part => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+  return new RegExp(`^${source}$`, "i").test(value);
+}
+
+/** The identifiers a route or catalog entry is known by: canonical `model` and the requested value. */
+function identifiers(model, requestedModel) {
+  return [model, requestedModel].filter(value => typeof value === "string" && value.length > 0);
+}
+
+/** True when the runtime's `deny` list matches the model or its requested value. */
+export function isModelDenied(agent, model, root = process.cwd(), requestedModel) {
+  const registry = loadRuntimeRegistry(root);
+  const runtime = registry.aliases.get(String(agent ?? "").trim().toLowerCase());
+  const denied = runtime ? registry.deniedModels.get(runtime.id) : undefined;
+  return Boolean(denied) && identifiers(model, requestedModel).some(value => denied.some(pattern => matchesModelPattern(pattern, value)));
+}
+
 /**
- * True unless the runtime declares an allowlist that does not contain this exact model.
- * Matches the canonical `model` only: no aliases, wildcards, suffixes or case folding.
+ * True unless the runtime declares an allowlist containing neither identifier, or a deny pattern matches.
+ * The allowlist is exact: no wildcards, suffixes or case folding. `requestedModel` is the value the
+ * catalog passes to `--model`, which differs from `model` only for runtimes that resolve aliases.
  */
-export function isModelAllowed(agent, model, root = process.cwd()) {
+export function isModelAllowed(agent, model, root = process.cwd(), requestedModel) {
   const registry = loadRuntimeRegistry(root);
   const runtime = registry.aliases.get(String(agent ?? "").trim().toLowerCase());
   const allowed = runtime ? registry.allowedModels.get(runtime.id) : undefined;
-  return !allowed || (typeof model === "string" && allowed.includes(model));
+  if (isModelDenied(agent, model, root, requestedModel)) return false;
+  return !allowed || identifiers(model, requestedModel).some(value => allowed.includes(value));
 }
 export function findRuntime(value, root = process.cwd(), { enabledOnly = false } = {}) {
   const registry = loadRuntimeRegistry(root);

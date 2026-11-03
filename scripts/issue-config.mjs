@@ -15,6 +15,7 @@ const RUN_KEYS = new Set([
   "unavailableModels",
   "unavailableAgents",
   "parentAsWorker",
+  "modelCatalog",
 ]);
 
 function fail(reason) {
@@ -53,6 +54,31 @@ function parseUnavailableAgents(value) {
   return value.map((agent) => agent.trim());
 }
 
+/** `run.modelCatalog`: only `maxAgeHours`, a positive number of hours (default 168 = 1 week). */
+function parseModelCatalogConfig(value) {
+  assertObject(value, "config-invalid-model-catalog");
+  assertKeys(value, new Set(["maxAgeHours"]), "run.modelCatalog");
+  if (value.maxAgeHours === undefined) return {};
+  if (typeof value.maxAgeHours !== "number" || !Number.isFinite(value.maxAgeHours) || value.maxAgeHours <= 0)
+    fail("config-invalid-model-catalog-max-age-hours");
+  return { maxAgeHours: value.maxAgeHours };
+}
+
+/**
+ * Model-catalog settings only, for runs (such as a graph resume) that do not otherwise
+ * read the YAML. A missing default config file yields defaults.
+ * @param {string} [filePath]
+ * @param {{ cwd?: string, explicit?: boolean }} [options]
+ */
+export async function loadModelCatalogConfig(filePath = DEFAULT_CONFIG_PATH, { cwd = process.cwd(), explicit = false } = {}) {
+  try {
+    return (await loadOrchestratorConfig(filePath, { cwd, dryRun: true })).modelCatalog ?? {};
+  } catch (error) {
+    if (error.message === "config-file-not-found" && !explicit) return {};
+    throw error;
+  }
+}
+
 function normalizeDocument(document) {
   if (document.errors.length) fail("config-invalid-yaml");
   const root = assertObject(document.toJS(), "config-invalid-root");
@@ -72,6 +98,7 @@ function normalizeDocument(document) {
     unavailableAgents: parseUnavailableAgents(run.unavailableAgents ?? "none"),
     // auto | always | never; legacy booleans map onto auto/always.
     parentAsWorker: parseParentWorkerMode(run.parentAsWorker),
+    ...(run.modelCatalog === undefined ? {} : { modelCatalog: parseModelCatalogConfig(run.modelCatalog) }),
   };
 }
 

@@ -48,6 +48,7 @@ import { DEFAULT_CAPABILITIES_OUTPUT, loadOrRefreshCapabilities, refreshWorkerRo
 import { canonicalizeAgent } from "./issue-assignment.mjs";
 import {
   DEFAULT_CONFIG_PATH,
+  loadModelCatalogConfig,
   loadOrchestratorConfig,
   mergeOrchestratorConfig,
 } from "./issue-config.mjs";
@@ -1743,7 +1744,11 @@ export function buildOrchestrationGraph({ checkpointer } = {}) {
 /* ------------------------------------------------------------------ */
 
 /** @param {{ cwd: string, checkpointer?: import("./issue-graph-checkpointer.mjs").FileCheckpointSaver, threadId?: string }} options */
-export function createDefaultDeps({ cwd, checkpointer, threadId }) {
+/**
+ * @param {{ cwd: string, checkpointer?: any, threadId?: string,
+ *   modelCatalog?: { refreshCatalog?: boolean, catalogMaxAgeHours?: number } }} options
+ */
+export function createDefaultDeps({ cwd, checkpointer, threadId, modelCatalog = {} }) {
   let triageRunner;
   const runId = triageRunId(threadId);
   const runner = () => {
@@ -1788,6 +1793,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
       const discovered = await loadOrRefreshCapabilities({
         cachePath: path.resolve(cwd, DEFAULT_CAPABILITIES_OUTPUT),
         cwd,
+        ...modelCatalog,
       });
       return discovered.capabilities;
     },
@@ -1795,6 +1801,7 @@ export function createDefaultDeps({ cwd, checkpointer, threadId }) {
       const discovered = await loadOrRefreshCapabilities({
         cachePath: path.resolve(cwd, DEFAULT_CAPABILITIES_OUTPUT),
         cwd,
+        catalogMaxAgeHours: modelCatalog.catalogMaxAgeHours,
         invalidateAgents: [agent],
       });
       return discovered.capabilities;
@@ -1911,6 +1918,10 @@ export function parseGraphCliArgs(argv) {
       options.parentAsWorker = "always";
       continue;
     }
+    if (flag === "--refresh-catalog") {
+      options.refreshCatalog = true;
+      continue;
+    }
     const key = valueFlags.get(flag);
     if (!key) throw new Error(`unknown-flag:${flag}`);
     const value = argv[++index];
@@ -2008,11 +2019,17 @@ async function main() {
   ));
   const checkpointer = await FileCheckpointSaver.load(checkpointFile);
   const graph = buildOrchestrationGraph({ checkpointer });
+  // Read on every invocation (including resumes) so catalog freshness follows the YAML.
+  const catalogConfig = await loadModelCatalogConfig(cli.configPath ?? DEFAULT_CONFIG_PATH,
+    { cwd: repositoryRoot, explicit: Boolean(cli.configPath) });
   const config = {
     recursionLimit: 100,
     configurable: {
       thread_id: cli.threadId,
-      deps: createDefaultDeps({ cwd: repositoryRoot, checkpointer, threadId: cli.threadId }),
+      deps: createDefaultDeps({ cwd: repositoryRoot, checkpointer, threadId: cli.threadId, modelCatalog: {
+        refreshCatalog: Boolean(cli.refreshCatalog),
+        ...(catalogConfig.maxAgeHours === undefined ? {} : { catalogMaxAgeHours: catalogConfig.maxAgeHours }),
+      } }),
     },
   };
 

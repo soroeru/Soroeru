@@ -91,11 +91,18 @@
                   "pattern": "^[^\\s\\u0000-\\u001f\\u007f]+$"
                 },
                 "uniqueItems": true
+              },
+              "deny": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^[^\\s\\u0000-\\u001f\\u007f]+$"
+                },
+                "minItems": 1,
+                "uniqueItems": true
               }
             },
-            "required": [
-              "allow"
-            ],
             "additionalProperties": false
           }
         }

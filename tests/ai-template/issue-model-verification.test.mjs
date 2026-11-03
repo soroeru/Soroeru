@@ -25,6 +25,16 @@ async function fakeRuntime(t, agent) {
     if (args.includes("status")) {
       console.log(JSON.stringify({loggedIn:true})); process.exit(0);
     }
+    if (args.includes("--input-format")) {
+      // Claude control protocol: answer \`initialize\` with the catalog plus fields that must be dropped.
+      require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+        const request = JSON.parse(line);
+        console.log(JSON.stringify({ type: "control_response", response: { subtype: "success",
+          request_id: request.request_id, response: { account: { email: "private@example.invalid" },
+            models: [{ value: "default", displayName: "Default" }, ...models.map(value => ({ value, displayName: value }))] } } }));
+      });
+      return;
+    }
     if (args.includes("models")) {
       console.log(JSON.stringify(${agent === "Codex" ? '{models:models.map(slug=>({slug}))}' : 'models'}));
       process.exit(0);
@@ -52,12 +62,11 @@ async function fakeRuntime(t, agent) {
       homeDir: directory,
       timeoutMs: 15_000,
       headlessProbeTimeoutMs: 15_000,
-      ...(agent === "Claude" ? { adapters: { Claude: { candidateModels: models } } } : {}),
     },
   };
 }
 
-for (const agent of ["Codex", "Claude", "Grok", "Gemini"]) {
+for (const agent of ["Codex", "Grok", "Gemini"]) {
   test(`${agent} only exposes individually successful exact models`, async (t) => {
     const { options } = await fakeRuntime(t, agent);
     const result = await discoverCapabilities(options);
@@ -69,6 +78,23 @@ for (const agent of ["Codex", "Claude", "Grok", "Gemini"]) {
     assert.equal(JSON.stringify(result).includes("fake-private-diagnostic"), false);
   });
 }
+
+test("Claude lists models over the control protocol and records the canonical model each alias reports", async (t) => {
+  const { options } = await fakeRuntime(t, "Claude");
+  const result = await discoverCapabilities(options);
+  // The value passed to --model stays requestedModel; the probe's report is the canonical model.
+  assert.deepEqual(result.capabilities.filter(r => r.role === "worker").map(r => [r.model, r.requestedModel]),
+    [["working", "working"], ["unexpected-model", "substituted"], ["working-last", "working-last"]]);
+  assert.match(result.capabilities.find(r => r.model === "unexpected-model").selector, /--model substituted /);
+  const failures = result.diagnostics.filter(d => d.status === "failed");
+  assert.deepEqual(failures.map(d => [d.model, d.reason]), [
+    ["unavailable", "headless-exec-failed"], ["quota", "headless-exec-failed"], ["unauthorized", "headless-exec-failed"],
+  ]);
+  // `default` names no model; account data from the response never leaves the listing.
+  assert.equal(result.diagnostics.some(d => d.model === "default"), false);
+  assert.equal(JSON.stringify(result).includes("private@example.invalid"), false);
+  assert.equal(JSON.stringify(result).includes("fake-private-diagnostic"), false);
+});
 
 test("fresh triage batches ignore caches and retain parent/model exclusions", async (t) => {
   const { directory, options } = await fakeRuntime(t, "Codex");
