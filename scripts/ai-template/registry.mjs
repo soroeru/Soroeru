@@ -72,8 +72,27 @@ export function loadRuntimeRegistry(root = process.cwd()) {
   }
   for (const skill of config.localSkills ?? []) if (!/^[a-z0-9][a-z0-9-]*$/.test(skill)) throw new Error("runtime-local-skill-invalid");
   const enabled = runtimes.filter(r => enabledIds.includes(r.id) && !r.retired);
-  const fingerprint = createHash("sha256").update(JSON.stringify({ runtimes, enabledIds })).digest("hex");
-  return { root, sourceRoot, runtimes, enabled, aliases, commands, localSkills: config.localSkills ?? [], fingerprint };
+  // Optional per-runtime exact model allowlists. Keys must be exact IDs of enabled runtimes.
+  const allowedModels = new Map();
+  for (const [id, entry] of Object.entries(config.agents?.models ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    const runtime = aliases.get(id);
+    if (!runtime || id !== runtime.id || !enabled.includes(runtime)) throw new Error(`runtime-models-invalid:${id}`);
+    allowedModels.set(id, [...entry.allow].sort());
+  }
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ runtimes, enabledIds, ...(allowedModels.size ? { allowedModels: [...allowedModels] } : {}) }))
+    .digest("hex");
+  return { root, sourceRoot, runtimes, enabled, aliases, commands, allowedModels, localSkills: config.localSkills ?? [], fingerprint };
+}
+/**
+ * True unless the runtime declares an allowlist that does not contain this exact model.
+ * Matches the canonical `model` only: no aliases, wildcards, suffixes or case folding.
+ */
+export function isModelAllowed(agent, model, root = process.cwd()) {
+  const registry = loadRuntimeRegistry(root);
+  const runtime = registry.aliases.get(String(agent ?? "").trim().toLowerCase());
+  const allowed = runtime ? registry.allowedModels.get(runtime.id) : undefined;
+  return !allowed || (typeof model === "string" && allowed.includes(model));
 }
 export function findRuntime(value, root = process.cwd(), { enabledOnly = false } = {}) {
   const registry = loadRuntimeRegistry(root);

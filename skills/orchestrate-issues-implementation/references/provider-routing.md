@@ -55,14 +55,18 @@ Codex-only file for ordinary orchestration; discovery (fresh or cached) is the s
 2. If the runtime cannot select or prove a requested model machine-readably, that route is
    unavailable (`verifiable: false` / omitted). Do not use a nearby model name and never relabel
    another model.
-3. Apply `--unavailable-agent` and `--unavailable-model` only to the current run. They remove routes
+3. A repository-owned allowlist (`agents.models.<id>.allow` in `.ai-template/config.json`) is
+   persistent policy, not run state: a model outside it is never probed (`model-not-allowed`),
+   never selected and never launched, even from a cached or explicit capability record. Do not
+   work around it with explicit capabilities; change the committed allowlist instead.
+4. Apply `--unavailable-agent` and `--unavailable-model` only to the current run. They remove routes
    from the run's worker pool; they never trigger substitution. Re-run discovery next time.
-4. The parent runtime's own worker records are admitted per its worker mode (see the
+5. The parent runtime's own worker records are admitted per its worker mode (see the
    orchestration skill): in `auto`, only while the parent's 5-hour window (exactly 300 minutes)
    has at least 50% left. Only Codex exposes this machine-readably (`codex app-server`,
    `account/rateLimits/read`, bounded by a timeout that terminates the child). Other runtimes
    report `parent-usage-unsupported-runtime` and are never estimated from tokens or logs.
-5. Require a positive `timeoutMs` in every external CLI capability record. On timeout, emit a failure
+6. Require a positive `timeoutMs` in every external CLI capability record. On timeout, emit a failure
    milestone, terminate only that CLI process (via `issue-dispatch.mjs` / the matching
    adapter), and preserve the Issue worktree; pick a handoff recipient from the remaining routes for
    `handoff-issue`.

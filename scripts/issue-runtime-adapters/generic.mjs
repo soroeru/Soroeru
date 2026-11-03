@@ -4,7 +4,7 @@ import {
   resolveExecutable, verifyModelCandidate, runProcess, spawnWorker, splitSelector,
 } from "./shared.mjs";
 import { parseAuthentication, parseCatalog } from "./parsers.mjs";
-import { isRetiredCommand } from "../ai-template/registry.mjs";
+import { isRetiredCommand, loadRuntimeRegistry } from "../ai-template/registry.mjs";
 
 export function createAdapter(definition) {
   const agent = definition.name;
@@ -36,10 +36,16 @@ export function createAdapter(definition) {
       const { models, loggedIn } = await parseCatalog(definition.models.parser, listed, ctx);
       if (listed.code !== 0) return fail(definition.auth || loggedIn ? REASON_CODES.PROBE_FAILED : REASON_CODES.AUTH_UNAVAILABLE);
       if (!models?.length) return fail(loggedIn === false ? REASON_CODES.AUTH_UNAVAILABLE : REASON_CODES.MODEL_NOT_SELECTABLE);
+      const allowed = loadRuntimeRegistry(ctx.cwd).allowedModels.get(definition.id);
       let selected = 0;
       for (const entry of models) {
         if (ctx.modelFilter !== undefined && entry.model !== ctx.modelFilter) continue;
         selected++;
+        // Never probe a model the repository allowlist excludes.
+        if (allowed && !allowed.includes(entry.model)) {
+          diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_ALLOWED, model: entry.model }));
+          continue;
+        }
         const args = [quoteSelectorArg(cliPath), ...definition.selectorArgs.map(arg => quoteSelectorArg(arg === "{model}" ? entry.model : arg))];
         if (args.some(arg => !arg)) { diagnostics.push(diagnostic({ agent, status: "failed", reason: REASON_CODES.MODEL_NOT_SELECTABLE, model: entry.model })); continue; }
         const selector = args.join(" ");

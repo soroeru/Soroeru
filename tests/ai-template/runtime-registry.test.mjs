@@ -10,7 +10,7 @@ import { run } from "../../scripts/ai-template.mjs";
 import { discoverCapabilities, loadOrRefreshCapabilities, verifyWorkerRoute } from "../../scripts/issue-capabilities.mjs";
 import { launchWithAdapter } from "../../scripts/issue-runtime-adapters/index.mjs";
 import { canonicalizeAgent, isKnownAgent } from "../../scripts/issue-assignment.mjs";
-import { selectWorkerRoutes } from "../../scripts/issue-plan.mjs";
+import { selectWorkerRoutes, validateCapabilities } from "../../scripts/issue-plan.mjs";
 import { buildDatasetFromTelemetryEvents } from "../../scripts/issue-offline-eval.mjs";
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -76,6 +76,80 @@ test("OpenCode addition and enablement needs no script or skill changes", async 
   assert.match(agent,/mode: "subagent"/);
   assert.match(agent,/"\*":\s*"deny"/);
   assert.match(agent,/AGENTS.md/);
+});
+
+function catalog(models, calls = []) {
+  const base = external(calls);
+  return { ...base, runProcess: async (cli, args) => args.includes("models")
+    ? (calls.push([cli, ...args]), { code: 0, stdout: models.join("\n") }) : base.runProcess(cli, args) };
+}
+const allow = (models) => ({ agents: { enabled: ["opencode"], models: { opencode: { allow: models } } } });
+
+test("model allowlist probes only listed models and reports the rest as model-not-allowed", async t => {
+  const root = fixture(t, ["opencode"]), calls = [];
+  put(root, ".ai-template/config.json", allow(["fiction/kept"]));
+  const result = await discoverCapabilities({ cwd: root, ...catalog(["fiction/kept", "fiction/dropped", "fiction/kept-extra"], calls) });
+  assert.deepEqual([...new Set(result.capabilities.map(r => r.model))], ["fiction/kept"]);
+  const probed = calls.filter(c => c[0] === "probe").map(c => c.join(" "));
+  assert.equal(probed.length, 1);
+  assert.match(probed[0], /--model fiction\/kept /);
+  assert.deepEqual(result.diagnostics.filter(d => d.reason === "model-not-allowed").map(d => d.model).sort(),
+    ["fiction/dropped", "fiction/kept-extra"]);
+});
+
+test("model allowlist matches exact IDs only and an empty list admits no model", async t => {
+  const root = fixture(t, ["opencode"]);
+  put(root, ".ai-template/config.json", allow(["FICTION/KEPT", "fiction/*"]));
+  const none = await discoverCapabilities({ cwd: root, ...catalog(["fiction/kept"]) });
+  assert.deepEqual(none.capabilities, []);
+  put(root, ".ai-template/config.json", allow([]));
+  const empty = await discoverCapabilities({ cwd: root, ...catalog(["fiction/kept"]) });
+  assert.deepEqual(empty.capabilities, []);
+});
+
+test("routes outside the allowlist are rejected from cache, explicit records, verification and launch", async t => {
+  const root = fixture(t, ["opencode"]), calls = [];
+  const cachePath = path.join(root, "cache.json");
+  await discoverCapabilities({ cwd: root, outputPath: cachePath, ...catalog(["fiction/kept", "fiction/dropped"]) });
+  const before = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+  const dropped = before.capabilities.find(r => r.model === "fiction/dropped" && r.role === "worker");
+  assert.ok(dropped);
+  put(root, ".ai-template/config.json", allow(["fiction/kept"]));
+  assert.notEqual(loadRuntimeRegistry(root).fingerprint, before.runtimeFingerprint);
+  assert.deepEqual(selectWorkerRoutes(before.capabilities, { cwd: root }).map(r => r.model), ["fiction/kept"]);
+  // validateCapabilities reads the registry of the current working directory.
+  const previousCwd = process.cwd();
+  process.chdir(root);
+  try {
+    assert.throws(() => validateCapabilities([{ agent: "OpenCode", model: "fiction/dropped", role: "worker" }], before.capabilities),
+      /routing-unavailable/);
+    assert.equal(validateCapabilities([{ agent: "OpenCode", model: "fiction/kept", role: "worker" }], before.capabilities).length, 1);
+  } finally { process.chdir(previousCwd); }
+  assert.deepEqual(await verifyWorkerRoute(dropped, { cwd: root, ...catalog(["fiction/kept", "fiction/dropped"], calls) }),
+    { ok: false, reason: "model-not-allowed" });
+  assert.deepEqual(calls, []);
+  await assert.rejects(launchWithAdapter("opencode", { ...dropped, issueNumber: 123, cwd: root, releasePolicy: "merged" },
+    { ...external(), spawnWorker: async () => assert.fail("must not launch") }), /runtime-model-not-allowed/);
+  const refreshed = await loadOrRefreshCapabilities({ cwd: root, cachePath, ...catalog(["fiction/kept", "fiction/dropped"]) });
+  assert.equal(refreshed.reused, false);
+  assert.deepEqual([...new Set(refreshed.capabilities.map(r => r.model))], ["fiction/kept"]);
+});
+
+test("model allowlist keys must name enabled runtimes and use the closed shape", async t => {
+  const root = fixture(t, ["opencode"]);
+  for (const config of [
+    { agents: { enabled: ["opencode"], models: { absent: { allow: [] } } } },
+    { agents: { enabled: ["opencode"], models: { codex: { allow: [] } } } },
+    { agents: { enabled: ["opencode"], models: { OpenCode: { allow: [] } } } },
+    { agents: { enabled: ["opencode"], models: { antigravity: { allow: [] } } } },
+    { agents: { enabled: ["opencode"], models: { opencode: { allow: "fiction/kept" } } } },
+    { agents: { enabled: ["opencode"], models: { opencode: { allow: ["fiction/kept"], deny: [] } } } },
+    { agents: { enabled: ["opencode"], models: { opencode: { allow: ["fiction/kept", "fiction/kept"] } } } },
+    { agents: { enabled: ["opencode"], models: { opencode: { allow: ["fiction kept"] } } } },
+  ]) {
+    put(root, ".ai-template/config.json", config);
+    await assert.rejects(discoverCapabilities({ cwd: root, resolveExecutable: () => assert.fail("must not spawn") }), /runtime-/);
+  }
 });
 
 test("disabling a runtime removes owned outputs, invalidates its cache and never probes it", async t => {

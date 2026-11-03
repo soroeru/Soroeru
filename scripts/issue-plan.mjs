@@ -1,5 +1,5 @@
 import { findRuntime } from "./ai-template/registry.mjs";
-import { isRetiredRuntimeRoute } from "./issue-runtime-adapters/shared.mjs";
+import { isDisallowedModelRoute, isRetiredRuntimeRoute } from "./issue-runtime-adapters/shared.mjs";
 import { canonicalizeAgent, isCanonicalDate } from "./issue-assignment.mjs";
 import { roleProgramForMode, selectExecutionMode } from "./issue-roles.mjs";
 
@@ -194,6 +194,7 @@ export function validateCapabilities(requiredRoutes, capabilities) {
     if (
       !match ||
       isRetiredRuntimeRoute(match) ||
+      isDisallowedModelRoute(match) ||
       !findRuntime(match.agent, process.cwd(), { enabledOnly: true }) ||
       (match.requestedModel !== undefined &&
         (typeof match.requestedModel !== "string" || match.requestedModel.trim() === "")) ||
@@ -259,6 +260,7 @@ export function selectWorkerRoutes(
       throw new Error(`invalid-capability-record:${record?.agent ?? "unknown"}`);
     if (record.selectable !== true || record.verifiable !== true) continue;
     if (!findRuntime(record.agent, cwd, { enabledOnly: true })) continue;
+    if (isDisallowedModelRoute(record, cwd)) continue;
     if (excludedAgents.has(canonicalizeAgent(record.agent, cwd).toLowerCase())) continue;
     if (excludedModels.has(record.model) || excludedModels.has(record.requestedModel)) continue;
     routes.push(record);

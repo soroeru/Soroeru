@@ -1,4 +1,4 @@
-import { findRuntime, isRetiredCommand } from "../ai-template/registry.mjs";
+import { findRuntime, isModelAllowed, isRetiredCommand } from "../ai-template/registry.mjs";
 import { loadRepositoryConfig } from "../repository-config.mjs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -20,6 +20,8 @@ export const REASON_CODES = Object.freeze({
   TTY_REQUIRED: "tty-required",
   NON_AGENTIC_PRINT_MODE: "non-agentic-print-mode",
   HEADLESS_EXEC_FAILED: "headless-exec-failed",
+  // Repository config `agents.models.<id>.allow` excludes this exact model; it is never probed.
+  MODEL_NOT_ALLOWED: "model-not-allowed",
 });
 
 // Bumped from 30s: CLI authentication / model catalogs
@@ -306,6 +308,11 @@ export function isRetiredRuntimeRoute(route, root = process.cwd()) {
   if (findRuntime(route?.agent, root)?.retired) return true;
   if (typeof route?.selector !== "string" || !route.selector.trim()) return false;
   return isRetiredCommand(splitSelector(route.selector)[0], root);
+}
+
+/** A route whose runtime declares a model allowlist without this exact model. */
+export function isDisallowedModelRoute(route, root = process.cwd()) {
+  return !isModelAllowed(route?.agent, route?.model, root);
 }
 
 /**

@@ -1,5 +1,6 @@
 import test from "node:test";
 import { freshCheckoutEnv } from "./helpers/fresh-checkout.mjs";
+import { isolatedScriptRoot } from "./helpers/script-root.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1102,7 +1103,7 @@ test("checkpoints contain no Issue bodies, prompts, diffs, or credentials", asyn
   }
 });
 
-test("the graph CLI starts, pauses, and resumes across separate processes", async () => {
+test("the graph CLI starts, pauses, and resumes across separate processes", async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "graph-cli-"));
   const checkpointFile = path.join(directory, "run.json");
   const inputFile = path.join(directory, "input.json");
@@ -1114,7 +1115,7 @@ test("the graph CLI starts, pauses, and resumes across separate processes", asyn
       capabilities: [parentRecord, workerRoute("Claude", "sonnet")],
     }),
   );
-  const script = new URL("../../scripts/issue-graph.mjs", import.meta.url).pathname;
+  const script = path.join(isolatedScriptRoot(t), "scripts/issue-graph.mjs");
   const options = { env: await freshCheckoutEnv(directory) };
   try {
     const started = await execFileAsync(process.execPath, [

@@ -25,6 +25,8 @@ export function validateSchema(value, schema, field = "root") {
     for (const [key, item] of Object.entries(value)) {
       if (schema.properties && Object.hasOwn(schema.properties, key)) validateSchema(item, schema.properties[key], `${field}.${key}`);
       else if (schema.additionalProperties === false) fail();
+      else if (schema.additionalProperties && typeof schema.additionalProperties === "object")
+        validateSchema(item, schema.additionalProperties, `${field}.${key}`);
     }
   }
 }

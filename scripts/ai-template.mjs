@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -56,12 +57,22 @@ export function run(argv, root = process.cwd()) {
   throw new Error(USAGE);
 }
 
-/** Run the managed suite without a shell so file names are never interpreted. */
+/**
+ * Run the managed suite without a shell so file names are never interpreted.
+ * The suite runs from an empty temporary directory, so code that defaults to
+ * `process.cwd()` sees template defaults rather than this repository's own
+ * `.ai-template/config.json` (enabled runtimes, base branch, local skills).
+ */
 export function runTests(root = process.cwd()) {
   const directory = path.join(root, "tests/ai-template");
   const files = fs.readdirSync(directory).filter(f => f.endsWith(".test.mjs")).sort().map(f => path.join(directory, f));
   if (!files.length) throw new Error("ai-template-tests-missing");
-  return spawnSync(process.execPath, ["--test", ...files], { cwd: root, stdio: "inherit" }).status ?? 1;
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "ai-template-test-"));
+  try {
+    return spawnSync(process.execPath, ["--test", ...files], { cwd, stdio: "inherit" }).status ?? 1;
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
