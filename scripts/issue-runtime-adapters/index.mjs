@@ -1,12 +1,10 @@
 import { createAdapter } from "./generic.mjs";
 import { loadRuntimeRegistry, findRuntime } from "../ai-template/registry.mjs";
-import { REASON_CODES, isRetiredRuntimeRoute } from "./shared.mjs";
+import { REASON_CODES, isDisallowedModelRoute, isRetiredRuntimeRoute } from "./shared.mjs";
 
 export function getRuntimeAdapters(root = process.cwd()) {
   return loadRuntimeRegistry(root).enabled.map(createAdapter);
 }
-// Compatibility export for callers inspecting this process's default registry.
-export const RUNTIME_ADAPTERS = Object.freeze(getRuntimeAdapters());
 export function getAdapter(agentName, root = process.cwd()) {
   const runtime = findRuntime(agentName, root, { enabledOnly: true });
   return runtime ? createAdapter(runtime) : null;
@@ -32,6 +30,7 @@ export async function discoverAllCapabilities(ctx = {}) {
 export async function launchWithAdapter(agentName, job, ctx = {}) {
   const root = job?.cwd ?? ctx.cwd;
   if (isRetiredRuntimeRoute({ agent: agentName, selector: job?.selector }, root)) throw new Error("runtime-retired");
+  if (isDisallowedModelRoute({ agent: agentName, model: job?.model }, root)) throw new Error("runtime-model-not-allowed");
   const adapter = getAdapter(agentName, root);
   if (!adapter) throw new Error(`dispatch-adapter-unavailable:${agentName}`);
   return adapter.launch(ctx, job);

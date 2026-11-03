@@ -1,4 +1,5 @@
 import { loadRuntimeRegistry } from "../../scripts/ai-template/registry.mjs";
+import { isolatedScriptRoot } from "./helpers/script-root.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
@@ -725,7 +726,8 @@ test("CLI dry-run discovery does not write the capabilities cache file", async (
   await assert.rejects(() => stat(capabilitiesOutput), /ENOENT/);
 });
 
-test("CLI reuses a fresh capabilities cache instead of re-probing every adapter (Issue #434)", async () => {
+test("CLI reuses a fresh capabilities cache instead of re-probing every adapter (Issue #434)", async (t) => {
+  const scriptRoot = isolatedScriptRoot(t);
   const directory = await mkdtemp(path.join(tmpdir(), "example-orchestrator-cache-reuse-"));
   const inputPath = path.join(directory, "input.json");
   const capabilitiesOutput = path.join(directory, "capabilities.json");
@@ -771,8 +773,9 @@ test("CLI reuses a fresh capabilities cache instead of re-probing every adapter 
       diagnostics: [{ agent: "Codex", status: "ok", model: "gpt-cached" }],
       cli: { Codex: { path: codexPath, version: "codex-fake 1.0.0" } },
       probedAt: "2026-01-01T00:00:00.000Z",
-      probeSchemaVersion: PROBE_SCHEMA_VERSION, runtimeFingerprint: loadRuntimeRegistry().fingerprint,
-      repositoryCommit: await getRepositoryCommit(process.cwd()),
+      // The CLI compares against the checkout that contains the script.
+      probeSchemaVersion: PROBE_SCHEMA_VERSION, runtimeFingerprint: loadRuntimeRegistry(scriptRoot).fingerprint,
+      repositoryCommit: await getRepositoryCommit(scriptRoot),
     }),
   );
 
@@ -789,12 +792,12 @@ test("CLI reuses a fresh capabilities cache instead of re-probing every adapter 
       },
     }),
   );
-  const script = new URL("../../scripts/issue-orchestrator.mjs", import.meta.url);
+  const script = path.join(scriptRoot, "scripts/issue-orchestrator.mjs");
   const isolatedEnv = { ...process.env, PATH: bin };
   const { stdout } = await execFileAsync(
     process.execPath,
     [
-      script.pathname,
+      script,
       "--input",
       inputPath,
       "--issues",

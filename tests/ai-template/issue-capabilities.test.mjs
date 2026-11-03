@@ -13,7 +13,7 @@ import {
 import { dispatchWorker } from "../../scripts/issue-dispatch.mjs";
 import {
   discoverAllCapabilities,
-  RUNTIME_ADAPTERS,
+  getRuntimeAdapters,
 } from "../../scripts/issue-runtime-adapters/index.mjs";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
@@ -44,9 +44,11 @@ function isolatedPath(directory) {
   return `${directory}${path.delimiter}${path.dirname(process.execPath)}`;
 }
 
-test("runtime adapters evaluate in fixed Codex → Claude → Grok → Gemini order", () => {
+test("runtime adapters evaluate in fixed Codex → Claude → Grok → Gemini order", async () => {
+  // A directory without .ai-template/config.json exposes the shipped defaults.
+  const templateDefaults = await mkdtemp(path.join(tmpdir(), "runtime-defaults-"));
   assert.deepEqual(
-    RUNTIME_ADAPTERS.map((adapter) => adapter.agent),
+    getRuntimeAdapters(templateDefaults).map((adapter) => adapter.agent),
     ["Codex", "Claude", "Grok", "Gemini"],
   );
 });

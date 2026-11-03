@@ -293,7 +293,7 @@ test("CLI parsing keeps live evaluation and live benchmarks behind explicit opt-
 });
 
 test("the baseline CLI runs offline and prints no Issue text", async () => {
-  const script = path.resolve("scripts/issue-triage-eval.mjs");
+  const script = path.resolve(import.meta.dirname, "../../scripts/issue-triage-eval.mjs");
   const env = { ...process.env };
   delete env.TYPESAFE_API_KEY;
   const { stdout } = await execFileAsync(process.execPath, [script, "--now", "2026-10-09T00:00:00Z"], {

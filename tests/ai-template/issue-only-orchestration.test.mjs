@@ -1,5 +1,6 @@
 import test from "node:test";
 import { freshCheckoutEnv } from "./helpers/fresh-checkout.mjs";
+import { isolatedScriptRoot } from "./helpers/script-root.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -118,9 +119,9 @@ printf '%s\\n' '${JSON.stringify({ data: { repository: { issue: issue(1) } } })}
     { agent: "Claude", model: "fixture-worker", role: "worker", selector: "fixture", selectable: true, verifiable: true, timeoutMs: 1000 },
   ]));
   const { stdout } = await promisify(execFile)(process.execPath, [
-    "scripts/issue-orchestrator.mjs", "--issues", "1", "--dry-run", "--config", config,
+    path.join(isolatedScriptRoot(t), "scripts/issue-orchestrator.mjs"), "--issues", "1", "--dry-run", "--config", config,
     "--capabilities-file", capabilities, "--parent-agent", "Codex", "--parent-model", "fixture-parent",
-  ], { cwd: path.resolve(import.meta.dirname, "../.."), env: {
+  ], { cwd: dir, env: {
     ...await freshCheckoutEnv(dir), TYPESAFE_API_KEY: "fake-key", GITHUB_REPOSITORY: "example-org/example-repo",
   } });
   const result = JSON.parse(stdout);

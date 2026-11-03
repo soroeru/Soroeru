@@ -1,5 +1,5 @@
-import { loadRuntimeRegistry, findRuntime } from "./ai-template/registry.mjs";
-export const AGENT_NAMES = new Map([...loadRuntimeRegistry().aliases].map(([alias, runtime]) => [alias, runtime.name]));
+import { findRuntime } from "./ai-template/registry.mjs";
+// Resolve runtimes per call: never read repository settings at module load.
 export function normalize(value) { return typeof value === "string" ? value.trim() : ""; }
 export function canonicalizeAgent(value, root = process.cwd()) {
   const text = normalize(value);

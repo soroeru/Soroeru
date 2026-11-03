@@ -21,6 +21,7 @@ import {
   REASON_CODES,
   getRepositoryCommit,
   isRetiredRuntimeRoute,
+  isDisallowedModelRoute,
   readCliVersion,
   runProcess,
   writeJsonAtomic,
@@ -209,7 +210,8 @@ export async function loadOrRefreshCapabilities(options = {}) {
 
   const registry = loadRuntimeRegistry(options.cwd);
   const runtimeMismatch = cached && cached.runtimeFingerprint !== registry.fingerprint;
-  const retiredCache = cached && ((cached.capabilities ?? []).some(record => isRetiredRuntimeRoute(record, options.cwd)) ||
+  const retiredCache = cached && ((cached.capabilities ?? []).some(record =>
+    isRetiredRuntimeRoute(record, options.cwd) || isDisallowedModelRoute(record, options.cwd)) ||
     Object.values(cached.cli ?? {}).some(entry => isRetiredCommand(entry?.path, options.cwd)));
   if (!cached || refresh || schemaMismatch || commitMismatch || runtimeMismatch || retiredCache) {
     const fresh = await discoverCapabilities({
@@ -298,6 +300,7 @@ export async function refreshWorkerRoutes(options = {}) {
  */
 export async function verifyWorkerRoute(route, options = {}) {
   if (isRetiredRuntimeRoute(route, options.cwd)) return { ok: false, reason: REASON_CODES.MODEL_NOT_SELECTABLE };
+  if (isDisallowedModelRoute(route, options.cwd)) return { ok: false, reason: REASON_CODES.MODEL_NOT_ALLOWED };
   const agent = canonicalAgentName(route?.agent, options.cwd);
   if (!agent || typeof route?.model !== "string" || !route.model ||
       typeof route?.selector !== "string" || !route.selector) {
