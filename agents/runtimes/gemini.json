@@ -5,26 +5,17 @@
   "probeArgs": [],
   "promptArgs": [],
   "skills": {
-    "discoveryDirs": [
-      ".agents/skills"
-    ]
+    "discoveryDirs": [".agents/skills"]
   },
   "id": "gemini",
   "name": "Gemini",
   "evaluationOrder": 3,
-  "commands": [
-    "gemini"
-  ],
+  "commands": ["gemini"],
   "models": {
-    "args": [
-      "models"
-    ],
+    "args": ["models"],
     "parser": "model-lines"
   },
-  "selectorArgs": [
-    "--model",
-    "{model}"
-  ],
+  "selectorArgs": ["--model", "{model}"],
   "subagents": {
     "format": "agent-json",
     "directory": ".agents/agents",

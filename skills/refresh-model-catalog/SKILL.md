@@ -25,6 +25,7 @@ on demand and to review the result.
 
    `--dry-run` lists without writing. `show` prints the stored catalog and
    which runtimes are stale without listing anything.
+
 2. Report to the operator, per runtime, from the JSON output:
    - `status` and, for `failed`, the closed `reason` code
      (`cli-not-found`, `auth-unavailable`, `model-not-selectable`, `probe-failed`,

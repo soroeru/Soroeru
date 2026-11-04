@@ -56,16 +56,10 @@
           }
         },
         "parser": {
-          "enum": [
-            "login-status",
-            "logged-in-json"
-          ]
+          "enum": ["login-status", "logged-in-json"]
         }
       },
-      "required": [
-        "args",
-        "parser"
-      ],
+      "required": ["args", "parser"],
       "additionalProperties": false
     },
     "models": {
@@ -109,26 +103,18 @@
                   "pattern": "^[a-z][a-z_]*$"
                 }
               },
-              "required": [
-                "method"
-              ],
+              "required": ["method"],
               "additionalProperties": false
             }
           },
-          "required": [
-            "args",
-            "request"
-          ],
+          "required": ["args", "request"],
           "additionalProperties": false
         },
         "resolveReportedModel": {
           "type": "boolean"
         }
       },
-      "required": [
-        "args",
-        "parser"
-      ],
+      "required": ["args", "parser"],
       "additionalProperties": false
     },
     "selectorArgs": {
@@ -168,20 +154,14 @@
           "uniqueItems": true
         }
       },
-      "required": [
-        "discoveryDirs"
-      ],
+      "required": ["discoveryDirs"],
       "additionalProperties": false
     },
     "subagents": {
       "type": "object",
       "properties": {
         "format": {
-          "enum": [
-            "claude-markdown",
-            "opencode-markdown",
-            "agent-json"
-          ]
+          "enum": ["claude-markdown", "opencode-markdown", "agent-json"]
         },
         "directory": {
           "type": "string",
@@ -202,18 +182,11 @@
               "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
             }
           },
-          "required": [
-            "reasoning",
-            "fast"
-          ],
+          "required": ["reasoning", "fast"],
           "additionalProperties": false
         }
       },
-      "required": [
-        "format",
-        "directory",
-        "models"
-      ],
+      "required": ["format", "directory", "models"],
       "additionalProperties": false
     },
     "hooks": {
@@ -235,11 +208,7 @@
             "type": "object"
           }
         },
-        "required": [
-          "file",
-          "event",
-          "entry"
-        ],
+        "required": ["file", "event", "entry"],
         "additionalProperties": false
       }
     },
@@ -247,11 +216,7 @@
       "type": "object",
       "properties": {
         "transport": {
-          "enum": [
-            "jsonrpc-stdio",
-            "exec-json",
-            "control-stdio"
-          ]
+          "enum": ["jsonrpc-stdio", "exec-json", "control-stdio"]
         },
         "command": {
           "type": "array",
@@ -274,9 +239,7 @@
               "type": "object"
             }
           },
-          "required": [
-            "method"
-          ],
+          "required": ["method"],
           "additionalProperties": false
         },
         "initialized": {
@@ -296,9 +259,7 @@
               "type": "object"
             }
           },
-          "required": [
-            "method"
-          ],
+          "required": ["method"],
           "additionalProperties": false
         },
         "windows": {
@@ -312,10 +273,7 @@
           "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
         },
         "windowDurationMins": {
-          "type": [
-            "string",
-            "integer"
-          ]
+          "type": ["string", "integer"]
         },
         "blocked": {
           "type": "array",
@@ -326,25 +284,17 @@
           }
         },
         "windowSelection": {
-          "enum": [
-            "children",
-            "self"
-          ]
+          "enum": ["children", "self"]
         },
         "percentFormat": {
-          "enum": [
-            "integer",
-            "number"
-          ]
+          "enum": ["integer", "number"]
         },
         "resetsAt": {
           "type": "string",
           "minLength": 1
         },
         "resetFormat": {
-          "enum": [
-            "iso"
-          ]
+          "enum": ["iso"]
         }
       },
       "required": [
@@ -357,9 +307,7 @@
       "additionalProperties": false
     },
     "usageUnavailable": {
-      "enum": [
-        "five-hour-query-unavailable"
-      ]
+      "enum": ["five-hour-query-unavailable"]
     }
   },
   "required": [

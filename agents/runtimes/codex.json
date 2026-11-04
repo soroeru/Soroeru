@@ -2,40 +2,24 @@
   "aliases": [],
   "enabledByDefault": true,
   "retired": false,
-  "probeArgs": [
-    "--skip-git-repo-check"
-  ],
+  "probeArgs": ["--skip-git-repo-check"],
   "promptArgs": [],
   "skills": {
-    "discoveryDirs": [
-      ".agents/skills"
-    ]
+    "discoveryDirs": [".agents/skills"]
   },
   "id": "codex",
   "name": "Codex",
   "evaluationOrder": 0,
-  "commands": [
-    "codex"
-  ],
+  "commands": ["codex"],
   "auth": {
-    "args": [
-      "login",
-      "status"
-    ],
+    "args": ["login", "status"],
     "parser": "login-status"
   },
   "models": {
-    "args": [
-      "debug",
-      "models"
-    ],
+    "args": ["debug", "models"],
     "parser": "codex-models"
   },
-  "selectorArgs": [
-    "exec",
-    "-m",
-    "{model}"
-  ],
+  "selectorArgs": ["exec", "-m", "{model}"],
   "subagents": {
     "format": "agent-json",
     "directory": ".agents/agents",
@@ -46,10 +30,7 @@
   },
   "usage": {
     "transport": "jsonrpc-stdio",
-    "command": [
-      "codex",
-      "app-server"
-    ],
+    "command": ["codex", "app-server"],
     "initialize": {
       "method": "initialize",
       "params": {
