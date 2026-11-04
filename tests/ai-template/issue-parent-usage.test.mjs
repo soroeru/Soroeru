@@ -1,3 +1,4 @@
+import { buildRuntimeEnvironment } from "../../scripts/issue-runtime-adapters/environment.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -19,7 +20,8 @@ import {
   normalizeUsage,
 } from "../../scripts/issue-runtime-adapters/usage.mjs";
 const codexUsage = findRuntime("codex").usage;
-const fetchCodexRateLimits = (options) => fetchUsage(codexUsage, options);
+const fetchCodexRateLimits = (options) =>
+  fetchUsage(codexUsage, { env: buildRuntimeEnvironment(), ...options });
 const normalizeCodexRateLimits = (result, options) =>
   normalizeUsage(result, codexUsage, options);
 import {

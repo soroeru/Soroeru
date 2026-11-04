@@ -1,4 +1,7 @@
-import { loadRuntimeRegistry } from "../../scripts/ai-template/registry.mjs";
+import {
+  loadRuntimeRegistry,
+  permissionFingerprintFor,
+} from "../../scripts/ai-template/registry.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -358,13 +361,18 @@ test("Claude candidates come from the CLI initialize response, never from local 
     ],
   );
   // Probe output must name the model: stream-json follows the shared selector.
-  assert.deepEqual(probes[0].slice(0, 4), [
+  // The probe runs the implementer's workspace-write argv, never bypass.
+  assert.deepEqual(probes[0].slice(0, 6), [
     "--model",
     "fiction-alpha",
     "--permission-mode",
-    "bypassPermissions",
+    "acceptEdits",
+    "--permission-prompts",
+    "none",
   ]);
-  assert.deepEqual(probes[0].slice(4), [
+  assert.match(probes[0][6], /^--allowedTools=Bash\(git status:\*\),/);
+  assert.equal(probes[0].join(" ").includes("bypassPermissions"), false);
+  assert.deepEqual(probes[0].slice(7), [
     "-p",
     "--output-format",
     "stream-json",
@@ -591,6 +599,16 @@ test("dispatches a non-Codex route with the exact probe selector and model", asy
   const bin = path.join(directory, "bin");
   await mkdir(bin);
   const marker = path.join(directory, "launched.json");
+  await mkdir(path.join(directory, ".ai-template"));
+  await writeFile(
+    path.join(directory, ".ai-template/config.json"),
+    JSON.stringify({
+      agents: {
+        enabled: ["grok"],
+        environment: { grok: { inherit: ["EXAMPLE_LAUNCH_MARKER"] } },
+      },
+    }),
+  );
   await makeFakeBin(
     bin,
     "grok",
@@ -610,6 +628,7 @@ test("dispatches a non-Codex route with the exact probe selector and model", asy
     selector: `${grokPath} --model grok-4.5`,
     selectable: true,
     verifiable: true,
+    permissionFingerprint: permissionFingerprintFor("grok", directory),
     timeoutMs: 10_000,
   };
 
@@ -635,6 +654,12 @@ test("dispatches a non-Codex route with the exact probe selector and model", asy
 
   const launched = JSON.parse(await readFile(marker, "utf8"));
   assert.deepEqual(launched.argv.slice(0, 2), ["--model", "grok-4.5"]);
+  // The single worker gets the implementer's argv, rebuilt from the registry.
+  assert.deepEqual(launched.argv.slice(2, 4), [
+    "--permission-mode",
+    "acceptEdits",
+  ]);
+  assert.equal(launched.argv.includes("bypassPermissions"), false);
   assert.match(launched.argv.at(-1), /Issue: #413/);
   assert.match(launched.argv.at(-1), /agent=Grok/);
   assert.doesNotMatch(launched.argv.at(-1), /password|token|BEGIN /i);
@@ -661,6 +686,7 @@ test("dispatch timeout kills only the worker process tree", async () => {
     selector: `${claudePath} --model sonnet`,
     selectable: true,
     verifiable: true,
+    permissionFingerprint: permissionFingerprintFor("claude"),
     timeoutMs: 200,
   };
   const handle = await dispatchWorker({

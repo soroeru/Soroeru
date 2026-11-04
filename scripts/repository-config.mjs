@@ -51,8 +51,26 @@ export function loadRepositoryConfig(root = process.cwd()) {
   }
   if (!object(parsed)) fail("root");
   for (const key of Object.keys(parsed))
-    if (!["$schema", "repository", "agents", "localSkills"].includes(key))
+    if (
+      ![
+        "$schema",
+        "repository",
+        "agents",
+        "enterprise",
+        "localSkills",
+      ].includes(key)
+    )
       fail("root-key");
+  // Opt-in enterprise route attestation (Issue #65): a closed boolean-only object.
+  if (parsed.enterprise !== undefined) {
+    if (
+      !object(parsed.enterprise) ||
+      Object.keys(parsed.enterprise).some((k) => k !== "routeAttestation") ||
+      (parsed.enterprise.routeAttestation !== undefined &&
+        typeof parsed.enterprise.routeAttestation !== "boolean")
+    )
+      fail("enterprise");
+  }
   // Runtime/skill registration belongs to its own validator; do not interpret it here.
   const repository = parsed.repository === undefined ? {} : parsed.repository;
   if (!object(repository)) fail("repository");

@@ -1,3 +1,8 @@
+import {
+  buildRuntimeEnvironment,
+  mergeEnvironmentPolicies,
+  validateEnvironmentPolicy,
+} from "../issue-runtime-adapters/environment.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,6 +55,13 @@ export function loadRuntimeRegistry(root = process.cwd()) {
   );
   const configFile = path.join(root, ".ai-template/config.json");
   const config = fs.existsSync(configFile) ? readJson(configFile) : {};
+  if (config.agents && Object.hasOwn(config.agents, "environment")) {
+    const policies = config.agents.environment;
+    if (!policies || typeof policies !== "object" || Array.isArray(policies))
+      throw new Error("runtime-env-policy-invalid");
+    for (const policy of Object.values(policies))
+      validateEnvironmentPolicy(policy);
+  }
   validateSchema(config, configSchema);
   loadRepositoryConfig(root); // Repository settings retain their separate strict contract.
   const runtimes = [];
@@ -65,6 +77,7 @@ export function loadRuntimeRegistry(root = process.cwd()) {
       .filter((f) => f.endsWith(".json"))
       .sort()) {
       const runtime = readJson(path.join(directory, file));
+      validateEnvironmentPolicy(runtime.environment);
       validateSchema(runtime, schema, file);
       validateUsageDefinition(runtime.usage);
       if (runtime.usage && runtime.usageUnavailable)
@@ -93,13 +106,20 @@ export function loadRuntimeRegistry(root = process.cwd()) {
           throw new Error("runtime-command-conflict");
         commands.set(command.toLowerCase(), runtime);
       }
+      if (!runtime.retired && runtime.permissions === undefined)
+        throw new Error(`runtime-definition-incomplete:${runtime.id}`);
       for (const arg of [
         ...(runtime.selectorArgs ?? []),
         ...(runtime.probeArgs ?? []),
         ...(runtime.promptArgs ?? []),
-      ])
+      ]) {
         if (/[{}]/.test(arg) && arg !== "{model}")
           throw new Error("runtime-argument-placeholder-invalid");
+        // Permission arguments come only from the permission profiles, never from a selector.
+        if (isPermissionArgument(arg, runtime))
+          throw new Error(`runtime-permission-flag-misplaced:${runtime.id}`);
+      }
+      validatePermissionDefinition(runtime);
       // A control-protocol listing replaces the list command and needs its own parser.
       if (
         runtime.models &&
@@ -155,6 +175,21 @@ export function loadRuntimeRegistry(root = process.cwd()) {
     if (entry.allow) allowedModels.set(id, [...entry.allow].sort());
     if (entry.deny) deniedModels.set(id, [...entry.deny].sort());
   }
+  const permissions = loadPermissionPolicy(config.agents?.permissions, {
+    aliases,
+    enabled,
+  });
+  for (const [id, policy] of Object.entries(config.agents?.environment ?? {})) {
+    const runtime = aliases.get(id);
+    if (!runtime || runtime.id !== id || runtime.retired)
+      throw new Error("runtime-env-policy-invalid");
+    validateEnvironmentPolicy(policy);
+  }
+  for (const runtime of runtimes)
+    runtime.environment = mergeEnvironmentPolicies(
+      runtime.environment,
+      config.agents?.environment?.[runtime.id],
+    );
   const fingerprint = createHash("sha256")
     .update(
       JSON.stringify({
@@ -162,10 +197,12 @@ export function loadRuntimeRegistry(root = process.cwd()) {
         enabledIds,
         ...(allowedModels.size ? { allowedModels: [...allowedModels] } : {}),
         ...(deniedModels.size ? { deniedModels: [...deniedModels] } : {}),
+        permissions,
       }),
     )
     .digest("hex");
   return {
+    permissions,
     root,
     sourceRoot,
     runtimes,
@@ -264,4 +301,245 @@ export function isRetiredCommand(command, root = process.cwd()) {
     .replace(/\.exe$/i, "")
     .toLowerCase();
   return loadRuntimeRegistry(root).commands.get(name)?.retired === true;
+}
+
+/** Named permission profiles a runtime definition may declare. */
+export const PERMISSION_PROFILES = Object.freeze([
+  "workspace-write",
+  "worktree-setup",
+  "read-only",
+  "bypass",
+]);
+/** The worker roles a profile is chosen for; a single worker runs as the implementer. */
+export const PERMISSION_ROLES = Object.freeze([
+  "implementer",
+  "planner",
+  "reviewer",
+]);
+export const DEFAULT_ROLE_PROFILES = Object.freeze({
+  implementer: "workspace-write",
+  planner: "worktree-setup",
+  reviewer: "read-only",
+});
+/**
+ * Arguments that skip or loosen a CLI's permission checks on any runtime. They may
+ * appear only in a runtime's `bypass` profile, never in a selector or another profile.
+ */
+const BYPASS_TOKENS = Object.freeze([
+  "--dangerously-skip-permissions",
+  "--allow-dangerously-skip-permissions",
+  "--dangerously-bypass-approvals-and-sandbox",
+  "--always-approve",
+  "--approve-for-me",
+  "--auto",
+  "--yolo",
+  "--full-auto",
+  "bypassPermissions",
+]);
+
+const matchesFlag = (arg, flag) => arg === flag || arg.startsWith(`${flag}=`);
+const isBypassToken = (arg) =>
+  BYPASS_TOKENS.some((token) => matchesFlag(String(arg), token));
+
+/** True when `arg` belongs to the permission layer: a reserved flag of this runtime or a bypass token. */
+export function isPermissionArgument(arg, runtime) {
+  const text = String(arg ?? "");
+  return (
+    isBypassToken(text) ||
+    (runtime?.permissions?.flags ?? []).some((flag) => matchesFlag(text, flag))
+  );
+}
+
+function allowPlaceholder(runtime) {
+  const allowArgs = runtime.permissions.allowArgs;
+  if (!allowArgs) return null;
+  const placeholders = allowArgs.filter((arg) => /[{}]/.test(arg));
+  if (placeholders.length !== 1)
+    throw new Error(`runtime-permission-allow-args-invalid:${runtime.id}`);
+  const [arg] = placeholders;
+  if (arg === "{rule}") return "rule";
+  if (arg.replace("{rules}", "").includes("{") || !arg.includes("{rules}"))
+    throw new Error(`runtime-permission-allow-args-invalid:${runtime.id}`);
+  if (arg.replace("{rules}", "").includes("}"))
+    throw new Error(`runtime-permission-allow-args-invalid:${runtime.id}`);
+  return "rules";
+}
+
+/** A joined `{rules}` list is comma-separated, so a rule must not contain a comma itself. */
+function validateAllowRules(runtime, rules) {
+  const form = allowPlaceholder(runtime);
+  if (!form)
+    throw new Error(`runtime-permission-allow-unsupported:${runtime.id}`);
+  for (const rule of rules)
+    if (
+      rule !== rule.trim() ||
+      hasControlCharacter(rule) ||
+      (form === "rules" && rule.includes(","))
+    )
+      throw new Error(`runtime-permission-rule-invalid:${runtime.id}`);
+}
+
+function validatePermissionDefinition(runtime) {
+  const permissions = runtime.permissions;
+  if (!permissions) return;
+  const fail = () => {
+    throw new Error(`runtime-permission-profile-invalid:${runtime.id}`);
+  };
+  allowPlaceholder(runtime);
+  const reserved = (arg) =>
+    !arg.startsWith("-") ||
+    permissions.flags.some((flag) => matchesFlag(arg, flag));
+  for (const arg of permissions.allowArgs ?? [])
+    if (arg !== "{rule}" && !reserved(arg))
+      throw new Error(`runtime-permission-flag-unreserved:${runtime.id}`);
+  for (const [name, profile] of Object.entries(permissions.profiles)) {
+    if (profile.args.some((arg) => /[{}]/.test(arg)))
+      throw new Error("runtime-argument-placeholder-invalid");
+    // Every flag a profile sets is reserved, so a route selector can never set it again.
+    if (profile.args.some((arg) => !reserved(arg)))
+      throw new Error(`runtime-permission-flag-unreserved:${runtime.id}`);
+    if (name === "bypass") {
+      if (profile.enforcement !== "none" || profile.allow) fail();
+    } else if (
+      profile.enforcement === "none" ||
+      profile.args.some(isBypassToken)
+    )
+      fail();
+    if (profile.allow) validateAllowRules(runtime, profile.allow);
+  }
+}
+
+/**
+ * Normalize repository config `agents.permissions`. Bypass is never a default: a role
+ * may map to `bypass` only when every enabled runtime is named in `allowBypass`.
+ */
+function loadPermissionPolicy(raw = {}, { aliases, enabled }) {
+  const enabledRuntime = (id) => {
+    const runtime = aliases.get(String(id).toLowerCase());
+    if (!runtime || runtime.id !== id || !enabled.includes(runtime))
+      throw new Error(`runtime-permission-invalid:${id}`);
+    return runtime;
+  };
+  const roles = { ...DEFAULT_ROLE_PROFILES, ...(raw.roles ?? {}) };
+  const allowBypass = [...(raw.allowBypass ?? [])].sort();
+  for (const id of allowBypass)
+    if (!enabledRuntime(id).permissions.profiles.bypass)
+      throw new Error(`runtime-permission-bypass-undefined:${id}`);
+  if (Object.values(roles).includes("bypass"))
+    for (const runtime of enabled)
+      if (!allowBypass.includes(runtime.id))
+        throw new Error(`runtime-permission-bypass-not-allowed:${runtime.id}`);
+  const runtimes = {};
+  for (const [id, profiles] of Object.entries(raw.runtimes ?? {}).sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
+    const runtime = enabledRuntime(id);
+    runtimes[id] = {};
+    for (const [name, entry] of Object.entries(profiles).sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      if (!runtime.permissions.profiles[name])
+        throw new Error(`runtime-permission-invalid:${id}`);
+      validateAllowRules(runtime, entry.allow);
+      runtimes[id][name] = { allow: [...entry.allow] };
+    }
+  }
+  return {
+    roles: Object.fromEntries(PERMISSION_ROLES.map((r) => [r, roles[r]])),
+    allowBypass,
+    requireEnforcement: [...(raw.requireEnforcement ?? [])].sort(),
+    runtimes,
+  };
+}
+
+function expandAllowArgs(runtime, rules) {
+  if (!rules.length) return [];
+  const form = allowPlaceholder(runtime);
+  if (form === "rule")
+    return rules.flatMap((rule) =>
+      runtime.permissions.allowArgs.map((arg) =>
+        arg === "{rule}" ? rule : arg,
+      ),
+    );
+  return runtime.permissions.allowArgs.map((arg) =>
+    arg.replace("{rules}", rules.join(",")),
+  );
+}
+
+/**
+ * The permission profile, argv and enforcement a runtime runs `role` with. The argv
+ * is passed to spawn as-is (never re-split), so rules containing spaces stay intact.
+ * @param {ReturnType<typeof loadRuntimeRegistry>} registry
+ * @param {{ id: string, permissions?: any }} runtime
+ * @param {string} [role] - omitted for a single worker, which runs as the implementer
+ */
+export function resolvePermission(registry, runtime, role = "implementer") {
+  if (!PERMISSION_ROLES.includes(role))
+    throw new Error(`runtime-permission-role-invalid:${role}`);
+  const profileName = registry.permissions.roles[role];
+  const profile = runtime?.permissions?.profiles?.[profileName];
+  if (!profile)
+    throw new Error(`runtime-permission-unavailable:${runtime?.id}`);
+  const allow =
+    registry.permissions.runtimes[runtime.id]?.[profileName]?.allow ??
+    profile.allow ??
+    [];
+  const args = [...profile.args, ...expandAllowArgs(runtime, allow)];
+  const unavailable = !profile.network
+    ? "route-permission-insufficient"
+    : registry.permissions.requireEnforcement.includes(profileName) &&
+        profile.enforcement !== "cli"
+      ? "route-permission-unenforced"
+      : null;
+  return {
+    role,
+    profile: profileName,
+    args,
+    enforcement: profile.enforcement,
+    network: profile.network,
+    ...(unavailable ? { unavailable } : {}),
+  };
+}
+
+/**
+ * The roles a runtime can run under the current policy, and a fingerprint of every
+ * role's resolved argv. A route probed under another policy no longer matches it.
+ */
+export function runtimePermissionSummary(registry, runtime) {
+  const resolved = PERMISSION_ROLES.map((role) =>
+    resolvePermission(registry, runtime, role),
+  );
+  return {
+    roles: resolved.filter((r) => !r.unavailable).map((r) => r.role),
+    fingerprint: createHash("sha256")
+      .update(JSON.stringify(resolved))
+      .digest("hex"),
+  };
+}
+
+/** The current permission fingerprint of an enabled runtime, or null when it is not enabled. */
+export function permissionFingerprintFor(agent, root = process.cwd()) {
+  const registry = loadRuntimeRegistry(root);
+  const runtime = registry.aliases.get(
+    String(agent ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+  return runtime && registry.enabled.includes(runtime)
+    ? runtimePermissionSummary(registry, runtime).fingerprint
+    : null;
+}
+
+/** Resolve overrides by canonical runtime ID, including for caller-supplied definitions. */
+export function runtimeEnvironment(definition, ctx = {}, lease = undefined) {
+  const registered = findRuntime(definition.id ?? definition.name, ctx.cwd);
+  const policy = mergeEnvironmentPolicies(
+    definition.environment,
+    registered?.environment,
+  );
+  return buildRuntimeEnvironment({
+    parentEnv: ctx.env ?? process.env,
+    policy,
+    lease,
+  });
 }

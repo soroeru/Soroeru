@@ -308,6 +308,180 @@
     },
     "usageUnavailable": {
       "enum": ["five-hour-query-unavailable"]
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "pattern": "^-[^\\s\\u0000-\\u001f\\u007f=]+$"
+          },
+          "uniqueItems": true
+        },
+        "allowArgs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          },
+          "minItems": 1
+        },
+        "profiles": {
+          "type": "object",
+          "properties": {
+            "workspace-write": {
+              "type": "object",
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  }
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "uniqueItems": true
+                },
+                "enforcement": {
+                  "enum": ["cli", "inherited", "none"]
+                },
+                "network": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["args", "enforcement", "network"],
+              "additionalProperties": false
+            },
+            "worktree-setup": {
+              "type": "object",
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  }
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "uniqueItems": true
+                },
+                "enforcement": {
+                  "enum": ["cli", "inherited", "none"]
+                },
+                "network": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["args", "enforcement", "network"],
+              "additionalProperties": false
+            },
+            "read-only": {
+              "type": "object",
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  }
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "uniqueItems": true
+                },
+                "enforcement": {
+                  "enum": ["cli", "inherited", "none"]
+                },
+                "network": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["args", "enforcement", "network"],
+              "additionalProperties": false
+            },
+            "bypass": {
+              "type": "object",
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  }
+                },
+                "allow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+                  },
+                  "uniqueItems": true
+                },
+                "enforcement": {
+                  "enum": ["cli", "inherited", "none"]
+                },
+                "network": {
+                  "type": "boolean"
+                }
+              },
+              "required": ["args", "enforcement", "network"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["workspace-write", "worktree-setup", "read-only"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["flags", "profiles"],
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "inherit": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "uniqueItems": true
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
     }
   },
   "required": [

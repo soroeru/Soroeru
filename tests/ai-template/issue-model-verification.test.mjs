@@ -138,7 +138,7 @@ test("Claude lists models over the control protocol and records the canonical mo
   );
   assert.match(
     result.capabilities.find((r) => r.model === "unexpected-model").selector,
-    /--model substituted /,
+    /--model substituted( |$)/,
   );
   const failures = result.diagnostics.filter((d) => d.status === "failed");
   assert.deepEqual(

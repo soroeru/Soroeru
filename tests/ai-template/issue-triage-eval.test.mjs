@@ -559,11 +559,15 @@ test("a benchmark task returns closed fields only and strips the Jev key from th
   });
   assert.deepEqual(result, { kind: "docs", passed: true, durationMs: 250 });
   assert.equal(seen[0].command, "fixture-cli");
-  assert.deepEqual(seen[0].args.slice(0, 3), [
+  // Benchmark tasks run with the implementer's argv between selector and probe args.
+  assert.deepEqual(seen[0].args.slice(0, 4), [
     "--model",
     "fixture-model",
-    "-p",
+    "--permission-mode",
+    "acceptEdits",
   ]);
+  assert.equal(seen[0].args.at(-2), "--verbose");
+  assert.equal(seen[0].args.join(" ").includes("bypassPermissions"), false);
   assert.equal(seen[0].env.TYPESAFE_API_KEY, undefined);
   const failed = await runBenchmarkTask(route, task, {
     run: fakeCli({ fix: false }),
