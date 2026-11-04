@@ -13,14 +13,25 @@ const source = path.resolve(import.meta.dirname, "../../..");
  * @param {{ after: (fn: () => void) => void }} [t] node:test context for cleanup
  */
 export function isolatedScriptRoot(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "script-root-")));
+  const root = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "script-root-")),
+  );
   t?.after(() => fs.rmSync(root, { recursive: true, force: true }));
   for (const entry of ["scripts", "agents"])
-    fs.cpSync(path.join(source, entry), path.join(root, entry), { recursive: true });
+    fs.cpSync(path.join(source, entry), path.join(root, entry), {
+      recursive: true,
+    });
   // Consumers may have no package.json; the .mjs scripts do not need one.
   if (fs.existsSync(path.join(source, "package.json")))
-    fs.copyFileSync(path.join(source, "package.json"), path.join(root, "package.json"));
+    fs.copyFileSync(
+      path.join(source, "package.json"),
+      path.join(root, "package.json"),
+    );
   if (fs.existsSync(path.join(source, "node_modules")))
-    fs.symlinkSync(path.join(source, "node_modules"), path.join(root, "node_modules"), "dir");
+    fs.symlinkSync(
+      path.join(source, "node_modules"),
+      path.join(root, "node_modules"),
+      "dir",
+    );
   return root;
 }

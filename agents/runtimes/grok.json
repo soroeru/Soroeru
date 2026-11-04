@@ -2,27 +2,17 @@
   "aliases": [],
   "enabledByDefault": true,
   "retired": false,
-  "probeArgs": [
-    "-p"
-  ],
-  "promptArgs": [
-    "-p"
-  ],
+  "probeArgs": ["-p"],
+  "promptArgs": ["-p"],
   "skills": {
-    "discoveryDirs": [
-      ".agents/skills"
-    ]
+    "discoveryDirs": [".agents/skills"]
   },
   "id": "grok",
   "name": "Grok",
   "evaluationOrder": 2,
-  "commands": [
-    "grok"
-  ],
+  "commands": ["grok"],
   "models": {
-    "args": [
-      "models"
-    ],
+    "args": ["models"],
     "parser": "bullet-models"
   },
   "selectorArgs": [

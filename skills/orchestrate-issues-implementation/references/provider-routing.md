@@ -94,7 +94,9 @@ When dynamic assignment selects a non-Codex route, launch it through the same ad
 the capability record, reusing the exact `selector` and `model`. Use
 `node scripts/issue-dispatch.mjs --route-json '…' --issue N --release-policy … --next-milestone …`
 or the `dispatchWorker` export. The worker receives only Issue number, agent/model route, release
-policy, and next milestone.
+policy, and next milestone. A worker that owns the Issue worktree (single-worker mode or the
+implementer role) also receives a fresh, non-sensitive lease session ID. The dispatcher renews that
+lease while the worker runs (`acquire --heartbeat`) and stops when the worker exits.
 
 Runtime interfaces differ. Verify availability for each supported CLI and exact model.
 Antigravity is an explicit operator exclusion, not a transient probe failure; it must not be

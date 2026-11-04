@@ -1,4 +1,8 @@
-import { findRuntime, isModelAllowed, isRetiredCommand } from "../ai-template/registry.mjs";
+import {
+  findRuntime,
+  isModelAllowed,
+  isRetiredCommand,
+} from "../ai-template/registry.mjs";
 import { loadRepositoryConfig } from "../repository-config.mjs";
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -47,7 +51,10 @@ const TTY_REQUIRED_PATTERN =
  * @param {string} command
  * @param {{ env?: NodeJS.ProcessEnv, pathEnv?: string }} [options]
  */
-export async function resolveExecutable(command, { env = process.env, pathEnv } = {}) {
+export async function resolveExecutable(
+  command,
+  { env = process.env, pathEnv } = {},
+) {
   if (typeof command !== "string" || !command.trim()) return null;
   if (command.includes("/") || command.includes("\\")) {
     try {
@@ -59,7 +66,9 @@ export async function resolveExecutable(command, { env = process.env, pathEnv } 
   }
   const pathValue = pathEnv ?? env.PATH ?? env.Path ?? "";
   const extensions =
-    process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean) : [""];
+    process.platform === "win32"
+      ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(Boolean)
+      : [""];
   for (const directory of pathValue.split(path.delimiter).filter(Boolean)) {
     for (const extension of extensions) {
       const candidate = path.join(directory, command + extension);
@@ -105,7 +114,10 @@ export function runProcess(
     const child = spawn(command, args, {
       env,
       cwd,
-      stdio: input === undefined ? ["ignore", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+      stdio:
+        input === undefined
+          ? ["ignore", "pipe", "pipe"]
+          : ["pipe", "pipe", "pipe"],
     });
     const stdoutChunks = [];
     const stderrChunks = [];
@@ -209,7 +221,9 @@ export async function runHeadlessExecProbe({
   timeoutMs = DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
   env = process.env,
 } = {}) {
-  const sandboxDir = await fs.mkdtemp(path.join(os.tmpdir(), "headless-probe-"));
+  const sandboxDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "headless-probe-"),
+  );
   try {
     const marker = randomBytes(8).toString("hex");
     const artifactPath = path.join(sandboxDir, "probe.txt");
@@ -219,18 +233,28 @@ export async function runHeadlessExecProbe({
       "Do not modify or create any other file. Do not ask questions. Do not explain your steps.",
     ].join("\n");
 
-    const result = await run(cliPath, [...args, prompt], { timeoutMs, env, cwd: sandboxDir });
+    const result = await run(cliPath, [...args, prompt], {
+      timeoutMs,
+      env,
+      cwd: sandboxDir,
+    });
 
     let artifactMatches = false;
     try {
-      artifactMatches = (await fs.readFile(artifactPath, "utf8")).trim() === marker;
+      artifactMatches =
+        (await fs.readFile(artifactPath, "utf8")).trim() === marker;
     } catch {
       artifactMatches = false;
     }
-    if (result.timedOut) return { ok: false, reason: REASON_CODES.VERIFICATION_TIMEOUT };
+    if (result.timedOut)
+      return { ok: false, reason: REASON_CODES.VERIFICATION_TIMEOUT };
     const combinedOutput = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
     const reported = [...new Set(reportedModels(result))];
-    if (!resolveModel && expectedModel && reported.some((model) => model !== expectedModel)) {
+    if (
+      !resolveModel &&
+      expectedModel &&
+      reported.some((model) => model !== expectedModel)
+    ) {
       return { ok: false, reason: REASON_CODES.MODEL_MISMATCH };
     }
     if (artifactMatches && result.code === 0) {
@@ -240,10 +264,12 @@ export async function runHeadlessExecProbe({
         ? { ok: true, reportedModel: reported[0] }
         : { ok: false, reason: REASON_CODES.MODEL_UNRESOLVED };
     }
-    if (TTY_REQUIRED_PATTERN.test(combinedOutput)) return { ok: false, reason: REASON_CODES.TTY_REQUIRED };
+    if (TTY_REQUIRED_PATTERN.test(combinedOutput))
+      return { ok: false, reason: REASON_CODES.TTY_REQUIRED };
     // Exited cleanly but produced no artifact: a print/response-only mode
     // that never actually exercised a tool (observed for `agy --print`).
-    if (result.code === 0) return { ok: false, reason: REASON_CODES.NON_AGENTIC_PRINT_MODE };
+    if (result.code === 0)
+      return { ok: false, reason: REASON_CODES.NON_AGENTIC_PRINT_MODE };
     return { ok: false, reason: REASON_CODES.HEADLESS_EXEC_FAILED };
   } finally {
     await fs.rm(sandboxDir, { recursive: true, force: true }).catch(() => {});
@@ -278,7 +304,8 @@ export async function verifyModelCandidate(candidate, ctx = {}) {
       expectedModel: candidate.model,
       resolveModel: ctx.resolveModel === true,
       run: ctx.run ?? runProcess,
-      timeoutMs: ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
+      timeoutMs:
+        ctx.headlessProbeTimeoutMs ?? DEFAULT_HEADLESS_PROBE_TIMEOUT_MS,
       env: ctx.env ?? process.env,
     });
     if (result?.ok === true) {
@@ -290,7 +317,8 @@ export async function verifyModelCandidate(candidate, ctx = {}) {
     return {
       ok: false,
       reason: Object.values(REASON_CODES).includes(result?.reason)
-        ? result.reason : REASON_CODES.HEADLESS_EXEC_FAILED,
+        ? result.reason
+        : REASON_CODES.HEADLESS_EXEC_FAILED,
     };
   } catch {
     return { ok: false, reason: REASON_CODES.PROBE_FAILED };
@@ -323,16 +351,34 @@ export function splitSelector(selector) {
   return tokens;
 }
 
+/** Match only exact model tokens recorded by discovery for this runtime. */
+export function selectorTargetsRoute(route, root = process.cwd()) {
+  const tokens = splitSelector(route.selector);
+  if (tokens.includes(route.model)) return true;
+  return (
+    findRuntime(route.agent, root)?.models?.resolveReportedModel === true &&
+    typeof route.requestedModel === "string" &&
+    route.requestedModel.length > 0 &&
+    tokens.includes(route.requestedModel)
+  );
+}
+
 /** Retirement is registry data, including executable aliases in cached selectors. */
 export function isRetiredRuntimeRoute(route, root = process.cwd()) {
   if (findRuntime(route?.agent, root)?.retired) return true;
-  if (typeof route?.selector !== "string" || !route.selector.trim()) return false;
+  if (typeof route?.selector !== "string" || !route.selector.trim())
+    return false;
   return isRetiredCommand(splitSelector(route.selector)[0], root);
 }
 
 /** A route excluded by the runtime's model allowlist or deny patterns (model or requested value). */
 export function isDisallowedModelRoute(route, root = process.cwd()) {
-  return !isModelAllowed(route?.agent, route?.model, root, route?.requestedModel);
+  return !isModelAllowed(
+    route?.agent,
+    route?.model,
+    root,
+    route?.requestedModel,
+  );
 }
 
 /**
@@ -384,7 +430,10 @@ export function diagnostic({ agent, status, reason, model } = {}) {
  * Never throws; returns null on any failure so a version check never blocks
  * discovery. Output is a short version string, not prompt/response content.
  */
-export async function readCliVersion(cliPath, { run = runProcess, timeoutMs = 10_000, env = process.env } = {}) {
+export async function readCliVersion(
+  cliPath,
+  { run = runProcess, timeoutMs = 10_000, env = process.env } = {},
+) {
   try {
     const result = await run(cliPath, ["--version"], { timeoutMs, env });
     if (result.timedOut || result.code !== 0) return null;
@@ -415,16 +464,22 @@ export async function getRepositoryCommit(cwd) {
 export async function verifyRepositoryFreshness(cwd) {
   const { baseBranch } = loadRepositoryConfig(cwd).repository;
   const baseRef = `origin/${baseBranch}`;
-  const fetchResult = await runProcess("git", ["fetch", "origin", baseBranch], { cwd });
+  const fetchResult = await runProcess("git", ["fetch", "origin", baseBranch], {
+    cwd,
+  });
   if (fetchResult.code !== 0) {
     throw new Error("orchestrator-checkout-stale:fetch-failed");
   }
 
-  const mergeBaseResult = await runProcess("git", ["merge-base", "--is-ancestor", baseRef, "HEAD"], { cwd });
+  const mergeBaseResult = await runProcess(
+    "git",
+    ["merge-base", "--is-ancestor", baseRef, "HEAD"],
+    { cwd },
+  );
   if (mergeBaseResult.code !== 0) {
     const headResult = await runProcess("git", ["rev-parse", "HEAD"], { cwd });
     const baseResult = await runProcess("git", ["rev-parse", baseRef], { cwd });
-    
+
     const formatSha = (res) => {
       const out = String(res.stdout ?? "").trim();
       const err = String(res.stderr ?? "").trim();
@@ -433,7 +488,9 @@ export async function verifyRepositoryFreshness(cwd) {
 
     const headSha = formatSha(headResult);
     const baseSha = formatSha(baseResult);
-    throw new Error(`orchestrator-checkout-stale:head=${headSha},${baseRef}=${baseSha}`);
+    throw new Error(
+      `orchestrator-checkout-stale:head=${headSha},${baseRef}=${baseSha}`,
+    );
   }
 }
 
@@ -464,7 +521,11 @@ export async function writeJsonAtomic(filePath, value) {
  * @param {string[]} args
  * @param {{ timeoutMs?: number, env?: NodeJS.ProcessEnv, cwd?: string }} [options]
  */
-export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd } = {}) {
+export function spawnWorker(
+  command,
+  args,
+  { timeoutMs, env = process.env, cwd } = {},
+) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error("invalid-timeout-ms");
   }
@@ -517,7 +578,13 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
       finish({ code, signal, timedOut, pid: child.pid });
     });
     child.on("error", () => {
-      finish({ code: null, signal: null, timedOut, pid: child.pid, error: true });
+      finish({
+        code: null,
+        signal: null,
+        timedOut,
+        pid: child.pid,
+        error: true,
+      });
     });
   });
 
@@ -533,6 +600,14 @@ export function spawnWorker(command, args, { timeoutMs, env = process.env, cwd }
 
 const NO_STATE_LEAK_RULE =
   "Do not store credentials, Issue bodies, prompts, diffs, or model response bodies in orchestrator run state.";
+
+// issue-implementation (and handoff-issue, which continues its workflow)
+// dispatches its own reviewer before the PR. Under a role program the
+// orchestrator already runs the one review pass per Issue as a separate role,
+// so an implementer that also followed the skill would review the Issue twice
+// on a route the run state never records.
+const SKIP_SKILL_REVIEW_RULE =
+  "Do NOT dispatch a reviewer role or run the skill's review step yourself: the orchestrator runs the review as a separate role. Go straight to push and pull request handling.";
 
 /**
  * Role-specific instructions. Each role runs as its own CLI process, so a
@@ -569,6 +644,7 @@ function roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }) {
     return [
       `Address the reviewer's findings for this Issue (fix cycle ${fixCycle}). A pull request already exists.`,
       `Use the repository ${skill} skill to resume the existing Issue worktree.`,
+      SKIP_SKILL_REVIEW_RULE,
       `Read the findings with \`gh pr view --comments\`: take the newest comment whose first line starts with \`role=reviewer\`.`,
       "Do NOT create a pull request — push to the same branch so the existing one updates.",
       `After pushing, post ONE pull request comment starting with the exact line \`role=implementer fix-cycle=${fixCycle}\`, stating per finding what you changed or why you did not.`,
@@ -576,15 +652,17 @@ function roleInstructions({ role, issueNumber, skill, reviewPass, fixCycle }) {
     ];
   return [
     `Implement exactly one GitHub Issue using the repository ${skill} skill.`,
+    SKIP_SKILL_REVIEW_RULE,
     "Report role-complete with role=implementer once the work is committed, pushed, and the pull request exists.",
   ];
 }
 
 /**
- * Build the minimal worker prompt — role, Issue number, and route labels
- * only. No Issue body, diff, or personal data ever enters the prompt.
+ * Build the minimal worker prompt — role, Issue number, route labels, and the
+ * non-sensitive lease session ID for a worker that owns the Issue worktree.
+ * No Issue body, diff, or personal data ever enters the prompt.
  * @param {{ issueNumber: number, agent: string, model: string, releasePolicy: string, nextMilestone: string,
- *   role?: string, skill?: string, reviewPass?: number, fixCycle?: number }} fields
+ *   role?: string, skill?: string, reviewPass?: number, fixCycle?: number, leaseSession?: string }} fields
  */
 export function buildWorkerPrompt({
   issueNumber,
@@ -596,7 +674,12 @@ export function buildWorkerPrompt({
   skill = "issue-implementation",
   reviewPass,
   fixCycle,
+  leaseSession,
 }) {
+  const lease =
+    leaseSession === undefined
+      ? []
+      : leaseInstructions({ issueNumber, agent, leaseSession });
   if (!role) {
     // Single-worker mode: one worker owns the whole Issue, as before roles.
     return [
@@ -605,6 +688,7 @@ export function buildWorkerPrompt({
       `Assigned route: agent=${agent} model=${model}`,
       `Release policy: ${releasePolicy}`,
       `Next milestone: ${nextMilestone}`,
+      ...lease,
       NO_STATE_LEAK_RULE,
     ].join("\n");
   }
@@ -615,6 +699,20 @@ export function buildWorkerPrompt({
     `Assigned route: agent=${agent} model=${model}`,
     `Release policy: ${releasePolicy}`,
     `Next milestone: ${nextMilestone}`,
+    ...lease,
     NO_STATE_LEAK_RULE,
   ].join("\n");
+}
+
+/**
+ * The dispatcher-issued lease session. Some runtimes run shell commands in a
+ * separate long-running server that does not inherit the worker's environment,
+ * so the session travels in the prompt as well as in ISSUE_WORKTREE_SESSION.
+ */
+function leaseInstructions({ issueNumber, agent, leaseSession }) {
+  return [
+    `Issue worktree lease session: ${leaseSession}`,
+    `Pass \`--session ${leaseSession}\` to every scripts/issue-worktree.sh create, acquire, handoff, and release call for Issue #${issueNumber}. The dispatcher renews this lease while you run; do not invent another session ID.`,
+    `Before each commit and each push, run \`bash scripts/issue-worktree.sh acquire ${issueNumber} --agent ${agent} --session ${leaseSession}\`. If it fails, stop without committing or pushing: another session has taken over the Issue.`,
+  ];
 }

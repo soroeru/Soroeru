@@ -1,34 +1,18 @@
 {
-  "aliases": [
-    "claude-code"
-  ],
+  "aliases": ["claude-code"],
   "enabledByDefault": true,
   "retired": false,
-  "probeArgs": [
-    "-p",
-    "--output-format",
-    "stream-json",
-    "--verbose"
-  ],
-  "promptArgs": [
-    "-p"
-  ],
+  "probeArgs": ["-p", "--output-format", "stream-json", "--verbose"],
+  "promptArgs": ["-p"],
   "skills": {
-    "discoveryDirs": [
-      ".claude/skills"
-    ]
+    "discoveryDirs": [".claude/skills"]
   },
   "id": "claude",
   "name": "Claude",
   "evaluationOrder": 1,
-  "commands": [
-    "claude"
-  ],
+  "commands": ["claude"],
   "auth": {
-    "args": [
-      "auth",
-      "status"
-    ],
+    "args": ["auth", "status"],
     "parser": "logged-in-json"
   },
   "models": {
@@ -111,9 +95,6 @@
     "percentFormat": "number",
     "resetsAt": "resets_at",
     "resetFormat": "iso",
-    "blocked": [
-      "$.rate_limits_available == false",
-      "locked_reason != null"
-    ]
+    "blocked": ["$.rate_limits_available == false", "locked_reason != null"]
   }
 }
