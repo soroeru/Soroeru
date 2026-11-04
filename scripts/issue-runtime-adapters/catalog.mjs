@@ -1,3 +1,4 @@
+import { environmentReason } from "./environment.mjs";
 /**
  * The single model-listing path for every runtime. Resolves the CLI, checks
  * authentication, and reads the runtime's own model list without executing a
@@ -15,7 +16,11 @@ import {
 } from "./shared.mjs";
 import { parseAuthentication, parseCatalog } from "./parsers.mjs";
 import { fetchUsage } from "./usage.mjs";
-import { isRetiredCommand } from "../ai-template/registry.mjs";
+import {
+  isRetiredCommand,
+  runtimeEnvironment,
+} from "../ai-template/registry.mjs";
+import { runtimeHasApprovedRoute } from "../enterprise-route-policy.mjs";
 
 /**
  * @typedef {{ model: string, label: string }} CatalogModel
@@ -38,7 +43,7 @@ export function catalogSource(definition) {
 export async function resolveRuntimeCli(definition, ctx = {}) {
   if (definition.retired) return null;
   const resolve = ctx.resolveExecutable ?? resolveExecutable;
-  const env = ctx.env ?? process.env;
+  const env = runtimeEnvironment(definition, ctx);
   for (const name of ctx.cliPath ? [ctx.cliPath] : definition.commands) {
     if (isRetiredCommand(name, ctx.cwd)) continue;
     const resolved = await resolve(name, { env, pathEnv: ctx.pathEnv });
@@ -56,10 +61,21 @@ export async function resolveRuntimeCli(definition, ctx = {}) {
 export async function fetchRuntimeCatalog(definition, ctx = {}) {
   const timeoutMs = ctx.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   const run = ctx.runProcess ?? runProcess;
-  const env = ctx.env ?? process.env;
+  let env;
+  try {
+    env = runtimeEnvironment(definition, ctx);
+  } catch (error) {
+    return {
+      status: "failed",
+      reason: environmentReason(error) ?? REASON_CODES.PROBE_FAILED,
+    };
+  }
   const source = catalogSource(definition);
   if (definition.retired)
     return { status: "failed", reason: REASON_CODES.CLI_NOT_FOUND, source };
+  // Enterprise mode: no catalog/listing/auth CLI call unless the runtime has an attested route.
+  if (!runtimeHasApprovedRoute(definition.id, { root: ctx.cwd }))
+    return { status: "failed", reason: REASON_CODES.ENTERPRISE_DENIED, source };
   const cliPath = await resolveRuntimeCli(definition, ctx);
   if (!cliPath)
     return { status: "failed", reason: REASON_CODES.CLI_NOT_FOUND, source };

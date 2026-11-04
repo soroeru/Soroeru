@@ -1,4 +1,5 @@
-import { findRuntime } from "./ai-template/registry.mjs";
+import { environmentReason } from "./issue-runtime-adapters/environment.mjs";
+import { findRuntime, runtimeEnvironment } from "./ai-template/registry.mjs";
 import { fetchUsage, normalizeUsage } from "./issue-runtime-adapters/usage.mjs";
 
 /**
@@ -105,13 +106,18 @@ export async function readParentUsage(
         fetchedAt,
       );
     return normalizeUsage(
-      await fetchUsage(runtime.usage, { ...options, timeoutMs, cwd }),
+      await fetchUsage(runtime.usage, {
+        ...options,
+        timeoutMs,
+        cwd,
+        env: runtimeEnvironment(runtime, { ...options, cwd }),
+      }),
       runtime.usage,
       { fetchedAt },
     );
   } catch (error) {
     const reason =
-      error?.message === "parent-usage-timeout"
+      (environmentReason(error) ?? error?.message === "parent-usage-timeout")
         ? "parent-usage-timeout"
         : "parent-usage-fetch-failed";
     return unknown(reason, fetchedAt);

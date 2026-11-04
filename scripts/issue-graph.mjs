@@ -102,6 +102,7 @@ import {
   ROLES,
   advanceRoleProgram,
   assignRoleRoutes,
+  routeServesRole,
   applyTriageDecision,
   buildRoleDispatchPayload,
   counterpartRole,
@@ -551,6 +552,12 @@ function modeTelemetryFor(roleState, outcome) {
  */
 function pickRoleRoute(pool, roleState, role) {
   const counterpart = roleState.routes[distinctPreferenceRole(role)];
+  // Prefer routes whose permission policy can run the role. With none left,
+  // dispatch refuses the route with a closed permission reason.
+  const permitted = pool.filter((candidate) =>
+    routeServesRole(candidate, role),
+  );
+  if (permitted.length) pool = permitted;
   const distinct = pool.find(
     (candidate) => !counterpart || !sameRoute(candidate, counterpart),
   );
@@ -1245,13 +1252,18 @@ function assignRoutesNode(state) {
         return rejectProposal(
           `invalid-assignment:${item.number}:${role}-route-not-distinct`,
         );
+      if (!routeServesRole(route, role ?? ROLES.IMPLEMENTER))
+        return rejectProposal(
+          `invalid-assignment:${item.number}:${role ?? ROLES.IMPLEMENTER}-route-not-permitted`,
+        );
     } else if (roleState) {
       route = roleState.routes[role];
       // Re-pick when the recorded route left the pool (its agent was excluded
       // after an interruption) or would collapse onto its counterpart.
       if (
         !pool.some((candidate) => sameRoute(candidate, route)) ||
-        violatesRoleDistinctness(pool, roleState, role, route)
+        violatesRoleDistinctness(pool, roleState, role, route) ||
+        !routeServesRole(route, role)
       ) {
         const picked = pickRoleRoute(pool, roleState, role);
         route = picked.route;

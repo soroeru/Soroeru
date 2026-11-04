@@ -22,6 +22,7 @@ import {
   getRepositoryCommit,
   isRetiredRuntimeRoute,
   isDisallowedModelRoute,
+  selectorHasPermissionArgs,
   readCliVersion,
   runProcess,
   writeJsonAtomic,
@@ -29,6 +30,7 @@ import {
 import { discoverAllCapabilities } from "./issue-runtime-adapters/index.mjs";
 
 import {
+  runtimeEnvironment,
   loadRuntimeRegistry,
   findRuntime,
   isRetiredCommand,
@@ -120,10 +122,16 @@ export async function discoverCapabilities(options = {}) {
   const cli = {};
   for (const [agentName, meta] of Object.entries(result.cli ?? {})) {
     if (typeof meta?.path !== "string" || !meta.path) continue;
+    const runtime = findRuntime(agentName, options.cwd);
     const version = await readCliVersion(meta.path, {
       run,
       timeoutMs,
-      env: options.env,
+      env: runtimeEnvironment(runtime ?? { name: agentName }, {
+        ...options,
+        ...(options.adapters?.[agentName] ??
+          options.adapters?.[runtime?.id] ??
+          {}),
+      }),
     });
     cli[agentName] = { path: meta.path, ...(version ? { version } : {}) };
   }
@@ -165,6 +173,8 @@ async function findStaleCachedAgents(
   cliMeta,
   {
     env,
+    cwd,
+    adapters,
     timeoutMs = DEFAULT_PROBE_TIMEOUT_MS,
     runProcess: run = runProcess,
   } = {},
@@ -184,7 +194,22 @@ async function findStaleCachedAgents(
     // Same budget discoverCapabilities used to record `meta.version`:
     // a shorter default here would read `null` for a
     // slow-but-unchanged CLI, judge it stale, and re-probe every run forever.
-    const version = await readCliVersion(meta.path, { run, timeoutMs, env });
+    let version;
+    try {
+      const runtime = findRuntime(agentName, cwd);
+      version = await readCliVersion(meta.path, {
+        run,
+        timeoutMs,
+        env: runtimeEnvironment(runtime ?? { name: agentName }, {
+          env,
+          cwd,
+          ...(adapters?.[agentName] ?? adapters?.[runtime?.id] ?? {}),
+        }),
+      });
+    } catch {
+      stale.push(agentName);
+      continue;
+    }
     if (version !== (meta.version ?? null)) stale.push(agentName);
   }
   return stale;
@@ -287,7 +312,8 @@ export async function loadOrRefreshCapabilities(options = {}) {
     ((cached.capabilities ?? []).some(
       (record) =>
         isRetiredRuntimeRoute(record, options.cwd) ||
-        isDisallowedModelRoute(record, options.cwd),
+        isDisallowedModelRoute(record, options.cwd) ||
+        selectorHasPermissionArgs(record, options.cwd),
     ) ||
       Object.values(cached.cli ?? {}).some((entry) =>
         isRetiredCommand(entry?.path, options.cwd),
@@ -425,7 +451,8 @@ export async function refreshWorkerRoutes(options = {}) {
  * Dispatch preflight: re-read the selected agent's catalog and probe only the
  * exact model. Never execute the supplied selector; compare it to fresh CLI
  * discovery. A changed selector or a failed model requires route reselection.
- * @param {{ agent?: string, model?: string, requestedModel?: string, selector?: string }} route
+ * @param {{ agent?: string, model?: string, requestedModel?: string, selector?: string,
+ *   permissionFingerprint?: string }} route
  * @param {CapabilityOptions} [options]
  */
 export async function verifyWorkerRoute(route, options = {}) {
@@ -458,7 +485,8 @@ export async function verifyWorkerRoute(route, options = {}) {
     (candidate) =>
       candidate.agent === agent &&
       candidate.model === route.model &&
-      candidate.selector === route.selector,
+      candidate.selector === route.selector &&
+      candidate.permissionFingerprint === route.permissionFingerprint,
   );
   if (verified) return { ok: true, route: verified, probedAt: result.probedAt };
   const failure = result.diagnostics.find(

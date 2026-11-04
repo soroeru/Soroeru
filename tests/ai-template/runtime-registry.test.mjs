@@ -118,12 +118,9 @@ test("new declaration alone participates in alias resolution, discovery, dispatc
     },
   );
   assert.equal(launched.cli, "/fake/fiction");
-  assert.deepEqual(launched.args.slice(0, 4), [
-    "run",
-    "--model",
-    "model",
-    "--auto",
-  ]);
+  assert.deepEqual(launched.args.slice(0, 3), ["run", "--model", "model"]);
+  // The single worker runs the implementer profile; bypass is never a default.
+  assert.equal(launched.args.includes("--auto"), false);
   const dataset = buildDatasetFromTelemetryEvents([{ issue_id: "123" }], {
     cwd: root,
   });
@@ -146,7 +143,7 @@ test("OpenCode addition and enablement needs no script or skill changes", async 
   const result = await discoverCapabilities({ cwd: root, ...external() });
   assert.equal(
     result.capabilities[0].selector,
-    "/fake/opencode run --model fiction/model --auto",
+    "/fake/opencode run --model fiction/model",
   );
   assert.equal(
     (
@@ -206,7 +203,7 @@ test("model allowlist probes only listed models and reports the rest as model-no
   );
   const probed = calls.filter((c) => c[0] === "probe").map((c) => c.join(" "));
   assert.equal(probed.length, 1);
-  assert.match(probed[0], /--model fiction\/kept /);
+  assert.match(probed[0], /--model fiction\/kept( |$)/);
   assert.deepEqual(
     result.diagnostics
       .filter((d) => d.reason === "model-not-allowed")

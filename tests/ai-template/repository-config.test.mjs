@@ -156,3 +156,18 @@ test("freshness follows the configured trunk, rejecting a checkout after that re
   git(checkout, "merge", "--ff-only", "origin/develop");
   await verifyRepositoryFreshness(checkout);
 });
+
+test("enterprise config accepts only a boolean routeAttestation object", async (t) => {
+  const root = await temporary(t);
+  await writeConfig(root, { enterprise: { routeAttestation: true } });
+  assert.doesNotThrow(() => loadRepositoryConfig(root));
+  for (const enterprise of [
+    { routeAttestation: "true" },
+    { other: true },
+    [],
+    "on",
+  ]) {
+    await writeConfig(root, { enterprise });
+    assert.throws(() => loadRepositoryConfig(root));
+  }
+});

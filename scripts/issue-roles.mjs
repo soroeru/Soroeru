@@ -151,6 +151,21 @@ export function roleProgramForMode(mode) {
 }
 
 /**
+ * True when the route's recorded permission policy lets it run `role`. A route
+ * probed before permission roles were recorded is not filtered here; dispatch
+ * still refuses it on a permission fingerprint mismatch.
+ */
+export function routeServesRole(route, role) {
+  return (
+    !Array.isArray(route?.permissionRoles) ||
+    route.permissionRoles.includes(role)
+  );
+}
+
+const sameAgentModel = (left, right) =>
+  left.agent === right.agent && left.model === right.model;
+
+/**
  * Bind each role in the program to a verified route.
  *
  * `implementer` and `reviewer` get distinct routes whenever the pool holds
@@ -160,8 +175,54 @@ export function roleProgramForMode(mode) {
  *
  * `planner` takes the reviewer's route when one is distinct, so the plan and
  * the implementation come from different runtimes.
+ *
+ * Each role only takes a route whose permission policy can run it (for
+ * example, a sandbox without network cannot post the review). When no route
+ * can run a role, it keeps a route anyway and dispatch refuses it with a
+ * closed permission reason, so the run stops instead of loosening permissions.
  */
 export function assignRoleRoutes(workerRoutes, program) {
+  const pool = workerRoutes ?? [];
+  const eligible = (role) => pool.filter((r) => routeServesRole(r, role));
+  if (
+    Object.values(ROLES).every((role) => eligible(role).length === pool.length)
+  )
+    return assignUnrestrictedRoleRoutes(pool, program);
+  const reviewers = eligible(ROLES.REVIEWER);
+  const implementers = eligible(ROLES.IMPLEMENTER);
+  // Independent review is the hard rule: take the first implementer route that
+  // still leaves a distinct route permitted to review.
+  const implementer =
+    implementers.find((r) =>
+      reviewers.some((reviewer) => !sameAgentModel(reviewer, r)),
+    ) ??
+    implementers[0] ??
+    pool[0];
+  if (!implementer) throw new Error("no-worker-routes-available");
+  const reviewer =
+    reviewers.find((r) => !sameAgentModel(r, implementer)) ??
+    reviewers[0] ??
+    implementer;
+  const planners = eligible(ROLES.PLANNER);
+  const planner = planners.includes(reviewer)
+    ? reviewer
+    : (planners.find((r) => !sameAgentModel(r, implementer)) ??
+      planners[0] ??
+      reviewer);
+  const byRole = {
+    [ROLES.IMPLEMENTER]: implementer,
+    [ROLES.REVIEWER]: reviewer,
+    [ROLES.PLANNER]: planner,
+  };
+  return {
+    routes: Object.fromEntries(program.map((role) => [role, byRole[role]])),
+    ...(sameAgentModel(reviewer, implementer)
+      ? { degraded: "same-route-reviewer:no-permitted-distinct-route" }
+      : {}),
+  };
+}
+
+function assignUnrestrictedRoleRoutes(workerRoutes, program) {
   const allowSameRoute = (workerRoutes ?? []).length === 1;
   const { implementer, reviewer } = assignRoutesForMode(workerRoutes, {
     allowSameRoute,

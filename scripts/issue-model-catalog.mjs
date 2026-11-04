@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runtimeEnvironment } from "./ai-template/registry.mjs";
 
 /**
  * Local model catalog: the latest model list each enabled runtime's CLI
@@ -137,7 +138,14 @@ export async function findStaleCatalogAgents(catalog, options = {}) {
       ...options,
       ...(options.adapters?.[id] ?? options.adapters?.[runtime.name] ?? {}),
     };
-    if ((await resolveRuntimeCli(runtime, ctx)) !== entry.cli.path) {
+    let resolved;
+    try {
+      resolved = await resolveRuntimeCli(runtime, ctx);
+    } catch {
+      stale.push(id);
+      continue;
+    }
+    if (resolved !== entry.cli.path) {
       stale.push(id);
       continue;
     }
@@ -150,7 +158,7 @@ export async function findStaleCatalogAgents(catalog, options = {}) {
     const version = await readCliVersion(entry.cli.path, {
       run,
       timeoutMs: options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-      env: options.env,
+      env: runtimeEnvironment(runtime, ctx),
     });
     if (version !== (entry.cli.version ?? null)) stale.push(id);
   }
@@ -279,7 +287,7 @@ export async function ensureModelCatalog(options = {}) {
       ? await readCliVersion(listing.cliPath, {
           run,
           timeoutMs: options.timeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS,
-          env: options.env,
+          env: runtimeEnvironment(runtime, ctx),
         })
       : null;
     agents[runtime.id] = {

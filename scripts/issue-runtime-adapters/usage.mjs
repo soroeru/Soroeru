@@ -140,13 +140,9 @@ export function normalizeUsage(result, usage, { fetchedAt } = {}) {
  * @param {{ timeoutMs?: number, spawn?: Function, env?: NodeJS.ProcessEnv, cwd?: string }} [options] */
 export function fetchUsage(
   usage,
-  {
-    timeoutMs = 15_000,
-    spawn = nodeSpawn,
-    env = process.env,
-    cwd = process.cwd(),
-  } = {},
+  { timeoutMs = 15_000, spawn = nodeSpawn, env, cwd = process.cwd() } = {},
 ) {
+  if (!env) return Promise.reject(new Error("runtime-env-policy-required"));
   return new Promise((resolve, reject) => {
     let child;
     let settled = false;
