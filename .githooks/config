@@ -1,4 +1,4 @@
 # .githooks/config
 #
 # Configuration for the git hooks in this repository.
-# This file is sourced by .githooks/pre-commit.
+# This file is sourced by .githooks/commit-msg.

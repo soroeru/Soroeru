@@ -30,6 +30,9 @@ npm run e2e:extension-demo
 Use fake data and disposable browser profiles. Never load the real-password CSV
 for automated tests or publish local state. The existing Git hooks can be installed
 with `bash scripts/setup-hooks.sh`; agents still run applicable checks explicitly.
+The `commit-msg` hook runs format, lint and typecheck after the commit message
+is prepared. A `[skip-hooks]` marker in that commit message skips these gates
+for that commit only; `npm test` remains a separate check.
 
 ## Run the extension
 

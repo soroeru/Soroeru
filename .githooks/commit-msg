@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# commit-msg hook — quality gate enforcement.
+#
+# Runs the following checks before every commit is recorded:
+#   1. npm run format   — Prettier format check
+#   2. npm run lint     — ESLint
+#   3. npm run typecheck — TypeScript (main + renderer tsconfigs)
+#
+# The gates run here rather than in pre-commit because only commit-msg
+# receives this commit's message ($1). pre-commit runs before Git writes
+# COMMIT_EDITMSG, so it could only see the previous commit's message.
+#
+# Skips on:
+#   - this commit's message contains [skip-hooks]
+#   - merge / rebase / cherry-pick in progress
+#
+# To bypass in an emergency, include [skip-hooks] in the commit message
+# or use `git commit --no-verify` (git built-in, but leaves no trace in
+# the commit message).
+#
+# Note: `npm test` is intentionally excluded from the commit-msg hook
+# because it includes a full build step and is too slow for per-commit use.
+# Run `npm test` manually or via `npm run release:check` before pushing.
+
+set -euo pipefail
+
+MSG_FILE=${1:-}
+if [ -z "$MSG_FILE" ] || [ ! -f "$MSG_FILE" ]; then
+  printf '[commit-msg] error: commit message file not provided\n' >&2
+  exit 1
+fi
+
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# --- Skip: merge / rebase / cherry-pick in progress ---------------
+GIT_DIR=$(git rev-parse --git-dir)
+if [ -f "$GIT_DIR/MERGE_HEAD" ] \
+   || [ -d "$GIT_DIR/rebase-merge" ] \
+   || [ -d "$GIT_DIR/rebase-apply" ] \
+   || [ -f "$GIT_DIR/CHERRY_PICK_HEAD" ]; then
+  exit 0
+fi
+
+# --- Skip: [skip-hooks] in this commit's message ------------------
+# Git cleans the message only after this hook runs, so mirror that cleanup
+# and decide on what the commit will actually record: the marker counts only
+# where Git keeps it. An editor template or `git commit -v` diff must not
+# trigger a skip, and a marker Git preserves must not be ignored.
+#
+# Git runs commit hooks with GIT_EDITOR=: when it does not open an editor.
+# Its default cleanup is `strip` for an edited message and `whitespace`
+# otherwise; commit.cleanup overrides that default. A `--cleanup` option on
+# the command line is not visible to hooks, so it is not mirrored here.
+EDITED=1
+[ "${GIT_EDITOR-}" = ":" ] && EDITED=0
+CLEANUP=$(git config --get commit.cleanup 2>/dev/null || true)
+case "$CLEANUP" in
+  strip|whitespace|verbatim|scissors) ;;
+  *) if [ "$EDITED" = "1" ]; then CLEANUP='strip'; else CLEANUP='whitespace'; fi ;;
+esac
+COMMENT_CHAR=$(git config --get core.commentChar 2>/dev/null || true)
+case "$COMMENT_CHAR" in
+  ?) ;;
+  *) COMMENT_CHAR='#' ;;
+esac
+# The scissors line cuts an edited message (it is how `-v` adds its diff);
+# `strip` also drops comment lines. Other cases keep the text as written.
+CUT_AT_SCISSORS=0
+if [ "$EDITED" = "1" ] && [ "$CLEANUP" != "verbatim" ]; then CUT_AT_SCISSORS=1; fi
+STRIP_COMMENTS=0
+[ "$CLEANUP" = "strip" ] && STRIP_COMMENTS=1
+MESSAGE_BODY=$(awk -v c="$COMMENT_CHAR" -v cut="$CUT_AT_SCISSORS" -v strip="$STRIP_COMMENTS" '
+  cut == 1 && $0 == c " ------------------------ >8 ------------------------" { exit }
+  strip == 1 && substr($0, 1, 1) == c { next }
+  { print }
+' "$MSG_FILE")
+case "$MESSAGE_BODY" in
+  *'[skip-hooks]'*)
+    printf '[commit-msg] skipped: [skip-hooks] found in commit message\n' >&2
+    exit 0
+    ;;
+esac
+
+# --- Quality gates ------------------------------------------------
+# Run each gate sequentially. On first failure, abort the commit with
+# a clear message indicating which gate failed.
+
+run_gate() {
+  local label="$1"
+  local cmd="$2"
+  printf '[commit-msg] running: %s\n' "$label" >&2
+  if ! (cd "$REPO_ROOT" && $cmd); then
+    printf '\n[commit-msg] ❌ FAILED: %s\n' "$label" >&2
+    printf '[commit-msg] commit aborted. Fix the issue and try again.\n' >&2
+    printf '[commit-msg] to bypass: include [skip-hooks] in your commit message\n' >&2
+    exit 1
+  fi
+  printf '[commit-msg] ✅ passed: %s\n' "$label" >&2
+}
+
+run_gate "npm run format"    "npm run format"
+run_gate "npm run lint"      "npm run lint"
+run_gate "npm run typecheck" "npm run typecheck"
+
+printf '[commit-msg] all quality gates passed ✅\n' >&2
+
+exit 0
